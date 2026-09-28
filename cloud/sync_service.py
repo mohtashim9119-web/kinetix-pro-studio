@@ -174,9 +174,19 @@ class SyncWorker:
     @modal.enter()
     def boot(self) -> None:
         self.booted_at = time.time()
-        self.first_job = True
+        # Wave 3 U5 — false until a job claims its start; the boot is billed
+        # to that first job, or metered on exit as residue if none ever does.
+        self.billed = False
         self.whisper = None
         self.fa: dict[str, tuple[Any, Any]] = {}
+
+    @modal.exit()
+    def exit_unbilled(self) -> None:
+        if self.billed:
+            return
+        now = time.time()
+        _write_meter(core.boot_residue_line(os.environ.get("MODAL_TASK_ID"), self.booted_at, now))
+        cache_vol.commit()
 
     def _whisper_model(self) -> Any:
         if self.whisper is None:
@@ -264,8 +274,7 @@ class SyncWorker:
     def run(self, job_id: str) -> str:
         # The first job in a container is charged from container boot, so
         # model load and volume attach land on the meter, not in a gap.
-        began = self.booted_at if self.first_job else time.time()
-        self.first_job = False
+        began = self.booted_at if not self.billed else time.time()
         outcome = self._execute(job_id, began)
         job = jobs.get(job_id) or {}
         if outcome == "done" and job.get("stage") == "transcribe" and job.get("hold"):
@@ -302,6 +311,14 @@ class SyncWorker:
         job = jobs.get(job_id)
         if job is None or job["status"] != "queued":
             return "skipped"
+        residue_sec = 0.0
+        if not self.billed:
+            began, residue_sec = core.first_job_billing(began, job.get("createdAt"))
+        if not jobs.put(core.start_key(job_id), began, skip_if_exists=True):
+            return "skipped"  # DELETE claimed it first: never started, never charged
+        self.billed = True
+        if residue_sec > 0:
+            _write_meter(core.boot_residue_line(os.environ.get("MODAL_TASK_ID"), began - residue_sec, began))
         job["status"] = "running"
         job["startedAt"] = time.time()
         jobs.put(job_id, job)
@@ -321,7 +338,7 @@ class SyncWorker:
             outcome, error = "failed", {"code": "worker-error", "detail": f"{type(exc).__name__}: {exc}"[:500]}
         now = time.time()
         latest = jobs.get(job_id) or job
-        if latest["status"] == "cancelled":
+        if latest["status"] == "cancelled" or jobs.get(core.cancelled_key(job_id)) is not None:
             # DELETE already metered the time this job burned; the result
             # (if any) stays cached so a retry is a cache hit, not a re-bill.
             return "cancelled"
@@ -422,7 +439,9 @@ def gateway() -> Any:
         job = await jobs.get.aio(job_id)
         if job is None or job.get("member") != member:
             raise GatewayError(404, "not-found", "no such job")
-        return job
+        # Wave 3 U5 — a cancel is final even if a worker's write raced it.
+        cancelled = await jobs.get.aio(core.cancelled_key(job_id))
+        return cancelled if cancelled is not None else job
 
     @web.get("/v1/ping")
     async def ping(request: Request) -> dict[str, Any]:
@@ -662,15 +681,27 @@ def gateway() -> Any:
         job = await owned_job(job_id, member)
         if job["status"] in core.TERMINAL_STATUSES:
             return core.public_job(job)
-        call_id = await jobs.get.aio(f"call:{job_id}")
-        if call_id:
-            await modal.FunctionCall.from_id(call_id).cancel.aio()
+        # Wave 3 U5 — one atomic claim decides "started?" (see core.start_key).
+        # Un-started work is never charged. A started job is charged from the
+        # second its billing began — container boot for a container's first
+        # job, exactly as a finished job would be (operator U5 ruling).
+        key = core.start_key(job_id)
+        won = await jobs.put.aio(key, core.CANCELLED_BEFORE_START, skip_if_exists=True)
+        claim = core.CANCELLED_BEFORE_START if won else await jobs.get.aio(key)
         now = time.time()
-        # Un-started work is never charged. A running job's seconds were
-        # really spent, and the meter says so (operator U5 clarification).
-        started = job.get("startedAt")
-        spent = (now - started) if started else 0.0
-        job.update(status="cancelled", finishedAt=now, workerSec=round(spent, 3))
+        started, spent = core.cancel_charge(claim, now)
+        call_id = await jobs.get.aio(f"call:{job_id}")
+        # A handed-off job that never started must not kill its holder: the
+        # holder finds the lost claim, meters its held seconds, and exits.
+        if call_id and (started or not job.get("handedOff")):
+            await modal.FunctionCall.from_id(call_id).cancel.aio()
+        job.update(
+            status="cancelled",
+            finishedAt=now,
+            startedAt=float(claim) if started else None,
+            workerSec=round(spent, 3),
+        )
+        await jobs.put.aio(core.cancelled_key(job_id), job)
         await jobs.put.aio(job_id, job)
         async with vol_lock:
             _write_meter(core.meter_line(job, "cancelled", spent, now))

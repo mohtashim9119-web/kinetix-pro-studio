@@ -96,8 +96,13 @@ describe('Group B closeout — handleApplySyncFromFiles cancel-boundary structur
     // Wave 3 U4.5 — the REVEAL wait (a background cloud intent for this
     // spine): cancel during the wait returns before anything is written,
     // strictly between STAGING and FA's own cancelled arm.
-    const reveal = lineNumbersOf('if (revealCancelled) return cancelledResult(newSegmentsRaw.length);');
+    // Wave 3 U5 — it now also cancels the background intent before
+    // returning through cancelledResult.
+    const reveal = lineNumbersOf('if (revealCancelled) {');
     expect(reveal, 'U4.5 reveal-wait cancel check not found').toHaveLength(1);
+    const revealBody = LINES.slice(reveal[0]! - 1, reveal[0]! + 12).join('\n');
+    expect(revealBody).toContain('cancelSyncIntent(intent.spineKey)');
+    expect(revealBody).toContain('return cancelledResult(newSegmentsRaw.length);');
     expect(staging[0]!).toBeLessThan(reveal[0]!);
     expect(reveal[0]!).toBeLessThan(faCancelled[0]!);
 
@@ -142,16 +147,26 @@ describe('Group B closeout — handleApplySyncFromFiles cancel-boundary structur
     // re-transcription PAUSE (the engine-switch transcript could not be
     // fetched past its one retry) — the same appendSyncLogEntries-only shape
     // as the 'paused' branch, verified below, on a path that returns before
-    // any timeline write.
+    // any timeline write. Wave 3 U5 adds a seventh, inside cancelledResult:
+    // a cancel after the engine-switch patch puts back exactly the fields
+    // that patch replaced (verified below) — it restores, never builds.
     expect(
       setProjectLines,
       'the number of setProject calls in handleApplySyncFromFiles changed — a ' +
         'new one needs its own cancel-safety argument, not silent coverage by this file',
-    ).toHaveLength(6);
+    ).toHaveLength(7);
 
     // Wave 3 U2 — the engine-switch transcript patch writes the transcript and
     // its provenance, and no timeline field.
-    const transcriptPatchLine = setProjectLines[1]!;
+    // Wave 3 U5 — the cancel restore: only the undo of the transcript patch.
+    const restoreLine = setProjectLines[1]!;
+    expect(LINES[restoreLine - 1]).toContain('setProject(p => ({ ...p, ...undo }))');
+    const restoreBody = LINES.slice(restoreLine - 6, restoreLine).join('\n');
+    expect(restoreBody).toContain('if (transcriptPatchUndo) {');
+    const undoBuild = LINES.findIndex(l => l.includes('for (const key of Object.keys(patch) as (keyof Project)[]) {'));
+    expect(undoBuild, 'the undo must be built from the patch\'s own keys').toBeGreaterThan(0);
+
+    const transcriptPatchLine = setProjectLines[2]!;
     const patchStart = LINES.findIndex(l => l.includes('const patch: Partial<Project> = {'));
     expect(patchStart + 1, 'engine-switch transcript patch not found').toBeGreaterThan(0);
     expect(patchStart + 1).toBeLessThan(transcriptPatchLine);
@@ -163,7 +178,7 @@ describe('Group B closeout — handleApplySyncFromFiles cancel-boundary structur
     expect(patchBody).not.toMatch(/voiceoverId\s*:/);
 
     // Wave 3 U4 — the re-transcription pause: log append only.
-    const retranscribePauseLine = setProjectLines[2]!;
+    const retranscribePauseLine = setProjectLines[3]!;
     const retranscribePauseBody = LINES.slice(retranscribePauseLine - 1, retranscribePauseLine + 12).join('\n');
     expect(retranscribePauseBody).toContain('appendSyncLogEntries(');
     expect(retranscribePauseBody).toContain("abortReason: 'fa-paused'");
@@ -174,14 +189,14 @@ describe('Group B closeout — handleApplySyncFromFiles cancel-boundary structur
     // The victim-pause branch's setProject call: same appendSyncLogEntries-only
     // shape as the pre-existing 'paused' branch — no segments/assets/voiceoverId
     // field, just the shared log-append helper.
-    const victimPauseLine = setProjectLines[4]!;
+    const victimPauseLine = setProjectLines[5]!;
     const victimPauseBody = LINES.slice(victimPauseLine - 1, victimPauseLine + 12).join('\n');
     expect(victimPauseBody).toContain('appendSyncLogEntries(');
     expect(victimPauseBody).not.toMatch(/segments\s*:/);
     expect(victimPauseBody).not.toMatch(/\bassets\s*:/);
     expect(victimPauseBody).not.toMatch(/voiceoverId\s*:/);
 
-    const realCommit = setProjectLines[5]!;
+    const realCommit = setProjectLines[6]!;
     const commitCheck = lineNumbersOf('if (syncAbortController.signal.aborted) return cancelledResult(lockRestoredSegments.length);')[0]!;
     expect(
       realCommit,

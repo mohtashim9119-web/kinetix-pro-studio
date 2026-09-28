@@ -86,7 +86,7 @@ describe('Wave 3 U4.6 — App wiring', () => {
 
   it('the wait shows the cloud\'s own phase, and cancel or a pause ends it keeping the staged files', () => {
     const b = earlyClickBlock();
-    expect(b).toMatch(/onCloudPhase\(pendingForWait\.audioHash/);
+    expect(b).toMatch(/onCloudPhase\(waitAudioHash/);
     expect(b).toMatch(/INTENT_PHASE_COPY\[phase\]/);
     expect(b).toMatch(/waitForStagingTranscript\(\s*\(\) => stagingTranscriptStateRef\.current, stagingTranscriptWaitersRef\.current, syncAbortController\.signal,/);
     expect(b).toMatch(/holdStaged: true/);
@@ -100,7 +100,7 @@ describe('Wave 3 U4.6 — App wiring', () => {
 
   it('on the cloud an in-flight staging transcription does not grey Build Timeline; local and explicit-transcribe still do', () => {
     expect(APP).toMatch(/applySyncDisabled=\{buildTimelineWaitsOnTranscription\}/);
-    expect(APP).toMatch(/const buildTimelineWaitsOnTranscription = applySyncDisabled\s*&& \(voiceoverNeedsExplicitTranscribe \|\| !cloudStagingInFlight\);/);
+    expect(APP).toMatch(/const buildTimelineWaitsOnTranscription = applySyncDisabled\s*&& \(voiceoverNeedsExplicitTranscribe \|\| !\(cloudStagingInFlight \|\| cloudStagingCancelled\)\);/);
     expect(APP).toMatch(/transcriptionStatus\.phase === 'transcribing'/);
   });
 
@@ -111,5 +111,47 @@ describe('Wave 3 U4.6 — App wiring', () => {
 
   it('the purple transcription bar is not mounted while transcribing', () => {
     expect(APP).toMatch(/transcriptionStatus\.phase !== 'idle' && transcriptionStatus\.phase !== 'transcribing' && whisperModelFailureKind === null/);
+  });
+});
+
+// Wave 3 U5 — cancel honesty: a cancel is a real stop on the cloud, says what
+// it cost, and leaves the timeline as it was.
+describe('Wave 3 U5 — App wiring', () => {
+  function sliceFrom(marker: string, length = 1800): string {
+    const at = APP.indexOf(marker);
+    expect(at, `${marker} not found`).toBeGreaterThan(-1);
+    return APP.slice(at, at + length);
+  }
+
+  it('cancelling an early click cancels the cloud transcription itself, keeps the staged files, and lets the next click restart it', () => {
+    const b = sliceFrom("if (waited === 'aborted') {", 700);
+    expect(b).toMatch(/cancelTranscription\(\);/);
+    expect(b).toMatch(/setStagingCancelledAssetId\(stagingAssetId\)/);
+    expect(b).toMatch(/await cancelledResult\(0\)/);
+    expect(b).toMatch(/holdStaged: true/);
+    const restart = sliceFrom('let restartedStagingHash', 900);
+    expect(restart).toMatch(/stagingCancelledAssetIdRef\.current === cancelledStaging\.asset\.id/);
+    expect(restart).toMatch(/handleVoiceoverStaged\(cancelledStaging\.file, \{ rerun: true \}\)/);
+  });
+
+  it('cancelling the reveal stops the background intent, not just the wait', () => {
+    const b = sliceFrom('if (revealCancelled) {', 700);
+    expect(b).toMatch(/cancelSyncIntent\(intent\.spineKey\)/);
+    expect(b.indexOf('cancelSyncIntent')).toBeLessThan(b.indexOf('return cancelledResult'));
+  });
+
+  it('a cancelled spine never auto-restarts; only a click lifts it', () => {
+    const b = effectBody();
+    const suppressed = b.indexOf('isSyncIntentSuppressed(spineKey)');
+    expect(suppressed).toBeGreaterThan(-1);
+    expect(suppressed).toBeLessThan(b.indexOf('startSyncIntent('));
+    expect(APP).toMatch(/clearSyncIntentSuppression\(\);/);
+  });
+
+  it('every cancel waits for the gateway\'s answer and reports it', () => {
+    const b = sliceFrom('const cancelledResult = async', 1200);
+    expect(b).toMatch(/await settleCloudCancels\(\)/);
+    expect(b).toMatch(/describeCloudCancel\(\s*takeCancelReceiptsSince\(syncRunAt\)/);
+    expect(b.indexOf('settleCloudCancels')).toBeLessThan(b.indexOf('logSyncAbort('));
   });
 });

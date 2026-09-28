@@ -181,6 +181,38 @@ export function cancelOtherSyncIntents(keepSpineKey: string | undefined): void {
   notify();
 }
 
+// ---------------------------------------------------------------------------
+// Wave 3 U5 — a user's cancel is a real stop. Cancelling the Build Timeline
+// reveal cancels the background intent it was waiting on (its cloud job is
+// cancelled on the gateway and leaves a receipt), and that spine is then
+// SUPPRESSED: the spine effect must not quietly start it again and bill work
+// the human just said no to. The next Build Timeline click lifts it, and so
+// does any real change (a changed spine has a new key).
+// ---------------------------------------------------------------------------
+
+const suppressed = new Set<string>();
+
+/** Stops this spine's intent and keeps it from auto-starting. Resolves once
+ *  the intent has settled (its cloud cancel answered), or at once if none. */
+export async function cancelSyncIntent(spineKey: string): Promise<void> {
+  suppressed.add(spineKey);
+  const entry = intents.get(spineKey);
+  if (!entry) return;
+  if (!entry.outcome) entry.controller.abort();
+  intents.delete(spineKey);
+  notify();
+  await entry.promise.catch(() => undefined);
+}
+
+export function isSyncIntentSuppressed(spineKey: string): boolean {
+  return suppressed.has(spineKey);
+}
+
+/** A Build Timeline click: the human asked for this spine again. */
+export function clearSyncIntentSuppression(): void {
+  suppressed.clear();
+}
+
 /** A paused intent's answer was given (retry / local / whisper): forget it
  *  so the next spine evaluation can start fresh. */
 export function forgetSyncIntent(spineKey: string): void {
@@ -193,12 +225,14 @@ export function __resetSyncIntentsForTests(): void {
   for (const entry of intents.values()) entry.controller.abort();
   intents.clear();
   listeners.clear();
+  suppressed.clear();
 }
 
 /** One human line per phase, for the reveal overlay. Operator-swappable. */
 export const INTENT_PHASE_COPY: Record<IntentPhase, string> = {
   planning: 'Checking the script against the audio…',
-  'waiting-gpu': 'Waiting for a cloud GPU…',
+  // Wave 3 U5 — the queued state says what a cancel costs right now.
+  'waiting-gpu': 'Waiting for a cloud GPU… Cancel now and this job costs nothing (a GPU already starting up may bill its start-up, about $0.01 or less).',
   transcribing: 'Transcribing on the cloud…',
   aligning: 'Aligning on the cloud…',
   ready: 'Building your timeline…',

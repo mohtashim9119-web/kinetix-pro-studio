@@ -139,7 +139,15 @@ import {
   saveRunHostOverride,
   shouldStartStaging,
 } from './services/syncEngineHost';
-import { CloudStageError, cloudPauseReason, onCloudPhase, releaseHeldTranscription, transcribeForHost } from './services/cloudSyncEngine';
+import { CloudStageError, cloudPauseReason, hasHeldTranscription, onCloudPhase, releaseHeldTranscription, transcribeForHost } from './services/cloudSyncEngine';
+import {
+  CLOUD_CANCEL_COPY,
+  SETTLE_TIMEOUT_MS,
+  describeCloudCancel,
+  hasStoppingCloudRuns,
+  settleCloudCancels,
+  takeCancelReceiptsSince,
+} from './services/cloudCancelReceipts';
 import {
   BUILD_TIMELINE_COPY,
   waitForStagingTranscript,
@@ -149,7 +157,10 @@ import {
 import {
   INTENT_PHASE_COPY,
   cancelOtherSyncIntents,
+  cancelSyncIntent,
+  clearSyncIntentSuppression,
   getSyncIntent,
+  isSyncIntentSuppressed,
   startSyncIntent,
   subscribeSyncIntents,
 } from './services/cloudSyncIntent';
@@ -2331,6 +2342,11 @@ export default function App() {
   // an effect below, and the early-click waiters it wakes.
   const stagingTranscriptStateRef = useRef<StagingTranscriptState>({ ready: true, paused: false });
   const stagingTranscriptWaitersRef = useRef(new Set<() => void>());
+  // Wave 3 U5 — the staged voiceover whose cloud transcription the human
+  // cancelled from the Build Timeline overlay. Keyed by the pending asset id,
+  // so replacing the voiceover makes it stale on its own.
+  const [stagingCancelledAssetId, setStagingCancelledAssetId] = useState<string | null>(null);
+  const stagingCancelledAssetIdRef = useRef<string | null>(null);
   const setPendingVoiceoverSync = useCallback((value: PendingVoiceoverSync | null) => {
     pendingVoiceoverRef.current = value;
     setPendingVoiceover(value);
@@ -3998,12 +4014,53 @@ export default function App() {
      *  on, not a new mechanism. `totalSegments` defaults to 0 since most call
      *  sites below run before segments are parsed; the one call site after
      *  parsing passes the real count. */
-    const cancelledResult = (totalSegments = 0): ApplySyncResult => {
+    //
+    // Wave 3 U5 — cancel honesty. The line says what the cancel cost, from
+    // the gateway's own receipts (before submit / while queued = no charge
+    // for the job; mid-run = the completed seconds, billed), and the timeline
+    // is left exactly as it was — including a re-transcription this run had
+    // already swapped in, which is put back.
+    let runOnCloud = false;
+    let heldReleased = false;
+    let transcriptPatchUndo: Partial<Project> | null = null;
+    const cancelledResult = async (totalSegments = 0): Promise<Extract<ApplySyncResult, { ok: false }>> => {
       console.warn('[sync] cancelled by user');
-      logSyncAbort('Sync cancelled.', totalSegments);
+      if (hasStoppingCloudRuns()) setSyncStageMessage(CLOUD_CANCEL_COPY.stopping);
+      await settleCloudCancels();
+      if (transcriptPatchUndo) {
+        const undo = transcriptPatchUndo;
+        projectRef.current = { ...projectRef.current, ...undo };
+        setProject(p => ({ ...p, ...undo }));
+      }
+      const cancelMessage = `Sync cancelled. ${describeCloudCancel(
+        takeCancelReceiptsSince(syncRunAt), { cloud: runOnCloud, heldReleased },
+      )}`;
+      logSyncAbort(cancelMessage, totalSegments);
       setIsProcessing(false);
-      return { ok: false, message: 'Sync cancelled.' };
+      return { ok: false, message: cancelMessage };
     };
+
+    // Wave 3 U5 — this click asks again for a spine whose background run the
+    // human cancelled earlier (see cancelSyncIntent).
+    clearSyncIntentSuppression();
+
+    // Wave 3 U5 — an earlier click's cancel stopped this voiceover's cloud
+    // transcription; this click asks for it again. Re-staging mints a fresh
+    // pending record whose hash lands asynchronously, so the wait below uses
+    // the hash already known.
+    let restartedStagingHash: string | undefined;
+    const cancelledStaging = pendingVoiceoverRef.current;
+    if (
+      staged.voiceoverFile
+      && cancelledStaging !== null
+      && cancelledStaging.file === staged.voiceoverFile.file
+      && stagingCancelledAssetIdRef.current === cancelledStaging.asset.id
+    ) {
+      stagingCancelledAssetIdRef.current = null;
+      setStagingCancelledAssetId(null);
+      restartedStagingHash = cancelledStaging.audioHash;
+      handleVoiceoverStaged(cancelledStaging.file, { rerun: true });
+    }
 
     // Wave 3 U4.6 — EARLY-CLICK REVEAL. On the cloud, Build Timeline is
     // clickable while the staged voiceover is still transcribing; the click
@@ -4014,19 +4071,21 @@ export default function App() {
     // writes its tokens back while it still owns that reference. A pause or a
     // cancel here keeps the staged files — nothing was built yet.
     const pendingForWait = pendingVoiceoverRef.current;
+    const waitAudioHash = pendingForWait?.audioHash ?? restartedStagingHash;
     if (
       staged.voiceoverFile
       && pendingForWait !== null
       && pendingForWait.file === staged.voiceoverFile.file
-      && pendingForWait.audioHash !== undefined
+      && waitAudioHash !== undefined
       && !stagingTranscriptStateRef.current.ready
       && hostForRun(readSyncEngineHost(), readRunHostOverride(projectRef.current.id), {
         projectId: projectRef.current.id,
-        audioHash: pendingForWait.audioHash,
+        audioHash: waitAudioHash,
       }) === 'cloud'
     ) {
+      runOnCloud = true;
       setSyncStageMessage(INTENT_PHASE_COPY.transcribing);
-      const offPhase = onCloudPhase(pendingForWait.audioHash, phase => setSyncStageMessage(INTENT_PHASE_COPY[phase]));
+      const offPhase = onCloudPhase(waitAudioHash, phase => setSyncStageMessage(INTENT_PHASE_COPY[phase]));
       let waited: StagingTranscriptWait;
       try {
         waited = await waitForStagingTranscript(
@@ -4035,8 +4094,19 @@ export default function App() {
       } finally {
         offPhase();
       }
+      if (waited === 'aborted') {
+        // Wave 3 U5 — a real stop: the cloud transcription is cancelled on
+        // the gateway (not left running to bill and auto-align), the staged
+        // files are kept, and the next click starts it again.
+        const stagingAssetId = pendingVoiceoverRef.current?.asset.id ?? null;
+        cancelTranscription();
+        stagingCancelledAssetIdRef.current = stagingAssetId;
+        setStagingCancelledAssetId(stagingAssetId);
+        const result = await cancelledResult(0);
+        return { ...result, holdStaged: true };
+      }
       if (waited !== 'ready') {
-        const waitMessage = waited === 'aborted' ? 'Sync cancelled.' : BUILD_TIMELINE_COPY.stagingPausedMessage;
+        const waitMessage = BUILD_TIMELINE_COPY.stagingPausedMessage;
         logSyncAbort(waitMessage, 0);
         setIsProcessing(false);
         return { ok: false, message: waitMessage, holdStaged: true };
@@ -4249,6 +4319,7 @@ export default function App() {
     // actually doing) instead of starting a second run. Its result lands in
     // the gateway cache, so the pipeline below reads it as two cache hits.
     // Waits only on work that is really pending; cancel stops the wait.
+    if (engineHost === 'cloud') runOnCloud = true;
     if (engineHost === 'cloud' && audioHash) {
       const engineKey = await computeSyncEngineKey(projectRef.current, 'cloud');
       const intent = getSyncIntent(`${audioHash}|${scriptHash}|${engineKey}`);
@@ -4268,7 +4339,17 @@ export default function App() {
           off();
         }
         const revealCancelled = syncAbortController.signal.aborted;
-        if (revealCancelled) return cancelledResult(newSegmentsRaw.length);
+        if (revealCancelled) {
+          // Wave 3 U5 — stop the background run too, or it keeps aligning
+          // (and billing) after the human said stop.
+          heldReleased = hasHeldTranscription(audioHash);
+          setSyncStageMessage(CLOUD_CANCEL_COPY.stopping);
+          await Promise.race([
+            cancelSyncIntent(intent.spineKey),
+            new Promise<void>(resolve => setTimeout(resolve, SETTLE_TIMEOUT_MS)),
+          ]);
+          return cancelledResult(newSegmentsRaw.length);
+        }
         setSyncStageMessage(INTENT_PHASE_COPY.ready);
       }
     }
@@ -4299,6 +4380,11 @@ export default function App() {
         };
         // The rest of this run reads `projectRef`, which otherwise only
         // advances on the next render.
+        const undo: Partial<Project> = {};
+        for (const key of Object.keys(patch) as (keyof Project)[]) {
+          (undo as Record<string, unknown>)[key] = projectRef.current[key];
+        }
+        transcriptPatchUndo = undo;
         projectRef.current = { ...projectRef.current, ...patch };
         setProject(p => ({ ...p, ...patch }));
       } catch (err) {
@@ -6897,8 +6983,13 @@ export default function App() {
       projectId: project.id,
       audioHash: pendingVoiceover.audioHash,
     }) === 'cloud';
+  // Wave 3 U5 — a cancelled cloud staging run leaves the button live: the
+  // next click starts the transcription again and waits on it.
+  const cloudStagingCancelled = pendingVoiceover !== null
+    && stagingCancelledAssetId === pendingVoiceover.asset.id
+    && transcriptionStatus.phase === 'idle';
   const buildTimelineWaitsOnTranscription = applySyncDisabled
-    && (voiceoverNeedsExplicitTranscribe || !cloudStagingInFlight);
+    && (voiceoverNeedsExplicitTranscribe || !(cloudStagingInFlight || cloudStagingCancelled));
   const [spineUnchanged, setSpineUnchanged] = useState(false);
   useEffect(() => {
     let cancelled = false;
@@ -7001,6 +7092,9 @@ export default function App() {
         : audioRef.current?.src === voiceoverAsset.url ? (audioRef.current?.duration || 0) : 0;
       if (!(audioDurationSec > 0)) { noIntent(); return; }
       const spineKey = `${audioHash}|${scriptHash}|${resolution.key}`;
+      // Wave 3 U5 — the human cancelled this spine's run; only a click (or a
+      // real change, which is a new key) starts it again.
+      if (isSyncIntentSuppressed(spineKey)) { noIntent(); return; }
       cancelOtherSyncIntents(spineKey);
       if (getSyncIntent(spineKey)) return;
       const entry = startSyncIntent({

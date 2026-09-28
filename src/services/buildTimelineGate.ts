@@ -32,10 +32,8 @@ export const BUILD_TIMELINE_COPY = {
   /** While a LOCAL staging transcription runs (local keeps click-to-run). */
   transcribingLabel: 'Transcribing…',
   transcribingTitle: 'Waiting for transcription to finish…',
-  /** Post-sync disabled label. "Timeline ready" is PROPOSED and not yet
-   *  signed off by the operator (wave3 rulings, U4.6 item 1) — the signed
-   *  Wave 2 label stays until it is. Swap here once signed. */
-  syncedLabel: 'Already synced',
+  /** Post-sync disabled label (operator-signed at U4.6 sign-off). */
+  syncedLabel: 'Timeline ready',
   nothingStagedTitle: 'Stage a new file to build the timeline',
   /** An early cloud click whose staging transcription paused or failed —
    *  the pause/model dialog is already up and carries the choice. */

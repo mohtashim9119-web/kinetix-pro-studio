@@ -59,6 +59,7 @@ import type { FaWordSpan } from './faBoundaryTypes';
 import type { SyncEngineHost } from './syncEngineHost';
 import { stampCloudProvenance, stampWhisperProvenance, type GatewayProvenance } from './timingProvenance';
 import { transcribeWithProgress } from './whisperService';
+import { recordCancelReceipt, trackStoppingRun } from './cloudCancelReceipts';
 
 // ---------------------------------------------------------------------------
 // Audio preparation, single-flight by content hash.
@@ -178,6 +179,7 @@ function reportPhase(audioHash: string, phase: CloudPhase): void {
 /** A job event as the phase it means: queued = waiting for a GPU (unbilled). */
 export function phaseForEvent(stage: 'transcribe' | 'align', event: CloudJobEvent): CloudPhase | undefined {
   if (event.type === 'submitted') return event.cached ? undefined : 'waiting-gpu';
+  if (event.type === 'cancelled') return undefined;
   if (event.status === 'queued') return 'waiting-gpu';
   if (event.status === 'running') return stage === 'transcribe' ? 'transcribing' : 'aligning';
   return undefined;
@@ -287,16 +289,52 @@ async function attemptStageCacheFirst<R>(
   if (!lookup.audioPresent) await prepare();
   let view;
   try {
-    view = await runCloudJob<R>(request, { signal, onEvent });
+    view = await runJobWithReceipt<R>(request, signal, onEvent);
   } catch (err) {
     if (!isAudioMissing(err)) throw err;
     await prepare();
-    view = await runCloudJob<R>(request, { signal, onEvent });
+    view = await runJobWithReceipt<R>(request, signal, onEvent);
   }
   return {
     result: view.result!, cached: view.cached, uploaded, encoded, retried: false,
     jobId: view.jobId, handedOff: view.handedOff === true,
   };
+}
+
+/** Wave 3 U5 — a job run whose cancel, if any, leaves a receipt: the
+ *  gateway's own answer on whether the job started and what it billed. */
+function runJobWithReceipt<R>(
+  request: CloudJobRequest,
+  signal: AbortSignal | undefined,
+  onEvent: ((event: CloudJobEvent) => void) | undefined,
+): ReturnType<typeof runCloudJob<R>> {
+  const run = runCloudJob<R>(request, {
+    signal,
+    onEvent: event => {
+      if (event.type === 'cancelled') {
+        recordCancelReceipt({
+          stage: request.stage,
+          jobId: event.jobId,
+          confirmed: event.confirmed,
+          started: event.started,
+          workerSec: event.workerSec,
+          estimatedUsd: event.estimatedUsd,
+          at: Date.now(),
+        });
+        return;
+      }
+      onEvent?.(event);
+    },
+  });
+  if (signal) {
+    const onAbort = (): void => trackStoppingRun(run);
+    signal.addEventListener('abort', onAbort, { once: true });
+    void run.then(
+      () => signal.removeEventListener('abort', onAbort),
+      () => signal.removeEventListener('abort', onAbort),
+    );
+  }
+  return run;
 }
 
 // ---------------------------------------------------------------------------
@@ -310,6 +348,7 @@ const COLD_START_ALLOWANCE_SEC = 30;
 
 export function cloudProgressPercent(event: CloudJobEvent, audioDurationSec: number): number {
   if (event.type === 'submitted') return event.cached ? 95 : 5;
+  if (event.type === 'cancelled') return 0;
   if (event.status === 'queued') return 5;
   if (event.status !== 'running') return 95;
   const expected = audioDurationSec / MEASURED_TRANSCRIBE_RTF + COLD_START_ALLOWANCE_SEC;

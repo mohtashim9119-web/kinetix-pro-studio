@@ -356,6 +356,65 @@ def meter_line(job: dict[str, Any], outcome: str, worker_sec: float, now: float)
     }
 
 
+# ---------------------------------------------------------------------------
+# Wave 3 U5 — cancel honesty. Whether a job started is decided by ONE
+# put-if-absent on `start_key`: the worker writes the second its billing
+# began from, DELETE writes CANCELLED_BEFORE_START. Exactly one wins, so a
+# cancel never meters $0 for work that ran and never meters work that didn't.
+# ---------------------------------------------------------------------------
+
+CANCELLED_BEFORE_START = "CANCELLED"
+
+
+def start_key(job_id: str) -> str:
+    return f"start:{job_id}"
+
+
+def cancelled_key(job_id: str) -> str:
+    """The cancelled record, kept apart from the job record so a worker's
+    late "running" write can never un-cancel a job."""
+    return f"cancelled:{job_id}"
+
+
+def cancel_charge(claim: Any, now: float) -> tuple[bool, float]:
+    """(started, billed seconds) for a cancel, from the start claim the
+    cancel lost to. A claim DELETE itself won is (False, 0.0)."""
+    if isinstance(claim, (int, float)) and not isinstance(claim, bool):
+        return True, max(0.0, now - float(claim))
+    return False, 0.0
+
+
+def first_job_billing(booted_at: float, created_at: float | None) -> tuple[float, float]:
+    """(billed_from, residue seconds) for a container's first job. The job
+    pays for the boot only if the container booted for it: a container Modal
+    started for an earlier job (one cancelled while it was starting) and kept
+    warm must not bill that job's start-up to the next one. The gap before the
+    job existed is residue, metered as its own `boot-unused` line."""
+    if created_at is None or created_at <= booted_at:
+        return booted_at, 0.0
+    return created_at, created_at - booted_at
+
+
+def boot_residue_line(task_id: str | None, booted_at: float, now: float) -> dict[str, Any]:
+    """A GPU container that booted and exited without running a job — the
+    usual cause is a job cancelled while its container was still starting.
+    No job is charged for it, but the container's seconds were real, so the
+    meter shows them under their own outcome instead of hiding them."""
+    worker_sec = max(0.0, now - booted_at)
+    return {
+        "ts": now,
+        "jobId": f"boot-{task_id or int(booted_at * 1000)}",
+        "member": None,
+        "stage": "container",
+        "audioHash": None,
+        "language": None,
+        "audioDurationSec": None,
+        "outcome": "boot-unused",
+        "workerSec": round(worker_sec, 3),
+        "estimatedUsd": round(worker_sec * USD_PER_WORKER_SEC, 6),
+    }
+
+
 def inflight_key(member: str, cache_key: str) -> str:
     """Wave 3 U4 — the jobs-dict key naming a member's non-terminal job for
     one cache key. A client retry after a lost poll resubmits the SAME
@@ -445,6 +504,9 @@ def public_job(job: dict[str, Any]) -> dict[str, Any]:
         "startedAt": job.get("startedAt"),
         "finishedAt": job.get("finishedAt"),
         "workerSec": job.get("workerSec"),
+        "estimatedUsd": (
+            round(float(job["workerSec"]) * USD_PER_WORKER_SEC, 6) if job.get("workerSec") is not None else None
+        ),
         "error": job.get("error"),
         # Wave 3 U4.5 — the container that ran it (None until it ran).
         "taskId": job.get("taskId"),

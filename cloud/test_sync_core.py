@@ -254,3 +254,71 @@ def test_public_job_reports_the_container_and_handoff():
     out = core.public_job(dict(job, taskId="ta-123", handedOff=True))
     assert out["taskId"] == "ta-123" and out["handedOff"] is True
     assert core.public_job(job)["taskId"] is None
+
+
+# Wave 3 U5 — cancel honesty.
+
+
+class _PutIfAbsent(dict):
+    """Modal Dict's `put(..., skip_if_exists=True)` semantics, in memory."""
+
+    def put(self, key, value, skip_if_exists=False):
+        if skip_if_exists and key in self:
+            return False
+        self[key] = value
+        return True
+
+
+def test_cancel_before_start_is_free_and_blocks_the_start():
+    d = _PutIfAbsent()
+    key = core.start_key("j1")
+    assert d.put(key, core.CANCELLED_BEFORE_START, skip_if_exists=True)  # DELETE wins
+    assert not d.put(key, 100.0, skip_if_exists=True)  # the worker then refuses to run
+    assert core.cancel_charge(d[key], 130.0) == (False, 0.0)
+
+
+def test_cancel_mid_run_bills_from_the_workers_billing_start():
+    d = _PutIfAbsent()
+    key = core.start_key("j1")
+    assert d.put(key, 100.0, skip_if_exists=True)  # worker wins (100 = container boot)
+    assert not d.put(key, core.CANCELLED_BEFORE_START, skip_if_exists=True)
+    started, sec = core.cancel_charge(d[key], 112.5)
+    assert started and sec == pytest.approx(12.5)
+    # Clock skew never produces a negative charge.
+    assert core.cancel_charge(200.0, 150.0) == (True, 0.0)
+    # Only a number is a start; anything else is "never started".
+    for not_a_start in (None, True, "100", core.CANCELLED_BEFORE_START):
+        assert core.cancel_charge(not_a_start, 150.0) == (False, 0.0)
+
+
+def test_cancel_keys_are_per_job():
+    assert core.start_key("j1") == "start:j1"
+    assert core.cancelled_key("j1") == "cancelled:j1"
+    assert core.start_key("j1") != core.start_key("j2")
+
+
+def test_boot_residue_is_metered_under_its_own_outcome():
+    line = core.boot_residue_line("ta-9", 100.0, 118.0)
+    assert line["outcome"] == "boot-unused" and line["stage"] == "container"
+    assert line["jobId"] == "boot-ta-9"
+    assert line["workerSec"] == pytest.approx(18.0)
+    assert line["estimatedUsd"] == pytest.approx(18.0 * core.USD_PER_WORKER_SEC, abs=1e-6)
+    assert line["member"] is None and line["audioHash"] is None  # no job, no member, no audio
+    assert core.boot_residue_line(None, 100.0, 90.0)["workerSec"] == 0.0
+
+
+def test_public_job_prices_its_seconds():
+    job = core.new_job("j1", "operator", "transcribe", AUDIO, "en", "k" * 64, None, 5.0)
+    assert core.public_job(job)["estimatedUsd"] is None
+    out = core.public_job(dict(job, status="cancelled", workerSec=10.0))
+    assert out["estimatedUsd"] == pytest.approx(10.0 * core.USD_PER_WORKER_SEC, abs=1e-6)
+
+
+def test_a_warm_container_never_bills_an_earlier_jobs_boot_to_the_next_job():
+    # Booted for this job: the job pays from boot, as a finished first job does.
+    assert core.first_job_billing(100.0, 95.0) == (100.0, 0.0)
+    assert core.first_job_billing(100.0, None) == (100.0, 0.0)
+    # Booted for an earlier (cancelled) job, then kept warm: this job pays
+    # from the moment it existed; the 18 s before it are residue.
+    billed_from, residue = core.first_job_billing(100.0, 118.0)
+    assert billed_from == 118.0 and residue == pytest.approx(18.0)

@@ -169,7 +169,12 @@ export interface CloudJobView<R> {
 export type CloudJobEvent =
   | { type: 'submitted'; jobId: string; cached: boolean }
   /** `queued` = waiting for a GPU (unbilled); `running` = on the GPU. */
-  | { type: 'status'; jobId: string; status: CloudJobStatus; elapsedSec: number };
+  | { type: 'status'; jobId: string; status: CloudJobStatus; elapsedSec: number }
+  /** Wave 3 U5 — the gateway's answer to this run's cancel. `confirmed`
+   *  false: the cancel never landed and the job may still run and bill.
+   *  Otherwise `started` false is a $0 job; `workerSec`/`estimatedUsd` are
+   *  what the meter charged for work already done. */
+  | { type: 'cancelled'; jobId: string; confirmed: boolean; started: boolean; workerSec: number; estimatedUsd: number };
 
 async function call<T>(command: string, args?: Parameters<typeof invoke>[1], options?: Parameters<typeof invoke>[2]): Promise<T> {
   try {

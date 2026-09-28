@@ -222,6 +222,13 @@ pub struct JobView {
     pub cached: bool,
     pub audio_duration_sec: Option<f64>,
     pub worker_sec: Option<f64>,
+    /// Wave 3 U5 — set when a job started (for a cancel: the second billing
+    /// began from, container boot for a container's first job).
+    #[serde(default)]
+    pub started_at: Option<f64>,
+    /// Wave 3 U5 — the gateway's rate-card price for `worker_sec`.
+    #[serde(default)]
+    pub estimated_usd: Option<f64>,
     pub error: Option<ErrorDetail>,
     /// Wave 3 U4.5 — the container that ran it, and whether a held
     /// transcription's container took it (no second boot).
@@ -249,6 +256,38 @@ pub enum CloudJobEvent {
     /// `queued` = waiting for a GPU (unbilled); `running` = on the GPU.
     #[serde(rename_all = "camelCase")]
     Status { job_id: String, status: String, elapsed_sec: f64 },
+    /// Wave 3 U5 — the gateway's answer to this run's cancel. `confirmed`
+    /// false means the DELETE never landed (offline): the job may still run
+    /// and bill. Otherwise `started` false is a $0 job, and `worker_sec` /
+    /// `estimated_usd` are what the meter charged for work already done.
+    #[serde(rename_all = "camelCase")]
+    Cancelled {
+        job_id: String,
+        confirmed: bool,
+        started: bool,
+        worker_sec: f64,
+        estimated_usd: f64,
+    },
+}
+
+/// Wave 3 U5 — a DELETE reply as the receipt event the app shows.
+fn cancel_receipt(job_id: &str, reply: Result<JobView, CloudError>) -> CloudJobEvent {
+    match reply {
+        Ok(view) => CloudJobEvent::Cancelled {
+            job_id: view.job_id,
+            confirmed: view.status == "cancelled",
+            started: view.started_at.is_some() || view.worker_sec.unwrap_or(0.0) > 0.0,
+            worker_sec: view.worker_sec.unwrap_or(0.0),
+            estimated_usd: view.estimated_usd.unwrap_or(0.0),
+        },
+        Err(_) => CloudJobEvent::Cancelled {
+            job_id: job_id.to_string(),
+            confirmed: false,
+            started: false,
+            worker_sec: 0.0,
+            estimated_usd: 0.0,
+        },
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -412,7 +451,8 @@ impl GatewayClient {
             let wait_until = Instant::now() + POLL_INTERVAL;
             while Instant::now() < wait_until {
                 if cancel.load(Ordering::SeqCst) {
-                    let _ = self.cancel(&view.job_id).await;
+                    let reply = self.cancel(&view.job_id).await;
+                    emit(cancel_receipt(&view.job_id, reply));
                     return Err(CloudError::Cancelled);
                 }
                 tokio::time::sleep(CANCEL_CHECK_SLICE).await;
@@ -816,6 +856,46 @@ mod tests {
         assert!(matches!(classify_status(502, "<html>bad gateway</html>"), CloudError::Server { status: 502, .. }));
         // A 4xx without the gateway's error envelope still gets a code.
         assert!(matches!(classify_status(404, "nope"), CloudError::Rejected { code, .. } if code == "http-404"));
+    }
+
+    fn view(status: &str, started_at: Option<f64>, worker_sec: Option<f64>, usd: Option<f64>) -> JobView {
+        JobView {
+            job_id: "j1".into(),
+            stage: "transcribe".into(),
+            status: status.into(),
+            cached: false,
+            audio_duration_sec: None,
+            worker_sec,
+            started_at,
+            estimated_usd: usd,
+            error: None,
+            task_id: None,
+            handed_off: false,
+            result: None,
+        }
+    }
+
+    #[test]
+    fn cancel_receipts_report_what_was_charged() {
+        let before_start = serde_json::to_value(cancel_receipt("j1", Ok(view("cancelled", None, Some(0.0), Some(0.0))))).unwrap();
+        assert_eq!(before_start["type"], "cancelled");
+        assert_eq!(before_start["confirmed"], true);
+        assert_eq!(before_start["started"], false);
+        assert_eq!(before_start["workerSec"], 0.0);
+
+        let mid_run = serde_json::to_value(cancel_receipt("j1", Ok(view("cancelled", Some(100.0), Some(12.5), Some(0.0026))))).unwrap();
+        assert_eq!(mid_run["started"], true);
+        assert_eq!(mid_run["workerSec"], 12.5);
+        assert_eq!(mid_run["estimatedUsd"], 0.0026);
+
+        // The DELETE never landed: the app must not claim the cloud stopped.
+        let offline = serde_json::to_value(cancel_receipt("j1", Err(CloudError::Unreachable { detail: "x".into() }))).unwrap();
+        assert_eq!(offline["confirmed"], false);
+        assert_eq!(offline["jobId"], "j1");
+
+        // A job that finished before the cancel reached it is not "cancelled".
+        let raced = serde_json::to_value(cancel_receipt("j1", Ok(view("done", Some(1.0), Some(30.0), Some(0.006))))).unwrap();
+        assert_eq!(raced["confirmed"], false);
     }
 
     #[test]

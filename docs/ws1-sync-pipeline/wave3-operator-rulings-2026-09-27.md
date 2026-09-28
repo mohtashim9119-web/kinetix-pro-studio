@@ -204,3 +204,71 @@ units sit next to each other.
   alignment (e.g. an empty scene doc), the held container isn't released explicitly. The worker
   closes it at `HOLD_FOR_PLAN_SEC` (≤ 30 s of `held` meter). The spine effect releases it
   earlier if it runs first.
+
+### U4.6 — rulings received at sign-off
+
+- "Timeline ready" **signed**, and swapped in (`BUILD_TIMELINE_COPY.syncedLabel`) alongside U5.
+- **Veto items, both upheld:** the transcription bar's cancel ✕ is removed along with the bar
+  (removing or replacing the voiceover still stops a run). An early click that ends in a
+  mismatch holds the container for at most 30 s of idle, then it closes itself.
+
+## U5 — cancel honesty (operator ruling on the U3 container-level finding)
+
+The container-level finding decides the copy, not the mechanism. There is no pre-spawn hold:
+
+- **Cancelled before start = no charge** (for the job). **Cancelled mid-run = the completed work
+  is billed.**
+- **The job meter stays honest:** $0 for work that never started.
+- **The queued-cancel container boot is stated in the copy:** a GPU Modal was already starting
+  may still bill its start-up.
+
+### U5 — as built
+
+- **Gateway (`sync_core.py`, `sync_service.py`).**
+  - *One atomic start claim* (`start:<jobId>`, put-if-absent). The worker writes the second its
+    billing began; DELETE writes `CANCELLED`. Exactly one wins, so a cancel can never meter $0
+    for work that ran, or meter work that never ran.
+  - *The cancelled record wins over late writes.* It is kept apart (`cancelled:<jobId>`), so a
+    worker's late "running" write can't un-cancel a job.
+  - *A mid-run cancel is billed from the billing start.* For a container's first job that
+    includes the boot, exactly as a finished job's would. This was under-metered before U5.
+  - *Handed-off alignments.* One that never started doesn't kill its holder: the holder loses
+    the claim, meters `held`, and exits.
+  - *Container residue gets its own meter line.* A container that exits without running a job
+    meters `boot-unused` via `@modal.exit`. A warm container's first job is billed from
+    `max(boot, job created)` (`first_job_billing`), and the gap is `boot-unused`. The live
+    smoke found the bug this fixes: a container Modal started for a queued-cancelled job
+    stayed warm, served the next job, and billed that job 18 s of someone else's boot.
+  - The DELETE reply carries `startedAt`, `workerSec` and `estimatedUsd`.
+- **Rust (`cloud_gateway.rs`).** After its DELETE, `run_job` emits a `cancelled` receipt event
+  (`confirmed`, `started`, `workerSec`, `estimatedUsd`). A DELETE that never landed is
+  `confirmed: false` and is never shown as free.
+- **App.**
+  - `cloudCancelReceipts.ts` records the receipts, waits (bounded, 8 s) for cancels in flight,
+    and holds the copy (`CLOUD_CANCEL_COPY`).
+  - Every Build Timeline cancel logs `Sync cancelled. <what it cost>. Your timeline is
+    unchanged.` The four cases are:
+    - before submit: no charge
+    - queued: this job costs nothing, but a GPU already starting may bill its start-up (about
+      $0.01 or less)
+    - mid-run: *N* s on transcription/alignment already done and billed (≈ $x)
+    - unconfirmed: the job may finish and be billed
+  - The queued phase copy (`INTENT_PHASE_COPY['waiting-gpu']`) states the same thing before
+    the click.
+- **Cancel is a real stop.** Before U5 the overlay's Cancel only stopped *waiting*: the
+  background intent kept aligning and billing, and an early click's staging transcription
+  kept running and then auto-aligned. Now:
+  - Cancelling the reveal cancels the intent (`cancelSyncIntent`). That spine is suppressed:
+    the spine effect won't restart it, and only the next Build Timeline click (or a real
+    change, which is a new key) lifts the suppression.
+  - Cancelling an early click cancels the cloud staging transcription. The staged files are
+    kept, the button stays live, and the next click restarts transcription and waits on it
+    (still one boot).
+- **Timeline untouched.** A cancel after the engine-switch re-transcription puts back the
+  transcript fields that patch replaced (built from the patch's own keys). The only other
+  write on a cancel path is the Sync Log line.
+- **Live proof** (`cloud/smoke_cancel.py`, 21/21): queued cancel is 0 s, never started, with one
+  0 s meter line. A mid-run cancel is billed 7.0 s, with the meter equal to the reply and no
+  late `done`. A handed-off cancel either wins at 0 s or bills what ran; the holder meters its
+  hold. The queued-cancel residue showed as `boot-unused` lines of 14.5 s and 12.0 s (≈ $0.003
+  each), matching the copy.
