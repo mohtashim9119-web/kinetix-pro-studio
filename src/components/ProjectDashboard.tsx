@@ -247,7 +247,7 @@ export function ProjectDashboard({
 
         <div className="kxd-actions">
           {createBlankProject && parseProjectData && (
-            <button className="kxd-btn" data-testid="dashboard-bulk-projects" onClick={() => { setBulkError(null); setBulkAsking(true); }}>
+            <button className="kxd-btn kxd-btn-quiet" data-testid="dashboard-bulk-projects" onClick={() => { setBulkError(null); setBulkAsking(true); }}>
               {BULK_COPY.button}
             </button>
           )}
@@ -333,7 +333,7 @@ export function ProjectDashboard({
       <main className="kxd-main custom-scrollbar">
         <div className="kxd-main-inner">
           {bulkProjects === null && <SyncQueuePanel />}
-          {bulkError && <p className="mb-3 text-[11px] text-amber-400" data-testid="bulk-error">{bulkError}</p>}
+          {bulkError && <p className="mb-3 text-[11px] text-amber-300/80" data-testid="bulk-error">{bulkError}</p>}
           <div className="kxd-section-head">
             <h1>Recent projects</h1>
             <div>

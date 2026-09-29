@@ -39,7 +39,7 @@ export const BULK_COPY = {
   namePrefix: 'Bulk Project',
   modalTitle: 'Bulk Projects',
   modalIntro: 'Drop files onto a row: loose files, a folder, a zip, or one bundle zip that carries the script, scene doc, voiceover and media. Nothing uses the cloud GPU until you press Build Timeline.',
-  rowDrop: 'Drop files or a zip here, or',
+  rowDrop: 'Drop files, a folder or a zip here',
   rowBrowseFiles: 'Add files',
   rowBrowseFolder: 'Add folder',
   slot: { script: 'Script', scene: 'Scene doc', voiceover: 'Voiceover', media: 'Media' },

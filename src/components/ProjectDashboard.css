@@ -119,6 +119,11 @@
 }
 .kxd-btn:active { transform: scale(0.97); }
 
+.kxd-btn-quiet {
+  background: var(--kxd-surface); border-color: var(--kxd-line-strong); color: var(--kxd-text-dim);
+}
+.kxd-btn-quiet:hover { background: var(--kxd-surface-hover); color: var(--kxd-text); }
+
 .kxd-btn-accent {
   background: linear-gradient(155deg, var(--kxd-accent-hi), var(--kxd-accent));
   color: #1c0f04; font-weight: 600;
