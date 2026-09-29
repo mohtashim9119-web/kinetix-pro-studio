@@ -134,6 +134,17 @@ describe('transcribeForHost', () => {
     await expect(p).rejects.toMatchObject({ cloud: { kind: 'auth' }, message: expect.stringContaining('did not accept') });
   });
 
+  it('Wave 3 U7: Cloud with no key is a typed cloud-auth failure — the local engine is NEVER run in its place', async () => {
+    mockInvoke.mockRejectedValue({ kind: 'notConfigured' });
+    const err = await transcribeForHost({
+      host: 'cloud', asset: asset(), durationSecs: 60, language: undefined, onProgress: () => {},
+      signal: new AbortController().signal, audioHash: HASH,
+    }).catch(e => e);
+    expect(err).toBeInstanceOf(CloudStageError);
+    expect(cloudPauseReason((err as CloudStageError).cloud)).toBe('cloud-auth');
+    expect(transcribeWithProgress).not.toHaveBeenCalled();
+  });
+
   it('cloud cancel is an AbortError, the same shape the staging path already treats as "back to idle"', async () => {
     gateway(() => { throw { kind: 'cancelled' }; });
     await expect(transcribeForHost({

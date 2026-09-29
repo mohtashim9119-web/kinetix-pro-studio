@@ -90,20 +90,58 @@ describe('CloudSyncSection', () => {
     expect(q('cloud-sync-key-input')).toBeTruthy();
   });
 
-  it('Wave 3 U2 interim switch: only once connected; persists Cloud; removing the key falls back to Local', async () => {
+  const radio = (which: 'cloud' | 'local') => q(`sync-engine-${which}`) as HTMLInputElement;
+
+  it('Wave 3 U7 picker: Local by default; Cloud is disabled until the key tests connected', async () => {
+    localStorage.clear();
+    status.mockResolvedValue({ configured: false, gateway: 'g' });
+    await act(async () => { root.render(<CloudSyncSection />); });
+    expect(radio('local').checked).toBe(true);
+    expect(radio('cloud').disabled).toBe(true);
+    expect(container.textContent).toContain('Add and test your cloud key above');
+  });
+
+  it('picker: choosing Cloud persists it at once; choosing Local puts it back', async () => {
+    localStorage.clear();
+    status.mockResolvedValue({ configured: true, gateway: 'g' });
+    ping.mockResolvedValue(PING);
+    await act(async () => { root.render(<CloudSyncSection />); });
+    expect(radio('cloud').disabled).toBe(false);
+    await act(async () => { radio('cloud').click(); });
+    expect(readSyncEngineHost()).toBe('cloud');
+    expect(radio('cloud').checked).toBe(true);
+    await act(async () => { radio('local').click(); });
+    expect(readSyncEngineHost()).toBe('local');
+  });
+
+  it('picker: removing the key resets a Cloud choice to Local', async () => {
     localStorage.clear();
     status.mockResolvedValue({ configured: true, gateway: 'g' });
     ping.mockResolvedValue(PING);
     clearKey.mockResolvedValue({ configured: false, gateway: 'g' });
     await act(async () => { root.render(<CloudSyncSection />); });
-    const toggle = q('cloud-sync-host-toggle') as HTMLButtonElement;
-    expect(toggle.getAttribute('aria-checked')).toBe('false');
-    await act(async () => { toggle.click(); });
-    expect(readSyncEngineHost()).toBe('cloud');
-    expect((q('cloud-sync-host-toggle') as HTMLButtonElement).getAttribute('aria-checked')).toBe('true');
+    await act(async () => { radio('cloud').click(); });
     await act(async () => { (q('cloud-sync-key-remove') as HTMLButtonElement).click(); });
     expect(readSyncEngineHost()).toBe('local');
-    expect(q('cloud-sync-host-toggle')).toBeNull();
+    expect(radio('local').checked).toBe(true);
+    expect(radio('cloud').disabled).toBe(true);
+  });
+
+  it('picker: a Cloud choice whose key is already gone (removed elsewhere) is reset to Local on open', async () => {
+    writeSyncEngineHost('cloud');
+    status.mockResolvedValue({ configured: false, gateway: 'g' });
+    await act(async () => { root.render(<CloudSyncSection />); });
+    expect(readSyncEngineHost()).toBe('local');
+  });
+
+  it('picker: an UNREACHABLE server never flips Cloud to Local — it stays Cloud and says the run will pause', async () => {
+    writeSyncEngineHost('cloud');
+    status.mockResolvedValue({ configured: true, gateway: 'g' });
+    ping.mockRejectedValue({ kind: 'unreachable', detail: 'offline' });
+    await act(async () => { root.render(<CloudSyncSection />); });
+    expect(readSyncEngineHost()).toBe('cloud');
+    expect(radio('cloud').checked).toBe(true);
+    expect(q('sync-engine-cloud-unreachable')?.textContent).toContain('never switches to this computer on its own');
     writeSyncEngineHost('local');
   });
 });

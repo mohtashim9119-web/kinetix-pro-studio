@@ -10,10 +10,20 @@
  * straight to Rust and is never read back — the field clears on save and the
  * row only ever shows "connected as <member>", never the key.
  *
- * Wave 3 U2 — an INTERIM "use cloud for sync" switch lives here so the
- * cloud engine can be exercised before the real Cloud/Local picker (U7)
- * replaces it. Shown only once the key tests connected; it writes the same
- * app-level `syncEngineHost` the picker will. Default stays Local (D3).
+ * Wave 3 U7 — the real Cloud/Local engine picker (it replaced U2's interim
+ * switch). Always visible in the desktop app; writes the app-level
+ * `syncEngineHost` at once. Rules it carries:
+ *   - Cloud can only be CHOSEN while the key tests connected. Nothing here
+ *     ever converts a chosen Cloud into Local on its own for a reachability
+ *     problem: an unreachable server stays Cloud and the run pauses and asks
+ *     (G3 offline contract). Only a key that is GONE resets to Local, since a
+ *     cloud choice with no key can never run at all.
+ *   - The default stays Local until U10's green gate (D3); the signed plan's
+ *     Cloud default is a one-constant flip in `syncEngineHost.ts`.
+ *   - Spine honesty is inherited, not re-implemented: the host is folded into
+ *     `computeSyncEngineKey`, so a switch here makes every synced project
+ *     read "not synced" until it is rebuilt on the new engine.
+ *   - The per-project High-Precision (FA) switch applies under BOTH engines.
  */
 
 import React, { useCallback, useEffect, useState } from 'react';
@@ -61,7 +71,12 @@ export function CloudSyncSection(): React.ReactElement {
       .then(status => {
         if (!alive) return;
         if (status.configured) void test();
-        else setState({ phase: 'unconfigured' });
+        else {
+          // A cloud choice with no key can never run: reset it (also covers
+          // the key having been removed by another window or by hand).
+          if (readSyncEngineHost() === 'cloud') writeSyncEngineHost('local');
+          setState({ phase: 'unconfigured' });
+        }
       })
       .catch(err => alive && setState({ phase: 'failed', error: describeCloudError(toCloudError(err)) }));
     return () => { alive = false; };
@@ -155,21 +170,53 @@ export function CloudSyncSection(): React.ReactElement {
         </div>
       )}
 
-      {available && state.phase === 'connected' && (
-        <label className="flex items-center justify-between gap-4 text-[10px] uppercase tracking-widest text-gray-500 font-bold pt-1">
-          <span>Use cloud for sync</span>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={host === 'cloud'}
-            aria-label={host === 'cloud' ? 'Run sync on this computer' : 'Run sync on the cloud'}
-            data-testid="cloud-sync-host-toggle"
-            onClick={() => writeSyncEngineHost(host === 'cloud' ? 'local' : 'cloud')}
-            className={`w-10 h-5 rounded-full transition-colors relative shrink-0 ${host === 'cloud' ? 'bg-[#F27D26]' : 'bg-[#1A1A1A] border border-[#282828]'}`}
-          >
-            <div className={`absolute top-1 left-1 w-3 h-3 rounded-full bg-white transition-all ${host === 'cloud' ? 'translate-x-5' : ''}`} />
-          </button>
-        </label>
+      {available && (
+        <fieldset className="pt-1 space-y-1.5" data-testid="sync-engine-picker">
+          <legend className="text-[10px] uppercase tracking-widest text-gray-500 font-bold">Sync runs on</legend>
+          {(['cloud', 'local'] as const).map(option => {
+            const connected = state.phase === 'connected';
+            // Cloud is choosable only while connected; an ALREADY-chosen
+            // Cloud stays selected (and enabled) through a failed test.
+            const disabled = option === 'cloud' && !connected && host !== 'cloud';
+            return (
+              <label
+                key={option}
+                className={`flex items-start gap-2 text-[10px] leading-snug ${disabled ? 'text-gray-600' : 'text-gray-300'}`}
+              >
+                <input
+                  type="radio"
+                  name="sync-engine-host"
+                  value={option}
+                  checked={host === option}
+                  disabled={disabled}
+                  data-testid={`sync-engine-${option}`}
+                  onChange={() => writeSyncEngineHost(option)}
+                  className="mt-0.5 accent-[#F27D26]"
+                />
+                <span>
+                  <span className="font-bold uppercase tracking-widest">{option === 'cloud' ? 'Cloud' : 'This computer'}</span>
+                  <span className="block text-[9px] text-gray-500">
+                    {option === 'cloud'
+                      ? disabled
+                        ? 'Add and test your cloud key above to use this.'
+                        : 'Transcription and alignment run on the Kinetix sync server.'
+                      : 'Transcription and alignment run on this computer.'}
+                  </span>
+                </span>
+              </label>
+            );
+          })}
+          {host === 'cloud' && state.phase === 'failed' && (
+            <p className="text-[9px] text-amber-400 leading-snug" data-testid="sync-engine-cloud-unreachable">
+              Cloud stays selected. If the server can’t be reached when you build a timeline, sync
+              pauses and asks — it never switches to this computer on its own.
+            </p>
+          )}
+          <p className="text-[9px] text-gray-600 leading-snug">
+            High-Precision Auto-Sync is set per project and applies to both. Switching the engine
+            marks synced timelines as needing a rebuild.
+          </p>
+        </fieldset>
       )}
     </div>
   );
