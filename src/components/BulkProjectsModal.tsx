@@ -15,13 +15,14 @@
 // is the sync-log Details line's quiet register.
 
 import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { AlertCircle, Check, FilePlus, FolderPlus, X } from 'lucide-react';
-import { BULK_COPY, BULK_MAX_PROJECTS, parseBulkCount, rowIncompleteReason } from '../services/bulkContext';
+import { AlertCircle, Check, ChevronDown, ChevronRight, FilePlus, FolderPlus, Plus, Trash2, X } from 'lucide-react';
+import { BULK_COPY, BULK_MAX_PROJECTS, parseBulkCount } from '../services/bulkContext';
 import { BulkRowStore, defaultBulkRowDeps, type BulkRowState } from '../services/bulkRows';
+import type { Project } from '../types';
 import { cloudSyncQueue, queueProjectsForCloudSync } from '../services/bulkSyncQueue';
 import { CLOUD_USD_PER_WORKER_SEC, type CloudQueueDeps } from '../services/cloudQueueJob';
 import { collectDroppedFiles } from '../services/droppedFiles';
-import { BUILD_TIMELINE_COPY, missingSlots } from '../services/buildTimelineGate';
+import { missingSlots } from '../services/buildTimelineGate';
 import { formatUsd, type QueueItem, type SyncQueue } from '../services/syncQueue';
 import { readSyncEngineHost } from '../services/syncEngineHost';
 
@@ -103,18 +104,23 @@ interface RowProps {
   /** After the cloud work: the app is building the real timeline. */
   final: FinalState | undefined;
   onName: (typed: string) => void;
-  onNameCommit: () => void;
   onFiles: (files: File[]) => void;
+  onRemoveFile: (fileId: string) => void;
+  onClearFiles: () => void;
+  onRemoveRow: () => void;
   onCancel: () => void;
   onOpen: () => void;
 }
 
-function BulkRow({ row, item, skippedReason, final, onName, onNameCommit, onFiles, onCancel, onOpen }: RowProps): React.ReactElement {
+function BulkRow({ row, item, skippedReason, final, onName, onFiles, onRemoveFile, onClearFiles, onRemoveRow, onCancel, onOpen }: RowProps): React.ReactElement {
   const filesRef = useRef<HTMLInputElement>(null);
   const folderRef = useRef<HTMLInputElement>(null);
   const [over, setOver] = useState(false);
+  const [listOpen, setListOpen] = useState(false);
   useEffect(() => { folderRef.current?.setAttribute('webkitdirectory', ''); }, []);
-  const locked = item !== undefined && (item.status === 'queued' || item.status === 'running');
+  const running = item !== undefined && (item.status === 'queued' || item.status === 'running');
+  // Once the project exists the row is a read-out, not an editor.
+  const locked = running || row.built;
   const empty = !Object.values(row.slots).some(Boolean);
   const status = item?.status === 'running'
     ? (item.phase ?? 'Starting…')
@@ -153,9 +159,8 @@ function BulkRow({ row, item, skippedReason, final, onName, onNameCommit, onFile
           data-testid={`bulk-name-${row.projectId}`}
           value={row.typedName}
           placeholder={BULK_COPY.namePlaceholder}
-          disabled={locked || item?.status === 'done'}
+          disabled={locked}
           onChange={e => onName(e.target.value)}
-          onBlur={onNameCommit}
           onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); }}
           className="w-64 max-w-[60%] h-9 bg-[#1A1A1A] border border-[#333] px-3 rounded-lg text-[13px] font-semibold text-[var(--kx-text)] placeholder:text-gray-500 placeholder:font-normal outline-none focus:border-[#F27D26] transition-colors disabled:cursor-not-allowed"
         />
@@ -171,7 +176,7 @@ function BulkRow({ row, item, skippedReason, final, onName, onNameCommit, onFile
             {BULK_COPY.open}
           </button>
         )}
-        {locked ? (
+        {running ? (
           <button
             type="button"
             data-testid={`bulk-cancel-${row.projectId}`}
@@ -180,7 +185,7 @@ function BulkRow({ row, item, skippedReason, final, onName, onNameCommit, onFile
           >
             {BULK_COPY.cancelRow}
           </button>
-        ) : (
+        ) : !locked && (
           <>
             <button type="button" aria-label={BULK_COPY.rowBrowseFiles} title={BULK_COPY.rowBrowseFiles} onClick={() => filesRef.current?.click()} className={ICON_BTN}>
               <FilePlus size={15} />
@@ -188,10 +193,13 @@ function BulkRow({ row, item, skippedReason, final, onName, onNameCommit, onFile
             <button type="button" aria-label={BULK_COPY.rowBrowseFolder} title={BULK_COPY.rowBrowseFolder} onClick={() => folderRef.current?.click()} className={ICON_BTN}>
               <FolderPlus size={15} />
             </button>
+            <button type="button" aria-label={BULK_COPY.removeProject} title={BULK_COPY.removeProject} data-testid={`bulk-remove-${row.projectId}`} onClick={onRemoveRow} className={ICON_BTN}>
+              <X size={15} />
+            </button>
           </>
         )}
       </div>
-      <div className="mt-3 flex flex-wrap gap-1.5" data-testid={`bulk-slots-${row.projectId}`}>
+      <div className="mt-3 flex flex-wrap items-center gap-1.5" data-testid={`bulk-slots-${row.projectId}`}>
         {(['script', 'scene', 'voiceover', 'media'] as const).map(slot => (
           <span
             key={slot}
@@ -205,7 +213,51 @@ function BulkRow({ row, item, skippedReason, final, onName, onNameCommit, onFile
             {BULK_COPY.slot[slot]}{slot === 'media' && row.mediaCount > 0 ? ` · ${row.mediaCount}` : ''}
           </span>
         ))}
+        {row.files.length > 0 && !locked && (
+          <button
+            type="button"
+            data-testid={`bulk-files-toggle-${row.projectId}`}
+            aria-expanded={listOpen}
+            onClick={() => setListOpen(o => !o)}
+            className="ml-1 flex items-center gap-1 text-[11px] text-[var(--kx-muted)] hover:text-[var(--kx-text)] transition-colors"
+          >
+            {listOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+            {BULK_COPY.filesToggle(row.files.length)}
+          </button>
+        )}
       </div>
+      {listOpen && row.files.length > 0 && !locked && (
+        <div className="mt-2.5 rounded-lg border border-[var(--kx-line)] bg-[#0f1319] py-1" data-testid={`bulk-files-${row.projectId}`}>
+          <ul>
+            {row.files.map(f => (
+              <li key={f.id} className="flex items-center gap-2 px-3 py-1 text-[12px]">
+                <span className="w-24 flex-shrink-0 whitespace-nowrap text-[10px] uppercase tracking-widest text-[var(--kx-faint)]">{BULK_COPY.slot[f.kind]}</span>
+                <span className="flex-1 min-w-0 truncate text-[var(--kx-text)]">{f.name}</span>
+                <button
+                  type="button"
+                  aria-label={BULK_COPY.removeFile(f.name)}
+                  title={BULK_COPY.removeFile(f.name)}
+                  onClick={() => onRemoveFile(f.id)}
+                  className="flex-shrink-0 w-6 h-6 flex items-center justify-center rounded text-gray-500 hover:text-white transition-colors"
+                >
+                  <X size={13} />
+                </button>
+              </li>
+            ))}
+          </ul>
+          <div className="px-3 pt-1 pb-1 border-t border-[var(--kx-line)] mt-1">
+            <button
+              type="button"
+              data-testid={`bulk-clear-${row.projectId}`}
+              onClick={onClearFiles}
+              className="flex items-center gap-1.5 text-[11px] text-gray-400 hover:text-white transition-colors"
+            >
+              <Trash2 size={12} />
+              {BULK_COPY.clearFiles}
+            </button>
+          </div>
+        </div>
+      )}
       <p
         data-testid={`bulk-status-${row.projectId}`}
         className={`mt-2.5 text-[12px] leading-snug ${dim ? 'text-[var(--kx-faint)]' : 'text-[var(--kx-muted)]'}`}
@@ -221,12 +273,17 @@ function BulkRow({ row, item, skippedReason, final, onName, onNameCommit, onFile
 }
 
 export function BulkProjectsModal({
-  projects, parseProjectData, onOpenProject, onClose, finalizeProject, queue = cloudSyncQueue, store: injected,
+  initialCount, createBlankProject, parseProjectData, onOpenProject, onClose, onProjectsCreated, finalizeProject,
+  queue = cloudSyncQueue, store: injected,
 }: {
-  projects: readonly { id: string; name: string }[];
+  /** How many empty rows to start with. Rows are drafts: no project exists yet. */
+  initialCount: number;
+  createBlankProject: () => Project;
   parseProjectData: CloudQueueDeps['parseProjectData'];
   onOpenProject: (id: string) => void;
   onClose: () => void;
+  /** Projects were just created (Build Timeline): the dashboard should refresh. */
+  onProjectsCreated?: () => void;
   /** Turns a project the cloud finished into a real, saved timeline (the
    *  app's own Build Timeline, run for it). Without it a row stops at 'done'. */
   finalizeProject?: (id: string) => Promise<{ ok: boolean; message?: string }>;
@@ -235,12 +292,17 @@ export function BulkProjectsModal({
 }): React.ReactElement {
   const [store, setStore] = useState<BulkRowStore | null>(injected ?? null);
   useEffect(() => {
-    if (injected) return;
+    if (injected) { injected.init(initialCount); return; }
     let live = true;
-    void defaultBulkRowDeps().then(deps => { if (live) setStore(new BulkRowStore(deps)); });
+    void defaultBulkRowDeps(createBlankProject).then(deps => {
+      if (!live) return;
+      const created = new BulkRowStore(deps, BULK_MAX_PROJECTS);
+      created.init(initialCount);
+      setStore(created);
+    });
     return () => { live = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [injected]);
-  useEffect(() => { store?.init(projects); }, [store, projects]);
   const rows = useSyncExternalStore(
     l => store?.subscribe(l) ?? (() => undefined),
     () => store?.snapshot() ?? EMPTY_ROWS,
@@ -256,7 +318,7 @@ export function BulkProjectsModal({
   useEffect(() => () => { closed.current = true; }, []);
   useEffect(() => {
     for (const item of snap.items) {
-      if (item.status !== 'done' || started.current.has(item.id) || !projects.some(p => p.id === item.id)) continue;
+      if (item.status !== 'done' || started.current.has(item.id) || !rows.some(r => r.projectId === item.id)) continue;
       started.current.add(item.id);
       if (!finalizeProject) { setFinals(f => ({ ...f, [item.id]: { state: 'done' } })); continue; }
       setFinals(f => ({ ...f, [item.id]: { state: 'building' } }));
@@ -269,31 +331,27 @@ export function BulkProjectsModal({
         setFinals(f => ({ ...f, [item.id]: result.ok ? { state: 'done' } : { state: 'failed', message: result.message ?? '' } }));
       });
     }
-  }, [snap.items, projects, finalizeProject]);
+  }, [snap.items, rows, finalizeProject]);
   const cloud = readSyncEngineHost() === 'cloud';
   const items = useMemo(() => new Map(snap.items.map(i => [i.id, i])), [snap.items]);
-  const complete = rows.filter(r => r.typedName.trim().length > 0 && missingSlots(r.slots).length === 0);
-  const canBuild = cloud && complete.length > 0 && !snap.running;
+  const complete = rows.filter(r => !r.built && r.typedName.trim().length > 0 && missingSlots(r.slots).length === 0);
+  const canBuild = cloud && complete.length > 0;
   const line = queue.batchLine();
 
   const build = (): void => {
     void (async () => {
       if (!store) return;
-      await store.commitAllNames();
-      const now = store.snapshot();
-      const next: Record<string, string> = {};
-      for (const r of now) {
-        const missing = missingSlots(r.slots).map(slot => BUILD_TIMELINE_COPY.slotNames[slot]);
-        const why = rowIncompleteReason(r.typedName, missing);
-        if (why) next[r.projectId] = why;
-      }
-      setSkips(next);
-      queueProjectsForCloudSync(
-        now.filter(r => !next[r.projectId]).map(r => ({ id: r.projectId, name: r.typedName.trim() })),
-        parseProjectData,
-      );
+      // Only now do projects exist: the real rows are created, empty drafts discarded.
+      const { created, skips: left } = await store.buildReady();
+      setSkips(left);
+      if (created.length === 0) return;
+      onProjectsCreated?.();
+      queueProjectsForCloudSync(created, parseProjectData);
     })();
   };
+
+  const close = (): void => { void (store?.discardUnbuilt() ?? Promise.resolve()).finally(onClose); };
+  const open = (id: string): void => { void (store?.discardUnbuilt() ?? Promise.resolve()).finally(() => onOpenProject(id)); };
 
   return (
     <div className={SHELL} data-testid="bulk-modal">
@@ -310,7 +368,7 @@ export function BulkProjectsModal({
               type="button"
               aria-label={BULK_COPY.close}
               data-testid="bulk-close"
-              onClick={onClose}
+              onClick={close}
               className="text-gray-500 hover:text-white transition-colors focus:outline-none focus:ring-2 focus:ring-[#F27D26] rounded"
             >
               <X size={16} />
@@ -327,10 +385,12 @@ export function BulkProjectsModal({
               skippedReason={skips[row.projectId]}
               final={finals[row.projectId]}
               onName={typed => store?.setTypedName(row.projectId, typed)}
-              onNameCommit={() => void store?.commitName(row.projectId)}
               onFiles={files => void store?.addFiles(row.projectId, files)}
+              onRemoveFile={fileId => void store?.removeFile(row.projectId, fileId)}
+              onClearFiles={() => void store?.clearFiles(row.projectId)}
+              onRemoveRow={() => void store?.discardRow(row.projectId)}
               onCancel={() => queue.cancel(row.projectId)}
-              onOpen={() => onOpenProject(row.projectId)}
+              onOpen={() => open(row.projectId)}
             />
           ))}
         </ol>
@@ -341,6 +401,17 @@ export function BulkProjectsModal({
               <p className="text-[11px] leading-snug text-gray-400 mb-3">{!cloud ? BULK_COPY.notCloud : BULK_COPY.buildNeeds}</p>
             )}
             <div className="flex gap-3">
+              <button
+                type="button"
+                data-testid="bulk-add"
+                className={`${BTN_CANCEL} flex items-center justify-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed`}
+                disabled={!store?.canAddRow()}
+                title={store?.canAddRow() ? undefined : `Up to ${BULK_MAX_PROJECTS} projects`}
+                onClick={() => store?.addRow()}
+              >
+                <Plus size={13} />
+                {BULK_COPY.addProject}
+              </button>
               {snap.running && (
                 <button type="button" data-testid="bulk-cancel-all" className={BTN_CANCEL} onClick={() => queue.cancelAll()}>
                   {BULK_COPY.cancelAll}

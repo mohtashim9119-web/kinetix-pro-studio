@@ -41,19 +41,23 @@ import { cloudSyncQueue } from '../services/bulkSyncQueue';
 import { classifyAndIngestBundleZip } from '../services/bundleIngest';
 import type { StagedFiles } from './DropZonePanel';
 
-function store(): BulkRowStore {
+interface Harness { store: BulkRowStore; created: string[]; purged: string[] }
+function store(): Harness {
   const staged = new Map<string, StagedFiles>();
+  const created: string[] = [];
+  const purged: string[] = [];
   const deps: BulkRowDeps = {
     loadStaged: async id => staged.get(id) ?? null,
     writeStaged: async (id, _p, next) => { staged.set(id, next); },
-    loadProject: async id => ({ project: { id, name: id, assets: [], segments: [] } as never }),
-    saveProject: async () => ({ ok: true }),
-    upsertMeta: () => {},
+    createProject: async info => { created.push(info.name); return true; },
+    purge: async id => { purged.push(id); staged.delete(id); },
+    removeBundleAsset: async () => {},
     hashAudio: async () => 'h', probeDuration: async () => 30,
     cloudActive: () => true, stageAudio: async () => ({}), ingestBundle: classifyAndIngestBundleZip,
   };
-  return new BulkRowStore(deps);
+  return { store: new BulkRowStore(deps, 25), created, purged };
 }
+const blank = (): never => ({} as never);
 
 const mount = async (el: React.ReactElement): Promise<{ root: ReturnType<typeof createRoot>; host: HTMLElement }> => {
   const host = document.createElement('div');
@@ -87,116 +91,130 @@ describe('BulkCountDialog', () => {
   });
 });
 
-describe('BulkProjectsModal', () => {
-  it('one row per project; Build is off until a row has all four slots; incomplete rows are skipped with their reason; a built row offers Open project; closing does not cancel', async () => {
-    const s = store();
-    const projects = [{ id: 'p1', name: 'Bulk Project 1' }, { id: 'p2', name: 'Bulk Project 2' }, { id: 'p3', name: 'Bulk Project 3' }];
-    const onOpen = vi.fn();
-    const onClose = vi.fn();
-    const { host } = await mount(
-      <BulkProjectsModal projects={projects} parseProjectData={async () => []} onOpenProject={onOpen} onClose={onClose} store={s} />,
-    );
-    expect(host.querySelectorAll('[data-testid^="bulk-row-"]')).toHaveLength(3);
+const fourFiles = (): File[] => [
+  new File(['line'], 'script.txt'), new File(['[a] x\n[b] y\n[c] z'], 'scene.txt'),
+  new File(['a'], 'vo.wav'), new File(['i'], 'a.png'),
+];
+const setValue = async (el: HTMLInputElement, v: string): Promise<void> => {
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(el, v);
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+};
+const modal = (h: Harness, count: number, extra: Partial<React.ComponentProps<typeof BulkProjectsModal>> = {}): React.ReactElement => (
+  <BulkProjectsModal
+    initialCount={count} createBlankProject={blank} parseProjectData={async () => []}
+    onOpenProject={() => {}} onClose={() => {}} store={h.store} {...extra}
+  />
+);
+const rowIds = (host: HTMLElement): string[] =>
+  [...host.querySelectorAll('[data-testid^="bulk-row-"]')].map(el => el.getAttribute('data-testid')!.replace('bulk-row-', ''));
+
+describe('BulkProjectsModal — draft rows', () => {
+  it('opens with N empty rows, creates NOTHING, and Build is off until a row is named and has all four slots', async () => {
+    const h = store();
+    const { host } = await mount(modal(h, 5));
+    expect(rowIds(host)).toHaveLength(5);
+    expect(h.created).toEqual([]);
+    const [a] = rowIds(host);
+    await act(async () => { await h.store.addFiles(a!, fourFiles()); });
     expect((q(host, 'bulk-build') as HTMLButtonElement).disabled).toBe(true);
-
-    // Row 1 gets all four slots (a bundle zip's own fill is bulkRows.test.ts, against
-    // real jszip); row 2 only a script; row 3 nothing.
-    await act(async () => { await s.addFiles('p2', [new File(['just a script'], 'script.txt')]); });
-    // Names are required: p1 is named, p2 is named but short of files, p3 is neither.
-    await act(async () => { s.setTypedName('p1', 'Alpine'); s.setTypedName('p2', 'Valley'); });
-    await act(async () => {
-      await s.addFiles('p1', [
-        new File(['line'], 'script.txt'), new File(['[a] x\n[b] y\n[c] z'], 'scene.txt'),
-        new File(['a'], 'vo.wav'), new File(['i'], 'a.png'),
-      ]);
-    });
-    expect(q(host, 'bulk-slots-p1')!.querySelectorAll('[data-filled="true"]')).toHaveLength(4);
-    expect(q(host, 'bulk-slots-p2')!.querySelectorAll('[data-filled="true"]')).toHaveLength(1);
+    const name = q(host, `bulk-name-${a}`) as HTMLInputElement;
+    expect(name.placeholder).toBe('Project name (required)');
+    await setValue(name, '  Harbour  ');
     expect((q(host, 'bulk-build') as HTMLButtonElement).disabled).toBe(false);
+  });
 
+  it('Add project appends a row', async () => {
+    const h = store();
+    const { host } = await mount(modal(h, 2));
+    await act(async () => { (q(host, 'bulk-add') as HTMLButtonElement).click(); });
+    expect(rowIds(host)).toHaveLength(3);
+  });
+
+  it('wrong files can be removed one by one, or all at once (Clear files), and a whole row can be removed', async () => {
+    const h = store();
+    const { host } = await mount(modal(h, 2));
+    const [a, b] = rowIds(host);
+    await act(async () => { await h.store.addFiles(a!, [...fourFiles(), new File(['j'], 'wrong.png')]); });
+    await act(async () => { (q(host, `bulk-files-toggle-${a}`) as HTMLButtonElement).click(); });
+    expect(q(host, `bulk-files-${a}`)!.textContent).toContain('wrong.png');
+    await act(async () => { (host.querySelector('[aria-label="Remove wrong.png"]') as HTMLButtonElement).click(); });
+    await vi.waitFor(() => expect(q(host, `bulk-files-${a}`)!.textContent).not.toContain('wrong.png'));
+    expect(q(host, `bulk-files-${a}`)!.textContent).toContain('a.png');
+    await act(async () => { (q(host, `bulk-clear-${a}`) as HTMLButtonElement).click(); });
+    await vi.waitFor(() => expect(q(host, `bulk-slots-${a}`)!.querySelectorAll('[data-filled="true"]')).toHaveLength(0));
+    await act(async () => { (q(host, `bulk-remove-${b}`) as HTMLButtonElement).click(); });
+    await vi.waitFor(() => expect(rowIds(host)).toEqual([a]));
+  });
+
+  it('Build creates only the real projects: 5 rows, 2 filled -> 2 projects, the empty ones discarded, the half-filled one kept with its reason; closing discards leftover drafts', async () => {
+    finishAtOnce = false;
+    cloudSyncQueue.clearFinished();
+    const h = store();
+    const onCreated = vi.fn();
+    const onClose = vi.fn();
+    const { host } = await mount(modal(h, 5, { onProjectsCreated: onCreated, onClose }));
+    const ids = rowIds(host);
+    await act(async () => {
+      await h.store.addFiles(ids[0]!, fourFiles()); h.store.setTypedName(ids[0]!, 'Alpine');
+      await h.store.addFiles(ids[1]!, fourFiles()); h.store.setTypedName(ids[1]!, 'Valley');
+      await h.store.addFiles(ids[2]!, [new File(['s'], 'script.txt')]); h.store.setTypedName(ids[2]!, 'Half');
+    });
     await act(async () => { (q(host, 'bulk-build') as HTMLButtonElement).click(); });
-    await vi.waitFor(() => expect(q(host, 'bulk-status-p3')!.textContent).toContain('Skipped'));
-    expect(q(host, 'bulk-status-p2')!.textContent).toBe('Skipped — Add a scene doc, a voiceover and media to build the timeline');
-    expect(q(host, 'bulk-status-p3')!.textContent).toBe('Skipped — Add a project name, a script, a scene doc, a voiceover and media to build the timeline');
-    // p1 is running: live phase, a Cancel, no Open yet.
-    expect(q(host, 'bulk-status-p1')!.textContent).toBe('Transcribing on the cloud…');
-    expect(q(host, 'bulk-open-p1')).toBeNull();
-
-    // Closing the modal does not touch the queue.
+    await vi.waitFor(() => expect(h.created).toEqual(['Alpine', 'Valley']));
+    expect(onCreated).toHaveBeenCalled();
+    await vi.waitFor(() => expect(rowIds(host)).toEqual([ids[0], ids[1], ids[2]]));
+    expect(q(host, `bulk-status-${ids[2]}`)!.textContent).toBe('Skipped — Add a scene doc, a voiceover and media to build the timeline');
+    expect(q(host, `bulk-status-${ids[0]}`)!.textContent).toBe('Transcribing on the cloud…');
+    // The built rows are read-outs now.
+    expect((q(host, `bulk-name-${ids[0]}`) as HTMLInputElement).disabled).toBe(true);
+    // Closing: the half-filled draft goes; the built ones stay; running jobs are not touched.
     await act(async () => { (q(host, 'bulk-close') as HTMLButtonElement).click(); });
-    expect(onClose).toHaveBeenCalled();
+    await vi.waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(h.purged).toContain(ids[2]);
+    expect(h.store.snapshot().map(r => r.projectId)).toEqual([ids[0], ids[1]]);
     expect(cloudSyncQueue.snapshot().items[0]!.status).toBe('running');
-
-    // Cancel the running row: receipt on the row, queue idle.
-    await act(async () => { (q(host, 'bulk-cancel-p1') as HTMLButtonElement).click(); });
+    // Cancel all: the running row gets its receipt (the queue is a shared singleton).
+    await act(async () => { cloudSyncQueue.cancelAll(); });
     await vi.waitFor(() => expect(cloudSyncQueue.snapshot().running).toBe(false));
     await act(async () => {});
-    expect(q(host, 'bulk-receipt-p1')!.textContent).toBe('The cloud had already worked 4.0 s.');
-    expect(onOpen).not.toHaveBeenCalled();
+    expect(cloudSyncQueue.snapshot().items[0]!.receipt).toBe('The cloud had already worked 4.0 s.');
   });
 
-  const fourFiles = (): File[] => [
-    new File(['line'], 'script.txt'), new File(['[a] x\n[b] y\n[c] z'], 'scene.txt'),
-    new File(['a'], 'vo.wav'), new File(['i'], 'a.png'),
-  ];
-
-  it('the project name is required: all four slots filled is still not buildable until the row is named, and the name is saved to the project', async () => {
-    const s = store();
-    const saved: string[] = [];
-    (s as unknown as { deps: BulkRowDeps }).deps.saveProject = async p => { saved.push(p.name); return { ok: true }; };
-    const { host } = await mount(
-      <BulkProjectsModal projects={[{ id: 'n1', name: 'Bulk Project 1' }]} parseProjectData={async () => []} onOpenProject={() => {}} onClose={() => {}} store={s} />,
-    );
-    await act(async () => { await s.addFiles('n1', fourFiles()); });
-    const build = q(host, 'bulk-build') as HTMLButtonElement;
-    expect(build.disabled).toBe(true);
-    const name = q(host, 'bulk-name-n1') as HTMLInputElement;
-    expect(name.placeholder).toBe('Project name (required)');
-    await act(async () => {
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(name, '  Harbour  ');
-      name.dispatchEvent(new Event('input', { bubbles: true }));
-    });
-    expect(build.disabled).toBe(false);
-    await act(async () => { name.blur(); name.dispatchEvent(new FocusEvent('focusout', { bubbles: true })); });
-    await vi.waitFor(() => expect(saved).toContain('Harbour'));
-  });
-
-  it('after the cloud work the modal builds the real timeline: "Building the timeline…" until it is finished, and only then Open project (one click, already built)', async () => {
+  it('after the cloud work the modal builds the real timeline: "Building the timeline…" until finished, and only then Open project (one click, already built)', async () => {
     finishAtOnce = true;
     cloudSyncQueue.clearFinished();
-    const s = store();
+    const h = store();
     const onOpen = vi.fn();
     let finish!: (r: { ok: boolean; message?: string }) => void;
     const finalize = vi.fn(() => new Promise<{ ok: boolean; message?: string }>(r => { finish = r; }));
-    const { host } = await mount(
-      <BulkProjectsModal projects={[{ id: 'z1', name: 'x' }]} parseProjectData={async () => []} onOpenProject={onOpen} onClose={() => {}} store={s} finalizeProject={finalize} />,
-    );
-    await act(async () => { await s.addFiles('z1', fourFiles()); s.setTypedName('z1', 'Harbour'); });
+    const { host } = await mount(modal(h, 1, { onOpenProject: onOpen, finalizeProject: finalize }));
+    const [id] = rowIds(host);
+    await act(async () => { await h.store.addFiles(id!, fourFiles()); h.store.setTypedName(id!, 'Harbour'); });
     await act(async () => { (q(host, 'bulk-build') as HTMLButtonElement).click(); });
-    await vi.waitFor(() => expect(finalize).toHaveBeenCalledWith('z1'));
-    expect(q(host, 'bulk-status-z1')!.textContent).toBe('Building the timeline…');
-    expect(q(host, 'bulk-open-z1')).toBeNull();
+    await vi.waitFor(() => expect(finalize).toHaveBeenCalledWith(id));
+    expect(q(host, `bulk-status-${id}`)!.textContent).toBe('Building the timeline…');
+    expect(q(host, `bulk-open-${id}`)).toBeNull();
     await act(async () => { finish({ ok: true }); });
-    await vi.waitFor(() => expect(q(host, 'bulk-open-z1')).not.toBeNull());
-    expect(q(host, 'bulk-status-z1')!.textContent).toBe('Ready');
-    await act(async () => { (q(host, 'bulk-open-z1') as HTMLButtonElement).click(); });
-    expect(onOpen).toHaveBeenCalledWith('z1');
+    await vi.waitFor(() => expect(q(host, `bulk-open-${id}`)).not.toBeNull());
+    expect(q(host, `bulk-status-${id}`)!.textContent).toBe('Ready');
+    await act(async () => { (q(host, `bulk-open-${id}`) as HTMLButtonElement).click(); });
+    await vi.waitFor(() => expect(onOpen).toHaveBeenCalledWith(id));
     finishAtOnce = false;
   });
 
   it('a timeline that could not be finished says so and still offers Open project (the project itself is intact)', async () => {
     finishAtOnce = true;
     cloudSyncQueue.clearFinished();
-    const s = store();
-    const { host } = await mount(
-      <BulkProjectsModal projects={[{ id: 'f1', name: 'x' }]} parseProjectData={async () => []} onOpenProject={() => {}} onClose={() => {}} store={s}
-        finalizeProject={async () => ({ ok: false, message: 'Sync cancelled.' })} />,
-    );
-    await act(async () => { await s.addFiles('f1', fourFiles()); s.setTypedName('f1', 'Harbour'); });
+    const h = store();
+    const { host } = await mount(modal(h, 1, { finalizeProject: async () => ({ ok: false, message: 'Sync cancelled.' }) }));
+    const [id] = rowIds(host);
+    await act(async () => { await h.store.addFiles(id!, fourFiles()); h.store.setTypedName(id!, 'Harbour'); });
     await act(async () => { (q(host, 'bulk-build') as HTMLButtonElement).click(); });
-    await vi.waitFor(() => expect(q(host, 'bulk-open-f1')).not.toBeNull());
-    expect(q(host, 'bulk-status-f1')!.textContent).toContain('the timeline could not be finished');
-    expect(q(host, 'bulk-status-f1')!.textContent).toContain('Sync cancelled.');
+    await vi.waitFor(() => expect(q(host, `bulk-open-${id}`)).not.toBeNull());
+    expect(q(host, `bulk-status-${id}`)!.textContent).toContain('the timeline could not be finished');
+    expect(q(host, `bulk-status-${id}`)!.textContent).toContain('Sync cancelled.');
     finishAtOnce = false;
   });
 });

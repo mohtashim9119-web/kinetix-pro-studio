@@ -316,6 +316,12 @@ export interface SaveOptions {
  * value.
  */
 export async function saveProject(project: Project, opts: SaveOptions = {}): Promise<SaveOutcome> {
+  // A project the dashboard deleted this session is never written again: the
+  // editor can still hold it in memory, and its autosave / teardown flush would
+  // otherwise recreate the record and the registry entry (Bulk Projects
+  // surfaced it — finishing timelines leaves the last one loaded).
+  if (deletedThisSession.has(project.id)) return { ok: true };
+
   // Guard 2 — a project whose load failed is poisoned for writing.
   const poisoned = loadFailures.get(project.id);
   if (poisoned) {
@@ -657,8 +663,12 @@ export function upsertProjectMeta(meta: ProjectMeta): void {
   }
 }
 
+/** Ids deleted in this session; `saveProject` refuses to resurrect them. */
+const deletedThisSession = new Set<string>();
+
 /** Removes a project's stored record and its registry entry. */
 export async function deleteProjectData(id: string): Promise<void> {
+  deletedThisSession.add(id);
   const remove = isTauri() ? osStoreDelete(id) : Promise.resolve(localStorage.removeItem(projectKey(id)));
   await remove.catch(err => console.error(`[kinetix] Failed to delete stored project ${id}:`, err));
   clearLoadFailure(id);

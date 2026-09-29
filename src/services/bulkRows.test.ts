@@ -31,7 +31,6 @@ import { classifyAndIngestBundleZip } from './bundleIngest';
 import { __resetCloudAudioInFlightForTests, stageCloudAudioOnly } from './cloudSyncEngine';
 import { computeAudioHash } from './spine';
 import type { StagedFiles } from '../components/DropZonePanel';
-import type { Project } from '../types';
 
 const mockInvoke = invoke as unknown as Mock;
 const EMPTY: StagedFiles = { scriptFile: null, sceneFile: null, voiceoverFile: null, assetFiles: [], zipFiles: [] };
@@ -107,16 +106,21 @@ describe('row ingest — the DropZone rules, applied per row', () => {
   });
 });
 
-describe('BulkRowStore — slots, and eager audio prep', () => {
-  function fakeDeps(over: Partial<BulkRowDeps> = {}): { deps: BulkRowDeps; staged: Map<string, StagedFiles>; stageAudio: Mock } {
+describe('BulkRowStore — draft rows, files, and creation only at Build Timeline', () => {
+  function fakeDeps(over: Partial<BulkRowDeps> = {}): {
+    deps: BulkRowDeps; staged: Map<string, StagedFiles>; stageAudio: Mock; created: { id: string; name: string; assets: unknown[] }[]; purged: string[]; removedAssets: string[];
+  } {
     const staged = new Map<string, StagedFiles>();
     const stageAudio = vi.fn().mockResolvedValue({ uploaded: true });
-    const project = (id: string): Project => ({ id, name: id, assets: [], segments: [], script: '', sceneDetails: '' } as unknown as Project);
+    const created: { id: string; name: string; assets: unknown[] }[] = [];
+    const purged: string[] = [];
+    const removedAssets: string[] = [];
     const deps: BulkRowDeps = {
       loadStaged: async id => staged.get(id) ?? null,
       writeStaged: async (id, _prev, next) => { staged.set(id, next); },
-      loadProject: async id => ({ project: project(id) }),
-      saveProject: async () => ({ ok: true }),
+      createProject: async info => { created.push(info); return true; },
+      purge: async id => { purged.push(id); staged.delete(id); },
+      removeBundleAsset: async (_id, asset) => { removedAssets.push(asset.id); },
       hashAudio: computeAudioHash,
       probeDuration: async () => 42,
       cloudActive: () => true,
@@ -124,30 +128,146 @@ describe('BulkRowStore — slots, and eager audio prep', () => {
       ingestBundle: classifyAndIngestBundleZip,
       ...over,
     };
-    return { deps, staged, stageAudio };
+    return { deps, staged, stageAudio, created, purged, removedAssets };
   }
+  const four = (): File[] => [
+    new File(['line'], 'script.txt'), new File(['[a] x\n[b] y\n[c] z'], 'scene.txt'),
+    new File(['a'], 'vo.wav'), new File(['i'], 'a.png'),
+  ];
 
-  it('a bundle zip fills the four slots, the voiceover is hashed, probed and staged to the gateway (once), and only complete rows are batchable', async () => {
+  it('init makes N EMPTY drafts: nothing is created or registered anywhere', async () => {
+    const { deps, created } = fakeDeps();
+    const store = new BulkRowStore(deps);
+    store.init(5);
+    expect(store.snapshot()).toHaveLength(5);
+    expect(new Set(store.snapshot().map(r => r.projectId)).size).toBe(5);
+    expect(created).toEqual([]);
+  });
+
+  it('a bundle zip fills the four slots, the voiceover is hashed, probed and staged to the gateway (once); a row needs a NAME too before it is buildable', async () => {
     const { deps, stageAudio } = fakeDeps();
     const store = new BulkRowStore(deps);
-    store.init([{ id: 'p1', name: 'Bulk Project 1' }, { id: 'p2', name: 'Bulk Project 2' }]);
-    await store.addFiles('p1', [await bundleZip()]);
+    store.init(2);
+    const [r1, r2] = store.snapshot().map(r => r.projectId);
+    await store.addFiles(r1!, [await bundleZip()]);
     await vi.waitFor(() => expect(store.snapshot()[0]!.audio.state).toBe('ready'));
     expect(store.snapshot()[0]!.slots).toEqual({ script: true, scene: true, voiceover: true, media: true });
     expect(store.snapshot()[1]!.slots).toEqual({ script: false, scene: false, voiceover: false, media: false });
-    // Named or not: the name is required as well as the four slots.
     expect(store.completeIds()).toEqual([]);
-    store.setTypedName('p1', 'Alpine');
-    expect(store.completeIds()).toEqual(['p1']);
+    store.setTypedName(r1!, 'Alpine');
+    expect(store.completeIds()).toEqual([r1]);
+    expect(r2).toBeDefined();
     expect(stageAudio).toHaveBeenCalledTimes(1);
     expect(stageAudio.mock.calls[0]![2]).toBe(42);
+  });
+
+  it('Build Timeline creates ONLY the real rows; empty drafts are discarded (and purged); a half-filled row stays a draft with its reason', async () => {
+    const { deps, created, purged } = fakeDeps({ cloudActive: () => false });
+    const store = new BulkRowStore(deps);
+    store.init(5);
+    const ids = store.snapshot().map(r => r.projectId);
+    await store.addFiles(ids[0]!, four()); store.setTypedName(ids[0]!, 'Alpine');
+    await store.addFiles(ids[1]!, four()); store.setTypedName(ids[1]!, 'Valley');
+    await store.addFiles(ids[2]!, [new File(['just a script'], 'script.txt')]); store.setTypedName(ids[2]!, 'Half');
+    // ids[3], ids[4]: untouched.
+    const out = await store.buildReady();
+    expect(created.map(c => c.name)).toEqual(['Alpine', 'Valley']);
+    expect(created.map(c => c.id)).toEqual([ids[0], ids[1]]);
+    expect(out.created.map(c => c.name)).toEqual(['Alpine', 'Valley']);
+    expect(purged.sort()).toEqual([ids[3], ids[4]].sort());
+    expect(store.snapshot().map(r => r.projectId)).toEqual([ids[0], ids[1], ids[2]]);
+    expect(out.skips[ids[2]!]).toBe('Add a scene doc, a voiceover and media to build the timeline');
+    expect(store.snapshot()[0]!.built).toBe(true);
+    expect(store.snapshot()[2]!.built).toBe(false);
+  });
+
+  it('a row with all four slots but no name is a draft, not a project', async () => {
+    const { deps, created } = fakeDeps({ cloudActive: () => false });
+    const store = new BulkRowStore(deps);
+    store.init(1);
+    const id = store.snapshot()[0]!.projectId;
+    await store.addFiles(id, four());
+    const out = await store.buildReady();
+    expect(created).toEqual([]);
+    expect(out.skips[id]).toBe('Add a project name to build the timeline');
+  });
+
+  it('a bundle\'s vaulted media rides into the created project', async () => {
+    const { deps, created } = fakeDeps({ cloudActive: () => false });
+    const store = new BulkRowStore(deps);
+    store.init(1);
+    const id = store.snapshot()[0]!.projectId;
+    await store.addFiles(id, [await bundleZip()]);
+    store.setTypedName(id, 'Bundle');
+    await store.buildReady();
+    expect(created[0]!.assets).toHaveLength(2);
+  });
+
+  it('Add project appends one more empty draft, up to the cap', async () => {
+    const { deps } = fakeDeps();
+    const store = new BulkRowStore(deps, 3);
+    store.init(2);
+    expect(store.canAddRow()).toBe(true);
+    expect(store.addRow()).toBeDefined();
+    expect(store.snapshot()).toHaveLength(3);
+    expect(store.canAddRow()).toBe(false);
+    expect(store.addRow()).toBeUndefined();
+  });
+
+  it('removing ONE wrong file leaves the rest, recomputes the slots, and lists what is in the row', async () => {
+    const { deps, staged } = fakeDeps({ cloudActive: () => false });
+    const store = new BulkRowStore(deps);
+    store.init(1);
+    const id = store.snapshot()[0]!.projectId;
+    await store.addFiles(id, [...four(), new File(['j'], 'b.png')]);
+    expect(store.snapshot()[0]!.files.map(f => f.name)).toEqual(['script.txt', 'scene.txt', 'vo.wav', 'a.png', 'b.png']);
+    const b = store.snapshot()[0]!.files.find(f => f.name === 'b.png')!;
+    await store.removeFile(id, b.id);
+    expect(store.snapshot()[0]!.files.map(f => f.name)).toEqual(['script.txt', 'scene.txt', 'vo.wav', 'a.png']);
+    expect(store.snapshot()[0]!.mediaCount).toBe(1);
+    await store.removeFile(id, 'voiceover');
+    expect(store.snapshot()[0]!.slots.voiceover).toBe(false);
+    expect(staged.get(id)!.voiceoverFile).toBeNull();
+    expect(staged.get(id)!.scriptFile).not.toBeNull();
+  });
+
+  it('removing a bundle\'s media deletes that vaulted asset; clearing a row purges everything but keeps the row and its name', async () => {
+    const { deps, purged, removedAssets } = fakeDeps({ cloudActive: () => false });
+    const store = new BulkRowStore(deps);
+    store.init(1);
+    const id = store.snapshot()[0]!.projectId;
+    store.setTypedName(id, 'Keep me');
+    await store.addFiles(id, [await bundleZip()]);
+    const first = store.snapshot()[0]!.files.find(f => f.id.startsWith('bundle:'))!;
+    await store.removeFile(id, first.id);
+    expect(removedAssets).toHaveLength(1);
+    expect(store.snapshot()[0]!.mediaCount).toBe(1);
+    await store.clearFiles(id);
+    expect(purged).toContain(id);
+    const row = store.snapshot()[0]!;
+    expect(row.files).toEqual([]);
+    expect(row.slots).toEqual({ script: false, scene: false, voiceover: false, media: false });
+    expect(row.typedName).toBe('Keep me');
+  });
+
+  it('closing the modal discards every unbuilt draft and keeps built ones', async () => {
+    const { deps, purged } = fakeDeps({ cloudActive: () => false });
+    const store = new BulkRowStore(deps);
+    store.init(3);
+    const ids = store.snapshot().map(r => r.projectId);
+    await store.addFiles(ids[0]!, four()); store.setTypedName(ids[0]!, 'Real');
+    await store.buildReady(); // creates ids[0]; discards the two empty ones
+    store.addRow();
+    await store.discardUnbuilt();
+    expect(store.snapshot().map(r => r.projectId)).toEqual([ids[0]]);
+    expect(purged.length).toBe(3);
   });
 
   it('local engine: the voiceover is staged in the row but nothing is encoded or uploaded', async () => {
     const { deps, stageAudio } = fakeDeps({ cloudActive: () => false });
     const store = new BulkRowStore(deps);
-    store.init([{ id: 'p1', name: 'x' }]);
-    await store.addFiles('p1', [new File(['a'], 'v.wav')]);
+    store.init(1);
+    await store.addFiles(store.snapshot()[0]!.projectId, [new File(['a'], 'v.wav')]);
     expect(store.snapshot()[0]!.audio.state).toBe('local');
     expect(stageAudio).not.toHaveBeenCalled();
   });
@@ -155,8 +275,8 @@ describe('BulkRowStore — slots, and eager audio prep', () => {
   it('a failed audio prep is shown on the row and is not fatal (the job uploads it itself)', async () => {
     const { deps } = fakeDeps({ stageAudio: async () => { throw { kind: 'unreachable', detail: 'offline' }; } });
     const store = new BulkRowStore(deps);
-    store.init([{ id: 'p1', name: 'x' }]);
-    await store.addFiles('p1', [new File(['a'], 'v.wav')]);
+    store.init(1);
+    await store.addFiles(store.snapshot()[0]!.projectId, [new File(['a'], 'v.wav')]);
     await vi.waitFor(() => expect(store.snapshot()[0]!.audio.state).toBe('failed'));
     expect(store.snapshot()[0]!.audio.detail).toBe('offline');
   });
@@ -168,9 +288,10 @@ describe('BulkRowStore — slots, and eager audio prep', () => {
       stageAudio: async () => { if (++n === 1) await new Promise<void>(r => { releaseFirst = r; }); },
     });
     const store = new BulkRowStore(deps);
-    store.init([{ id: 'p1', name: 'x' }]);
-    await store.addFiles('p1', [new File(['1'], 'v1.wav')]);
-    await store.addFiles('p1', [new File(['2'], 'v2.wav')]);
+    store.init(1);
+    const id = store.snapshot()[0]!.projectId;
+    await store.addFiles(id, [new File(['1'], 'v1.wav')]);
+    await store.addFiles(id, [new File(['2'], 'v2.wav')]);
     await vi.waitFor(() => expect(store.snapshot()[0]!.audio.state).toBe('ready'));
     releaseFirst();
     await new Promise(r => setTimeout(r, 10));

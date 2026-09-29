@@ -35,8 +35,6 @@ export const BULK_COPY = {
   quantityInvalid: (max: number): string => `Enter a whole number from 1 to ${max}.`,
   create: 'Create projects',
   cancel: 'Cancel',
-  /** "Bulk Project 1" … "Bulk Project N". Rename later in the project. */
-  namePrefix: 'Bulk Project',
   modalTitle: 'Bulk Projects',
   modalIntro: 'Drop files onto a row: loose files, a folder, a zip, or one bundle zip that carries the script, scene doc, voiceover and media. Nothing uses the cloud GPU until you press Build Timeline.',
   rowDrop: 'Drop files, a folder or a zip here',
@@ -61,7 +59,12 @@ export const BULK_COPY = {
   cancelAll: 'Cancel all',
   open: 'Open project',
   close: 'Close',
-  closeNote: 'Closing this window does not stop projects that are already building — they finish into the cloud cache, and opening the project then is free.',
+  closeNote: 'Projects are created when you press Build Timeline; rows left empty are discarded. Closing this window does not stop projects that are already building — they finish into the cloud cache, and opening the project then is free.',
+  addProject: 'Add project',
+  removeProject: 'Remove project',
+  clearFiles: 'Clear files',
+  removeFile: (name: string): string => `Remove ${name}`,
+  filesToggle: (n: number): string => `${n} file${n === 1 ? '' : 's'}`,
   skipped: (why: string): string => `Skipped — ${why}`,
   notCloud: 'Bulk build runs on the Cloud engine (App Settings → Sync Engine).',
 } as const;
@@ -75,10 +78,6 @@ export function rowIncompleteReason(
   if (parts.length === 0) return undefined;
   const list = parts.length === 1 ? parts[0]! : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
   return `Add ${list} to build the timeline`;
-}
-
-export function bulkProjectName(index1: number): string {
-  return `${BULK_COPY.namePrefix} ${index1}`;
 }
 
 /** A whole number in 1..max, else null. */
@@ -126,15 +125,17 @@ export async function peekCloudTranscript(audioHash: string, language: string | 
 }
 
 /** A blank project shaped like the New Project modal's defaults would make it. */
-export function makeBulkProject(base: Project, index1: number): Project {
+export function makeBulkProject(base: Project, info: { id: string; name: string; assets: Project['assets'] }): Project {
   const defaults = readNewProjectDefaults();
   const fresh: Project = {
     ...base,
-    name: bulkProjectName(index1),
-    // A bulk project starts EMPTY: the blank project's placeholder script and
-    // scene doc would otherwise read as two filled slots.
+    id: info.id,
+    name: info.name,
+    // A bulk project starts with no placeholder text: the blank project's
+    // script and scene doc would otherwise read as two filled slots.
     script: '',
     sceneDetails: '',
+    assets: info.assets,
     aspectRatio: defaults.aspectRatio,
     resolutionTier: defaults.resolutionTier,
     confirmed: true,
@@ -154,16 +155,15 @@ export interface CreateBulkDeps {
   upsertMeta: (meta: { id: string; name: string; savedAt: number; segmentCount: number }) => void;
 }
 
-/** Creates and persists all N projects at once (registry entries included),
- *  so the dashboard shows every one immediately. */
-export async function createBulkProjects(count: number, deps: CreateBulkDeps): Promise<Project[]> {
-  const made: Project[] = [];
-  for (let i = 1; i <= count; i++) {
-    const project = makeBulkProject(deps.makeBlankProject(), i);
-    const outcome = await deps.save(project);
-    if (!outcome.ok) throw new Error(`Couldn’t save ${project.name}. Check available storage and try again.`);
-    deps.upsertMeta({ id: project.id, name: project.name, savedAt: Date.now(), segmentCount: 0 });
-    made.push(project);
-  }
-  return made;
+/** Creates and registers ONE project (its dashboard card included) — called at
+ *  Build Timeline for each real row. False when it could not be saved. */
+export async function createBulkProject(
+  info: { id: string; name: string; assets: Project['assets'] },
+  deps: CreateBulkDeps,
+): Promise<boolean> {
+  const project = makeBulkProject(deps.makeBlankProject(), info);
+  const outcome = await deps.save(project);
+  if (!outcome.ok) return false;
+  deps.upsertMeta({ id: project.id, name: project.name, savedAt: Date.now(), segmentCount: 0 });
+  return true;
 }

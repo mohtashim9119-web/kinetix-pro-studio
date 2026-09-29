@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { Plus, Trash2, Search, Check, Loader2, Settings, ChevronDown, Play, Image as ImageIcon } from 'lucide-react';
-import type { Project, ProjectMeta } from '../types';
-import { loadAllMetas, loadProject, deleteProjectData, saveProject, upsertProjectMeta } from '../services/projectStore';
+import type { ProjectMeta } from '../types';
+import { loadAllMetas, loadProject, deleteProjectData } from '../services/projectStore';
 import { deleteAllStagedForProject } from '../services/stagedFilesStore';
 import { deleteAllAssets } from '../services/assetStore';
 import { deleteProjectAssetsNativeStrict } from '../services/nativeAssetStore';
@@ -13,7 +13,7 @@ import { queueProjectsForCloudSync } from '../services/bulkSyncQueue';
 import type { CloudQueueDeps } from '../services/cloudQueueJob';
 import { SyncQueuePanel } from './SyncQueuePanel';
 import { BulkCountDialog } from './BulkProjectsModal';
-import { BULK_COPY, createBulkProjects } from '../services/bulkContext';
+import { BULK_COPY } from '../services/bulkContext';
 import './ProjectDashboard.css';
 
 /**
@@ -61,15 +61,17 @@ interface Props {
    */
   parseProjectData?: CloudQueueDeps['parseProjectData'];
   /**
-   * Wave 3 U7.5 — App.tsx's blank-project factory. The "Bulk Projects" button
-   * appears only when this and `parseProjectData` are given.
+   * Wave 3 U7.5 — "Bulk Projects" asked for N rows. Nothing is created yet:
+   * App hosts the rows modal (it must outlive the dashboard while timelines are
+   * finished in the editor) and projects appear here when Build Timeline runs.
    */
-  createBlankProject?: () => Project;
-  /** Wave 3 U7.5 — the projects just created; App hosts the rows modal (it must
-   *  outlive the dashboard while timelines are being finished in the editor). */
-  onBulkCreated?: (projects: { id: string; name: string }[]) => void;
+  onBulkStart?: (count: number) => void;
+  /** Bumped by App when projects were created/removed behind the dashboard. */
+  metasVersion?: number;
   /** The rows modal is open: the queue is shown there, not here too. */
   bulkOpen?: boolean;
+  /** Ids just deleted, so the editor can drop one it still holds in memory. */
+  onProjectsDeleted?: (ids: string[]) => void;
 }
 
 function formatDate(ts: number): string {
@@ -92,9 +94,10 @@ export function ProjectDashboard({
   onOpenAppSettings,
   onAssetCleanupFailed,
   parseProjectData,
-  createBlankProject,
-  onBulkCreated,
+  onBulkStart,
+  metasVersion = 0,
   bulkOpen = false,
+  onProjectsDeleted,
 }: Props): React.ReactElement {
   const [engineHost, setEngineHost] = useState<SyncEngineHost>(readSyncEngineHost);
   useEffect(() => onSyncEngineHostChange(setEngineHost), []);
@@ -105,7 +108,6 @@ export function ProjectDashboard({
   const [profileOpen, setProfileOpen] = useState(false);
   // Wave 3 U7.5 — Bulk Projects: the "how many?" step, then the rows modal.
   const [bulkAsking, setBulkAsking] = useState(false);
-  const [bulkError, setBulkError] = useState<string | null>(null);
   const [storage, setStorage] = useState<{ usage: number; quota: number } | null>(null);
 
   const searchRef = useRef<HTMLInputElement>(null);
@@ -119,7 +121,7 @@ export function ProjectDashboard({
     enteringIds.current = new Set(data.filter(m => !seenProjectIds.has(m.id)).map(m => m.id));
     data.forEach(m => seenProjectIds.add(m.id));
     setMetas(data);
-  }, []);
+  }, [metasVersion]);
 
   useEffect(() => {
     void navigator.storage?.estimate?.().then(({ usage, quota }) => {
@@ -211,6 +213,7 @@ export function ProjectDashboard({
       await Promise.all(Array.from(contentHashes, hash => mediaVaultUnreference(hash, id)));
       await deleteProjectData(id);
     }
+    onProjectsDeleted?.(ids);
     setMetas(prev => prev.filter(m => !selectedIds.has(m.id)));
     setSelectedIds(new Set());
     setShowBulkConfirm(false);
@@ -252,8 +255,8 @@ export function ProjectDashboard({
         </div>
 
         <div className="kxd-actions">
-          {createBlankProject && parseProjectData && (
-            <button className="kxd-btn kxd-btn-quiet" data-testid="dashboard-bulk-projects" onClick={() => { setBulkError(null); setBulkAsking(true); }}>
+          {onBulkStart && parseProjectData && (
+            <button className="kxd-btn kxd-btn-quiet" data-testid="dashboard-bulk-projects" onClick={() => setBulkAsking(true)}>
               {BULK_COPY.button}
             </button>
           )}
@@ -339,7 +342,6 @@ export function ProjectDashboard({
       <main className="kxd-main custom-scrollbar">
         <div className="kxd-main-inner">
           {!bulkOpen && <SyncQueuePanel />}
-          {bulkError && <p className="mb-3 text-[11px] text-amber-300/80" data-testid="bulk-error">{bulkError}</p>}
           <div className="kxd-section-head">
             <h1>Recent projects</h1>
             <div>
@@ -485,26 +487,13 @@ export function ProjectDashboard({
         </div>
       </main>
 
-      {bulkAsking && createBlankProject && (
+      {bulkAsking && (
         <BulkCountDialog
           onCancel={() => setBulkAsking(false)}
-          onConfirm={count => {
-            setBulkAsking(false);
-            void createBulkProjects(count, {
-              makeBlankProject: createBlankProject,
-              save: p => saveProject(p),
-              upsertMeta: upsertProjectMeta,
-            }).then(made => {
-              // Every project is on the dashboard at once, then the rows open.
-              const data = loadAllMetas();
-              data.sort((a, b) => (b.savedAt ?? 0) - (a.savedAt ?? 0));
-              data.forEach(m => seenProjectIds.add(m.id));
-              setMetas(data);
-              onBulkCreated?.(made.map(m => ({ id: m.id, name: m.name })));
-            }).catch((err: unknown) => setBulkError(err instanceof Error ? err.message : String(err)));
-          }}
+          onConfirm={count => { setBulkAsking(false); onBulkStart?.(count); }}
         />
       )}
+
       {showBulkConfirm && (
         <div className="kxd-dialog-scrim">
           <div className="kxd-dialog" role="dialog" aria-modal="true" aria-label="Delete projects">

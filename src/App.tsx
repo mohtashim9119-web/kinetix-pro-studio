@@ -2253,7 +2253,8 @@ export default function App() {
   // Wave 3 U7.5 — the Bulk Projects rows modal lives here, not in the
   // dashboard: finishing a timeline opens that project in the editor, which
   // unmounts the dashboard, and the modal must survive that.
-  const [bulkProjects, setBulkProjects] = useState<{ id: string; name: string }[] | null>(null);
+  const [bulkRowCount, setBulkRowCount] = useState<number | null>(null);
+  const [dashboardVersion, setDashboardVersion] = useState(0);
   const [showProjectSettingsModal, setShowProjectSettingsModal] = useState(false);
   // WS2 T4.1 — the machine-global settings surface. Separate flag from
   // `showProjectSettingsModal` so both can be up at once: Project Settings
@@ -8254,9 +8255,17 @@ export default function App() {
       onOpenAppSettings={() => setShowAppSettingsModal(true)}
       onAssetCleanupFailed={showToast}
       parseProjectData={parseProjectData}
-      createBlankProject={makeDefaultProject}
-      onBulkCreated={setBulkProjects}
-      bulkOpen={bulkProjects !== null}
+      onBulkStart={setBulkRowCount}
+      metasVersion={dashboardVersion}
+      bulkOpen={bulkRowCount !== null}
+      onProjectsDeleted={ids => {
+        // The editor may still hold a project the dashboard just deleted (the
+        // last one opened): drop it, so it cannot be written back or resumed.
+        if (!ids.includes(project.id)) return;
+        setProjectSilent(makeDefaultProject());
+        setHistory(emptyHistory<Project>());
+        clearLastOpenedProjectId();
+      }}
     />
   ) : (
     /* `data-project-id` is the editor's rendered project IDENTITY. It exists so
@@ -9388,13 +9397,15 @@ export default function App() {
           whichever view is up. The dashboard stays mounted behind it and is
           only unmounted once `handleNewProjectConfirm` swaps in the new
           project, so cancelling needs no view restore. */}
-      {bulkProjects !== null && (
+      {bulkRowCount !== null && (
         <BulkProjectsModal
-          projects={bulkProjects}
+          initialCount={bulkRowCount}
+          createBlankProject={makeDefaultProject}
           parseProjectData={parseProjectData}
           finalizeProject={finalizeBulkProject}
-          onOpenProject={id => { setBulkProjects(null); void handleSwitchProject(id); }}
-          onClose={() => { setBulkProjects(null); setShowDashboard(true); }}
+          onProjectsCreated={() => setDashboardVersion(v => v + 1)}
+          onOpenProject={id => { setBulkRowCount(null); void handleSwitchProject(id); }}
+          onClose={() => { setBulkRowCount(null); setDashboardVersion(v => v + 1); setShowDashboard(true); }}
         />
       )}
       {showNewProjectModal && (

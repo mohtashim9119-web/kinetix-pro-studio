@@ -5,7 +5,9 @@
 
 // ---------------------------------------------------------------------------
 // Wave 3 U7.5 — the rows of the Bulk Projects modal: one upload surface per
-// bulk-created project.
+// DRAFT project. A row is only a draft: no project exists (nothing on the
+// dashboard, nothing in the registry) until Build Timeline, which creates the
+// complete rows and discards the empty ones.
 //
 // FILES STAGE EXACTLY WHERE THE EDITOR STAGES THEM. A row writes the same
 // `kinetix-staged` rows the project's own DropZone restores on open
@@ -35,30 +37,42 @@ import {
 } from './stagedFilesPersist';
 import { deleteStagedFile, putStagedFile } from './stagedFilesStore';
 import { computeAudioHash } from './spine';
-import { missingSlots, type BuildTimelineSlots } from './buildTimelineGate';
+import { BUILD_TIMELINE_COPY, missingSlots, type BuildTimelineSlots } from './buildTimelineGate';
+import { rowIncompleteReason } from './bulkContext';
 
 export type BulkAudioState = 'none' | 'preparing' | 'ready' | 'failed' | 'local';
 
-export interface BulkRowState {
-  projectId: string;
+export interface BulkRowFile {
+  /** Address inside the row: 'script' | 'scene' | 'voiceover' | 'asset:<key>' | 'zip:<key>' | 'bundle:<assetId>'. */
+  id: string;
+  kind: 'script' | 'scene' | 'voiceover' | 'media';
   name: string;
+}
+
+export interface BulkRowState {
+  /** The id the project will have when (if) it is created at Build Timeline. */
+  projectId: string;
   /** What the person typed. Empty until they name it: required to build. */
   typedName: string;
   slots: BuildTimelineSlots;
   mediaCount: number;
+  files: BulkRowFile[];
   audio: { state: BulkAudioState; detail?: string };
   /** What the last drop did, in plain words (skipped files, bundle problems). */
   notes: string[];
   busy: boolean;
+  /** The project has been created and handed to the batch: the row is locked. */
+  built: boolean;
 }
 
 export interface BulkRowDeps {
   loadStaged: (projectId: string) => Promise<StagedFiles | null>;
   writeStaged: (projectId: string, prev: StagedFiles, next: StagedFiles) => Promise<void>;
-  loadProject: (projectId: string) => Promise<{ project: Project } | null>;
-  saveProject: (project: Project) => Promise<{ ok: boolean }>;
-  /** Registry entry (dashboard card name) for a renamed project. */
-  upsertMeta?: (meta: { id: string; name: string; savedAt: number; segmentCount: number }) => void;
+  /** Creates + registers the project (dashboard card) at Build Timeline. */
+  createProject: (info: { id: string; name: string; assets: Asset[] }) => Promise<boolean>;
+  /** Everything a draft left behind: staged rows, vaulted bundle media. */
+  purge: (projectId: string, bundleAssets: Asset[]) => Promise<void>;
+  removeBundleAsset: (projectId: string, asset: Asset) => Promise<void>;
   hashAudio: (file: File) => Promise<string>;
   probeDuration: (file: File, audioHash: string) => Promise<number>;
   /** Cloud engine selected and usable: only then is audio pre-positioned. */
@@ -83,16 +97,30 @@ export function memoizedDuration(
 }
 export function __resetDurationMemoForTests(): void { durationMemo.clear(); }
 
-export const defaultBulkRowDeps = async (): Promise<BulkRowDeps> => {
-  const [{ loadProject, saveProject, upsertProjectMeta }, engine, tauri, host] = await Promise.all([
+export const defaultBulkRowDeps = async (makeBlankProject: () => Project): Promise<BulkRowDeps> => {
+  const [store, engine, tauri, host, assets, vault, staged, ctx] = await Promise.all([
     import('./projectStore'), import('./cloudSyncEngine'), import('./tauriFfmpeg'), import('./syncEngineHost'),
+    import('./assetStore'), import('./mediaVaultClient'), import('./stagedFilesStore'), import('./bulkContext'),
   ]);
+  const unreference = async (projectId: string, list: Asset[]): Promise<void> => {
+    const hashes = new Set(list.map(a => a.contentHash).filter((h): h is string => !!h));
+    await Promise.all([...hashes].map(h => vault.mediaVaultUnreference(h, projectId).catch(() => undefined)));
+  };
   return {
     loadStaged: loadStagedFromStore,
     writeStaged: writeStagedDiff,
-    loadProject,
-    saveProject: p => saveProject(p),
-    upsertMeta: upsertProjectMeta,
+    createProject: info => ctx.createBulkProject(info, {
+      makeBlankProject, save: p => store.saveProject(p), upsertMeta: store.upsertProjectMeta,
+    }),
+    purge: async (projectId, bundleAssets) => {
+      await staged.deleteAllStagedForProject(projectId).catch(() => undefined);
+      await assets.deleteAllAssets(projectId).catch(() => undefined);
+      await unreference(projectId, bundleAssets);
+    },
+    removeBundleAsset: async (projectId, asset) => {
+      await assets.deleteAsset(projectId, asset.id).catch(() => undefined);
+      await unreference(projectId, [asset]);
+    },
     hashAudio: computeAudioHash,
     probeDuration: (file, hash) => memoizedDuration(file, hash, tauri.probeAudioDuration),
     cloudActive: () => tauri.isTauri() && host.readSyncEngineHost() === 'cloud',
@@ -195,14 +223,26 @@ export function slotsOf(st: StagedFiles, persistedMedia: number): BuildTimelineS
   };
 }
 
+function filesOf(st: StagedFiles, bundle: readonly Asset[]): BulkRowFile[] {
+  const out: BulkRowFile[] = [];
+  if (st.scriptFile) out.push({ id: 'script', kind: 'script', name: st.scriptFile.file.name });
+  if (st.sceneFile) out.push({ id: 'scene', kind: 'scene', name: st.sceneFile.file.name });
+  if (st.voiceoverFile) out.push({ id: 'voiceover', kind: 'voiceover', name: st.voiceoverFile.file.name });
+  for (const f of st.assetFiles) out.push({ id: `asset:${f.key}`, kind: 'media', name: f.file.name });
+  for (const f of st.zipFiles) out.push({ id: `zip:${f.key}`, kind: 'media', name: f.file.name });
+  for (const a of bundle) out.push({ id: `bundle:${a.id}`, kind: 'media', name: a.name });
+  return out;
+}
+
 export class BulkRowStore {
   private rows = new Map<string, BulkRowState>();
   private order: string[] = [];
+  private bundle = new Map<string, Asset[]>();
   private listeners = new Set<() => void>();
   private view: readonly BulkRowState[] = [];
   private audioToken = new Map<string, number>();
 
-  constructor(private readonly deps: BulkRowDeps) {}
+  constructor(private readonly deps: BulkRowDeps, private readonly max = Infinity) {}
 
   subscribe(listener: () => void): () => void {
     this.listeners.add(listener);
@@ -220,96 +260,182 @@ export class BulkRowStore {
     this.emit();
   }
 
-  init(projects: readonly { id: string; name: string }[]): void {
+  private blankRow(id: string): BulkRowState {
+    return {
+      projectId: id, typedName: '', mediaCount: 0, files: [], notes: [], busy: false, built: false,
+      slots: { script: false, scene: false, voiceover: false, media: false },
+      audio: { state: 'none' },
+    };
+  }
+
+  /** N empty draft rows. Nothing is created anywhere. */
+  init(count: number): void {
     this.rows.clear();
-    this.order = projects.map(p => p.id);
-    for (const p of projects) {
-      this.rows.set(p.id, {
-        projectId: p.id, name: p.name, typedName: '', mediaCount: 0, notes: [], busy: false,
-        slots: { script: false, scene: false, voiceover: false, media: false },
-        audio: { state: 'none' },
-      });
-    }
+    this.order = [];
+    this.bundle.clear();
+    for (let i = 0; i < count; i++) this.pushRow();
     this.emit();
   }
 
-  /** Rows with a name AND all four slots — what the batch will take. */
+  private pushRow(): string {
+    const id = crypto.randomUUID();
+    this.rows.set(id, this.blankRow(id));
+    this.order.push(id);
+    return id;
+  }
+
+  canAddRow(): boolean { return this.order.length < this.max; }
+
+  /** "Add project": one more empty draft row. */
+  addRow(): string | undefined {
+    if (!this.canAddRow()) return undefined;
+    const id = this.pushRow();
+    this.emit();
+    return id;
+  }
+
+  /** Rows with a name AND all four slots that have not been built yet. */
   completeIds(): string[] {
     return this.order.filter(id => {
       const r = this.rows.get(id)!;
-      return r.typedName.trim().length > 0 && missingSlots(r.slots).length === 0;
+      return !r.built && r.typedName.trim().length > 0 && missingSlots(r.slots).length === 0;
     });
   }
 
-  /** Typing only updates the row; `commitName` writes it to the project. */
-  setTypedName(projectId: string, typed: string): void {
-    this.patch(projectId, { typedName: typed });
+  setTypedName(id: string, typed: string): void {
+    this.patch(id, { typedName: typed });
   }
 
-  /** Writes the typed name to the stored project and the dashboard registry. */
-  async commitName(projectId: string): Promise<void> {
-    const row = this.rows.get(projectId);
-    const name = row?.typedName.trim();
-    if (!row || !name || name === row.name) return;
-    const stored = await this.deps.loadProject(projectId);
-    if (!stored) return;
-    const saved = await this.deps.saveProject({ ...stored.project, name });
-    if (!saved.ok) { this.patch(projectId, { notes: ['The project name could not be saved.'] }); return; }
-    this.deps.upsertMeta?.({ id: projectId, name, savedAt: Date.now(), segmentCount: stored.project.segments.length });
-    this.patch(projectId, { name });
+  private refresh(id: string, st: StagedFiles, extra: Partial<BulkRowState> = {}): void {
+    const bundle = this.bundle.get(id) ?? [];
+    const persistedMedia = bundle.filter(a => a.type !== 'audio').length;
+    this.patch(id, {
+      slots: slotsOf(st, persistedMedia),
+      mediaCount: st.assetFiles.length + st.zipFiles.length + persistedMedia,
+      files: filesOf(st, bundle),
+      ...extra,
+    });
   }
 
-  async commitAllNames(): Promise<void> {
-    for (const id of this.order) await this.commitName(id);
-  }
-
-  async addFiles(projectId: string, files: readonly File[]): Promise<void> {
-    if (!this.rows.has(projectId) || files.length === 0) return;
-    this.patch(projectId, { busy: true, notes: [] });
+  async addFiles(id: string, files: readonly File[]): Promise<void> {
+    const row = this.rows.get(id);
+    if (!row || row.built || files.length === 0) return;
+    this.patch(id, { busy: true, notes: [] });
     try {
-      const prev = (await this.deps.loadStaged(projectId)) ?? EMPTY_STAGED;
-      const stored = await this.deps.loadProject(projectId);
-      const existing = (stored?.project.assets ?? []).map(a => a.contentHash).filter((h): h is string => !!h);
-      const drop = await classifyRowDrop(projectId, prev, files, this.deps, existing);
-      let persistedMedia = (stored?.project.assets ?? []).filter(a => a.type !== 'audio').length;
-      if (drop.bundleMedia.length > 0 && stored) {
-        // A bundle's media is already in the vault; the project owns it from here.
-        const project = { ...stored.project, assets: [...stored.project.assets, ...drop.bundleMedia] };
-        const saved = await this.deps.saveProject(project);
-        if (saved.ok) persistedMedia += drop.bundleMedia.length;
-        else drop.notes.push('The bundle’s media could not be saved to the project.');
-      }
-      await this.deps.writeStaged(projectId, prev, drop.next);
-      const row = this.rows.get(projectId)!;
-      this.patch(projectId, {
-        slots: slotsOf(drop.next, persistedMedia),
-        mediaCount: drop.next.assetFiles.length + drop.next.zipFiles.length + persistedMedia,
+      const prev = (await this.deps.loadStaged(id)) ?? EMPTY_STAGED;
+      const have = this.bundle.get(id) ?? [];
+      const drop = await classifyRowDrop(id, prev, files, this.deps, have.map(a => a.contentHash).filter((h): h is string => !!h));
+      // A bundle's media is already in the vault; it is attached to the
+      // project when (if) the project is created.
+      if (drop.bundleMedia.length > 0) this.bundle.set(id, [...have, ...drop.bundleMedia]);
+      await this.deps.writeStaged(id, prev, drop.next);
+      this.refresh(id, drop.next, {
         notes: drop.notes,
         busy: false,
-        audio: drop.voiceover ? { state: this.deps.cloudActive() ? 'preparing' : 'local' } : row.audio,
+        audio: drop.voiceover ? { state: this.deps.cloudActive() ? 'preparing' : 'local' } : this.rows.get(id)!.audio,
       });
-      if (drop.voiceover && this.deps.cloudActive()) void this.prepareAudio(projectId, drop.voiceover);
+      if (drop.voiceover && this.deps.cloudActive()) void this.prepareAudio(id, drop.voiceover);
     } catch (err) {
-      this.patch(projectId, { busy: false, notes: [`Couldn’t add those files: ${err instanceof Error ? err.message : String(err)}`] });
+      this.patch(id, { busy: false, notes: [`Couldn’t add those files: ${err instanceof Error ? err.message : String(err)}`] });
     }
   }
 
+  /** Removes one file from a row (a wrong drop). */
+  async removeFile(id: string, fileId: string): Promise<void> {
+    const row = this.rows.get(id);
+    if (!row || row.built) return;
+    const prev = (await this.deps.loadStaged(id)) ?? EMPTY_STAGED;
+    let next = prev;
+    if (fileId.startsWith('bundle:')) {
+      const assetId = fileId.slice('bundle:'.length);
+      const list = this.bundle.get(id) ?? [];
+      const gone = list.find(a => a.id === assetId);
+      if (gone) await this.deps.removeBundleAsset(id, gone);
+      this.bundle.set(id, list.filter(a => a.id !== assetId));
+    } else {
+      next = {
+        scriptFile: fileId === 'script' ? null : prev.scriptFile,
+        sceneFile: fileId === 'scene' ? null : prev.sceneFile,
+        voiceoverFile: fileId === 'voiceover' ? null : prev.voiceoverFile,
+        assetFiles: prev.assetFiles.filter(f => `asset:${f.key}` !== fileId),
+        zipFiles: prev.zipFiles.filter(f => `zip:${f.key}` !== fileId),
+      };
+      await this.deps.writeStaged(id, prev, next);
+    }
+    const extra: Partial<BulkRowState> = { notes: [] };
+    if (fileId === 'voiceover') {
+      this.audioToken.set(id, (this.audioToken.get(id) ?? 0) + 1); // a late prep must not resurrect the state
+      extra.audio = { state: 'none' };
+    }
+    this.refresh(id, next, extra);
+  }
+
+  /** Clears every file of a row, keeping the row and its name. */
+  async clearFiles(id: string): Promise<void> {
+    const row = this.rows.get(id);
+    if (!row || row.built) return;
+    await this.deps.purge(id, this.bundle.get(id) ?? []);
+    this.bundle.delete(id);
+    this.audioToken.set(id, (this.audioToken.get(id) ?? 0) + 1);
+    this.refresh(id, EMPTY_STAGED, { notes: [], audio: { state: 'none' } });
+  }
+
+  /** Drops a draft row and everything it staged. */
+  async discardRow(id: string): Promise<void> {
+    if (!this.rows.has(id)) return;
+    await this.deps.purge(id, this.bundle.get(id) ?? []);
+    this.rows.delete(id);
+    this.bundle.delete(id);
+    this.order = this.order.filter(x => x !== id);
+    this.emit();
+  }
+
+  /** Closing the modal: drafts that never became projects leave nothing behind. */
+  async discardUnbuilt(): Promise<void> {
+    for (const id of [...this.order]) if (!this.rows.get(id)!.built) await this.discardRow(id);
+  }
+
+  /**
+   * Build Timeline: create the projects that are real (named, four slots) and
+   * discard the empty drafts. A half-filled row is neither: it stays a draft,
+   * with the reason it was left out.
+   */
+  async buildReady(): Promise<{ created: { id: string; name: string }[]; skips: Record<string, string> }> {
+    const created: { id: string; name: string }[] = [];
+    const skips: Record<string, string> = {};
+    for (const id of [...this.order]) {
+      const r = this.rows.get(id)!;
+      if (r.built) continue;
+      const empty = r.files.length === 0 && r.typedName.trim() === '';
+      if (empty) { await this.discardRow(id); continue; }
+      const missing = missingSlots(r.slots).map(slot => BUILD_TIMELINE_COPY.slotNames[slot]);
+      const why = rowIncompleteReason(r.typedName, missing);
+      if (why) { skips[id] = why; continue; }
+      const name = r.typedName.trim();
+      const ok = await this.deps.createProject({ id, name, assets: this.bundle.get(id) ?? [] });
+      if (!ok) { skips[id] = 'the project could not be saved'; continue; }
+      this.patch(id, { built: true });
+      created.push({ id, name });
+    }
+    return { created, skips };
+  }
+
   /** Eager, GPU-free: hash, probe, Opus-encode, PUT. Never submits a job. */
-  private async prepareAudio(projectId: string, file: File): Promise<void> {
-    const token = (this.audioToken.get(projectId) ?? 0) + 1;
-    this.audioToken.set(projectId, token);
-    const current = (): boolean => this.audioToken.get(projectId) === token;
+  private async prepareAudio(id: string, file: File): Promise<void> {
+    const token = (this.audioToken.get(id) ?? 0) + 1;
+    this.audioToken.set(id, token);
+    const current = (): boolean => this.audioToken.get(id) === token;
     try {
       const hash = await this.deps.hashAudio(file);
       const duration = await this.deps.probeDuration(file, hash);
       await this.deps.stageAudio(file, hash, duration);
-      if (current()) this.patch(projectId, { audio: { state: 'ready' } });
+      if (current()) this.patch(id, { audio: { state: 'ready' } });
     } catch (err) {
       const detail = err instanceof Error ? err.message
         : typeof err === 'object' && err !== null && 'detail' in err ? String((err as { detail: unknown }).detail)
         : typeof err === 'object' && err !== null && 'kind' in err ? String((err as { kind: unknown }).kind) : String(err);
       // Not fatal: the job encodes and uploads it itself if this did not land.
-      if (current()) this.patch(projectId, { audio: { state: 'failed', detail } });
+      if (current()) this.patch(id, { audio: { state: 'failed', detail } });
     }
   }
 }

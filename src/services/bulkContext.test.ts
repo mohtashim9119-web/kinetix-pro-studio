@@ -20,7 +20,7 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(), Channel: class {} }));
 
 import { invoke } from '@tauri-apps/api/core';
 import {
-  BULK_MAX_PROJECTS, bulkProjectName, createBulkProjects, decideStagingStart, isBulkAutoFireSuppressed,
+  BULK_MAX_PROJECTS, createBulkProject, decideStagingStart, isBulkAutoFireSuppressed,
   makeBulkProject, parseBulkCount, peekCloudTranscript,
 } from './bulkContext';
 import { loadAllMetas, loadProject, saveProject, upsertProjectMeta } from './projectStore';
@@ -44,7 +44,7 @@ describe('old bug 1 — an ordinary project has nothing stopping a cloud auto-st
 
 describe('suppression for bulk-context projects', () => {
   it('a bulk project that has not built only peeks (lookup-first); an explicit click or a pause answer still starts', () => {
-    const p = makeBulkProject(blank(), 1);
+    const p = makeBulkProject(blank(), { id: 'x', name: 'Harbour', assets: [] });
     expect(isBulkAutoFireSuppressed(p)).toBe(true);
     expect(decideStagingStart({ project: p, host: 'cloud', explicit: false, rerun: false })).toBe('lookup-first');
     expect(decideStagingStart({ project: p, host: 'cloud', explicit: true, rerun: false })).toBe('start');
@@ -54,14 +54,16 @@ describe('suppression for bulk-context projects', () => {
   });
 
   it('after the first successful build (lastSyncSpine) normal semantics resume', () => {
-    const p = { ...makeBulkProject(blank(), 1), lastSyncSpine: { audioHash: 'a', scriptHash: 's', engineKey: 'e' } } as Project;
+    const p = { ...makeBulkProject(blank(), { id: 'x', name: 'Harbour', assets: [] }), lastSyncSpine: { audioHash: 'a', scriptHash: 's', engineKey: 'e' } } as Project;
     expect(isBulkAutoFireSuppressed(p)).toBe(false);
     expect(decideStagingStart({ project: p, host: 'cloud', explicit: false, rerun: false })).toBe('start');
   });
 
   it('the flag persists across a reload (real project store round trip)', async () => {
-    const [made] = await createBulkProjects(1, { makeBlankProject: blank, save: p => saveProject(p), upsertMeta: upsertProjectMeta });
-    const reloaded = await loadProject(made!.id);
+    const ok = await createBulkProject({ id: '44444444-4444-4444-8444-444444444444', name: 'Harbour', assets: [] },
+      { makeBlankProject: blank, save: p => saveProject(p), upsertMeta: upsertProjectMeta });
+    expect(ok).toBe(true);
+    const reloaded = await loadProject('44444444-4444-4444-8444-444444444444');
     expect(reloaded?.project.bulkContext).toBe(true);
     expect(isBulkAutoFireSuppressed(reloaded!.project)).toBe(true);
   });
@@ -81,26 +83,24 @@ describe('suppression for bulk-context projects', () => {
   });
 });
 
-describe('creation', () => {
-  it('names them Bulk Project 1…N, all persisted and registered at once, EMPTY (no placeholder script/scene)', async () => {
-    const made = await createBulkProjects(3, { makeBlankProject: blank, save: p => saveProject(p), upsertMeta: upsertProjectMeta });
-    expect(made.map(p => p.name)).toEqual(['Bulk Project 1', 'Bulk Project 2', 'Bulk Project 3']);
-    expect(new Set(made.map(p => p.id)).size).toBe(3);
-    expect(loadAllMetas().map(m => m.name).sort()).toEqual(['Bulk Project 1', 'Bulk Project 2', 'Bulk Project 3']);
-    for (const p of made) {
-      expect(p.script).toBe('');
-      expect(p.sceneDetails).toBe('');
-      expect(p.confirmed).toBe(true);
-      expect(p.bulkContext).toBe(true);
-      const stored = await loadProject(p.id);
-      expect(stored?.project.name).toBe(p.name);
-    }
-    expect(bulkProjectName(12)).toBe('Bulk Project 12');
+describe('creation — one project per real row, at Build Timeline', () => {
+  it('creates the named project with the row\'s id and bundle media, registered, EMPTY of placeholder script/scene', async () => {
+    const asset = { id: 'a1', name: 'a.jpg', type: 'image' } as never;
+    const ok = await createBulkProject({ id: '55555555-5555-4555-8555-555555555555', name: 'Alpine', assets: [asset] },
+      { makeBlankProject: blank, save: p => saveProject(p), upsertMeta: upsertProjectMeta });
+    expect(ok).toBe(true);
+    const stored = (await loadProject('55555555-5555-4555-8555-555555555555'))!.project;
+    expect(stored).toMatchObject({ name: 'Alpine', script: '', sceneDetails: '', confirmed: true, bulkContext: true });
+    expect(stored.assets.map(a => a.id)).toEqual(['a1']);
+    expect(loadAllMetas().map(m => m.name)).toEqual(['Alpine']);
   });
 
-  it('a failed save stops creation with a plain message', async () => {
-    await expect(createBulkProjects(2, { makeBlankProject: blank, save: async () => ({ ok: false }), upsertMeta: () => {} }))
-      .rejects.toThrow(/Couldn’t save Bulk Project 1/);
+  it('a failed save creates nothing and says so (false)', async () => {
+    let metas = 0;
+    const ok = await createBulkProject({ id: 'x', name: 'n', assets: [] },
+      { makeBlankProject: blank, save: async () => ({ ok: false }), upsertMeta: () => { metas++; } });
+    expect(ok).toBe(false);
+    expect(metas).toBe(0);
   });
 
   it('the quantity is a whole number from 1 to the cap (25)', () => {
