@@ -320,7 +320,7 @@ export async function saveProject(project: Project, opts: SaveOptions = {}): Pro
   // editor can still hold it in memory, and its autosave / teardown flush would
   // otherwise recreate the record and the registry entry (Bulk Projects
   // surfaced it — finishing timelines leaves the last one loaded).
-  if (deletedThisSession.has(project.id)) return { ok: true };
+  if (deletedProjectIds().has(project.id)) return { ok: true };
 
   // Guard 2 — a project whose load failed is poisoned for writing.
   const poisoned = loadFailures.get(project.id);
@@ -663,12 +663,37 @@ export function upsertProjectMeta(meta: ProjectMeta): void {
   }
 }
 
-/** Ids deleted in this session; `saveProject` refuses to resurrect them. */
+/**
+ * Ids the operator deleted. Persisted (bounded), so neither a late save nor
+ * boot-time mirror adoption can bring one back — the ordering fix in
+ * `projectMirror.ts` prevents the race, this is the backstop for any stale
+ * mirror copy that still exists.
+ */
+const TOMBSTONE_KEY = 'kinetix:deleted-projects:v1';
+const TOMBSTONE_CAP = 500;
 const deletedThisSession = new Set<string>();
+
+export function deletedProjectIds(): Set<string> {
+  const ids = new Set<string>(deletedThisSession);
+  try {
+    const raw = localStorage.getItem(TOMBSTONE_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    if (Array.isArray(parsed)) for (const id of parsed) if (typeof id === 'string') ids.add(id);
+  } catch { /* unreadable list: the session set still applies */ }
+  return ids;
+}
+
+function rememberDeleted(id: string): void {
+  deletedThisSession.add(id);
+  try {
+    const list = [...deletedProjectIds()].slice(-TOMBSTONE_CAP);
+    localStorage.setItem(TOMBSTONE_KEY, JSON.stringify(list));
+  } catch { /* quota: the session set still applies */ }
+}
 
 /** Removes a project's stored record and its registry entry. */
 export async function deleteProjectData(id: string): Promise<void> {
-  deletedThisSession.add(id);
+  rememberDeleted(id);
   const remove = isTauri() ? osStoreDelete(id) : Promise.resolve(localStorage.removeItem(projectKey(id)));
   await remove.catch(err => console.error(`[kinetix] Failed to delete stored project ${id}:`, err));
   clearLoadFailure(id);
@@ -681,7 +706,9 @@ export async function deleteProjectData(id: string): Promise<void> {
     localStorage.removeItem(REGISTRY_KEY);
     registryJson = '[]';
   }
-  void deleteMirroredProject(id, registryJson);
+  // Awaited (and ordered after any earlier mirror write): a quick reload must
+  // not find a stale mirror copy that adoption would restore.
+  await deleteMirroredProject(id, registryJson);
 }
 
 // ---------------------------------------------------------------------------
@@ -747,8 +774,14 @@ export async function adoptMirroredProjects(): Promise<AdoptionReport> {
     }
   }
 
+  const deleted = deletedProjectIds();
   for (const [id, contents] of snapshot.projects) {
     try {
+      if (deleted.has(id)) {
+        // The operator deleted this; a stale mirror copy is cleaned up, never restored.
+        await deleteMirroredProject(id);
+        continue;
+      }
       if ((await osStoreRead(id)) !== null) {
         report.skippedAlreadyLocal.push(id);
         continue;

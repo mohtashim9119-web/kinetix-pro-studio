@@ -56,25 +56,44 @@ export async function readMirror(): Promise<MirrorSnapshot | null> {
  * Fire-and-forget: callers do not await this, and it resolves rather than
  * rejects on failure.
  */
-export async function writeMirroredProject(
+export function writeMirroredProject(
   id: string,
   contents: string,
   registry?: string,
 ): Promise<void> {
-  if (!isTauri()) return;
-  try {
-    await invoke('project_mirror_write_project', { id, contents, registry: registry ?? null });
-  } catch (err) {
-    console.warn(`[projectMirror] write failed for ${id} (local save unaffected):`, err);
-  }
+  if (!isTauri()) return Promise.resolve();
+  return inOrder(async () => {
+    try {
+      await invoke('project_mirror_write_project', { id, contents, registry: registry ?? null });
+    } catch (err) {
+      console.warn(`[projectMirror] write failed for ${id} (local save unaffected):`, err);
+    }
+  });
+}
+
+/**
+ * Mirror writes and deletes run ONE AT A TIME, in the order they were asked.
+ * The native commands are synchronous and Tauri runs them on a thread pool, so
+ * two fire-and-forget calls are not ordered: a save made just before a delete
+ * could land after it and put the deleted project back in the mirror — which
+ * boot-time adoption then restored (bulk-built projects, saved by the batch
+ * moments before the operator deleted them, came back after a reload).
+ */
+let mirrorChain: Promise<void> = Promise.resolve();
+function inOrder(work: () => Promise<void>): Promise<void> {
+  const next = mirrorChain.then(work, work);
+  mirrorChain = next.catch(() => undefined);
+  return next;
 }
 
 /** Removes a project from the mirror. Its backups are retained by design. */
-export async function deleteMirroredProject(id: string, registry?: string): Promise<void> {
-  if (!isTauri()) return;
-  try {
-    await invoke('project_mirror_delete_project', { id, registry: registry ?? null });
-  } catch (err) {
-    console.warn(`[projectMirror] delete failed for ${id}:`, err);
-  }
+export function deleteMirroredProject(id: string, registry?: string): Promise<void> {
+  if (!isTauri()) return Promise.resolve();
+  return inOrder(async () => {
+    try {
+      await invoke('project_mirror_delete_project', { id, registry: registry ?? null });
+    } catch (err) {
+      console.warn(`[projectMirror] delete failed for ${id}:`, err);
+    }
+  });
 }
