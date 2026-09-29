@@ -34,6 +34,7 @@
 // ---------------------------------------------------------------------------
 
 import { canonicalize } from './textNormalize';
+import { expandTokensToWords } from './transcriptWords';
 import type { FaLanguageCode } from './faTextNormalize';
 import type { VideoSegment, TranscriptToken } from '../types';
 
@@ -95,7 +96,7 @@ export function computeLocalPreFaCoverage(
   const scriptWords = scriptSegments.flatMap(s => (s.text ? canonicalize(s.text, languageCode) : []));
   if (scriptWords.length === 0) return { coverage: 1, band: 'ok', scriptWordCount: 0 };
 
-  const transcriptWords = transcriptTokens.flatMap(t => canonicalize(t.text, languageCode));
+  const transcriptWords = expandTokensToWords(transcriptTokens, languageCode).words.map(w => w.word);
   const bag = wordBag(transcriptWords);
 
   let matched = 0;

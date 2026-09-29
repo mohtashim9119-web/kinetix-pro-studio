@@ -370,8 +370,75 @@ def expand_cardinal_token(stripped: str, data: dict[str, Any]) -> str | None:
     n = int(stripped)
     yr = data["yearReading"]
     if len(stripped) == 4 and yr["rangeMin"] <= n <= yr["rangeMax"]:
-        return compose_year_reading(n, select_year_candidate(n, yr["selectionPolicy"]), data)
-    return cardinal_to_words(n, data)
+        return compose_year_reading(n, select_year_candidate(n, yr["selectionPolicy"]), data).lower()
+    # Lowercased: German's scale words are capitalized in the data ("Million").
+    return cardinal_to_words(n, data).lower()
+
+
+# --- AMOUNT tokens: byte-identical mirror of faTextNormalize.ts's amount
+# section (grammar, reading order, plural rule), pinned by the shared
+# scripts/fixtures/fa-amount-lockstep.json corpus. ---------------------------
+
+AMOUNT_CURRENCY_SYMBOLS = ("$", "€", "£")
+MAX_SAFE_INTEGER = 9_007_199_254_740_991
+_AMOUNT_CORE_EN = re.compile(r"^([0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)(?:\.([0-9]+))?$")
+_AMOUNT_CORE_OTHER = re.compile(r"^([0-9]{1,3}(?:\.[0-9]{3})+|[0-9]+)(?:,([0-9]+))?$")
+
+
+def parse_amount_token(stripped: str, language: str) -> dict[str, Any] | None:
+    """One already-edge-stripped, lowercased token as an amount, or None (not
+    an amount — including a BARE integer, which keeps its cardinal/year reading)."""
+    s = stripped
+    currency: str | None = None
+    percent = False
+    if s and s[0] in AMOUNT_CURRENCY_SYMBOLS:
+        currency = s[0]
+        s = s[1:]
+    if s.endswith("%"):
+        percent = True
+        s = s[:-1]
+    if currency is None and s and s[-1] in AMOUNT_CURRENCY_SYMBOLS:
+        currency = s[-1]
+        s = s[:-1]
+    m = (_AMOUNT_CORE_EN if language == "en" else _AMOUNT_CORE_OTHER).match(s)
+    if not m:
+        return None
+    raw_int = m.group(1)
+    frac = m.group(2)
+    has_separator = bool(re.search(r"[.,]", raw_int)) or frac is not None
+    if currency is None and not percent and not has_separator:
+        return None  # bare integer
+    int_digits = re.sub(r"[.,]", "", raw_int)
+    if len(int_digits) > 1 and int_digits[0] == "0":
+        return None
+    if int(int_digits) > MAX_SAFE_INTEGER:
+        return None
+    return {"int": int_digits, "frac": frac, "currency": currency, "percent": percent}
+
+
+def spoken_amount(parts: dict[str, Any], data: dict[str, Any]) -> str | None:
+    words = data.get("amount")
+    if not words:
+        return None
+    n = int(parts["int"])
+    out = cardinal_to_words(n, data).lower()
+    if parts["frac"] is not None:
+        out += " " + words["pointWord"]
+        for d in parts["frac"]:
+            out += " " + cardinal0to99(int(d), data).lower()
+    if parts["currency"] is not None:
+        c = words["currency"].get(parts["currency"])
+        if c is None:
+            return None
+        out += " " + (c["one"] if n == 1 and parts["frac"] is None else c["other"])
+    if parts["percent"]:
+        out += " " + words["percentWord"]
+    return out
+
+
+def expand_amount_token(stripped: str, language: str, data: dict[str, Any]) -> str | None:
+    parts = parse_amount_token(stripped, language)
+    return spoken_amount(parts, data) if parts else None
 
 
 def fold_french_elision_backtick(word: str, vocab_chars: set[str]) -> str:
@@ -418,7 +485,9 @@ def normalize_word(raw: str, language: str, vocab_chars: set[str], cardinal: dic
     stripped = strip_boundary_punct(folded)
     if not stripped:
         return {"input": raw, "representable": False, "reason": "reduced to nothing"}
-    expansion = expand_cardinal_token(stripped, cardinal)
+    expansion = expand_amount_token(stripped, language, cardinal)
+    if expansion is None:
+        expansion = expand_cardinal_token(stripped, cardinal)
     candidate = expansion if expansion is not None else stripped
     if expansion is None and DIGIT_RE.search(stripped):
         return {"input": raw, "representable": False, "reason": "contains a digit"}
@@ -564,6 +633,12 @@ def load_vocab(language: str, vocab_dir: Path | None = None) -> Vocab:
         elif len(key) == 1:
             char_to_id[key] = ident
     cardinal = json.loads((root / f"fa-cardinal-{language}.json").read_text(encoding="utf-8"))
+    # Amount words live in their OWN file (never the cardinal JSON: its digest
+    # keys the alignment cache). Optional so an image built before the file
+    # existed still boots — amount tokens then keep the pre-amount behavior.
+    amount_path = root / "fa-amount-words.json"
+    if amount_path.exists():
+        cardinal["amount"] = json.loads(amount_path.read_text(encoding="utf-8"))["languages"][language]
     return Vocab(char_to_id=char_to_id, chars=chars, blank_id=blank_id, word_delim_id=word_delim_id, cardinal=cardinal)
 
 

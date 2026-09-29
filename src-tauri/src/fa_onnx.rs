@@ -787,7 +787,13 @@ fn cardinal_json_for(language: &str) -> Result<&'static str, FaOnnxError> {
 
 fn load_cardinal_data(language: &str) -> Result<crate::fa::text::FaCardinalData, FaOnnxError> {
     let json_str = cardinal_json_for(language)?;
-    Ok(serde_json::from_str(json_str).expect("embedded fa-cardinal-*.json must parse"))
+    let data: crate::fa::text::FaCardinalData =
+        serde_json::from_str(json_str).expect("embedded fa-cardinal-*.json must parse");
+    // Amount words come from their own embedded file (fa-amount-words.json),
+    // never from the cardinal JSON — see `FaCardinalData::amount`.
+    let lang = crate::fa::text::Language::from_code(language)
+        .ok_or_else(|| FaOnnxError::UnsupportedLanguage(language.to_string()))?;
+    Ok(crate::fa::text::with_amount_words(data, lang))
 }
 
 fn load_vocab(language: &str) -> Result<Vocab, FaOnnxError> {

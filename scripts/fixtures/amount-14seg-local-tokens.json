@@ -1,0 +1,524 @@
+{
+ "_provenance": {
+  "audio": "3. Voiceover.mp3 (14-segment project), sha256 ab5e4f1864cf92ccb9b24555a97bc329ad25907de99a49cc7bd87dd2414f9983",
+  "durationSec": 32.69,
+  "note": "Amount-drop regression fixture. tokens are the two engines' raw transcripts of the SAME audio in their own dialects (cloud: faster-whisper words, '$11' ',000.'; local: whisper.cpp -ml 1 tokens, '$' '11' ',' '000'). silences: silenceDetector.ts algorithm on the native-rate left channel."
+ },
+ "tokens": [
+  {
+   "startSec": 0.16,
+   "endSec": 0.2,
+   "text": "You"
+  },
+  {
+   "startSec": 0.2,
+   "endSec": 0.32,
+   "text": "are"
+  },
+  {
+   "startSec": 0.32,
+   "endSec": 0.65,
+   "text": "24"
+  },
+  {
+   "startSec": 0.65,
+   "endSec": 0.84,
+   "text": "."
+  },
+  {
+   "startSec": 0.84,
+   "endSec": 1.18,
+   "text": "The"
+  },
+  {
+   "startSec": 1.18,
+   "endSec": 1.33,
+   "text": "year"
+  },
+  {
+   "startSec": 1.33,
+   "endSec": 1.47,
+   "text": "is"
+  },
+  {
+   "startSec": 1.47,
+   "endSec": 2.3,
+   "text": "2003"
+  },
+  {
+   "startSec": 2.3,
+   "endSec": 2.51,
+   "text": "."
+  },
+  {
+   "startSec": 2.51,
+   "endSec": 2.71,
+   "text": "You"
+  },
+  {
+   "startSec": 2.71,
+   "endSec": 2.78,
+   "text": "have"
+  },
+  {
+   "startSec": 2.78,
+   "endSec": 3.11,
+   "text": ","
+  },
+  {
+   "startSec": 3.11,
+   "endSec": 3.38,
+   "text": "in"
+  },
+  {
+   "startSec": 3.38,
+   "endSec": 3.5,
+   "text": "your"
+  },
+  {
+   "startSec": 3.5,
+   "endSec": 3.97,
+   "text": "savings"
+  },
+  {
+   "startSec": 3.97,
+   "endSec": 4.44,
+   "text": "account"
+  },
+  {
+   "startSec": 4.44,
+   "endSec": 4.57,
+   "text": ","
+  },
+  {
+   "startSec": 4.57,
+   "endSec": 4.67,
+   "text": "$"
+  },
+  {
+   "startSec": 4.67,
+   "endSec": 5.16,
+   "text": "11"
+  },
+  {
+   "startSec": 5.16,
+   "endSec": 5.23,
+   "text": ","
+  },
+  {
+   "startSec": 5.23,
+   "endSec": 5.76,
+   "text": "000"
+  },
+  {
+   "startSec": 5.76,
+   "endSec": 6.02,
+   "text": "."
+  },
+  {
+   "startSec": 6.02,
+   "endSec": 7.13,
+   "text": "You"
+  },
+  {
+   "startSec": 7.13,
+   "endSec": 7.28,
+   "text": "need"
+  },
+  {
+   "startSec": 7.28,
+   "endSec": 7.52,
+   "text": "a"
+  },
+  {
+   "startSec": 7.52,
+   "endSec": 7.61,
+   "text": "car"
+  },
+  {
+   "startSec": 7.61,
+   "endSec": 8.44,
+   "text": "."
+  },
+  {
+   "startSec": 8.44,
+   "endSec": 8.52,
+   "text": "You"
+  },
+  {
+   "startSec": 8.52,
+   "endSec": 8.66,
+   "text": "go"
+  },
+  {
+   "startSec": 8.66,
+   "endSec": 8.86,
+   "text": "to"
+  },
+  {
+   "startSec": 8.86,
+   "endSec": 8.88,
+   "text": "a"
+  },
+  {
+   "startSec": 8.88,
+   "endSec": 9.19,
+   "text": "used"
+  },
+  {
+   "startSec": 9.19,
+   "endSec": 9.47,
+   "text": "lot"
+  },
+  {
+   "startSec": 9.47,
+   "endSec": 9.57,
+   "text": "on"
+  },
+  {
+   "startSec": 9.57,
+   "endSec": 9.64,
+   "text": "a"
+  },
+  {
+   "startSec": 9.64,
+   "endSec": 10.26,
+   "text": "Saturday"
+  },
+  {
+   "startSec": 10.26,
+   "endSec": 10.41,
+   "text": "in"
+  },
+  {
+   "startSec": 10.41,
+   "endSec": 10.79,
+   "text": "April"
+  },
+  {
+   "startSec": 10.79,
+   "endSec": 11.02,
+   "text": "."
+  },
+  {
+   "startSec": 11.02,
+   "endSec": 11.25,
+   "text": "The"
+  },
+  {
+   "startSec": 11.25,
+   "endSec": 11.39,
+   "text": "sales"
+  },
+  {
+   "startSec": 11.39,
+   "endSec": 12.04,
+   "text": "man"
+  },
+  {
+   "startSec": 12.04,
+   "endSec": 12.24,
+   "text": "walks"
+  },
+  {
+   "startSec": 12.24,
+   "endSec": 12.58,
+   "text": "you"
+  },
+  {
+   "startSec": 12.58,
+   "endSec": 12.62,
+   "text": "to"
+  },
+  {
+   "startSec": 12.62,
+   "endSec": 12.69,
+   "text": "a"
+  },
+  {
+   "startSec": 12.69,
+   "endSec": 13.89,
+   "text": "2001"
+  },
+  {
+   "startSec": 13.89,
+   "endSec": 13.99,
+   "text": "Honda"
+  },
+  {
+   "startSec": 13.99,
+   "endSec": 14.48,
+   "text": "Civic"
+  },
+  {
+   "startSec": 14.48,
+   "endSec": 14.96,
+   "text": "with"
+  },
+  {
+   "startSec": 14.96,
+   "endSec": 15.2,
+   "text": "84"
+  },
+  {
+   "startSec": 15.2,
+   "endSec": 15.79,
+   "text": ","
+  },
+  {
+   "startSec": 15.79,
+   "endSec": 16.28,
+   "text": "000"
+  },
+  {
+   "startSec": 16.28,
+   "endSec": 16.64,
+   "text": "miles"
+  },
+  {
+   "startSec": 16.64,
+   "endSec": 16.84,
+   "text": "on"
+  },
+  {
+   "startSec": 16.84,
+   "endSec": 16.98,
+   "text": "it"
+  },
+  {
+   "startSec": 16.98,
+   "endSec": 17.23,
+   "text": "."
+  },
+  {
+   "startSec": 17.23,
+   "endSec": 17.48,
+   "text": "The"
+  },
+  {
+   "startSec": 17.48,
+   "endSec": 17.91,
+   "text": "Civic"
+  },
+  {
+   "startSec": 17.91,
+   "endSec": 18.08,
+   "text": "is"
+  },
+  {
+   "startSec": 18.08,
+   "endSec": 19.03,
+   "text": "technically"
+  },
+  {
+   "startSec": 19.03,
+   "endSec": 19.35,
+   "text": "gray"
+  },
+  {
+   "startSec": 19.35,
+   "endSec": 19.42,
+   "text": "."
+  },
+  {
+   "startSec": 19.42,
+   "endSec": 20.02,
+   "text": "The"
+  },
+  {
+   "startSec": 20.02,
+   "endSec": 20.3,
+   "text": "Civic"
+  },
+  {
+   "startSec": 20.3,
+   "endSec": 20.57,
+   "text": "has"
+  },
+  {
+   "startSec": 20.57,
+   "endSec": 20.98,
+   "text": "cloth"
+  },
+  {
+   "startSec": 20.98,
+   "endSec": 21.41,
+   "text": "seats"
+  },
+  {
+   "startSec": 21.41,
+   "endSec": 21.87,
+   "text": "."
+  },
+  {
+   "startSec": 21.87,
+   "endSec": 21.91,
+   "text": "The"
+  },
+  {
+   "startSec": 21.91,
+   "endSec": 22.34,
+   "text": "Civic"
+  },
+  {
+   "startSec": 22.34,
+   "endSec": 22.59,
+   "text": "has"
+  },
+  {
+   "startSec": 22.59,
+   "endSec": 22.69,
+   "text": "a"
+  },
+  {
+   "startSec": 22.69,
+   "endSec": 22.99,
+   "text": "tape"
+  },
+  {
+   "startSec": 22.99,
+   "endSec": 23.77,
+   "text": "deck"
+  },
+  {
+   "startSec": 23.77,
+   "endSec": 23.82,
+   "text": "that"
+  },
+  {
+   "startSec": 24.02,
+   "endSec": 24.1,
+   "text": "the"
+  },
+  {
+   "startSec": 24.1,
+   "endSec": 24.63,
+   "text": "sales"
+  },
+  {
+   "startSec": 24.63,
+   "endSec": 24.85,
+   "text": "man"
+  },
+  {
+   "startSec": 24.85,
+   "endSec": 25.32,
+   "text": "tells"
+  },
+  {
+   "startSec": 25.32,
+   "endSec": 25.6,
+   "text": "you"
+  },
+  {
+   "startSec": 25.6,
+   "endSec": 25.98,
+   "text": "also"
+  },
+  {
+   "startSec": 25.98,
+   "endSec": 26.45,
+   "text": "plays"
+  },
+  {
+   "startSec": 26.45,
+   "endSec": 27.2,
+   "text": "CDs"
+  },
+  {
+   "startSec": 27.2,
+   "endSec": 27.39,
+   "text": "through"
+  },
+  {
+   "startSec": 27.39,
+   "endSec": 27.75,
+   "text": "an"
+  },
+  {
+   "startSec": 27.75,
+   "endSec": 28.24,
+   "text": "adapter"
+  },
+  {
+   "startSec": 28.24,
+   "endSec": 28.52,
+   "text": "."
+  },
+  {
+   "startSec": 28.52,
+   "endSec": 29.05,
+   "text": "You"
+  },
+  {
+   "startSec": 29.05,
+   "endSec": 29.08,
+   "text": "pay"
+  },
+  {
+   "startSec": 29.08,
+   "endSec": 29.17,
+   "text": "$"
+  },
+  {
+   "startSec": 29.17,
+   "endSec": 29.5,
+   "text": "9"
+  },
+  {
+   "startSec": 29.5,
+   "endSec": 29.63,
+   "text": ","
+  },
+  {
+   "startSec": 29.63,
+   "endSec": 30.67,
+   "text": "400"
+  },
+  {
+   "startSec": 30.67,
+   "endSec": 30.95,
+   "text": "in"
+  },
+  {
+   "startSec": 30.95,
+   "endSec": 31.05,
+   "text": "cash"
+  },
+  {
+   "startSec": 31.05,
+   "endSec": 31.42,
+   "text": "."
+  },
+  {
+   "startSec": 31.42,
+   "endSec": 31.53,
+   "text": "You"
+  },
+  {
+   "startSec": 31.53,
+   "endSec": 31.72,
+   "text": "drive"
+  },
+  {
+   "startSec": 31.72,
+   "endSec": 31.92,
+   "text": "the"
+  },
+  {
+   "startSec": 31.92,
+   "endSec": 32.14,
+   "text": "Civic"
+  },
+  {
+   "startSec": 32.14,
+   "endSec": 32.35,
+   "text": "home"
+  },
+  {
+   "startSec": 32.35,
+   "endSec": 32.52,
+   "text": "."
+  }
+ ]
+}

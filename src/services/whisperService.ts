@@ -2,6 +2,7 @@ import { invoke, Channel } from '@tauri-apps/api/core';
 import type { Asset, VideoSegment, TranscriptToken } from '../types';
 import type { SilenceInterval } from './silenceDetector';
 import { canonicalize, canonicalizeSceneDoc } from './textNormalize';
+import { expandTokensToWords, isAmountSeparatorToken } from './transcriptWords';
 import { SUPPORTED_LANGUAGE_CODES } from '../constants';
 // WS2 Wave 2 Group 2 (G2 completion, Unit 1) — `hirschbergMatchClient.ts`
 // itself imports `alignQueryToSubject` FROM this file (its fallback path,
@@ -955,13 +956,10 @@ export function buildSegmentAlignmentInputs(
   // individually finer timestamp) — good enough for the rescue window check,
   // which only needs to place a word within a multi-second slot, not sub-token
   // precision.
-  const tokenWords: Array<{ word: string; tokenIdx: number; startSec: number }> = [];
-  for (let i = 0; i < tokens.length; i++) {
-    const words = normalize(tokens[i]!.text, languageCode);
-    for (const word of words) {
-      if (word.length > 0) tokenWords.push({ word, tokenIdx: i, startSec: tokens[i]!.startSec });
-    }
-  }
+  // Amount runs an engine split across tokens ("$11" ",000." / "$" "11" ","
+  // "000") are read as ONE amount first — see transcriptWords.ts.
+  const tokenWords: Array<{ word: string; tokenIdx: number; startSec: number }> =
+    expandTokensToWords(tokens, languageCode).words;
 
   // Build the query (all segments' canonicalized words, in order) with each
   // segment's contiguous word range recorded for per-segment extraction (§3.1.1).
@@ -1640,6 +1638,13 @@ export function filterMalformedTokens(
     // never match a scene-doc word, but its timestamps can still be picked as a
     // segment edge. Drop it here rather than letting it anchor a boundary.
     if (normalize(text, languageCode).length === 0) {
+      // ...except the "," inside an amount ("$" "11" "," "000"): it is the
+      // only evidence that "11" "000" is one number, and it can never be a
+      // segment edge (it sits between two digit tokens of the same amount).
+      if (isAmountSeparatorToken(text, tokens[index - 1], tokens[index + 1])) {
+        kept.push(t);
+        continue;
+      }
       drop('empty-text');
       continue;
     }
@@ -1792,11 +1797,7 @@ export function classifyCoverage(alignments: SegmentAlignment[]): SegmentCoverag
  * sequence itself.
  */
 export function countTranscriptWords(tokens: TranscriptToken[], languageCode?: AlignmentLanguageCode): number {
-  let count = 0;
-  for (const t of tokens) {
-    for (const w of normalize(t.text, languageCode)) if (w.length > 0) count++;
-  }
-  return count;
+  return expandTokensToWords(tokens, languageCode).words.length;
 }
 
 export interface CoverageSummary {

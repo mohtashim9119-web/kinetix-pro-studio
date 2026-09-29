@@ -1,0 +1,589 @@
+{
+  "_generatedBy": "scripts/generate-fa-amount-lockstep.ts (drives src/services/faTextNormalize.ts)",
+  "_read": "TS: src/services/faAmountLockstep.test.ts; Rust: src-tauri/src/fa/text.rs amount_lockstep; Python: cloud/test_fa_amount_lockstep.py. Compared: per-word representable + mapped, and the joined chunk text. Reason strings are NOT compared (each side words its own).",
+  "entries": [
+    {
+      "language": "en",
+      "input": "$11,000.",
+      "note": "currency + thousands separator + trailing period",
+      "words": [
+        {
+          "input": "$11,000.",
+          "representable": true,
+          "mapped": "eleven thousand dollars"
+        }
+      ],
+      "text": "eleven thousand dollars"
+    },
+    {
+      "language": "en",
+      "input": "$9,400",
+      "note": "currency + thousands separator",
+      "words": [
+        {
+          "input": "$9,400",
+          "representable": true,
+          "mapped": "nine thousand four hundred dollars"
+        }
+      ],
+      "text": "nine thousand four hundred dollars"
+    },
+    {
+      "language": "en",
+      "input": "you have in your savings account $11,000.",
+      "note": "scene 3 chunk text: the amount must be present",
+      "words": [
+        {
+          "input": "you",
+          "representable": true,
+          "mapped": "you"
+        },
+        {
+          "input": "have",
+          "representable": true,
+          "mapped": "have"
+        },
+        {
+          "input": "in",
+          "representable": true,
+          "mapped": "in"
+        },
+        {
+          "input": "your",
+          "representable": true,
+          "mapped": "your"
+        },
+        {
+          "input": "savings",
+          "representable": true,
+          "mapped": "savings"
+        },
+        {
+          "input": "account",
+          "representable": true,
+          "mapped": "account"
+        },
+        {
+          "input": "$11,000.",
+          "representable": true,
+          "mapped": "eleven thousand dollars"
+        }
+      ],
+      "text": "you have in your savings account eleven thousand dollars"
+    },
+    {
+      "language": "en",
+      "input": "you pay $9,400 in cash.",
+      "note": "scene 13 chunk text: the amount must be present",
+      "words": [
+        {
+          "input": "you",
+          "representable": true,
+          "mapped": "you"
+        },
+        {
+          "input": "pay",
+          "representable": true,
+          "mapped": "pay"
+        },
+        {
+          "input": "$9,400",
+          "representable": true,
+          "mapped": "nine thousand four hundred dollars"
+        },
+        {
+          "input": "in",
+          "representable": true,
+          "mapped": "in"
+        },
+        {
+          "input": "cash.",
+          "representable": true,
+          "mapped": "cash"
+        }
+      ],
+      "text": "you pay nine thousand four hundred dollars in cash"
+    },
+    {
+      "language": "en",
+      "input": "84,000",
+      "note": "thousands separator, no symbol",
+      "words": [
+        {
+          "input": "84,000",
+          "representable": true,
+          "mapped": "eighty-four thousand"
+        }
+      ],
+      "text": "eighty-four thousand"
+    },
+    {
+      "language": "en",
+      "input": "11000",
+      "note": "bare integer above the old 9999 cap",
+      "words": [
+        {
+          "input": "11000",
+          "representable": true,
+          "mapped": "eleven thousand"
+        }
+      ],
+      "text": "eleven thousand"
+    },
+    {
+      "language": "en",
+      "input": "$11000",
+      "note": "currency, no separator",
+      "words": [
+        {
+          "input": "$11000",
+          "representable": true,
+          "mapped": "eleven thousand dollars"
+        }
+      ],
+      "text": "eleven thousand dollars"
+    },
+    {
+      "language": "en",
+      "input": "€1,234,567",
+      "note": "millions, euro",
+      "words": [
+        {
+          "input": "€1,234,567",
+          "representable": true,
+          "mapped": "one million two hundred thirty-four thousand five hundred sixty-seven euros"
+        }
+      ],
+      "text": "one million two hundred thirty-four thousand five hundred sixty-seven euros"
+    },
+    {
+      "language": "en",
+      "input": "£3",
+      "note": "pound, plural",
+      "words": [
+        {
+          "input": "£3",
+          "representable": true,
+          "mapped": "three pounds"
+        }
+      ],
+      "text": "three pounds"
+    },
+    {
+      "language": "en",
+      "input": "$1",
+      "note": "currency singular form (exactly one, no decimals)",
+      "words": [
+        {
+          "input": "$1",
+          "representable": true,
+          "mapped": "one dollar"
+        }
+      ],
+      "text": "one dollar"
+    },
+    {
+      "language": "en",
+      "input": "$1.00",
+      "note": "decimals => plural form even at one",
+      "words": [
+        {
+          "input": "$1.00",
+          "representable": true,
+          "mapped": "one point zero zero dollars"
+        }
+      ],
+      "text": "one point zero zero dollars"
+    },
+    {
+      "language": "en",
+      "input": "2.5",
+      "note": "decimal",
+      "words": [
+        {
+          "input": "2.5",
+          "representable": true,
+          "mapped": "two point five"
+        }
+      ],
+      "text": "two point five"
+    },
+    {
+      "language": "en",
+      "input": "$5.99",
+      "note": "currency + decimal",
+      "words": [
+        {
+          "input": "$5.99",
+          "representable": true,
+          "mapped": "five point nine nine dollars"
+        }
+      ],
+      "text": "five point nine nine dollars"
+    },
+    {
+      "language": "en",
+      "input": "0.05",
+      "note": "decimal, zero integer part",
+      "words": [
+        {
+          "input": "0.05",
+          "representable": true,
+          "mapped": "zero point zero five"
+        }
+      ],
+      "text": "zero point zero five"
+    },
+    {
+      "language": "en",
+      "input": "50%",
+      "note": "percent",
+      "words": [
+        {
+          "input": "50%",
+          "representable": true,
+          "mapped": "fifty percent"
+        }
+      ],
+      "text": "fifty percent"
+    },
+    {
+      "language": "en",
+      "input": "(50%)",
+      "note": "percent inside edge punctuation",
+      "words": [
+        {
+          "input": "(50%)",
+          "representable": true,
+          "mapped": "fifty percent"
+        }
+      ],
+      "text": "fifty percent"
+    },
+    {
+      "language": "en",
+      "input": "$1998",
+      "note": "money is never read as a year",
+      "words": [
+        {
+          "input": "$1998",
+          "representable": true,
+          "mapped": "one thousand nine hundred ninety-eight dollars"
+        }
+      ],
+      "text": "one thousand nine hundred ninety-eight dollars"
+    },
+    {
+      "language": "en",
+      "input": "2001",
+      "note": "bare year-shaped integer keeps the year reading",
+      "words": [
+        {
+          "input": "2001",
+          "representable": true,
+          "mapped": "two thousand one"
+        }
+      ],
+      "text": "two thousand one"
+    },
+    {
+      "language": "en",
+      "input": "2003",
+      "note": "bare year-shaped integer keeps the cardinal reading (03 < 10)",
+      "words": [
+        {
+          "input": "2003",
+          "representable": true,
+          "mapped": "two thousand three"
+        }
+      ],
+      "text": "two thousand three"
+    },
+    {
+      "language": "en",
+      "input": "10",
+      "note": "bare integer",
+      "words": [
+        {
+          "input": "10",
+          "representable": true,
+          "mapped": "ten"
+        }
+      ],
+      "text": "ten"
+    },
+    {
+      "language": "en",
+      "input": "$",
+      "note": "lone symbol is not an amount",
+      "words": [
+        {
+          "input": "$",
+          "representable": false,
+          "mapped": null
+        }
+      ],
+      "text": ""
+    },
+    {
+      "language": "en",
+      "input": "1,5",
+      "note": "comma decimal is not English amount grammar",
+      "words": [
+        {
+          "input": "1,5",
+          "representable": false,
+          "mapped": null
+        }
+      ],
+      "text": ""
+    },
+    {
+      "language": "en",
+      "input": "1234,567",
+      "note": "malformed thousands grouping",
+      "words": [
+        {
+          "input": "1234,567",
+          "representable": false,
+          "mapped": null
+        }
+      ],
+      "text": ""
+    },
+    {
+      "language": "en",
+      "input": "$007",
+      "note": "leading zero is not an amount",
+      "words": [
+        {
+          "input": "$007",
+          "representable": false,
+          "mapped": null
+        }
+      ],
+      "text": ""
+    },
+    {
+      "language": "en",
+      "input": "50%%",
+      "note": "malformed percent",
+      "words": [
+        {
+          "input": "50%%",
+          "representable": false,
+          "mapped": null
+        }
+      ],
+      "text": ""
+    },
+    {
+      "language": "es",
+      "input": "$11.000",
+      "note": "es: \".\" thousands, dollars",
+      "words": [
+        {
+          "input": "$11.000",
+          "representable": true,
+          "mapped": "once mil dólares"
+        }
+      ],
+      "text": "once mil dólares"
+    },
+    {
+      "language": "es",
+      "input": "1.234,56",
+      "note": "es: thousands + decimal",
+      "words": [
+        {
+          "input": "1.234,56",
+          "representable": true,
+          "mapped": "mil doscientos treinta y cuatro coma cinco seis"
+        }
+      ],
+      "text": "mil doscientos treinta y cuatro coma cinco seis"
+    },
+    {
+      "language": "es",
+      "input": "15%",
+      "note": "es: percent (two words)",
+      "words": [
+        {
+          "input": "15%",
+          "representable": true,
+          "mapped": "quince por ciento"
+        }
+      ],
+      "text": "quince por ciento"
+    },
+    {
+      "language": "es",
+      "input": "€1",
+      "note": "es: euro singular",
+      "words": [
+        {
+          "input": "€1",
+          "representable": true,
+          "mapped": "uno euro"
+        }
+      ],
+      "text": "uno euro"
+    },
+    {
+      "language": "es",
+      "input": "12",
+      "note": "es: bare integer unchanged",
+      "words": [
+        {
+          "input": "12",
+          "representable": true,
+          "mapped": "doce"
+        }
+      ],
+      "text": "doce"
+    },
+    {
+      "language": "fr",
+      "input": "84.000",
+      "note": "fr: hyphenated cardinal + thousands",
+      "words": [
+        {
+          "input": "84.000",
+          "representable": true,
+          "mapped": "quatre-vingt-quatre mille"
+        }
+      ],
+      "text": "quatre-vingt-quatre mille"
+    },
+    {
+      "language": "fr",
+      "input": "$1",
+      "note": "fr: dollar singular",
+      "words": [
+        {
+          "input": "$1",
+          "representable": true,
+          "mapped": "un dollar"
+        }
+      ],
+      "text": "un dollar"
+    },
+    {
+      "language": "fr",
+      "input": "50%",
+      "note": "fr: percent",
+      "words": [
+        {
+          "input": "50%",
+          "representable": true,
+          "mapped": "cinquante pour cent"
+        }
+      ],
+      "text": "cinquante pour cent"
+    },
+    {
+      "language": "fr",
+      "input": "1.234,5",
+      "note": "fr: thousands + decimal",
+      "words": [
+        {
+          "input": "1.234,5",
+          "representable": true,
+          "mapped": "mille deux cent trente-quatre virgule cinq"
+        }
+      ],
+      "text": "mille deux cent trente-quatre virgule cinq"
+    },
+    {
+      "language": "de",
+      "input": "1.234.567",
+      "note": "de: millions (capitalized scale word in the data must lowercase)",
+      "words": [
+        {
+          "input": "1.234.567",
+          "representable": true,
+          "mapped": "eine million zweihundertvierunddreissigtausendfünfhundertsiebenundsechzig"
+        }
+      ],
+      "text": "eine million zweihundertvierunddreissigtausendfünfhundertsiebenundsechzig"
+    },
+    {
+      "language": "de",
+      "input": "€30",
+      "note": "de: euro",
+      "words": [
+        {
+          "input": "€30",
+          "representable": true,
+          "mapped": "dreissig euro"
+        }
+      ],
+      "text": "dreissig euro"
+    },
+    {
+      "language": "de",
+      "input": "3,5",
+      "note": "de: decimal",
+      "words": [
+        {
+          "input": "3,5",
+          "representable": true,
+          "mapped": "drei komma fünf"
+        }
+      ],
+      "text": "drei komma fünf"
+    },
+    {
+      "language": "de",
+      "input": "30%",
+      "note": "de: percent",
+      "words": [
+        {
+          "input": "30%",
+          "representable": true,
+          "mapped": "dreissig prozent"
+        }
+      ],
+      "text": "dreissig prozent"
+    },
+    {
+      "language": "pt",
+      "input": "$11.000,50",
+      "note": "pt: full amount",
+      "words": [
+        {
+          "input": "$11.000,50",
+          "representable": true,
+          "mapped": "onze mil vírgula cinco zero dólares"
+        }
+      ],
+      "text": "onze mil vírgula cinco zero dólares"
+    },
+    {
+      "language": "pt",
+      "input": "12.345",
+      "note": "pt: thousands, no symbol",
+      "words": [
+        {
+          "input": "12.345",
+          "representable": true,
+          "mapped": "doze mil trezentos e quarenta e cinco"
+        }
+      ],
+      "text": "doze mil trezentos e quarenta e cinco"
+    },
+    {
+      "language": "pt",
+      "input": "€1",
+      "note": "pt: euro singular",
+      "words": [
+        {
+          "input": "€1",
+          "representable": true,
+          "mapped": "um euro"
+        }
+      ],
+      "text": "um euro"
+    }
+  ]
+}

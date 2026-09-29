@@ -269,19 +269,26 @@ describe('canonicalize — languageCode omitted stays byte-identical (English ba
   });
 });
 
+// AMOUNT tokens (separator / decimal / currency / percent) now read in the
+// LANGUAGE's own words, from the same `fa-cardinal-<lang>.json` +
+// `fa-amount-words.json` data the forced-alignment normalizer uses — so the
+// script side and the aligner's own output (which speaks the language) agree.
+// These three expectations used to pin the English reading of a non-English
+// amount (the documented per-language digit-word gap, closed here for amounts
+// only; a BARE integer still reads as before — see the 'unaffected' test below).
 describe('canonicalize — es/fr/de/pt invert the thousands/decimal separators', () => {
   it('drops a period thousands separator (German)', () => {
-    expect(canonicalize('2.500', 'de')).toEqual(['two', 'thousand', 'five', 'hundred']);
+    expect(canonicalize('2.500', 'de')).toEqual(['zweitausendfünfhundert']);
   });
 
   it('reads a comma as the decimal mark (German)', () => {
-    expect(canonicalize('3,5', 'de')).toEqual(['three', 'point', 'five']);
+    expect(canonicalize('3,5', 'de')).toEqual(['drei', 'komma', 'fünf']);
   });
 
   it('correctly parses a combined thousands+decimal number (Spanish)', () => {
     // "3.456,78" is English's "3,456.78" under the es/fr/de/pt convention.
     expect(canonicalize('3.456,78', 'es')).toEqual([
-      'three', 'thousand', 'four', 'hundred', 'fifty', 'six', 'point', 'seven', 'eight',
+      'tres', 'mil', 'cuatrocientos', 'cincuenta', 'y', 'seis', 'coma', 'siete', 'ocho',
     ]);
   });
 

@@ -101,6 +101,9 @@ for _lang in core.FA_LANGS:
     gpu_image = gpu_image.add_local_file(
         str(FIXTURE_DIR / f"fa-vocab-{_lang}.json"), f"/vocabs/fa-vocab-{_lang}.json"
     ).add_local_file(str(FIXTURE_DIR / f"fa-cardinal-{_lang}.json"), f"/vocabs/fa-cardinal-{_lang}.json")
+# Amount words (fa-amount-words.json) ride with the worker only — the gateway
+# never normalizes text, and pack_digests deliberately excludes this file.
+gpu_image = gpu_image.add_local_file(str(FIXTURE_DIR / "fa-amount-words.json"), "/vocabs/fa-amount-words.json")
 gpu_image = gpu_image.add_local_python_source("sync_core")
 
 gateway_image = (

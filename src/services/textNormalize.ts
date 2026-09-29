@@ -41,6 +41,8 @@
 // ---------------------------------------------------------------------------
 
 import { NUMBER_WORDS } from './syncConstants';
+import { cardinalWords, expandAmountToken, type FaLanguageCode } from './faTextNormalize';
+import { loadFaLanguageData } from './faLanguageData';
 
 // --- Number-word expansion (unchanged from the former whisperService.ts home) --
 
@@ -84,16 +86,34 @@ function yearToWords(n: number): string[] {
   return [...under100ToWords(high), ...under100ToWords(low)];
 }
 
-/** Expands a pure-digit token to its canonical spoken word sequence. */
-function digitTokenToWords(tok: string): string[] {
+/**
+ * Expands a pure-digit token to its canonical spoken word sequence.
+ *
+ * 0-9999 (and the 1100-2999 year reading) is the original English reader,
+ * byte-for-byte. Above 9999 the former 9999 cap read the token DIGIT BY DIGIT
+ * ("11000" -> "one one zero zero zero"), which could never match a spoken
+ * "eleven thousand"; it now reads the full cardinal for any safe integer from
+ * the SAME per-language data (`fa-cardinal-<lang>.json`) the forced-alignment
+ * normalizer uses, so a script digit, a transcript digit and a spelled-out
+ * number all collapse to one word sequence. A token with a leading zero or
+ * beyond the safe-integer range (an ID/phone-like run) keeps the digit-by-
+ * digit reading.
+ */
+function digitTokenToWords(tok: string, languageCode?: AlignmentLanguage): string[] {
   const n = Number.parseInt(tok, 10);
   if (!Number.isFinite(n)) return [tok];
   if (tok.length === 4 && n >= 1100 && n <= 2999 && n % 100 >= 10) {
     return yearToWords(n);
   }
   if (n >= 0 && n <= 9999) return cardinalToWords(n);
+  const data = Number.isSafeInteger(n) && !(tok.length > 1 && tok[0] === '0')
+    ? loadFaLanguageData(languageCode ?? 'en')?.cardinalData
+    : undefined;
+  if (data) return cardinalWords(n, data).split(/\s+/).flatMap(resolveHyphen);
   return tok.split('').map(d => ONES_WORDS[Number(d)] ?? d);
 }
+
+type AlignmentLanguage = 'en' | 'es' | 'fr' | 'de' | 'pt';
 
 // --- Contractions -----------------------------------------------------------
 
@@ -184,7 +204,7 @@ function resolveHyphen(tok: string): string[] {
 }
 
 /** Expands a resolved token's digit runs to words, emitting into `out`. */
-function expandDigitsInto(tok: string, out: string[]): void {
+function expandDigitsInto(tok: string, out: string[], languageCode?: AlignmentLanguage): void {
   // A preserved hyphen-compound is one unit by design (co-operate, covid-19) —
   // emit it verbatim rather than letting the mixed-alnum split leak a stray hyphen.
   if (tok.includes('-')) {
@@ -192,7 +212,7 @@ function expandDigitsInto(tok: string, out: string[]): void {
     return;
   }
   if (/^\d+$/.test(tok)) {
-    out.push(...digitTokenToWords(tok));
+    out.push(...digitTokenToWords(tok, languageCode));
     return;
   }
   if (/\d/.test(tok)) {
@@ -203,12 +223,34 @@ function expandDigitsInto(tok: string, out: string[]): void {
     // and emit the letter runs as their own words, preserving left-to-right order.
     const parts = tok.match(/\d+|\D+/g) ?? [tok];
     for (const part of parts) {
-      if (/^\d+$/.test(part)) out.push(...digitTokenToWords(part));
+      if (/^\d+$/.test(part)) out.push(...digitTokenToWords(part, languageCode));
       else out.push(part);
     }
     return;
   }
   out.push(tok);
+}
+
+// --- Amount tokens (step 4b) ------------------------------------------------
+
+/** One whitespace piece split into [edge junk][core][edge junk]; the junk
+ *  never contains a letter, digit or amount symbol. */
+const AMOUNT_PIECE_RE = /^([^\p{L}\p{N}$€£%]*)(.*?)([^\p{L}\p{N}$€£%]*)$/su;
+
+function expandAmountsInText(t: string, language: FaLanguageCode): string {
+  if (!/[0-9]/.test(t)) return t;
+  const data = loadFaLanguageData(language)?.cardinalData;
+  if (!data?.amount) return t;
+  // "$ 11,000" (a space after the symbol) is one amount, as the legacy
+  // `\$\s?(\d+)` reading already treated it.
+  const glued = t.replace(/([$€£])\s+(?=\d)/g, '$1');
+  return glued.replace(/\S+/g, piece => {
+    if (!/[0-9]/.test(piece)) return piece;
+    const m = AMOUNT_PIECE_RE.exec(piece);
+    if (!m) return piece;
+    const words = expandAmountToken(m[2]!, language, data);
+    return words === undefined ? piece : `${m[1]} ${words} ${m[3]}`;
+  });
 }
 
 // --- Public entry points ----------------------------------------------------
@@ -245,6 +287,13 @@ export function canonicalize(text: string, languageCode?: 'en' | 'es' | 'fr' | '
 
   // Step 4 — contraction expansion (apostrophes already folded to ASCII above).
   t = t.replace(CONTRACTION_RE, m => CONTRACTIONS[m] ?? m);
+
+  // Step 4b — AMOUNT tokens ($11,000 / 84,000 / 2.5 / 50%) read as their
+  // spoken words, per the language's own cardinal + amount data. Runs BEFORE
+  // the legacy separator/currency steps so an amount is never half-handled by
+  // them (the former "$11,000" -> "one one zero zero zero dollars"). Every
+  // other token passes through untouched, so non-amount text is byte-identical.
+  t = expandAmountsInText(t, languageCode ?? 'en');
 
   const nonEnglish = languageCode !== undefined && NON_ENGLISH_CANONICALIZE_LANGUAGES.has(languageCode);
 
@@ -300,7 +349,7 @@ export function canonicalize(text: string, languageCode?: 'en' | 'es' | 'fr' | '
   const out: string[] = [];
   for (const tok of rawTokens) {
     for (const piece of resolveHyphen(tok)) {
-      expandDigitsInto(piece, out);
+      expandDigitsInto(piece, out, languageCode);
     }
   }
   return out;
