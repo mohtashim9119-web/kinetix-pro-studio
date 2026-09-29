@@ -57,6 +57,11 @@ def compare(local: list[dict[str, Any]], cloud: list[dict[str, Any]]) -> dict[st
             "le10ms": sum(1 for d in diffs if d <= 0.010),
             "le50ms": sum(1 for d in diffs if d <= 0.050),
             "gt50ms": sum(1 for d in diffs if d > 0.050),
+            # Wave 3 U8 parity gate: the owner's bar is "within 100 ms". Rounded to
+            # milliseconds first so an exactly-100ms difference (0.1000000000000005
+            # in floating point) is not tipped over the line by representation noise.
+            "le100ms": sum(1 for d in diffs if round(d * 1000) <= 100),
+            "gt100ms": sum(1 for d in diffs if round(d * 1000) > 100),
         }
 
     mean_start = sum(start_diffs) / len(start_diffs) if start_diffs else None
@@ -84,6 +89,10 @@ def compare(local: list[dict[str, Any]], cloud: list[dict[str, Any]]) -> dict[st
         "maxAbsEndSec": max_end,
         "startDistribution": dist(start_diffs),
         "endDistribution": dist(end_diffs),
+        "withinHundredMsPct": {
+            "start": round(100.0 * dist(start_diffs)["le100ms"] / len(start_diffs), 3) if start_diffs else None,
+            "end": round(100.0 * dist(end_diffs)["le100ms"] / len(end_diffs), 3) if end_diffs else None,
+        },
         "interchangeableUnderOwnerThreshold": interchangeable,
         "textMismatchesHead": mismatches,
     }

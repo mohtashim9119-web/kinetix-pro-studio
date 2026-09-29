@@ -1,0 +1,32 @@
+{
+  "nLocal": 1660,
+  "nCloud": 1660,
+  "nCompared": 1660,
+  "identicalText": 1660,
+  "onlyLocal": 0,
+  "onlyCloud": 0,
+  "meanAbsStartSec": 0.0036024096385542203,
+  "meanAbsEndSec": 0.002939759036144295,
+  "maxAbsStartSec": 0.6999999999999886,
+  "maxAbsEndSec": 0.7999999999999545,
+  "startDistribution": {
+    "le10ms": 1541,
+    "le50ms": 1646,
+    "gt50ms": 14,
+    "le100ms": 1653,
+    "gt100ms": 7
+  },
+  "endDistribution": {
+    "le10ms": 1560,
+    "le50ms": 1652,
+    "gt50ms": 8,
+    "le100ms": 1655,
+    "gt100ms": 5
+  },
+  "withinHundredMsPct": {
+    "start": 99.578,
+    "end": 99.699
+  },
+  "interchangeableUnderOwnerThreshold": false,
+  "textMismatchesHead": []
+}
