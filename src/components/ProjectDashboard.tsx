@@ -12,7 +12,7 @@ import { readSyncEngineHost, onSyncEngineHostChange, type SyncEngineHost } from 
 import { queueProjectsForCloudSync } from '../services/bulkSyncQueue';
 import type { CloudQueueDeps } from '../services/cloudQueueJob';
 import { SyncQueuePanel } from './SyncQueuePanel';
-import { BulkCountDialog, BulkProjectsModal } from './BulkProjectsModal';
+import { BulkCountDialog } from './BulkProjectsModal';
 import { BULK_COPY, createBulkProjects } from '../services/bulkContext';
 import './ProjectDashboard.css';
 
@@ -65,6 +65,11 @@ interface Props {
    * appears only when this and `parseProjectData` are given.
    */
   createBlankProject?: () => Project;
+  /** Wave 3 U7.5 — the projects just created; App hosts the rows modal (it must
+   *  outlive the dashboard while timelines are being finished in the editor). */
+  onBulkCreated?: (projects: { id: string; name: string }[]) => void;
+  /** The rows modal is open: the queue is shown there, not here too. */
+  bulkOpen?: boolean;
 }
 
 function formatDate(ts: number): string {
@@ -88,6 +93,8 @@ export function ProjectDashboard({
   onAssetCleanupFailed,
   parseProjectData,
   createBlankProject,
+  onBulkCreated,
+  bulkOpen = false,
 }: Props): React.ReactElement {
   const [engineHost, setEngineHost] = useState<SyncEngineHost>(readSyncEngineHost);
   useEffect(() => onSyncEngineHostChange(setEngineHost), []);
@@ -98,7 +105,6 @@ export function ProjectDashboard({
   const [profileOpen, setProfileOpen] = useState(false);
   // Wave 3 U7.5 — Bulk Projects: the "how many?" step, then the rows modal.
   const [bulkAsking, setBulkAsking] = useState(false);
-  const [bulkProjects, setBulkProjects] = useState<{ id: string; name: string }[] | null>(null);
   const [bulkError, setBulkError] = useState<string | null>(null);
   const [storage, setStorage] = useState<{ usage: number; quota: number } | null>(null);
 
@@ -332,7 +338,7 @@ export function ProjectDashboard({
 
       <main className="kxd-main custom-scrollbar">
         <div className="kxd-main-inner">
-          {bulkProjects === null && <SyncQueuePanel />}
+          {!bulkOpen && <SyncQueuePanel />}
           {bulkError && <p className="mb-3 text-[11px] text-amber-300/80" data-testid="bulk-error">{bulkError}</p>}
           <div className="kxd-section-head">
             <h1>Recent projects</h1>
@@ -494,20 +500,11 @@ export function ProjectDashboard({
               data.sort((a, b) => (b.savedAt ?? 0) - (a.savedAt ?? 0));
               data.forEach(m => seenProjectIds.add(m.id));
               setMetas(data);
-              setBulkProjects(made.map(m => ({ id: m.id, name: m.name })));
+              onBulkCreated?.(made.map(m => ({ id: m.id, name: m.name })));
             }).catch((err: unknown) => setBulkError(err instanceof Error ? err.message : String(err)));
           }}
         />
       )}
-      {bulkProjects !== null && parseProjectData && (
-        <BulkProjectsModal
-          projects={bulkProjects}
-          parseProjectData={parseProjectData}
-          onOpenProject={id => { setBulkProjects(null); onSelectProject(id); }}
-          onClose={() => setBulkProjects(null)}
-        />
-      )}
-
       {showBulkConfirm && (
         <div className="kxd-dialog-scrim">
           <div className="kxd-dialog" role="dialog" aria-modal="true" aria-label="Delete projects">

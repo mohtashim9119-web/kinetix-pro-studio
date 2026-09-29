@@ -50,6 +50,11 @@ export const BULK_COPY = {
     failed: 'Voiceover not prepared',
     local: 'Local engine: nothing is uploaded',
   },
+  namePlaceholder: 'Project name (required)',
+  nameLabel: 'Project name',
+  nameMissing: 'a project name',
+  building: 'Building the timeline…',
+  finishFailed: (why: string): string => `Built on the cloud, but the timeline could not be finished — open the project and press Build Timeline. ${why}`.trim(),
   build: 'Build Timeline',
   buildNeeds: 'Fill every slot of at least one project to build',
   cancelRow: 'Cancel',
@@ -60,6 +65,17 @@ export const BULK_COPY = {
   skipped: (why: string): string => `Skipped — ${why}`,
   notCloud: 'Bulk build runs on the Cloud engine (App Settings → Sync Engine).',
 } as const;
+
+/** Why a row cannot be built yet (name + the four slots), or undefined. */
+export function rowIncompleteReason(
+  name: string,
+  slotNames: readonly string[],
+): string | undefined {
+  const parts = [...(name.trim() ? [] : [BULK_COPY.nameMissing]), ...slotNames];
+  if (parts.length === 0) return undefined;
+  const list = parts.length === 1 ? parts[0]! : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
+  return `Add ${list} to build the timeline`;
+}
 
 export function bulkProjectName(index1: number): string {
   return `${BULK_COPY.namePrefix} ${index1}`;

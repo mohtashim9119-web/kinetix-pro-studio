@@ -111,7 +111,7 @@ describe('BulkRowStore — slots, and eager audio prep', () => {
   function fakeDeps(over: Partial<BulkRowDeps> = {}): { deps: BulkRowDeps; staged: Map<string, StagedFiles>; stageAudio: Mock } {
     const staged = new Map<string, StagedFiles>();
     const stageAudio = vi.fn().mockResolvedValue({ uploaded: true });
-    const project = (id: string): Project => ({ id, name: id, assets: [], script: '', sceneDetails: '' } as unknown as Project);
+    const project = (id: string): Project => ({ id, name: id, assets: [], segments: [], script: '', sceneDetails: '' } as unknown as Project);
     const deps: BulkRowDeps = {
       loadStaged: async id => staged.get(id) ?? null,
       writeStaged: async (id, _prev, next) => { staged.set(id, next); },
@@ -135,6 +135,9 @@ describe('BulkRowStore — slots, and eager audio prep', () => {
     await vi.waitFor(() => expect(store.snapshot()[0]!.audio.state).toBe('ready'));
     expect(store.snapshot()[0]!.slots).toEqual({ script: true, scene: true, voiceover: true, media: true });
     expect(store.snapshot()[1]!.slots).toEqual({ script: false, scene: false, voiceover: false, media: false });
+    // Named or not: the name is required as well as the four slots.
+    expect(store.completeIds()).toEqual([]);
+    store.setTypedName('p1', 'Alpine');
     expect(store.completeIds()).toEqual(['p1']);
     expect(stageAudio).toHaveBeenCalledTimes(1);
     expect(stageAudio.mock.calls[0]![2]).toBe(42);

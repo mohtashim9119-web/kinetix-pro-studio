@@ -16,12 +16,12 @@
 
 import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { AlertCircle, Check, FilePlus, FolderPlus, X } from 'lucide-react';
-import { BULK_COPY, BULK_MAX_PROJECTS, parseBulkCount } from '../services/bulkContext';
+import { BULK_COPY, BULK_MAX_PROJECTS, parseBulkCount, rowIncompleteReason } from '../services/bulkContext';
 import { BulkRowStore, defaultBulkRowDeps, type BulkRowState } from '../services/bulkRows';
 import { cloudSyncQueue, queueProjectsForCloudSync } from '../services/bulkSyncQueue';
 import { CLOUD_USD_PER_WORKER_SEC, type CloudQueueDeps } from '../services/cloudQueueJob';
 import { collectDroppedFiles } from '../services/droppedFiles';
-import { missingSlots, missingSlotsReason } from '../services/buildTimelineGate';
+import { BUILD_TIMELINE_COPY, missingSlots } from '../services/buildTimelineGate';
 import { formatUsd, type QueueItem, type SyncQueue } from '../services/syncQueue';
 import { readSyncEngineHost } from '../services/syncEngineHost';
 
@@ -94,16 +94,22 @@ function rowCost(item: Readonly<QueueItem>): string {
   return `${item.workerSec.toFixed(0)} s worked · about ${formatUsd(item.workerSec * CLOUD_USD_PER_WORKER_SEC)}`;
 }
 
+export type FinalState = { state: 'building' } | { state: 'done' } | { state: 'failed'; message: string };
+
 interface RowProps {
   row: BulkRowState;
   item: Readonly<QueueItem> | undefined;
   skippedReason: string | undefined;
+  /** After the cloud work: the app is building the real timeline. */
+  final: FinalState | undefined;
+  onName: (typed: string) => void;
+  onNameCommit: () => void;
   onFiles: (files: File[]) => void;
   onCancel: () => void;
   onOpen: () => void;
 }
 
-function BulkRow({ row, item, skippedReason, onFiles, onCancel, onOpen }: RowProps): React.ReactElement {
+function BulkRow({ row, item, skippedReason, final, onName, onNameCommit, onFiles, onCancel, onOpen }: RowProps): React.ReactElement {
   const filesRef = useRef<HTMLInputElement>(null);
   const folderRef = useRef<HTMLInputElement>(null);
   const [over, setOver] = useState(false);
@@ -113,7 +119,7 @@ function BulkRow({ row, item, skippedReason, onFiles, onCancel, onOpen }: RowPro
   const status = item?.status === 'running'
     ? (item.phase ?? 'Starting…')
     : item?.status === 'queued' ? 'Waiting'
-    : item?.status === 'done' ? 'Ready'
+    : item?.status === 'done' ? (final?.state === 'building' || final === undefined ? BULK_COPY.building : final.state === 'failed' ? BULK_COPY.finishFailed(final.message) : 'Ready')
     : item?.status === 'paused' ? `Paused — ${item.reason ?? 'open the project to answer'}`
     : item?.status === 'failed' ? `Failed — ${item.detail ?? ''}`
     : item?.status === 'cancelled' ? 'Cancelled'
@@ -141,7 +147,18 @@ function BulkRow({ row, item, skippedReason, onFiles, onCancel, onOpen }: RowPro
     >
       <div className="flex items-center gap-2.5">
         <div className="flex-1 min-w-0 flex flex-col gap-0.5">
-          <span className="text-[14px] font-semibold text-[var(--kx-text)] truncate">{row.name}</span>
+          <input
+            type="text"
+            aria-label={BULK_COPY.nameLabel}
+            data-testid={`bulk-name-${row.projectId}`}
+            value={row.typedName}
+            placeholder={BULK_COPY.namePlaceholder}
+            disabled={locked || item?.status === 'done'}
+            onChange={e => onName(e.target.value)}
+            onBlur={onNameCommit}
+            onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+            className="w-full bg-[#1A1A1A] border border-[#282828] px-2.5 py-1.5 rounded-lg text-[13px] font-semibold text-[var(--kx-text)] placeholder:text-gray-600 placeholder:font-normal outline-none focus:border-[#F27D26] transition-colors disabled:opacity-60"
+          />
           <span
             data-testid={`bulk-status-${row.projectId}`}
             className={`text-[11.5px] truncate ${dim ? 'text-[var(--kx-faint)]' : 'text-[var(--kx-muted)]'}`}
@@ -150,7 +167,7 @@ function BulkRow({ row, item, skippedReason, onFiles, onCancel, onOpen }: RowPro
           </span>
         </div>
         {row.busy && <span className="text-[11px] text-[var(--kx-faint)]">Adding…</span>}
-        {item?.status === 'done' && (
+        {item?.status === 'done' && final !== undefined && final.state !== 'building' && (
           <button
             type="button"
             data-testid={`bulk-open-${row.projectId}`}
@@ -204,12 +221,15 @@ function BulkRow({ row, item, skippedReason, onFiles, onCancel, onOpen }: RowPro
 }
 
 export function BulkProjectsModal({
-  projects, parseProjectData, onOpenProject, onClose, queue = cloudSyncQueue, store: injected,
+  projects, parseProjectData, onOpenProject, onClose, finalizeProject, queue = cloudSyncQueue, store: injected,
 }: {
   projects: readonly { id: string; name: string }[];
   parseProjectData: CloudQueueDeps['parseProjectData'];
   onOpenProject: (id: string) => void;
   onClose: () => void;
+  /** Turns a project the cloud finished into a real, saved timeline (the
+   *  app's own Build Timeline, run for it). Without it a row stops at 'done'. */
+  finalizeProject?: (id: string) => Promise<{ ok: boolean; message?: string }>;
   queue?: SyncQueue;
   store?: BulkRowStore;
 }): React.ReactElement {
@@ -227,20 +247,52 @@ export function BulkProjectsModal({
   );
   const snap = useSyncExternalStore(l => queue.subscribe(l), () => queue.snapshot());
   const [skips, setSkips] = useState<Record<string, string>>({});
+  const [finals, setFinals] = useState<Record<string, FinalState>>({});
+  // One timeline at a time (the app has one editor); each starts the moment
+  // its cloud work is done, so it overlaps the next project's GPU time.
+  const chain = useRef<Promise<void>>(Promise.resolve());
+  const started = useRef(new Set<string>());
+  const closed = useRef(false);
+  useEffect(() => () => { closed.current = true; }, []);
+  useEffect(() => {
+    for (const item of snap.items) {
+      if (item.status !== 'done' || started.current.has(item.id) || !projects.some(p => p.id === item.id)) continue;
+      started.current.add(item.id);
+      if (!finalizeProject) { setFinals(f => ({ ...f, [item.id]: { state: 'done' } })); continue; }
+      setFinals(f => ({ ...f, [item.id]: { state: 'building' } }));
+      chain.current = chain.current.then(async () => {
+        // Closing the window stops the remaining timelines, never the cloud jobs.
+        if (closed.current) return;
+        let result: { ok: boolean; message?: string };
+        try { result = await finalizeProject(item.id); } catch (err) { result = { ok: false, message: err instanceof Error ? err.message : String(err) }; }
+        if (closed.current) return;
+        setFinals(f => ({ ...f, [item.id]: result.ok ? { state: 'done' } : { state: 'failed', message: result.message ?? '' } }));
+      });
+    }
+  }, [snap.items, projects, finalizeProject]);
   const cloud = readSyncEngineHost() === 'cloud';
   const items = useMemo(() => new Map(snap.items.map(i => [i.id, i])), [snap.items]);
-  const complete = rows.filter(r => missingSlots(r.slots).length === 0);
+  const complete = rows.filter(r => r.typedName.trim().length > 0 && missingSlots(r.slots).length === 0);
   const canBuild = cloud && complete.length > 0 && !snap.running;
   const line = queue.batchLine();
 
   const build = (): void => {
-    const next: Record<string, string> = {};
-    for (const r of rows) {
-      const why = missingSlotsReason(r.slots);
-      if (why) next[r.projectId] = why;
-    }
-    setSkips(next);
-    queueProjectsForCloudSync(complete.map(r => ({ id: r.projectId, name: r.name })), parseProjectData);
+    void (async () => {
+      if (!store) return;
+      await store.commitAllNames();
+      const now = store.snapshot();
+      const next: Record<string, string> = {};
+      for (const r of now) {
+        const missing = missingSlots(r.slots).map(slot => BUILD_TIMELINE_COPY.slotNames[slot]);
+        const why = rowIncompleteReason(r.typedName, missing);
+        if (why) next[r.projectId] = why;
+      }
+      setSkips(next);
+      queueProjectsForCloudSync(
+        now.filter(r => !next[r.projectId]).map(r => ({ id: r.projectId, name: r.typedName.trim() })),
+        parseProjectData,
+      );
+    })();
   };
 
   return (
@@ -273,6 +325,9 @@ export function BulkProjectsModal({
               row={row}
               item={items.get(row.projectId)}
               skippedReason={skips[row.projectId]}
+              final={finals[row.projectId]}
+              onName={typed => store?.setTypedName(row.projectId, typed)}
+              onNameCommit={() => void store?.commitName(row.projectId)}
               onFiles={files => void store?.addFiles(row.projectId, files)}
               onCancel={() => queue.cancel(row.projectId)}
               onOpen={() => onOpenProject(row.projectId)}

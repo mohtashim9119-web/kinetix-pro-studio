@@ -379,6 +379,7 @@ import { Timeline } from './components/Timeline';
 import { PreviewStage, type AutoGradeSampler, type PreviewStageHandle } from './components/PreviewStage';
 import { SpeedBadge, SPEED_LADDER } from './components/SpeedBadge';
 import { ProjectDashboard } from './components/ProjectDashboard';
+import { BulkProjectsModal } from './components/BulkProjectsModal';
 import { NewProjectModal, type NewProjectChoices } from './components/NewProjectModal';
 import { ProjectSettingsModal } from './components/ProjectSettingsModal';
 import { AppSettingsModal } from './components/AppSettingsModal';
@@ -2249,6 +2250,10 @@ export default function App() {
   // The pure matcher's output lives here; the screen renders it verbatim.
   const [folderRelink, setFolderRelink] = useState<FolderRelinkView | null>(null);
   const [showNewProjectModal, setShowNewProjectModal] = useState(false);
+  // Wave 3 U7.5 — the Bulk Projects rows modal lives here, not in the
+  // dashboard: finishing a timeline opens that project in the editor, which
+  // unmounts the dashboard, and the modal must survive that.
+  const [bulkProjects, setBulkProjects] = useState<{ id: string; name: string }[] | null>(null);
   const [showProjectSettingsModal, setShowProjectSettingsModal] = useState(false);
   // WS2 T4.1 — the machine-global settings surface. Separate flag from
   // `showProjectSettingsModal` so both can be up at once: Project Settings
@@ -8194,6 +8199,36 @@ export default function App() {
   // latest version of handleSwitchProject.
   handleSwitchProjectRef.current = handleSwitchProject;
 
+  // Wave 3 U7.5 — finish a bulk project's timeline: the app's OWN Build
+  // Timeline, run for it. The cloud work is already done (results sit in the
+  // gateway cache), so this is cache hits: open the project, wait for its
+  // staged files to restore and its transcript to be adopted, run Apply Sync,
+  // save. After it the project is a fully built timeline on disk, so Open
+  // project needs no second click. Refs, because the modal outlives renders.
+  const bulkLatest = useRef({ switchProject: handleSwitchProject, applySync: handleApplySyncFromFiles, saveNow });
+  bulkLatest.current = { switchProject: handleSwitchProject, applySync: handleApplySyncFromFiles, saveNow };
+  const bulkBuildReadyRef = useRef({ projectId: '', ready: false });
+  bulkBuildReadyRef.current = {
+    projectId: project.id,
+    ready: !showDashboard && !isProcessing && stagedVoiceoverFile !== null
+      && transcriptionReady && !applySyncDisabled,
+  };
+  const finalizeBulkProject = useCallback(async (id: string): Promise<{ ok: boolean; message?: string }> => {
+    await bulkLatest.current.switchProject(id);
+    const deadline = Date.now() + 120_000;
+    for (;;) {
+      const s = bulkBuildReadyRef.current;
+      if (s.projectId === id && s.ready) break;
+      if (Date.now() > deadline) return { ok: false, message: 'The project did not become ready in time.' };
+      await new Promise(r => setTimeout(r, 100));
+    }
+    const result = await bulkLatest.current.applySync();
+    if (!result.ok) return { ok: false, message: result.message };
+    await bulkLatest.current.saveNow();
+    return { ok: true };
+  }, []);
+
+
   const SHOW_GLOBAL_TEXT_LAYERS_IN_RIGHT_PANEL = false;
 
   if (isHydrating) {
@@ -8220,6 +8255,8 @@ export default function App() {
       onAssetCleanupFailed={showToast}
       parseProjectData={parseProjectData}
       createBlankProject={makeDefaultProject}
+      onBulkCreated={setBulkProjects}
+      bulkOpen={bulkProjects !== null}
     />
   ) : (
     /* `data-project-id` is the editor's rendered project IDENTITY. It exists so
@@ -9351,6 +9388,15 @@ export default function App() {
           whichever view is up. The dashboard stays mounted behind it and is
           only unmounted once `handleNewProjectConfirm` swaps in the new
           project, so cancelling needs no view restore. */}
+      {bulkProjects !== null && (
+        <BulkProjectsModal
+          projects={bulkProjects}
+          parseProjectData={parseProjectData}
+          finalizeProject={finalizeBulkProject}
+          onOpenProject={id => { setBulkProjects(null); void handleSwitchProject(id); }}
+          onClose={() => { setBulkProjects(null); setShowDashboard(true); }}
+        />
+      )}
       {showNewProjectModal && (
         <NewProjectModal
           onConfirm={handleNewProjectConfirm}

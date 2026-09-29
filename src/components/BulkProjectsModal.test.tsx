@@ -46,8 +46,9 @@ function store(): BulkRowStore {
   const deps: BulkRowDeps = {
     loadStaged: async id => staged.get(id) ?? null,
     writeStaged: async (id, _p, next) => { staged.set(id, next); },
-    loadProject: async id => ({ project: { id, assets: [] } as never }),
+    loadProject: async id => ({ project: { id, name: id, assets: [], segments: [] } as never }),
     saveProject: async () => ({ ok: true }),
+    upsertMeta: () => {},
     hashAudio: async () => 'h', probeDuration: async () => 30,
     cloudActive: () => true, stageAudio: async () => ({}), ingestBundle: classifyAndIngestBundleZip,
   };
@@ -101,6 +102,8 @@ describe('BulkProjectsModal', () => {
     // Row 1 gets all four slots (a bundle zip's own fill is bulkRows.test.ts, against
     // real jszip); row 2 only a script; row 3 nothing.
     await act(async () => { await s.addFiles('p2', [new File(['just a script'], 'script.txt')]); });
+    // Names are required: p1 is named, p2 is named but short of files, p3 is neither.
+    await act(async () => { s.setTypedName('p1', 'Alpine'); s.setTypedName('p2', 'Valley'); });
     await act(async () => {
       await s.addFiles('p1', [
         new File(['line'], 'script.txt'), new File(['[a] x\n[b] y\n[c] z'], 'scene.txt'),
@@ -112,8 +115,9 @@ describe('BulkProjectsModal', () => {
     expect((q(host, 'bulk-build') as HTMLButtonElement).disabled).toBe(false);
 
     await act(async () => { (q(host, 'bulk-build') as HTMLButtonElement).click(); });
+    await vi.waitFor(() => expect(q(host, 'bulk-status-p3')!.textContent).toContain('Skipped'));
     expect(q(host, 'bulk-status-p2')!.textContent).toBe('Skipped — Add a scene doc, a voiceover and media to build the timeline');
-    expect(q(host, 'bulk-status-p3')!.textContent).toBe('Skipped — Add a script, a scene doc, a voiceover and media to build the timeline');
+    expect(q(host, 'bulk-status-p3')!.textContent).toBe('Skipped — Add a project name, a script, a scene doc, a voiceover and media to build the timeline');
     // p1 is running: live phase, a Cancel, no Open yet.
     expect(q(host, 'bulk-status-p1')!.textContent).toBe('Transcribing on the cloud…');
     expect(q(host, 'bulk-open-p1')).toBeNull();
@@ -131,25 +135,68 @@ describe('BulkProjectsModal', () => {
     expect(onOpen).not.toHaveBeenCalled();
   });
 
-  it('a project whose timeline is built shows Open project, which opens exactly that project', async () => {
+  const fourFiles = (): File[] => [
+    new File(['line'], 'script.txt'), new File(['[a] x\n[b] y\n[c] z'], 'scene.txt'),
+    new File(['a'], 'vo.wav'), new File(['i'], 'a.png'),
+  ];
+
+  it('the project name is required: all four slots filled is still not buildable until the row is named, and the name is saved to the project', async () => {
+    const s = store();
+    const saved: string[] = [];
+    (s as unknown as { deps: BulkRowDeps }).deps.saveProject = async p => { saved.push(p.name); return { ok: true }; };
+    const { host } = await mount(
+      <BulkProjectsModal projects={[{ id: 'n1', name: 'Bulk Project 1' }]} parseProjectData={async () => []} onOpenProject={() => {}} onClose={() => {}} store={s} />,
+    );
+    await act(async () => { await s.addFiles('n1', fourFiles()); });
+    const build = q(host, 'bulk-build') as HTMLButtonElement;
+    expect(build.disabled).toBe(true);
+    const name = q(host, 'bulk-name-n1') as HTMLInputElement;
+    expect(name.placeholder).toBe('Project name (required)');
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(name, '  Harbour  ');
+      name.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    expect(build.disabled).toBe(false);
+    await act(async () => { name.blur(); name.dispatchEvent(new FocusEvent('focusout', { bubbles: true })); });
+    await vi.waitFor(() => expect(saved).toContain('Harbour'));
+  });
+
+  it('after the cloud work the modal builds the real timeline: "Building the timeline…" until it is finished, and only then Open project (one click, already built)', async () => {
     finishAtOnce = true;
     cloudSyncQueue.clearFinished();
     const s = store();
     const onOpen = vi.fn();
+    let finish!: (r: { ok: boolean; message?: string }) => void;
+    const finalize = vi.fn(() => new Promise<{ ok: boolean; message?: string }>(r => { finish = r; }));
     const { host } = await mount(
-      <BulkProjectsModal projects={[{ id: 'z1', name: 'Bulk Project 1' }]} parseProjectData={async () => []} onOpenProject={onOpen} onClose={() => {}} store={s} />,
+      <BulkProjectsModal projects={[{ id: 'z1', name: 'x' }]} parseProjectData={async () => []} onOpenProject={onOpen} onClose={() => {}} store={s} finalizeProject={finalize} />,
     );
-    await act(async () => {
-      await s.addFiles('z1', [
-        new File(['line'], 'script.txt'), new File(['[a] x\n[b] y\n[c] z'], 'scene.txt'),
-        new File(['a'], 'vo.wav'), new File(['i'], 'a.png'),
-      ]);
-    });
+    await act(async () => { await s.addFiles('z1', fourFiles()); s.setTypedName('z1', 'Harbour'); });
     await act(async () => { (q(host, 'bulk-build') as HTMLButtonElement).click(); });
+    await vi.waitFor(() => expect(finalize).toHaveBeenCalledWith('z1'));
+    expect(q(host, 'bulk-status-z1')!.textContent).toBe('Building the timeline…');
+    expect(q(host, 'bulk-open-z1')).toBeNull();
+    await act(async () => { finish({ ok: true }); });
     await vi.waitFor(() => expect(q(host, 'bulk-open-z1')).not.toBeNull());
+    expect(q(host, 'bulk-status-z1')!.textContent).toBe('Ready');
     await act(async () => { (q(host, 'bulk-open-z1') as HTMLButtonElement).click(); });
     expect(onOpen).toHaveBeenCalledWith('z1');
-    expect(q(host, 'bulk-batch-line')!.textContent).toContain('1 projects: 1 built');
+    finishAtOnce = false;
+  });
+
+  it('a timeline that could not be finished says so and still offers Open project (the project itself is intact)', async () => {
+    finishAtOnce = true;
+    cloudSyncQueue.clearFinished();
+    const s = store();
+    const { host } = await mount(
+      <BulkProjectsModal projects={[{ id: 'f1', name: 'x' }]} parseProjectData={async () => []} onOpenProject={() => {}} onClose={() => {}} store={s}
+        finalizeProject={async () => ({ ok: false, message: 'Sync cancelled.' })} />,
+    );
+    await act(async () => { await s.addFiles('f1', fourFiles()); s.setTypedName('f1', 'Harbour'); });
+    await act(async () => { (q(host, 'bulk-build') as HTMLButtonElement).click(); });
+    await vi.waitFor(() => expect(q(host, 'bulk-open-f1')).not.toBeNull());
+    expect(q(host, 'bulk-status-f1')!.textContent).toContain('the timeline could not be finished');
+    expect(q(host, 'bulk-status-f1')!.textContent).toContain('Sync cancelled.');
     finishAtOnce = false;
   });
 });

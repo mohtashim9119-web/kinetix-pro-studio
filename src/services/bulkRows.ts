@@ -42,6 +42,8 @@ export type BulkAudioState = 'none' | 'preparing' | 'ready' | 'failed' | 'local'
 export interface BulkRowState {
   projectId: string;
   name: string;
+  /** What the person typed. Empty until they name it: required to build. */
+  typedName: string;
   slots: BuildTimelineSlots;
   mediaCount: number;
   audio: { state: BulkAudioState; detail?: string };
@@ -55,6 +57,8 @@ export interface BulkRowDeps {
   writeStaged: (projectId: string, prev: StagedFiles, next: StagedFiles) => Promise<void>;
   loadProject: (projectId: string) => Promise<{ project: Project } | null>;
   saveProject: (project: Project) => Promise<{ ok: boolean }>;
+  /** Registry entry (dashboard card name) for a renamed project. */
+  upsertMeta?: (meta: { id: string; name: string; savedAt: number; segmentCount: number }) => void;
   hashAudio: (file: File) => Promise<string>;
   probeDuration: (file: File, audioHash: string) => Promise<number>;
   /** Cloud engine selected and usable: only then is audio pre-positioned. */
@@ -80,7 +84,7 @@ export function memoizedDuration(
 export function __resetDurationMemoForTests(): void { durationMemo.clear(); }
 
 export const defaultBulkRowDeps = async (): Promise<BulkRowDeps> => {
-  const [{ loadProject, saveProject }, engine, tauri, host] = await Promise.all([
+  const [{ loadProject, saveProject, upsertProjectMeta }, engine, tauri, host] = await Promise.all([
     import('./projectStore'), import('./cloudSyncEngine'), import('./tauriFfmpeg'), import('./syncEngineHost'),
   ]);
   return {
@@ -88,6 +92,7 @@ export const defaultBulkRowDeps = async (): Promise<BulkRowDeps> => {
     writeStaged: writeStagedDiff,
     loadProject,
     saveProject: p => saveProject(p),
+    upsertMeta: upsertProjectMeta,
     hashAudio: computeAudioHash,
     probeDuration: (file, hash) => memoizedDuration(file, hash, tauri.probeAudioDuration),
     cloudActive: () => tauri.isTauri() && host.readSyncEngineHost() === 'cloud',
@@ -220,7 +225,7 @@ export class BulkRowStore {
     this.order = projects.map(p => p.id);
     for (const p of projects) {
       this.rows.set(p.id, {
-        projectId: p.id, name: p.name, mediaCount: 0, notes: [], busy: false,
+        projectId: p.id, name: p.name, typedName: '', mediaCount: 0, notes: [], busy: false,
         slots: { script: false, scene: false, voiceover: false, media: false },
         audio: { state: 'none' },
       });
@@ -228,9 +233,34 @@ export class BulkRowStore {
     this.emit();
   }
 
-  /** Projects whose four slots are all filled — what the batch will take. */
+  /** Rows with a name AND all four slots — what the batch will take. */
   completeIds(): string[] {
-    return this.order.filter(id => missingSlots(this.rows.get(id)!.slots).length === 0);
+    return this.order.filter(id => {
+      const r = this.rows.get(id)!;
+      return r.typedName.trim().length > 0 && missingSlots(r.slots).length === 0;
+    });
+  }
+
+  /** Typing only updates the row; `commitName` writes it to the project. */
+  setTypedName(projectId: string, typed: string): void {
+    this.patch(projectId, { typedName: typed });
+  }
+
+  /** Writes the typed name to the stored project and the dashboard registry. */
+  async commitName(projectId: string): Promise<void> {
+    const row = this.rows.get(projectId);
+    const name = row?.typedName.trim();
+    if (!row || !name || name === row.name) return;
+    const stored = await this.deps.loadProject(projectId);
+    if (!stored) return;
+    const saved = await this.deps.saveProject({ ...stored.project, name });
+    if (!saved.ok) { this.patch(projectId, { notes: ['The project name could not be saved.'] }); return; }
+    this.deps.upsertMeta?.({ id: projectId, name, savedAt: Date.now(), segmentCount: stored.project.segments.length });
+    this.patch(projectId, { name });
+  }
+
+  async commitAllNames(): Promise<void> {
+    for (const id of this.order) await this.commitName(id);
   }
 
   async addFiles(projectId: string, files: readonly File[]): Promise<void> {
