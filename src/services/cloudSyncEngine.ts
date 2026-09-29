@@ -88,6 +88,26 @@ export function prepareCloudAudioOnce(
   return attempt;
 }
 
+/**
+ * Wave 3 U7.5 — STAGE AUDIO ONLY. Encode this voiceover to Opus and put it in
+ * the gateway's audio cache, and NOTHING else: no cache lookup, no job, no GPU,
+ * no meter line, no held container. Bulk Projects calls it the moment a
+ * voiceover lands in a row so each later job finds its audio already there
+ * (`lookupCloudCache` -> `audioPresent`) and skips the upload.
+ *
+ * Before this unit the encode + upload only ran as step one of a job attempt
+ * (`attemptStageCacheFirst`), so there was no way to position audio without
+ * also submitting work. Same single-flight and free refusals (one-hour cap,
+ * Opus size) as every other upload.
+ */
+export function stageCloudAudioOnly(
+  file: Blob,
+  audioHash: string,
+  options: { durationSec?: number } = {},
+): Promise<CloudUpload & { encoded: boolean }> {
+  return prepareCloudAudioOnce(file, audioHash, options);
+}
+
 /** Test-only. */
 export function __resetCloudAudioInFlightForTests(): void {
   inFlightAudio.clear();

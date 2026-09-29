@@ -27,6 +27,7 @@
 // ---------------------------------------------------------------------------
 
 import type { Asset, Project, VideoSegment } from '../types';
+import type { StagedFiles } from '../components/DropZonePanel';
 import { getAsset } from './assetStore';
 import { readAssetNative } from './nativeAssetStore';
 import { loadProject } from './projectStore';
@@ -39,6 +40,7 @@ import {
   adoptHeldContainer,
   cloudPauseReason,
   cloudWorkerSecTotal,
+  onCloudPhase,
   requestHoldAfterAlign,
   takeHeldAlign,
   transcribeForHost,
@@ -46,6 +48,9 @@ import {
 import { releaseCloudJob } from './cloudGateway';
 import { describeCloudCancel, settleCloudCancels, takeCancelReceiptsSince } from './cloudCancelReceipts';
 import { saveFaPause, type FaPauseRecord } from './faSyncPauseStore';
+import { loadStagedFromStore } from './stagedFilesPersist';
+import { stripRtfIfNeeded } from './textUtils';
+import { memoizedDuration } from './bulkRows';
 import { mintSyncLogId } from './syncLog';
 import { missingSlots, missingSlotsReason, type BuildTimelineSlots } from './buildTimelineGate';
 import type { QueueEngine, QueueJob, QueueJobOutcome } from './syncQueue';
@@ -68,25 +73,33 @@ export const cloudQueueEngine: QueueEngine = {
   },
 };
 
-/** The four-slot rule the Build Timeline button uses, for a stored project. */
-export function projectSlots(project: Project): BuildTimelineSlots {
+/** The four-slot rule the Build Timeline button uses, for a stored project.
+ *  A slot is filled when persisted OR staged (Bulk Projects stages files the
+ *  way the editor's own drop zone does — the batch reads them from there). */
+export function projectSlots(project: Project, staged?: StagedFiles | null): BuildTimelineSlots {
   return {
-    script: project.script.trim().length > 0,
-    scene: project.sceneDetails.trim().length > 0,
-    voiceover: !!project.voiceoverId && project.assets.some(a => a.id === project.voiceoverId),
-    media: project.assets.some(a => a.type !== 'audio'),
+    script: project.script.trim().length > 0 || !!staged?.scriptFile,
+    scene: project.sceneDetails.trim().length > 0 || !!staged?.sceneFile,
+    voiceover: (!!project.voiceoverId && project.assets.some(a => a.id === project.voiceoverId)) || !!staged?.voiceoverFile,
+    media: project.assets.some(a => a.type !== 'audio')
+      || (staged?.assetFiles.length ?? 0) > 0 || (staged?.zipFiles.length ?? 0) > 0,
   };
 }
 
 /** Why this project cannot enter the queue yet, or undefined if it can. */
-export function queueIneligibleReason(project: Project): string | undefined {
-  const slots = projectSlots(project);
+export function queueIneligibleReason(project: Project, staged?: StagedFiles | null): string | undefined {
+  const slots = projectSlots(project, staged);
   return missingSlots(slots).length > 0 ? missingSlotsReason(slots) : undefined;
 }
 
 export interface CloudQueueDeps {
   loadProject: (id: string) => Promise<{ project: Project } | null>;
   loadVoiceover: (project: Project, asset: Asset) => Promise<File | null>;
+  /** Bulk Projects — the project's staged files (script, scene doc, voiceover,
+   *  media), which take the place of an unset persisted slot. */
+  loadStaged?: (projectId: string) => Promise<StagedFiles | null>;
+  /** Audio length for a STAGED voiceover (a committed one carries its own). */
+  probeDuration?: (file: File, audioHash: string) => Promise<number>;
   /** App.tsx's `parseProjectData` — injected so this module never imports
    *  the app (same discipline as `SyncIntentInputs.prepareSegments`). */
   parseProjectData: (
@@ -110,16 +123,33 @@ export async function loadStoredVoiceover(project: Project, asset: Asset): Promi
 export function defaultCloudQueueDeps(
   parseProjectData: CloudQueueDeps['parseProjectData'],
 ): CloudQueueDeps {
-  return { loadProject, loadVoiceover: loadStoredVoiceover, parseProjectData };
+  return {
+    loadProject, loadVoiceover: loadStoredVoiceover, parseProjectData,
+    loadStaged: loadStagedFromStore,
+    probeDuration: async (file, hash) => {
+      const { probeAudioDuration } = await import('./tauriFfmpeg');
+      return memoizedDuration(file, hash, probeAudioDuration);
+    },
+  };
 }
 
 interface Loaded {
+  /** The stored project with any staged script/scene text laid over it. */
   project: Project;
   asset: Asset;
   file: File;
   audioHash: string;
   durationSec: number;
 }
+
+const PHASE_TEXT = {
+  /** Before the gateway has said anything: the cache-first check may end it. */
+  checking: 'Checking the cloud…',
+  planning: 'Checking the script against the audio…',
+  'waiting-gpu': 'Waiting for a cloud GPU…',
+  transcribing: 'Transcribing on the cloud…',
+  aligning: 'Aligning on the cloud…',
+} as const;
 
 export function createCloudProjectJob(
   meta: { id: string; name: string },
@@ -131,13 +161,29 @@ export function createCloudProjectJob(
     loading ??= (async (): Promise<Loaded | string> => {
       const stored = await deps.loadProject(meta.id);
       if (!stored) return 'the project could not be opened';
-      const project = stored.project;
-      const why = queueIneligibleReason(project);
+      const staged = deps.loadStaged ? await deps.loadStaged(meta.id).catch(() => null) : null;
+      const why = queueIneligibleReason(stored.project, staged);
       if (why) return why;
-      const asset = project.assets.find(a => a.id === project.voiceoverId)!;
-      const file = await deps.loadVoiceover(project, asset);
+      // Staged text wins over persisted text, as it does at Apply Sync.
+      const project: Project = {
+        ...stored.project,
+        script: staged?.scriptFile ? stripRtfIfNeeded(await staged.scriptFile.file.text()) : stored.project.script,
+        sceneDetails: staged?.sceneFile ? stripRtfIfNeeded(await staged.sceneFile.file.text()) : stored.project.sceneDetails,
+      };
+      let asset: Asset;
+      let file: File | null;
+      let durationSec: number;
+      if (staged?.voiceoverFile) {
+        file = staged.voiceoverFile.file;
+        asset = { id: `staged-${meta.id}`, name: file.name, url: '', type: 'audio', addedAt: Date.now() };
+        const hash = await computeAudioHash(file);
+        durationSec = deps.probeDuration ? await deps.probeDuration(file, hash).catch(() => 0) : 0;
+      } else {
+        asset = project.assets.find(a => a.id === project.voiceoverId)!;
+        file = await deps.loadVoiceover(project, asset);
+        durationSec = asset.duration ?? 0;
+      }
       if (!file) return 'the voiceover file could not be found';
-      const durationSec = asset.duration ?? 0;
       if (!(durationSec > 0)) return 'the voiceover’s length is unknown — open the project once';
       return { project, asset, file, audioHash: await computeAudioHash(file), durationSec };
     })();
@@ -179,52 +225,58 @@ export function createCloudProjectJob(
         return { status: 'paused', reason: record.reason, detail: record.detail };
       };
 
-      ctx.setPhase('Transcribing on the cloud…');
-      let tokens;
+      ctx.setPhase(PHASE_TEXT.checking);
+      // Live phase from the gateway's own job states (queued = waiting for a GPU).
+      const offPhase = onCloudPhase(audioHash, phase => ctx.setPhase(PHASE_TEXT[phase]));
       try {
-        const tr = await transcribeForHost({
-          host: 'cloud', asset: voiceover, durationSecs: durationSec, language: project.language,
-          onProgress: () => {}, signal: ctx.signal, audioHash,
-          hold: resolution.gateOpen, holdJobId: token,
-        });
-        tokens = tr.tokens;
-        if (token && !tr.handedOff) {
-          // The kept container was not used (cache hit or the hold closed).
-          // A cache hit hands it straight on to the alignment; otherwise let go.
-          if (tr.cached && resolution.gateOpen) adoptHeldContainer(audioHash, token);
-          else letGo();
+        let tokens;
+        try {
+          const tr = await transcribeForHost({
+            host: 'cloud', asset: voiceover, durationSecs: durationSec, language: project.language,
+            onProgress: () => {}, signal: ctx.signal, audioHash,
+            hold: resolution.gateOpen, holdJobId: token,
+          });
+          tokens = tr.tokens;
+          if (token && !tr.handedOff) {
+            // The kept container was not used (cache hit or the hold closed).
+            // A cache hit hands it straight on to the alignment; otherwise let go.
+            if (tr.cached && resolution.gateOpen) adoptHeldContainer(audioHash, token);
+            else letGo();
+          }
+        } catch (err) {
+          letGo();
+          if (err instanceof DOMException && err.name === 'AbortError') throw err;
+          if (err instanceof CloudStageError) {
+            return pause({ reason: cloudPauseReason(err.cloud), detail: err.message, stage: 'transcribe' });
+          }
+          return { status: 'failed', detail: err instanceof Error ? err.message : String(err) };
         }
-      } catch (err) {
-        letGo();
-        if (err instanceof DOMException && err.name === 'AbortError') throw err;
-        if (err instanceof CloudStageError) {
-          return pause({ reason: cloudPauseReason(err.cloud), detail: err.message, stage: 'transcribe' });
+
+        if (!resolution.gateOpen) return { status: 'done', detail: 'Transcript ready (High-Precision off).' };
+
+        if (ctx.hasNext) requestHoldAfterAlign(audioHash);
+        ctx.setPhase(PHASE_TEXT.planning);
+        const outcome = await runCloudSyncIntent({
+          spineKey: `${audioHash}|${scriptHash}|${resolution.key}`,
+          voiceover, audioHash, audioDurationSec: durationSec, tokens,
+          language: resolveFaLanguage(project),
+          prepareSegments: () => deps.parseProjectData(
+            project.script, project.sceneDetails, project.assets, durationSec, project.segments, project.defaultTextOverlay ?? false,
+          ),
+        }, ctx.signal);
+
+        const kept = takeHeldAlign(audioHash);
+        if (outcome.status === 'ready') {
+          ctx.carry.set(kept);
+          return { status: 'done', detail: 'Ready — press Build Timeline to reveal it.' };
         }
-        return { status: 'failed', detail: err instanceof Error ? err.message : String(err) };
+        if (kept) void releaseCloudJob(kept).catch(() => undefined);
+        if (outcome.status === 'cancelled') throw new DOMException('Aborted', 'AbortError');
+        if (outcome.status === 'paused') return pause({ reason: outcome.faRun.reason, detail: outcome.faRun.detail });
+        return { status: 'skipped', detail: outcome.reason };
+      } finally {
+        offPhase();
       }
-
-      if (!resolution.gateOpen) return { status: 'done', detail: 'Transcript ready (High-Precision off).' };
-
-      if (ctx.hasNext) requestHoldAfterAlign(audioHash);
-      ctx.setPhase('Aligning on the cloud…');
-      const outcome = await runCloudSyncIntent({
-        spineKey: `${audioHash}|${scriptHash}|${resolution.key}`,
-        voiceover, audioHash, audioDurationSec: durationSec, tokens,
-        language: resolveFaLanguage(project),
-        prepareSegments: () => deps.parseProjectData(
-          project.script, project.sceneDetails, project.assets, durationSec, project.segments, project.defaultTextOverlay ?? false,
-        ),
-      }, ctx.signal);
-
-      const kept = takeHeldAlign(audioHash);
-      if (outcome.status === 'ready') {
-        ctx.carry.set(kept);
-        return { status: 'done', detail: 'Ready — press Build Timeline to reveal it.' };
-      }
-      if (kept) void releaseCloudJob(kept).catch(() => undefined);
-      if (outcome.status === 'cancelled') throw new DOMException('Aborted', 'AbortError');
-      if (outcome.status === 'paused') return pause({ reason: outcome.faRun.reason, detail: outcome.faRun.detail });
-      return { status: 'skipped', detail: outcome.reason };
     },
   };
 }

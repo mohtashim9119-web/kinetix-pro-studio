@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { Plus, Trash2, Search, Check, Loader2, Settings, ChevronDown, Play, Image as ImageIcon } from 'lucide-react';
-import type { ProjectMeta } from '../types';
-import { loadAllMetas, loadProject, deleteProjectData } from '../services/projectStore';
+import type { Project, ProjectMeta } from '../types';
+import { loadAllMetas, loadProject, deleteProjectData, saveProject, upsertProjectMeta } from '../services/projectStore';
 import { deleteAllStagedForProject } from '../services/stagedFilesStore';
 import { deleteAllAssets } from '../services/assetStore';
 import { deleteProjectAssetsNativeStrict } from '../services/nativeAssetStore';
@@ -12,6 +12,8 @@ import { readSyncEngineHost, onSyncEngineHostChange, type SyncEngineHost } from 
 import { queueProjectsForCloudSync } from '../services/bulkSyncQueue';
 import type { CloudQueueDeps } from '../services/cloudQueueJob';
 import { SyncQueuePanel } from './SyncQueuePanel';
+import { BulkCountDialog, BulkProjectsModal } from './BulkProjectsModal';
+import { BULK_COPY, createBulkProjects } from '../services/bulkContext';
 import './ProjectDashboard.css';
 
 /**
@@ -58,6 +60,11 @@ interface Props {
    * cloud" action appears only when this is given.
    */
   parseProjectData?: CloudQueueDeps['parseProjectData'];
+  /**
+   * Wave 3 U7.5 — App.tsx's blank-project factory. The "Bulk Projects" button
+   * appears only when this and `parseProjectData` are given.
+   */
+  createBlankProject?: () => Project;
 }
 
 function formatDate(ts: number): string {
@@ -80,6 +87,7 @@ export function ProjectDashboard({
   onOpenAppSettings,
   onAssetCleanupFailed,
   parseProjectData,
+  createBlankProject,
 }: Props): React.ReactElement {
   const [engineHost, setEngineHost] = useState<SyncEngineHost>(readSyncEngineHost);
   useEffect(() => onSyncEngineHostChange(setEngineHost), []);
@@ -88,6 +96,10 @@ export function ProjectDashboard({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [showBulkConfirm, setShowBulkConfirm] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
+  // Wave 3 U7.5 — Bulk Projects: the "how many?" step, then the rows modal.
+  const [bulkAsking, setBulkAsking] = useState(false);
+  const [bulkProjects, setBulkProjects] = useState<{ id: string; name: string }[] | null>(null);
+  const [bulkError, setBulkError] = useState<string | null>(null);
   const [storage, setStorage] = useState<{ usage: number; quota: number } | null>(null);
 
   const searchRef = useRef<HTMLInputElement>(null);
@@ -234,6 +246,11 @@ export function ProjectDashboard({
         </div>
 
         <div className="kxd-actions">
+          {createBlankProject && parseProjectData && (
+            <button className="kxd-btn" data-testid="dashboard-bulk-projects" onClick={() => { setBulkError(null); setBulkAsking(true); }}>
+              {BULK_COPY.button}
+            </button>
+          )}
           <button className="kxd-btn kxd-btn-accent" onClick={onNewProject}>
             <Plus size={14} strokeWidth={2.2} aria-hidden="true" />
             New Project
@@ -315,7 +332,8 @@ export function ProjectDashboard({
 
       <main className="kxd-main custom-scrollbar">
         <div className="kxd-main-inner">
-          <SyncQueuePanel />
+          {bulkProjects === null && <SyncQueuePanel />}
+          {bulkError && <p className="mb-3 text-[11px] text-amber-400" data-testid="bulk-error">{bulkError}</p>}
           <div className="kxd-section-head">
             <h1>Recent projects</h1>
             <div>
@@ -460,6 +478,35 @@ export function ProjectDashboard({
           )}
         </div>
       </main>
+
+      {bulkAsking && createBlankProject && (
+        <BulkCountDialog
+          onCancel={() => setBulkAsking(false)}
+          onConfirm={count => {
+            setBulkAsking(false);
+            void createBulkProjects(count, {
+              makeBlankProject: createBlankProject,
+              save: p => saveProject(p),
+              upsertMeta: upsertProjectMeta,
+            }).then(made => {
+              // Every project is on the dashboard at once, then the rows open.
+              const data = loadAllMetas();
+              data.sort((a, b) => (b.savedAt ?? 0) - (a.savedAt ?? 0));
+              data.forEach(m => seenProjectIds.add(m.id));
+              setMetas(data);
+              setBulkProjects(made.map(m => ({ id: m.id, name: m.name })));
+            }).catch((err: unknown) => setBulkError(err instanceof Error ? err.message : String(err)));
+          }}
+        />
+      )}
+      {bulkProjects !== null && parseProjectData && (
+        <BulkProjectsModal
+          projects={bulkProjects}
+          parseProjectData={parseProjectData}
+          onOpenProject={id => { setBulkProjects(null); onSelectProject(id); }}
+          onClose={() => setBulkProjects(null)}
+        />
+      )}
 
       {showBulkConfirm && (
         <div className="kxd-dialog-scrim">

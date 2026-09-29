@@ -164,6 +164,7 @@ import {
   startSyncIntent,
   subscribeSyncIntents,
 } from './services/cloudSyncIntent';
+import { decideStagingStart, isBulkAutoFireSuppressed, peekCloudTranscript } from './services/bulkContext';
 import type { TimingProvenance } from './types';
 import {
   detectUnspokenScriptSegmentsFromWhisperFullAsync,
@@ -3684,7 +3685,7 @@ export default function App() {
   // handleApplySyncFromFiles commits. onSegmentsUpdated is a no-op — this
   // call is cache-only, it never mutates live segments (only Apply Sync does).
   // --------------------------------------------------------------------------
-  const handleVoiceoverStaged = useCallback((file: File, opts?: { rerun?: boolean }) => {
+  const handleVoiceoverStaged = useCallback((file: File, opts?: { rerun?: boolean; explicit?: boolean }) => {
     if (!isTauri()) return;
 
     const incomingIdentity = getFileIdentity(file);
@@ -3754,6 +3755,30 @@ export default function App() {
         // gets stuck disabled with no event left that could re-enable it.
         setProject(p => ({ ...p, lastTranscribedAssetId: asset.id }));
         return;
+      }
+
+      // Wave 3 U7.5 — a bulk project that has not built yet may not start
+      // cloud work from a drop or a restore. It only PEEKS at the gateway's
+      // cache (free: no upload, no job, no meter line): a hit falls through
+      // to the ordinary cache-served transcription below; a miss leaves the
+      // voiceover waiting for the project's own Transcribe click.
+      const stagingDecision = decideStagingStart({
+        project: projectRef.current,
+        host: hostForRun(readSyncEngineHost(), readRunHostOverride(projectRef.current.id), {
+          projectId: projectRef.current.id, audioHash,
+        }),
+        explicit: opts?.explicit === true,
+        rerun: opts?.rerun === true,
+      });
+      if (stagingDecision === 'lookup-first') {
+        const cachedOnCloud = await peekCloudTranscript(audioHash, projectRef.current.language);
+        if (pendingVoiceoverRef.current?.asset.id !== asset.id) return;
+        if (!cachedOnCloud) {
+          URL.revokeObjectURL(asset.url);
+          setPendingVoiceoverSync(null);
+          setRestoredUnadoptedAudioHash(audioHash);
+          return;
+        }
       }
 
       // Genuinely different content (neither guard above fired): clear the
@@ -3911,6 +3936,18 @@ export default function App() {
       lastTranscribedAudioHash: projectRef.current.lastTranscribedAudioHash,
       cachedTokenCount: projectRef.current.transcriptTokens?.length ?? 0,
     });
+    // Wave 3 U7.5 — a bulk project's batch leaves its transcript in the cloud
+    // cache, not on the project. Adopt the voiceover only when that cache
+    // already holds it (a free peek): then Build Timeline is live and the
+    // reveal is two cache hits. Otherwise the ordinary refusal below applies.
+    if (!adoptable && isBulkAutoFireSuppressed(projectRef.current)
+      && hostForRun(readSyncEngineHost(), readRunHostOverride(projectRef.current.id), {
+        projectId: projectRef.current.id, audioHash,
+      }) === 'cloud'
+      && await peekCloudTranscript(audioHash, projectRef.current.language)) {
+      handleVoiceoverStaged(file, { explicit: true }); // already peeked: no second lookup
+      return true;
+    }
     if (!adoptable) {
       // Refused: the slot stays, showing an explicit Transcribe affordance
       // instead. stagedVoiceoverNeedsExplicitTranscribe needs this hash at
@@ -3924,7 +3961,7 @@ export default function App() {
   }, [handleVoiceoverStaged]);
 
   const handleVoiceoverTranscribeRequested = useCallback((file: File): void => {
-    handleVoiceoverStaged(file);
+    handleVoiceoverStaged(file, { explicit: true });
   }, [handleVoiceoverStaged]);
 
   // Wave 3 U4 — CloudTranscriptionPausedDialog's answers. Both re-drive the
@@ -7067,6 +7104,9 @@ export default function App() {
       cancelOtherSyncIntents(undefined);
     };
     if (host !== 'cloud') { noIntent(); return; }
+    // Wave 3 U7.5 — a bulk project that has not built yet never starts cloud
+    // work on its own; the batch or its own click does.
+    if (isBulkAutoFireSuppressed(p)) { noIntent(); return; }
     const tokens = p.transcriptTokens;
     const cloudTranscriptForThisAudio = (tokens?.length ?? 0) > 0
       && p.lastTranscribedAudioHash === audioHash
@@ -8179,6 +8219,7 @@ export default function App() {
       onOpenAppSettings={() => setShowAppSettingsModal(true)}
       onAssetCleanupFailed={showToast}
       parseProjectData={parseProjectData}
+      createBlankProject={makeDefaultProject}
     />
   ) : (
     /* `data-project-id` is the editor's rendered project IDENTITY. It exists so

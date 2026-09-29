@@ -633,6 +633,13 @@ export interface Project {
    * value never disables the button (there is nothing proven unchanged),
    * it only enables the new gate once a first stamp exists. */
   lastSyncSpine?: SyncSpine;
+  /** Wave 3 U7.5 — created by Bulk Projects. Until this project's first
+   *  successful build (`lastSyncSpine` set) NOTHING may start cloud work for
+   *  it on its own: only the batch button or its own explicit Build
+   *  Timeline / Transcribe click. Set once at creation, persists across
+   *  reloads, never cleared — the "after first build" half is derived from
+   *  `lastSyncSpine` (`services/bulkContext.ts`). */
+  bulkContext?: boolean;
   /** WS2 T4.1 Step 2 — what THIS project's freshly minted segments start their
    *  `showOverlay` at, seeded ONCE at creation from App Settings' New Project
    *  Defaults (`services/appDefaults.ts`) and never re-read from that global

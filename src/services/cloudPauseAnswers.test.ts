@@ -50,7 +50,7 @@ describe('U4 hotfix — the cloud-pause answers actually act', () => {
   });
 
   it('the staging guard is the shared decision, with the re-run flag threaded through', () => {
-    expect(APP).toMatch(/const handleVoiceoverStaged = useCallback\(\(file: File, opts\?: \{ rerun\?: boolean \}\)/);
+    expect(APP).toMatch(/const handleVoiceoverStaged = useCallback\(\(file: File, opts\?: \{ rerun\?: boolean; explicit\?: boolean \}\)/);
     expect(APP).toMatch(/shouldStartStaging\(\{[\s\S]{0,200}rerun: opts\?\.rerun === true/);
   });
 });
