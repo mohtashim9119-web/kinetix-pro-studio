@@ -364,6 +364,9 @@ def meter_line(job: dict[str, Any], outcome: str, worker_sec: float, now: float)
         "language": job["language"],
         "audioDurationSec": job.get("audioDurationSec"),
         "outcome": outcome,
+        # Wave 3 U7 — which container: a batch's "one boot" is checkable as
+        # one distinct task id across its lines.
+        "taskId": job.get("taskId"),
         "workerSec": round(worker_sec, 3),
         "estimatedUsd": round(worker_sec * USD_PER_WORKER_SEC, 6),
     }
@@ -423,6 +426,7 @@ def boot_residue_line(task_id: str | None, booted_at: float, now: float) -> dict
         "language": None,
         "audioDurationSec": None,
         "outcome": "boot-unused",
+        "taskId": task_id,
         "workerSec": round(worker_sec, 3),
         "estimatedUsd": round(worker_sec * USD_PER_WORKER_SEC, 6),
     }
@@ -454,6 +458,13 @@ def reusable_inflight(job: dict[str, Any] | None, member: str) -> bool:
 # ---------------------------------------------------------------------------
 
 HOLD_FOR_PLAN_SEC = 30.0
+# Wave 3 U7 — the bulk queue chains many jobs through ONE container: any job
+# may be held (not only a transcription) and handed the next. Modal's timeout
+# is per CALL, so a chain must stay well inside it: once a call has run this
+# long it stops holding, and the queue's next job spawns normally (a second
+# boot, said so in the batch report). 300 s of a 600 s timeout leaves room for
+# the one job that starts just under the budget (<= ~145 s for a full hour).
+CHAIN_BUDGET_SEC = 300.0
 HANDOFF_RELEASE = "RELEASE"
 HANDOFF_CLOSED = "CLOSED"
 
@@ -470,15 +481,61 @@ def handoff_target(value: Any) -> str | None:
 
 
 def can_hold_for(holder: dict[str, Any] | None, member: str) -> bool:
-    """A job an alignment may be handed to: this member's transcription that
-    asked to be held and has not been released/closed by its own record."""
+    """A job the next job may be handed to: this member's job (either stage —
+    U7 chains a whole queue) that asked to be held and has not been
+    released/closed by its own record."""
     return (
         holder is not None
         and holder.get("member") == member
-        and holder.get("stage") == "transcribe"
+        and holder.get("stage") in STAGES
         and bool(holder.get("hold"))
         and holder.get("status") in ("queued", "running", "done")
     )
+
+
+BATCH_GAP_SEC = 120.0
+
+
+def batch_summaries(lines: list[dict[str, Any]], gap_sec: float = BATCH_GAP_SEC) -> list[dict[str, Any]]:
+    """Wave 3 U7 — the billing report's batches. Meter lines are grouped into
+    runs whose consecutive lines are less than `gap_sec` apart (a bulk queue
+    finishes jobs back to back). Per batch: projects (distinct audio), GPU
+    jobs, distinct containers (`boots` — 1 means the queue rode one cold
+    start), the seconds the container was merely held between jobs, the
+    unused-boot residue, and the rate-card total."""
+    ordered = sorted(lines, key=lambda line: line["ts"])
+    groups: list[list[dict[str, Any]]] = []
+    for line in ordered:
+        if groups and line["ts"] - groups[-1][-1]["ts"] < gap_sec:
+            groups[-1].append(line)
+        else:
+            groups.append([line])
+    out: list[dict[str, Any]] = []
+    for group in groups:
+        work = [line for line in group if line["outcome"] in ("done", "failed", "cancelled")]
+        held = sum(line["workerSec"] for line in group if line["outcome"] == "held")
+        residue = sum(line["workerSec"] for line in group if line["outcome"] == "boot-unused")
+        boots = {line.get("taskId") for line in group if line.get("taskId")}
+        total_sec = sum(line["workerSec"] for line in group)
+        out.append({
+            "from": group[0]["ts"],
+            "to": group[-1]["ts"],
+            "projects": len({line["audioHash"] for line in work if line.get("audioHash")}),
+            "jobs": len(work),
+            "cacheHits": sum(1 for line in group if line["outcome"] == "cache-hit"),
+            "boots": len(boots),
+            "heldSec": round(held, 3),
+            "bootResidueSec": round(residue, 3),
+            "workerSec": round(total_sec, 3),
+            "estimatedUsd": round(total_sec * USD_PER_WORKER_SEC, 6),
+        })
+    return out
+
+
+def may_hold(call_age_sec: float) -> bool:
+    """Whether a container whose call has run `call_age_sec` may still wait
+    for a hand-off (see CHAIN_BUDGET_SEC)."""
+    return call_age_sec < CHAIN_BUDGET_SEC
 
 
 def lookup_reply(result: dict[str, Any] | None, audio_duration_sec: float | None) -> dict[str, Any]:

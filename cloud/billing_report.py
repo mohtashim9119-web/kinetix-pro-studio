@@ -29,6 +29,8 @@ from decimal import Decimal
 
 import modal
 
+import sync_core
+
 WAVE3_START_DATE = "2026-09-27"
 WAVE3_CAP_USD = Decimal("25")
 
@@ -52,6 +54,21 @@ def meter_section(since_ts: float) -> None:
         total_usd += usd
         print(f"  {stage:<10} {outcome:<10} jobs={len(group):>3}  audio={audio_h:6.3f} h  worker={sec:8.1f} s  est=${usd:.4f}")
     print(f"  {'TOTAL':<21} worker={total_sec:8.1f} s  est=${total_usd:.4f}")
+
+
+def batch_section(since_ts: float) -> None:
+    """Wave 3 U7 — the bulk queue's batches: projects, GPU jobs, containers
+    (boots), held/unused seconds and the batch total, one line each."""
+    lines = modal.Function.from_name("kinetix-sync", "meter_lines").remote(since_ts)
+    batches = sync_core.batch_summaries(lines)
+    print(f"BATCHES — {len(batches)} run(s) of back-to-back jobs (gap < {sync_core.BATCH_GAP_SEC:.0f} s)")
+    for b in batches:
+        start = datetime.fromtimestamp(b["from"]).strftime("%H:%M:%S")
+        print(
+            f"  {start}  projects={b['projects']:>2} jobs={b['jobs']:>2} boots={b['boots']:>2}  "
+            f"held={b['heldSec']:6.1f} s  unused-boot={b['bootResidueSec']:5.1f} s  "
+            f"worker={b['workerSec']:7.1f} s  BATCH TOTAL est=${b['estimatedUsd']:.4f}"
+        )
 
 
 def hits_section(since_ts: float) -> None:
@@ -90,6 +107,8 @@ def main() -> None:
     parser.add_argument("--since-ts", type=float, default=0.0)
     args = parser.parse_args()
     meter_section(args.since_ts)
+    print()
+    batch_section(args.since_ts)
     print()
     hits_section(args.since_ts)
     print()

@@ -187,11 +187,11 @@ pub struct JobRequest {
     pub language: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chunks: Option<Vec<ChunkInput>>,
-    /// Wave 3 U4.5 — transcribe only: keep the GPU container for the
-    /// alignment hand-off (one boot per sync).
+    /// Wave 3 U4.5 — keep the GPU container for the next job's hand-off (one
+    /// boot per sync; U7: either stage, so a bulk queue rides one container).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hold: Option<bool>,
-    /// Wave 3 U4.5 — align only: the held transcription to hand this to.
+    /// Wave 3 U4.5 — the held job to hand this to (U7: either stage).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hold_job_id: Option<String>,
 }

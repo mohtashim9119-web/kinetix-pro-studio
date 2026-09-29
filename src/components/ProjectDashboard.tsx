@@ -7,6 +7,11 @@ import { deleteAllAssets } from '../services/assetStore';
 import { deleteProjectAssetsNativeStrict } from '../services/nativeAssetStore';
 import { deleteAllWaveforms } from '../services/waveformStore';
 import { mediaVaultUnreference } from '../services/mediaVaultClient';
+import { isTauri } from '../services/tauriFfmpeg';
+import { readSyncEngineHost, onSyncEngineHostChange, type SyncEngineHost } from '../services/syncEngineHost';
+import { queueProjectsForCloudSync } from '../services/bulkSyncQueue';
+import type { CloudQueueDeps } from '../services/cloudQueueJob';
+import { SyncQueuePanel } from './SyncQueuePanel';
 import './ProjectDashboard.css';
 
 /**
@@ -47,6 +52,12 @@ interface Props {
    * always does — a failed cleanup must never simply be silent.
    */
   onAssetCleanupFailed?: (message: string) => void;
+  /**
+   * Wave 3 U7 — App.tsx's `parseProjectData`, injected so the bulk queue can
+   * plan a stored project's scenes without importing the app. The "Sync on
+   * cloud" action appears only when this is given.
+   */
+  parseProjectData?: CloudQueueDeps['parseProjectData'];
 }
 
 function formatDate(ts: number): string {
@@ -68,7 +79,10 @@ export function ProjectDashboard({
   onNewProject,
   onOpenAppSettings,
   onAssetCleanupFailed,
+  parseProjectData,
 }: Props): React.ReactElement {
+  const [engineHost, setEngineHost] = useState<SyncEngineHost>(readSyncEngineHost);
+  useEffect(() => onSyncEngineHostChange(setEngineHost), []);
   const [metas, setMetas] = useState<ProjectMeta[]>([]);
   const [search, setSearch] = useState('');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -301,6 +315,7 @@ export function ProjectDashboard({
 
       <main className="kxd-main custom-scrollbar">
         <div className="kxd-main-inner">
+          <SyncQueuePanel />
           <div className="kxd-section-head">
             <h1>Recent projects</h1>
             <div>
@@ -313,6 +328,19 @@ export function ProjectDashboard({
                   <button className="kxd-text-btn" onClick={handleSelectAllToggle}>
                     {allVisibleSelected ? 'Deselect all' : 'Select all'}
                   </button>
+                  {parseProjectData && isTauri() && engineHost === 'cloud' && (
+                    <button
+                      className="kxd-text-btn"
+                      data-testid="dashboard-sync-on-cloud"
+                      onClick={() => {
+                        const chosen = metas.filter(m => selectedIds.has(m.id));
+                        queueProjectsForCloudSync(chosen, parseProjectData);
+                        setSelectedIds(new Set());
+                      }}
+                    >
+                      Sync on cloud
+                    </button>
+                  )}
                   <button className="kxd-btn-sm-danger" onClick={() => setShowBulkConfirm(true)}>
                     <Trash2 size={13} aria-hidden="true" />
                     Delete

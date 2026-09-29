@@ -97,6 +97,14 @@ async function assetBlob(asset: Asset): Promise<Blob> {
   return asset.file ?? (await (await fetch(asset.url)).blob());
 }
 
+/** Wave 3 U7 — GPU seconds this window's cloud jobs have worked, summed at
+ *  the one place a job's view arrives. The bulk queue reads it before/after
+ *  each project to price the batch. */
+let workerSecTotal = 0;
+export function cloudWorkerSecTotal(): number {
+  return workerSecTotal;
+}
+
 /** What one cache-first stage run actually did — for logs and the billing
  *  reconciliation, never for branching on correctness. */
 export interface CloudStageRun<R> {
@@ -114,6 +122,9 @@ export interface CloudStageRun<R> {
   jobId?: string;
   /** Wave 3 U4.5 — a held transcription's container ran it (no boot). */
   handedOff?: boolean;
+  /** Wave 3 U7 — GPU seconds the job worked (absent on a lookup hit); the
+   *  bulk queue's batch cost adds these up. */
+  workerSec?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -134,6 +145,30 @@ const heldTranscriptions = new Map<string, { jobId: string; at: number }>();
 
 function rememberHeld(audioHash: string, jobId: string): void {
   heldTranscriptions.set(audioHash, { jobId, at: Date.now() });
+}
+
+/** Wave 3 U7 — a bulk queue hands the container it kept from the previous
+ *  project to this audio (only when this audio holds nothing of its own). */
+export function adoptHeldContainer(audioHash: string, jobId: string): void {
+  if (!heldTranscriptions.has(audioHash)) rememberHeld(audioHash, jobId);
+}
+
+/** Wave 3 U7 — audios whose alignment should keep its container for the
+ *  next queued project. Consumed by `alignViaCloud`. */
+const holdAfterAlign = new Set<string>();
+const heldAligns = new Map<string, { jobId: string; at: number }>();
+
+export function requestHoldAfterAlign(audioHash: string): void {
+  holdAfterAlign.add(audioHash);
+}
+
+/** The container this audio's alignment kept for the queue, if any (fresh). */
+export function takeHeldAlign(audioHash: string): string | undefined {
+  holdAfterAlign.delete(audioHash);
+  const held = heldAligns.get(audioHash);
+  heldAligns.delete(audioHash);
+  if (!held || Date.now() - held.at > HELD_TRANSCRIPTION_TTL_MS) return undefined;
+  return held.jobId;
 }
 
 /** The live held transcription for this audio, removed from the registry. */
@@ -307,9 +342,10 @@ async function attemptStageCacheFirst<R>(
     await prepare();
     view = await runJobWithReceipt<R>(request, signal, onEvent);
   }
+  workerSecTotal += view.workerSec ?? 0;
   return {
     result: view.result!, cached: view.cached, uploaded, encoded, retried: false,
-    jobId: view.jobId, handedOff: view.handedOff === true,
+    jobId: view.jobId, handedOff: view.handedOff === true, workerSec: view.workerSec ?? undefined,
   };
 }
 
@@ -381,6 +417,10 @@ export interface HostTranscribeResult {
   host: SyncEngineHost;
   /** Wave 3 U3 — cloud only: served from the gateway's transcript cache. */
   cached?: boolean;
+  /** Wave 3 U7 — cloud only: ran in a container handed over by the queue. */
+  handedOff?: boolean;
+  /** Wave 3 U7 — cloud only: GPU seconds worked (absent on a cache hit). */
+  workerSec?: number;
 }
 
 /** A cloud failure surfaced through the staging path's existing Error
@@ -405,13 +445,18 @@ export async function transcribeViaCloud(args: {
   signal: AbortSignal;
   /** Wave 3 U4.5 — keep the container for this audio's alignment. */
   hold?: boolean;
+  /** Wave 3 U7 — run in the container the previous queued project kept. */
+  holdJobId?: string;
 }): Promise<HostTranscribeResult> {
-  const { asset, audioHash, durationSecs, language, onProgress, signal, hold } = args;
+  const { asset, audioHash, durationSecs, language, onProgress, signal, hold, holdJobId } = args;
   if (signal.aborted) throw abortError();
   try {
     onProgress(1);
     const run = await runStageCacheFirst<CloudTranscribeResult>(
-      { stage: 'transcribe', audioHash, language: language ?? 'auto', ...(hold ? { hold: true } : {}) },
+      {
+        stage: 'transcribe', audioHash, language: language ?? 'auto',
+        ...(hold ? { hold: true } : {}), ...(holdJobId ? { holdJobId } : {}),
+      },
       () => assetBlob(asset),
       {
         signal,
@@ -434,6 +479,8 @@ export async function transcribeViaCloud(args: {
       stamp: ({ language: lang, completedAt }) => stampCloudProvenance(provenance, { language: lang, completedAt }),
       host: 'cloud',
       cached: run.cached,
+      handedOff: run.handedOff === true,
+      workerSec: run.workerSec,
     };
   } catch (err) {
     if (err instanceof DOMException) throw err;
@@ -482,6 +529,8 @@ export async function transcribeForHost(args: {
   audioHash?: string;
   /** Wave 3 U4.5 — cloud only; ignored locally. */
   hold?: boolean;
+  /** Wave 3 U7 — cloud only: the container the previous queued project kept. */
+  holdJobId?: string;
 }): Promise<HostTranscribeResult> {
   if (args.host === 'cloud') {
     if (!args.audioHash) {
@@ -512,6 +561,8 @@ export type CloudAlignOutcome =
       status: 'ok'; words: FaWordSpan[]; nFallbackChunks: number; provenance: GatewayProvenance; cached: boolean;
       /** Wave 3 U4.5 — ran in the held transcription's container. */
       handedOff: boolean;
+      /** Wave 3 U7 — GPU seconds worked (absent on a cache hit). */
+      workerSec?: number;
     }
   | { status: 'cancelled' }
   | { status: 'failed'; error: CloudError };
@@ -527,6 +578,8 @@ export async function alignViaCloud(args: {
 }): Promise<CloudAlignOutcome> {
   // Wave 3 U4.5 — hand this to the held transcription's container, if any.
   const holdJobId = takeHeldTranscription(args.audioHash);
+  // Wave 3 U7 — a queued project with another behind it keeps the container.
+  const holdNext = holdAfterAlign.delete(args.audioHash);
   try {
     const run = await runStageCacheFirst<CloudAlignResult>(
       {
@@ -535,6 +588,7 @@ export async function alignViaCloud(args: {
         language: args.language,
         chunks: args.chunks.map(c => ({ startSec: c.startSec, endSec: c.endSec, text: c.text })),
         ...(holdJobId ? { holdJobId } : {}),
+        ...(holdNext ? { hold: true } : {}),
       },
       async () => args.voiceoverBlob,
       {
@@ -548,6 +602,7 @@ export async function alignViaCloud(args: {
     logStageRun('alignment', run);
     // Answered from the cache: the held container has nothing to do.
     if (holdJobId && run.cached) void releaseCloudJob(holdJobId).catch(() => {});
+    if (holdNext && !run.cached && run.jobId) heldAligns.set(args.audioHash, { jobId: run.jobId, at: Date.now() });
     const result = run.result;
     return {
       status: 'ok',
@@ -556,6 +611,7 @@ export async function alignViaCloud(args: {
       provenance: result.provenance as GatewayProvenance,
       cached: run.cached,
       handedOff: run.handedOff === true,
+      workerSec: run.workerSec,
     };
   } catch (err) {
     if (holdJobId) void releaseCloudJob(holdJobId).catch(() => {});

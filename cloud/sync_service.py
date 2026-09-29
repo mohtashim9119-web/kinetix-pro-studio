@@ -275,14 +275,26 @@ class SyncWorker:
         # The first job in a container is charged from container boot, so
         # model load and volume attach land on the meter, not in a gap.
         began = self.booted_at if not self.billed else time.time()
+        call_started = time.time()
         outcome = self._execute(job_id, began)
-        job = jobs.get(job_id) or {}
-        if outcome == "done" and job.get("stage") == "transcribe" and job.get("hold"):
-            self._hold_for_alignment(job)
-        return outcome
+        first = outcome
+        # Wave 3 U7 — a held job hands its container to the next job, which
+        # may itself be held: a bulk queue rides ONE container. The chain
+        # stops holding once this call has used its budget (the next job
+        # then spawns normally). Any hold that was not handed a job ends the
+        # loop.
+        current = jobs.get(job_id) or {}
+        while outcome == "done" and current.get("hold") and core.may_hold(time.time() - call_started):
+            target = self._hold_for_next(current)
+            if not target:
+                break
+            outcome = self._execute(target, time.time())
+            current = jobs.get(target) or {}
+        return first
 
-    def _hold_for_alignment(self, job: dict[str, Any]) -> None:
-        """Wave 3 U4.5 — wait (bounded) for the client's alignment hand-off.
+    def _hold_for_next(self, job: dict[str, Any]) -> str | None:
+        """Wave 3 U4.5 — wait (bounded) for the client's hand-off: the
+        alignment for a held transcription, or (U7) the next queued job.
 
         The idle seconds are real GPU time, so they get their own meter line
         (`held`) rather than hiding in a gap the reconciliation can't explain.
@@ -304,8 +316,7 @@ class SyncWorker:
         now = time.time()
         _write_meter(core.meter_line(dict(job, jobId=f"{job['jobId']}-hold"), "held", now - held_from, now))
         cache_vol.commit()
-        if target:
-            self._execute(target, time.time())
+        return target
 
     def _execute(self, job_id: str, began: float) -> str:
         job = jobs.get(job_id)
@@ -601,9 +612,10 @@ def gateway() -> Any:
             job["chunks"] = chunks
         # Wave 3 U4.5 — a transcription may ask its container to wait for the
         # alignment (one boot per sync); an alignment may name that held job.
-        if stage == "transcribe" and body.get("hold") is True:
+        if body.get("hold") is True:
             job["hold"] = True
-        hold_job_id = body.get("holdJobId") if stage == "align" else None
+        # U7: any stage may be handed to a held job (a queue chains).
+        hold_job_id = body.get("holdJobId")
         await jobs.put.aio(job_id, job)
         await jobs.put.aio(inflight, job_id)
         if isinstance(hold_job_id, str) and hold_job_id:

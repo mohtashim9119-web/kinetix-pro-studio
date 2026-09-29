@@ -118,10 +118,10 @@ export interface CloudJobRequest {
   /** `'auto'` or a code for transcribe; one of the FA pack codes for align. */
   language: string;
   chunks?: CloudChunk[];
-  /** Wave 3 U4.5 — transcribe only: keep the container for the alignment
-   *  hand-off (one boot per sync). */
+  /** Wave 3 U4.5 — keep the container for the next job's hand-off (one boot
+   *  per sync; U7: also across a bulk queue). */
   hold?: boolean;
-  /** Wave 3 U4.5 — align only: the held transcription to hand this to. */
+  /** Wave 3 U4.5 — the held job to hand this one to (U7: either stage). */
   holdJobId?: string;
 }
 

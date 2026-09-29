@@ -8178,6 +8178,7 @@ export default function App() {
       onNewProject={() => setShowNewProjectModal(true)}
       onOpenAppSettings={() => setShowAppSettingsModal(true)}
       onAssetCleanupFailed={showToast}
+      parseProjectData={parseProjectData}
     />
   ) : (
     /* `data-project-id` is the editor's rendered project IDENTITY. It exists so

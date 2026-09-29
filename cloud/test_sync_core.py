@@ -130,7 +130,7 @@ def test_meter_line_carries_no_text_and_prices_seconds():
     line = core.meter_line(job, "done", 100.0, 6.0)
     assert set(line) == {
         "ts", "jobId", "member", "stage", "audioHash", "language",
-        "audioDurationSec", "outcome", "workerSec", "estimatedUsd",
+        "audioDurationSec", "outcome", "taskId", "workerSec", "estimatedUsd",
     }
     assert line["estimatedUsd"] == pytest.approx(100.0 * core.USD_PER_WORKER_SEC, abs=1e-6)
     assert core.meter_line(job, "cancelled", -3.0, 6.0)["workerSec"] == 0.0
@@ -239,7 +239,9 @@ def test_only_this_members_held_transcription_can_take_an_alignment():
     assert core.can_hold_for(dict(held, status="done"), "operator")
     assert not core.can_hold_for(held, "someone-else")
     assert not core.can_hold_for(dict(held, hold=False), "operator")
-    assert not core.can_hold_for(dict(held, stage="align"), "operator")
+    # U7: a held alignment can hand its container to the next queued job.
+    assert core.can_hold_for(dict(held, stage="align"), "operator")
+    assert not core.can_hold_for(dict(held, stage="bogus"), "operator")
     for dead in ("failed", "cancelled"):
         assert not core.can_hold_for(dict(held, status=dead), "operator")
     assert not core.can_hold_for(None, "operator")
@@ -373,3 +375,38 @@ def test_limits_match_the_client_constants_in_ts():
     assert const("MAX_AUDIO_SEC") == core.MAX_AUDIO_SEC
     assert const("AUDIO_DURATION_TOLERANCE_SEC") == core.AUDIO_DURATION_TOLERANCE_SEC
     assert "OPUS_HOUR_BYTES + Math.floor(OPUS_HOUR_BYTES / 50)" in ts
+
+
+# --- Wave 3 U7: a queue rides one container ---------------------------------
+
+
+def test_chain_budget_stops_holding_well_inside_the_worker_timeout():
+    assert core.may_hold(0.0)
+    assert core.may_hold(core.CHAIN_BUDGET_SEC - 0.1)
+    assert not core.may_hold(core.CHAIN_BUDGET_SEC)
+    # The last job admitted just under the budget is a full-hour transcribe
+    # (+ its hold): budget + that must still fit in the timeout.
+    worst_admitted = core.CHAIN_BUDGET_SEC + core.WARM_HOUR_TRANSCRIBE_SEC + core.HOLD_FOR_PLAN_SEC + 5
+    assert worst_admitted < core.WORKER_TIMEOUT_SEC
+
+
+def _line(ts, outcome, sec, audio="a" * 64, task="ta-1", stage="transcribe"):
+    return {"ts": ts, "jobId": f"j{ts}", "stage": stage, "audioHash": audio, "outcome": outcome,
+            "workerSec": sec, "taskId": task, "estimatedUsd": 0.0}
+
+
+def test_batch_summary_shows_one_boot_for_a_chained_queue_and_splits_distant_runs():
+    lines = [
+        _line(100, "done", 30, audio="a" * 64), _line(101, "held", 2, audio="a" * 64),
+        _line(140, "done", 20, audio="a" * 64, stage="align"),
+        _line(180, "done", 30, audio="b" * 64), _line(190, "done", 20, audio="b" * 64, stage="align"),
+        # An hour later: a separate batch, two containers, one unused boot.
+        _line(4000, "done", 30, audio="c" * 64, task="ta-2"),
+        _line(4010, "done", 30, audio="d" * 64, task="ta-3"),
+        _line(4015, "boot-unused", 12, audio=None, task="ta-4"),
+    ]
+    first, second = core.batch_summaries(lines)
+    assert (first["projects"], first["jobs"], first["boots"], first["heldSec"]) == (2, 4, 1, 2)
+    assert first["workerSec"] == 102
+    assert first["estimatedUsd"] == pytest.approx(102 * core.USD_PER_WORKER_SEC, abs=1e-6)
+    assert (second["projects"], second["boots"], second["bootResidueSec"]) == (2, 3, 12)
