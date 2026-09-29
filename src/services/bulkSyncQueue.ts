@@ -21,3 +21,22 @@ export function queueProjectsForCloudSync(
   const deps = defaultCloudQueueDeps(parseProjectData);
   return cloudSyncQueue.enqueue(projects.map(p => createCloudProjectJob(p, deps)));
 }
+
+// Wave 3 U7.8 — the persistent batch: survives closing the window, a reload,
+// a quit or a crash (see bulkBatch.ts). Created lazily so importing this
+// module stays side-effect free for tests.
+import { BulkBatchRunner } from './bulkBatch';
+import { loadAllMetas } from './projectStore';
+
+let runner: BulkBatchRunner | undefined;
+let parseForResume: CloudQueueDeps['parseProjectData'] | undefined;
+
+export function bulkBatchRunner(parseProjectData?: CloudQueueDeps['parseProjectData']): BulkBatchRunner {
+  if (parseProjectData) parseForResume = parseProjectData;
+  runner ??= new BulkBatchRunner({
+    queue: cloudSyncQueue,
+    enqueue: rows => { if (parseForResume) queueProjectsForCloudSync(rows, parseForResume); },
+    exists: id => loadAllMetas().some(m => m.id === id),
+  });
+  return runner;
+}

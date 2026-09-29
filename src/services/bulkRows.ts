@@ -286,6 +286,28 @@ export class BulkRowStore {
 
   canAddRow(): boolean { return this.order.length < this.max; }
 
+  /** Rows for projects the persistent batch already created (a reopened
+   *  window): shown locked, in step with the batch record. Also drops built
+   *  rows the operator cleared. */
+  syncBuilt(records: readonly { id: string; name: string }[]): void {
+    let changed = false;
+    const ids = new Set(records.map(r => r.id));
+    for (const rec of records) {
+      if (this.rows.has(rec.id)) continue;
+      this.rows.set(rec.id, { ...this.blankRow(rec.id), typedName: rec.name, built: true });
+      this.order.push(rec.id);
+      changed = true;
+    }
+    for (const id of [...this.order]) {
+      if (this.rows.get(id)!.built && !ids.has(id)) {
+        this.rows.delete(id); this.bundle.delete(id);
+        this.order = this.order.filter(x => x !== id);
+        changed = true;
+      }
+    }
+    if (changed) this.emit();
+  }
+
   /** "Add project": one more empty draft row. */
   addRow(): string | undefined {
     if (!this.canAddRow()) return undefined;

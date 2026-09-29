@@ -19,7 +19,8 @@ import { AlertCircle, Check, ChevronDown, ChevronRight, FilePlus, FolderPlus, Pl
 import { BULK_COPY, BULK_MAX_PROJECTS, parseBulkCount } from '../services/bulkContext';
 import { BulkRowStore, defaultBulkRowDeps, type BulkRowState } from '../services/bulkRows';
 import type { Project } from '../types';
-import { cloudSyncQueue, queueProjectsForCloudSync } from '../services/bulkSyncQueue';
+import { bulkBatchRunner, cloudSyncQueue } from '../services/bulkSyncQueue';
+import { isBatchRowFinal, type BatchRow, type BulkBatchRunner } from '../services/bulkBatch';
 import { CLOUD_USD_PER_WORKER_SEC, type CloudQueueDeps } from '../services/cloudQueueJob';
 import { collectDroppedFiles } from '../services/droppedFiles';
 import { missingSlots } from '../services/buildTimelineGate';
@@ -95,14 +96,12 @@ function rowCost(item: Readonly<QueueItem>): string {
   return `${item.workerSec.toFixed(0)} s worked · about ${formatUsd(item.workerSec * CLOUD_USD_PER_WORKER_SEC)}`;
 }
 
-export type FinalState = { state: 'building' } | { state: 'done' } | { state: 'failed'; message: string };
-
 interface RowProps {
   row: BulkRowState;
   item: Readonly<QueueItem> | undefined;
   skippedReason: string | undefined;
-  /** After the cloud work: the app is building the real timeline. */
-  final: FinalState | undefined;
+  /** The persistent batch's record for this row (once its project exists). */
+  record: BatchRow | undefined;
   onName: (typed: string) => void;
   onFiles: (files: File[]) => void;
   onRemoveFile: (fileId: string) => void;
@@ -112,35 +111,38 @@ interface RowProps {
   onOpen: () => void;
 }
 
-function BulkRow({ row, item, skippedReason, final, onName, onFiles, onRemoveFile, onClearFiles, onRemoveRow, onCancel, onOpen }: RowProps): React.ReactElement {
+function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFile, onClearFiles, onRemoveRow, onCancel, onOpen }: RowProps): React.ReactElement {
   const filesRef = useRef<HTMLInputElement>(null);
   const folderRef = useRef<HTMLInputElement>(null);
   const [over, setOver] = useState(false);
   const [listOpen, setListOpen] = useState(false);
   useEffect(() => { folderRef.current?.setAttribute('webkitdirectory', ''); }, []);
-  const running = item !== undefined && (item.status === 'queued' || item.status === 'running');
+  const phase = record?.phase;
+  const running = phase === 'queued' || phase === 'cloud';
   // Once the project exists the row is a read-out, not an editor.
-  const locked = running || row.built;
+  const locked = row.built;
   const empty = !Object.values(row.slots).some(Boolean);
-  const status = item?.status === 'running'
-    ? (item.phase ?? 'Starting…')
-    : item?.status === 'queued' ? 'Waiting'
-    : item?.status === 'done' ? (final?.state === 'building' || final === undefined ? BULK_COPY.building : final.state === 'failed' ? BULK_COPY.finishFailed(final.message) : 'Ready')
-    : item?.status === 'paused' ? `Paused — ${item.reason ?? 'open the project to answer'}`
-    : item?.status === 'failed' ? `Failed — ${item.detail ?? ''}`
-    : item?.status === 'cancelled' ? 'Cancelled'
-    : item?.status === 'skipped' ? BULK_COPY.skipped(item.detail ?? '')
+  const status = record
+    ? phase === 'queued' ? 'Waiting'
+    : phase === 'cloud' ? (item?.phase ?? 'Working on the cloud…')
+    : phase === 'cloud-done' || phase === 'finishing' ? BULK_COPY.building
+    : phase === 'done' ? 'Ready'
+    : phase === 'finish-failed' ? BULK_COPY.finishFailed(record.message ?? '')
+    : phase === 'paused' ? `Paused — ${record.message ?? 'open the project to answer'}`
+    : phase === 'failed' ? `Failed — ${record.message ?? ''}`
+    : phase === 'cancelled' ? 'Cancelled'
+    : BULK_COPY.skipped(record.message ?? '')
     : skippedReason ? BULK_COPY.skipped(skippedReason) : '';
   const audioText = BULK_COPY.audio[row.audio.state] + (row.audio.detail ? ` (${row.audio.detail})` : '');
   // The quiet line: what the queue says, else the reason a row was left out,
   // else what the voiceover prep is doing, else how to fill the row.
   const quiet = status || audioText || (empty ? BULK_COPY.rowDrop : '');
-  const dim = item?.status === 'skipped' || (!item && !!skippedReason);
-  const cost = item && item.workerSec > 0 ? rowCost(item) : '';
+  const dim = phase === 'skipped' || phase === 'cancelled' || (!record && !!skippedReason);
+  const cost = item && item.workerSec > 0 && record ? rowCost(item) : '';
   return (
     <li
       data-testid={`bulk-row-${row.projectId}`}
-      data-status={item?.status ?? 'idle'}
+      data-status={phase ?? 'idle'}
       onDragOver={e => { e.preventDefault(); if (!locked) setOver(true); }}
       onDragLeave={() => setOver(false)}
       onDrop={e => {
@@ -166,7 +168,7 @@ function BulkRow({ row, item, skippedReason, final, onName, onFiles, onRemoveFil
         />
         <div className="flex-1" />
         {row.busy && <span className="text-[11px] text-[var(--kx-muted)]">Adding…</span>}
-        {item?.status === 'done' && final !== undefined && final.state !== 'building' && (
+        {(phase === 'done' || phase === 'finish-failed') && (
           <button
             type="button"
             data-testid={`bulk-open-${row.projectId}`}
@@ -273,10 +275,11 @@ function BulkRow({ row, item, skippedReason, final, onName, onFiles, onRemoveFil
 }
 
 export function BulkProjectsModal({
-  initialCount, createBlankProject, parseProjectData, onOpenProject, onClose, onProjectsCreated, finalizeProject,
-  queue = cloudSyncQueue, store: injected,
+  initialCount, createBlankProject, parseProjectData, onOpenProject, onClose, onProjectsCreated,
+  runner: injectedRunner, queue = cloudSyncQueue, store: injected,
 }: {
-  /** How many empty rows to start with. Rows are drafts: no project exists yet. */
+  /** How many empty rows to start with (0 when reopening a running batch).
+   *  Rows are drafts: no project exists yet. */
   initialCount: number;
   createBlankProject: () => Project;
   parseProjectData: CloudQueueDeps['parseProjectData'];
@@ -284,12 +287,13 @@ export function BulkProjectsModal({
   onClose: () => void;
   /** Projects were just created (Build Timeline): the dashboard should refresh. */
   onProjectsCreated?: () => void;
-  /** Turns a project the cloud finished into a real, saved timeline (the
-   *  app's own Build Timeline, run for it). Without it a row stops at 'done'. */
-  finalizeProject?: (id: string) => Promise<{ ok: boolean; message?: string }>;
+  /** The persistent batch (default: the app's). It keeps working after this
+   *  window closes, and after a reload it is reachable from the dashboard. */
+  runner?: BulkBatchRunner;
   queue?: SyncQueue;
   store?: BulkRowStore;
 }): React.ReactElement {
+  const runner = useMemo(() => injectedRunner ?? bulkBatchRunner(parseProjectData), [injectedRunner, parseProjectData]);
   const [store, setStore] = useState<BulkRowStore | null>(injected ?? null);
   useEffect(() => {
     if (injected) { injected.init(initialCount); return; }
@@ -308,34 +312,19 @@ export function BulkProjectsModal({
     () => store?.snapshot() ?? EMPTY_ROWS,
   );
   const snap = useSyncExternalStore(l => queue.subscribe(l), () => queue.snapshot());
+  const records = useSyncExternalStore(l => runner.subscribe(l), () => runner.snapshot());
   const [skips, setSkips] = useState<Record<string, string>>({});
-  const [finals, setFinals] = useState<Record<string, FinalState>>({});
-  // One timeline at a time (the app has one editor); each starts the moment
-  // its cloud work is done, so it overlaps the next project's GPU time.
-  const chain = useRef<Promise<void>>(Promise.resolve());
-  const started = useRef(new Set<string>());
-  const closed = useRef(false);
-  useEffect(() => () => { closed.current = true; }, []);
-  useEffect(() => {
-    for (const item of snap.items) {
-      if (item.status !== 'done' || started.current.has(item.id) || !rows.some(r => r.projectId === item.id)) continue;
-      started.current.add(item.id);
-      if (!finalizeProject) { setFinals(f => ({ ...f, [item.id]: { state: 'done' } })); continue; }
-      setFinals(f => ({ ...f, [item.id]: { state: 'building' } }));
-      chain.current = chain.current.then(async () => {
-        // Closing the window stops the remaining timelines, never the cloud jobs.
-        if (closed.current) return;
-        let result: { ok: boolean; message?: string };
-        try { result = await finalizeProject(item.id); } catch (err) { result = { ok: false, message: err instanceof Error ? err.message : String(err) }; }
-        if (closed.current) return;
-        setFinals(f => ({ ...f, [item.id]: result.ok ? { state: 'done' } : { state: 'failed', message: result.message ?? '' } }));
-      });
-    }
-  }, [snap.items, rows, finalizeProject]);
+  // While this window is open, finished cloud work is turned into real timelines.
+  useEffect(() => runner.holdFinishOpen(), [runner]);
+  // The rows of projects the batch already made (a reopened window) come from its record.
+  useEffect(() => { store?.syncBuilt(records); }, [store, records]);
   const cloud = readSyncEngineHost() === 'cloud';
   const items = useMemo(() => new Map(snap.items.map(i => [i.id, i])), [snap.items]);
+  const recordById = useMemo(() => new Map(records.map(r => [r.id, r])), [records]);
   const complete = rows.filter(r => !r.built && r.typedName.trim().length > 0 && missingSlots(r.slots).length === 0);
   const canBuild = cloud && complete.length > 0;
+  const anyRunning = records.some(r => r.phase === 'queued' || r.phase === 'cloud');
+  const anyFinal = records.some(r => isBatchRowFinal(r.phase));
   const line = queue.batchLine();
 
   const build = (): void => {
@@ -346,7 +335,7 @@ export function BulkProjectsModal({
       setSkips(left);
       if (created.length === 0) return;
       onProjectsCreated?.();
-      queueProjectsForCloudSync(created, parseProjectData);
+      runner.start(created);
     })();
   };
 
@@ -383,7 +372,7 @@ export function BulkProjectsModal({
               row={row}
               item={items.get(row.projectId)}
               skippedReason={skips[row.projectId]}
-              final={finals[row.projectId]}
+              record={recordById.get(row.projectId)}
               onName={typed => store?.setTypedName(row.projectId, typed)}
               onFiles={files => void store?.addFiles(row.projectId, files)}
               onRemoveFile={fileId => void store?.removeFile(row.projectId, fileId)}
@@ -397,7 +386,7 @@ export function BulkProjectsModal({
         <div className="px-8 pt-4 pb-8 flex-shrink-0">
           <div className="border-t border-white/[0.06] pt-3">
             {line && <p className="text-[11px] leading-snug text-gray-400 mb-2" data-testid="bulk-batch-line">{line}</p>}
-            {!canBuild && !snap.running && (
+            {!canBuild && !anyRunning && (
               <p className="text-[11px] leading-snug text-gray-400 mb-3">{!cloud ? BULK_COPY.notCloud : BULK_COPY.buildNeeds}</p>
             )}
             <div className="flex gap-3">
@@ -412,7 +401,12 @@ export function BulkProjectsModal({
                 <Plus size={13} />
                 {BULK_COPY.addProject}
               </button>
-              {snap.running && (
+              {anyFinal && (
+                <button type="button" data-testid="bulk-clear-finished" className={BTN_CANCEL} onClick={() => runner.clearFinished()}>
+                  {BULK_COPY.clearFinished}
+                </button>
+              )}
+              {anyRunning && (
                 <button type="button" data-testid="bulk-cancel-all" className={BTN_CANCEL} onClick={() => queue.cancelAll()}>
                   {BULK_COPY.cancelAll}
                 </button>

@@ -358,7 +358,7 @@ describe('WS2-50 — the delete contract is actually invoked', () => {
       DASHBOARD_SRC,
       'ProjectDashboard no longer clears staged rows on delete — they outlive the only thing ' +
         'that could ever restore them.',
-    ).toContain('await deleteAllStagedForProject(id);');
+    ).toContain("step('staged files cleanup', id, () => deleteAllStagedForProject(id))");
   });
 });
 

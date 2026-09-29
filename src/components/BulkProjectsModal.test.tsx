@@ -37,7 +37,8 @@ vi.mock('../services/bulkSyncQueue', async () => {
 
 import { BulkCountDialog, BulkProjectsModal } from './BulkProjectsModal';
 import { BulkRowStore, type BulkRowDeps } from '../services/bulkRows';
-import { cloudSyncQueue } from '../services/bulkSyncQueue';
+import { cloudSyncQueue, queueProjectsForCloudSync } from '../services/bulkSyncQueue';
+import { BulkBatchRunner } from '../services/bulkBatch';
 import { classifyAndIngestBundleZip } from '../services/bundleIngest';
 import type { StagedFiles } from './DropZonePanel';
 
@@ -58,6 +59,20 @@ function store(): Harness {
   return { store: new BulkRowStore(deps, 25), created, purged };
 }
 const blank = (): never => ({} as never);
+const memStorage = (): Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> => {
+  const m = new Map<string, string>();
+  return { getItem: k => m.get(k) ?? null, setItem: (k, v) => { m.set(k, v); }, removeItem: k => { m.delete(k); } };
+};
+const makeRunner = (finalize?: (id: string) => Promise<{ ok: boolean; message?: string }>): BulkBatchRunner => {
+  const r = new BulkBatchRunner({
+    queue: cloudSyncQueue,
+    enqueue: rows => { queueProjectsForCloudSync(rows, async () => []); },
+    exists: () => true,
+    storage: memStorage(),
+  });
+  if (finalize) r.setFinalizer(finalize);
+  return r;
+};
 
 const mount = async (el: React.ReactElement): Promise<{ root: ReturnType<typeof createRoot>; host: HTMLElement }> => {
   const host = document.createElement('div');
@@ -104,7 +119,7 @@ const setValue = async (el: HTMLInputElement, v: string): Promise<void> => {
 const modal = (h: Harness, count: number, extra: Partial<React.ComponentProps<typeof BulkProjectsModal>> = {}): React.ReactElement => (
   <BulkProjectsModal
     initialCount={count} createBlankProject={blank} parseProjectData={async () => []}
-    onOpenProject={() => {}} onClose={() => {}} store={h.store} {...extra}
+    onOpenProject={() => {}} onClose={() => {}} store={h.store} runner={makeRunner()} {...extra}
   />
 );
 const rowIds = (host: HTMLElement): string[] =>
@@ -189,7 +204,7 @@ describe('BulkProjectsModal — draft rows', () => {
     const onOpen = vi.fn();
     let finish!: (r: { ok: boolean; message?: string }) => void;
     const finalize = vi.fn(() => new Promise<{ ok: boolean; message?: string }>(r => { finish = r; }));
-    const { host } = await mount(modal(h, 1, { onOpenProject: onOpen, finalizeProject: finalize }));
+    const { host } = await mount(modal(h, 1, { onOpenProject: onOpen, runner: makeRunner(finalize) }));
     const [id] = rowIds(host);
     await act(async () => { await h.store.addFiles(id!, fourFiles()); h.store.setTypedName(id!, 'Harbour'); });
     await act(async () => { (q(host, 'bulk-build') as HTMLButtonElement).click(); });
@@ -208,7 +223,7 @@ describe('BulkProjectsModal — draft rows', () => {
     finishAtOnce = true;
     cloudSyncQueue.clearFinished();
     const h = store();
-    const { host } = await mount(modal(h, 1, { finalizeProject: async () => ({ ok: false, message: 'Sync cancelled.' }) }));
+    const { host } = await mount(modal(h, 1, { runner: makeRunner(async () => ({ ok: false, message: 'Sync cancelled.' })) }));
     const [id] = rowIds(host);
     await act(async () => { await h.store.addFiles(id!, fourFiles()); h.store.setTypedName(id!, 'Harbour'); });
     await act(async () => { (q(host, 'bulk-build') as HTMLButtonElement).click(); });

@@ -380,6 +380,7 @@ import { PreviewStage, type AutoGradeSampler, type PreviewStageHandle } from './
 import { SpeedBadge, SPEED_LADDER } from './components/SpeedBadge';
 import { ProjectDashboard } from './components/ProjectDashboard';
 import { BulkProjectsModal } from './components/BulkProjectsModal';
+import { bulkBatchRunner } from './services/bulkSyncQueue';
 import { NewProjectModal, type NewProjectChoices } from './components/NewProjectModal';
 import { ProjectSettingsModal } from './components/ProjectSettingsModal';
 import { AppSettingsModal } from './components/AppSettingsModal';
@@ -8208,19 +8209,26 @@ export default function App() {
   // project needs no second click. Refs, because the modal outlives renders.
   const bulkLatest = useRef({ switchProject: handleSwitchProject, applySync: handleApplySyncFromFiles, saveNow });
   bulkLatest.current = { switchProject: handleSwitchProject, applySync: handleApplySyncFromFiles, saveNow };
-  const bulkBuildReadyRef = useRef({ projectId: '', ready: false });
+  const bulkBuildReadyRef = useRef({ projectId: '', ready: false, built: false, why: '' });
   bulkBuildReadyRef.current = {
     projectId: project.id,
+    // Already a finished timeline (a resumed batch, or opened and built by hand).
+    built: !showDashboard && !!project.lastSyncSpine && project.segments.length > 0 && stagedVoiceoverFile === null,
+    why: showDashboard ? 'the project is not open' : stagedVoiceoverFile === null ? 'its staged files are still restoring'
+      : !transcriptionReady ? 'its transcript is not ready' : applySyncDisabled ? 'Build Timeline is not available' : isProcessing ? 'a sync is already running' : '',
     ready: !showDashboard && !isProcessing && stagedVoiceoverFile !== null
       && transcriptionReady && !applySyncDisabled,
   };
   const finalizeBulkProject = useCallback(async (id: string): Promise<{ ok: boolean; message?: string }> => {
     await bulkLatest.current.switchProject(id);
-    const deadline = Date.now() + 120_000;
+    const deadline = Date.now() + 90_000;
     for (;;) {
       const s = bulkBuildReadyRef.current;
+      if (s.projectId === id && s.built) return { ok: true };
       if (s.projectId === id && s.ready) break;
-      if (Date.now() > deadline) return { ok: false, message: 'The project did not become ready in time.' };
+      if (Date.now() > deadline) {
+        return { ok: false, message: `Timed out waiting: ${s.projectId === id ? s.why : 'the project did not open'}.` };
+      }
       await new Promise(r => setTimeout(r, 100));
     }
     const result = await bulkLatest.current.applySync();
@@ -8228,6 +8236,15 @@ export default function App() {
     await bulkLatest.current.saveNow();
     return { ok: true };
   }, []);
+  // Wave 3 U7.8 — the batch is a persistent background job (bulkBatch.ts):
+  // App gives it the editor-side finish, and on boot it picks up where it stopped.
+  useEffect(() => { bulkBatchRunner(parseProjectData).setFinalizer(finalizeBulkProject); }, [finalizeBulkProject]);
+  const bulkResumed = useRef(false);
+  useEffect(() => {
+    if (isHydrating || bulkResumed.current) return;
+    bulkResumed.current = true;
+    bulkBatchRunner(parseProjectData).resume();
+  }, [isHydrating]);
 
 
   const SHOW_GLOBAL_TEXT_LAYERS_IN_RIGHT_PANEL = false;
@@ -9402,7 +9419,6 @@ export default function App() {
           initialCount={bulkRowCount}
           createBlankProject={makeDefaultProject}
           parseProjectData={parseProjectData}
-          finalizeProject={finalizeBulkProject}
           onProjectsCreated={() => setDashboardVersion(v => v + 1)}
           onOpenProject={id => { setBulkRowCount(null); void handleSwitchProject(id); }}
           onClose={() => { setBulkRowCount(null); setDashboardVersion(v => v + 1); setShowDashboard(true); }}

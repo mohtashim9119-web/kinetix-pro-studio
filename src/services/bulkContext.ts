@@ -61,6 +61,8 @@ export const BULK_COPY = {
   close: 'Close',
   closeNote: 'Projects are created when you press Build Timeline; rows left empty are discarded. Closing this window does not stop projects that are already building — they finish into the cloud cache, and opening the project then is free.',
   addProject: 'Add project',
+  clearFinished: 'Clear finished',
+  batchButton: (n: number): string => `Bulk builds (${n})`,
   removeProject: 'Remove project',
   clearFiles: 'Clear files',
   removeFile: (name: string): string => `Remove ${name}`,
