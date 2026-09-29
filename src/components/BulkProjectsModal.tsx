@@ -29,7 +29,7 @@ const SHELL = 'fixed inset-0 z-[600] flex items-center justify-center bg-black/8
 const LABEL = 'text-[10px] uppercase tracking-widest text-gray-500 font-bold block mb-2';
 const BTN_CANCEL = 'flex-1 bg-transparent border border-[#282828] p-3 rounded-xl text-[10px] font-black uppercase tracking-widest text-gray-500 hover:text-white hover:border-gray-500 transition-all focus:outline-none focus:ring-2 focus:ring-gray-500';
 const BTN_PRIMARY = 'flex-1 bg-[#F27D26] text-white p-3 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-orange-400 transition-all focus:outline-none focus:ring-2 focus:ring-orange-400 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-[#F27D26]';
-const ICON_BTN = 'flex items-center justify-center w-8 h-8 rounded-[8px] bg-[var(--kx-surface-2)] border border-[var(--kx-line)] text-[var(--kx-muted)] hover:text-[var(--kx-text)] hover:border-[var(--kx-line-2)] transition-colors flex-shrink-0';
+const ICON_BTN = 'flex items-center justify-center w-9 h-9 rounded-[8px] bg-[var(--kx-surface-2)] border border-[var(--kx-line-2)] text-[var(--kx-text)] opacity-80 hover:opacity-100 hover:border-[#F27D26] transition flex-shrink-0';
 const CHIP = 'flex-shrink-0 flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-[6px]';
 
 /** The "how many?" question. */
@@ -143,36 +143,30 @@ function BulkRow({ row, item, skippedReason, final, onName, onNameCommit, onFile
         if (locked) return;
         void collectDroppedFiles(e.dataTransfer).then(onFiles);
       }}
-      className={`rounded-[13px] border px-3 py-2.5 transition-colors bg-[var(--kx-surface)] border-[var(--kx-line)] hover:border-[var(--kx-line-2)] ${over ? 'bg-[var(--kx-accent-soft)]' : ''}`}
+      className={`rounded-[13px] border px-4 py-3.5 transition-colors bg-[var(--kx-surface)] border-[var(--kx-line-2)] hover:border-[rgba(255,255,255,.18)] ${over ? 'bg-[var(--kx-accent-soft)]' : ''}`}
     >
-      <div className="flex items-center gap-2.5">
-        <div className="flex-1 min-w-0 flex flex-col gap-0.5">
-          <input
-            type="text"
-            aria-label={BULK_COPY.nameLabel}
-            data-testid={`bulk-name-${row.projectId}`}
-            value={row.typedName}
-            placeholder={BULK_COPY.namePlaceholder}
-            disabled={locked || item?.status === 'done'}
-            onChange={e => onName(e.target.value)}
-            onBlur={onNameCommit}
-            onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); }}
-            className="w-full bg-[#1A1A1A] border border-[#282828] px-2.5 py-1.5 rounded-lg text-[13px] font-semibold text-[var(--kx-text)] placeholder:text-gray-600 placeholder:font-normal outline-none focus:border-[#F27D26] transition-colors disabled:opacity-60"
-          />
-          <span
-            data-testid={`bulk-status-${row.projectId}`}
-            className={`text-[11.5px] truncate ${dim ? 'text-[var(--kx-faint)]' : 'text-[var(--kx-muted)]'}`}
-          >
-            {quiet}{cost ? ` · ${cost}` : ''}
-          </span>
-        </div>
-        {row.busy && <span className="text-[11px] text-[var(--kx-faint)]">Adding…</span>}
+      <div className="flex items-center gap-2">
+        <input
+          type="text"
+          aria-label={BULK_COPY.nameLabel}
+          aria-required="true"
+          data-testid={`bulk-name-${row.projectId}`}
+          value={row.typedName}
+          placeholder={BULK_COPY.namePlaceholder}
+          disabled={locked || item?.status === 'done'}
+          onChange={e => onName(e.target.value)}
+          onBlur={onNameCommit}
+          onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+          className="w-64 max-w-[60%] h-9 bg-[#1A1A1A] border border-[#333] px-3 rounded-lg text-[13px] font-semibold text-[var(--kx-text)] placeholder:text-gray-500 placeholder:font-normal outline-none focus:border-[#F27D26] transition-colors disabled:cursor-not-allowed"
+        />
+        <div className="flex-1" />
+        {row.busy && <span className="text-[11px] text-[var(--kx-muted)]">Adding…</span>}
         {item?.status === 'done' && final !== undefined && final.state !== 'building' && (
           <button
             type="button"
             data-testid={`bulk-open-${row.projectId}`}
             onClick={onOpen}
-            className="flex-shrink-0 text-[12px] px-2.5 py-1.5 rounded-[8px] bg-[var(--kx-surface-2)] border border-[var(--kx-line)] text-[var(--kx-muted)] hover:text-[var(--kx-text)] hover:border-[var(--kx-line-2)] transition-colors"
+            className="flex-shrink-0 h-8 text-[12px] px-3 rounded-[8px] bg-[var(--kx-surface-2)] border border-[var(--kx-line-2)] text-[var(--kx-text)] hover:border-[#F27D26] transition-colors"
           >
             {BULK_COPY.open}
           </button>
@@ -182,22 +176,22 @@ function BulkRow({ row, item, skippedReason, final, onName, onNameCommit, onFile
             type="button"
             data-testid={`bulk-cancel-${row.projectId}`}
             onClick={onCancel}
-            className="flex-shrink-0 text-[12px] text-gray-500 hover:text-white transition-colors"
+            className="flex-shrink-0 h-8 px-2 text-[12px] text-gray-400 hover:text-white transition-colors"
           >
             {BULK_COPY.cancelRow}
           </button>
         ) : (
           <>
             <button type="button" aria-label={BULK_COPY.rowBrowseFiles} title={BULK_COPY.rowBrowseFiles} onClick={() => filesRef.current?.click()} className={ICON_BTN}>
-              <FilePlus size={14} />
+              <FilePlus size={15} />
             </button>
             <button type="button" aria-label={BULK_COPY.rowBrowseFolder} title={BULK_COPY.rowBrowseFolder} onClick={() => folderRef.current?.click()} className={ICON_BTN}>
-              <FolderPlus size={14} />
+              <FolderPlus size={15} />
             </button>
           </>
         )}
       </div>
-      <div className="mt-2 flex flex-wrap gap-1.5 pl-0.5" data-testid={`bulk-slots-${row.projectId}`}>
+      <div className="mt-3 flex flex-wrap gap-1.5" data-testid={`bulk-slots-${row.projectId}`}>
         {(['script', 'scene', 'voiceover', 'media'] as const).map(slot => (
           <span
             key={slot}
@@ -205,13 +199,19 @@ function BulkRow({ row, item, skippedReason, final, onName, onNameCommit, onFile
             data-filled={row.slots[slot]}
             className={`${CHIP} ${row.slots[slot]
               ? 'bg-[var(--kx-ready-soft)] text-[var(--kx-ready)]'
-              : 'bg-[var(--kx-surface-2)] text-[var(--kx-faint)]'}`}
+              : 'bg-[var(--kx-surface-2)] text-[var(--kx-muted)]'}`}
           >
             {row.slots[slot] ? <Check size={11} /> : <AlertCircle size={11} />}
             {BULK_COPY.slot[slot]}{slot === 'media' && row.mediaCount > 0 ? ` · ${row.mediaCount}` : ''}
           </span>
         ))}
       </div>
+      <p
+        data-testid={`bulk-status-${row.projectId}`}
+        className={`mt-2.5 text-[12px] leading-snug ${dim ? 'text-[var(--kx-faint)]' : 'text-[var(--kx-muted)]'}`}
+      >
+        {quiet}{cost ? ` · ${cost}` : ''}
+      </p>
       <input ref={filesRef} type="file" multiple hidden onChange={e => { onFiles(Array.from(e.target.files ?? [])); e.target.value = ''; }} />
       <input ref={folderRef} type="file" multiple hidden onChange={e => { onFiles(Array.from(e.target.files ?? [])); e.target.value = ''; }} />
       {item?.receipt && <p data-testid={`bulk-receipt-${row.projectId}`} className="mt-1.5 text-[11px] text-amber-300/80">{item.receipt}</p>}
@@ -301,9 +301,9 @@ export function BulkProjectsModal({
         role="dialog"
         aria-modal="true"
         aria-label={BULK_COPY.modalTitle}
-        className="bg-[#111] border border-[#282828] rounded-2xl w-full max-w-2xl shadow-2xl max-h-[85vh] flex flex-col"
+        className="bg-[#111] border border-[#282828] rounded-2xl w-full max-w-2xl shadow-2xl max-h-[92vh] h-[92vh] flex flex-col"
       >
-        <div className="px-8 pt-8 pb-4 flex-shrink-0">
+        <div className="px-8 pt-7 pb-5 flex-shrink-0">
           <div className="flex items-center justify-between mb-2">
             <h2 className="text-sm font-black uppercase tracking-[0.2em]">{BULK_COPY.modalTitle}</h2>
             <button
@@ -316,9 +316,9 @@ export function BulkProjectsModal({
               <X size={16} />
             </button>
           </div>
-          <p className="text-xs text-gray-500">{BULK_COPY.modalIntro}</p>
+          <p className="text-xs leading-relaxed text-gray-400">{BULK_COPY.modalIntro}</p>
         </div>
-        <ol className="flex-1 min-h-0 overflow-y-auto custom-scrollbar px-8 py-1 space-y-2">
+        <ol className="flex-1 min-h-0 overflow-y-auto custom-scrollbar px-8 py-2 space-y-3">
           {rows.map(row => (
             <BulkRow
               key={row.projectId}
@@ -336,9 +336,9 @@ export function BulkProjectsModal({
         </ol>
         <div className="px-8 pt-4 pb-8 flex-shrink-0">
           <div className="border-t border-white/[0.06] pt-3">
-            {line && <p className="text-[11px] leading-snug text-gray-600 mb-2" data-testid="bulk-batch-line">{line}</p>}
+            {line && <p className="text-[11px] leading-snug text-gray-400 mb-2" data-testid="bulk-batch-line">{line}</p>}
             {!canBuild && !snap.running && (
-              <p className="text-[11px] leading-snug text-gray-600 mb-2">{!cloud ? BULK_COPY.notCloud : BULK_COPY.buildNeeds}</p>
+              <p className="text-[11px] leading-snug text-gray-400 mb-3">{!cloud ? BULK_COPY.notCloud : BULK_COPY.buildNeeds}</p>
             )}
             <div className="flex gap-3">
               {snap.running && (
@@ -357,7 +357,7 @@ export function BulkProjectsModal({
                 {BULK_COPY.build}
               </button>
             </div>
-            <p className="mt-2 text-[9px] leading-snug text-gray-600">{BULK_COPY.closeNote}</p>
+            <p className="mt-3 text-[10px] leading-snug text-gray-500">{BULK_COPY.closeNote}</p>
           </div>
         </div>
       </div>
