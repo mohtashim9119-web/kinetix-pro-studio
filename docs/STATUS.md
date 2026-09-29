@@ -1,11 +1,15 @@
 # Project Status
 
-Last updated: 2026-09-27 — Wave 2 landed on `main` (merge `c895007`, `ws1-wave2` → `main`).
-Open count **38 → 37** (37/40, under cap): two closures (38 − 2 = 36 — Settings model-status
-divergence, per-scene pre-flight gate), one addition (36 + 1 = 37 — byte-deletion lifecycle).
-Nothing else opens or closes this pass. Prior header's 40 → 36 figure described the Wave 1
-landing (merge `ws1-wave1`, 2026-09-20); Wave 1 formal close (`e039c4d`) then queued two Wave 2
-lines (36 → 38).
+Last updated: 2026-09-30 — Wave 3 mini-landing on `main` (merge `88f2936`, `ws1-wave3` → `main`): the
+amount-normalization defect found and fixed, the anchor-extension work discarded.
+Open count **37 → 41** (**41/40, OVER the cap by one**): four parked additions (37 + 4 = 41), no open
+item closed. The defect below is found-and-fixed in the same pass (never counted open) and the
+anchor-extension is closed-by-discard (never counted open), so neither moves the arithmetic. The cap
+breach is recorded, not resolved — it needs an operator call (close, fold or defer one line).
+Prior header (2026-09-27): Wave 2 landing, open count 38 → 37 (37/40) — two closures (38 − 2 = 36:
+Settings model-status divergence, per-scene pre-flight gate), one addition (36 + 1 = 37: byte-deletion
+lifecycle). Wave 1 landing (merge `ws1-wave1`, 2026-09-20) had taken 40 → 36; Wave 1 formal close
+(`e039c4d`) then queued two Wave 2 lines (36 → 38).
 
 > **Single source of truth for project tracking.** Retired trackers live under
 > `docs/archive/history/` (`work-in-progress.md`, `project-state.md`). Update this file only;
@@ -84,6 +88,15 @@ has a STATUS.md citation:
 
 ### Open Bugs — added at Wave 2 landing (2026-09-27)
 - [OPEN] Byte-deletion lifecycle — delete-then-undo destroys an asset's bytes at source; G6 imports write vault + IDB only (the native store lags until boot). Rescued today by the vault rung (`447dd62`) + boot migration. Source fix — defer byte deletion until undo history drops the step — is a deferred design change.
+
+### Wave 3 mini-landing — 2026-09-30 (merge `88f2936`, `ws1-wave3` → `main`)
+- **FOUND AND FIXED THIS SESSION (not counted open) — amount/currency normalization.** A written amount ("$11,000", "$9,400", "84,000") was unmatched (`canonicalize` read numbers above 9999 digit by digit and canonicalized each transcript token alone) and never sent to forced alignment (`normalizeForForcedAlignment` dropped every non-bare-integer token), so the neighbouring words were stretched over the amount's speech and cuts collapsed ~1.5s early on cloud transcripts. Fixed in `6612741` (amounts as words in all three normalizers — TS, Rust, Python — plus the `canonicalize` fix, guarded by a 41-case cross-implementation lockstep), `041e47d` (a cut is never derived from a scene's last MATCHED word when its tail words were never found; number tripwire; engine-switch boundary-delta finding; the <60% word-coverage finding is also persisted on the timing provenance) and `db80b04` (M4 plan-byte-equality net, direct-vs-batch equality, restart stability, U8 parity 98.4–100% within 100 ms on Spanish/173/V6). Operator click check passed 3/3. v6/173/Spanish chunk plans and their alignment cache keys are byte-identical to before; only plans whose script carries an amount re-key (one-time re-align, cents).
+- CLOSED (2026-09-30, DISCARDED by operator ruling — closed, not parked) — head-word anchor extension for the 0.00-confidence stranded "you"/"the" words. The rule was too greedy: it re-anchored 213/312 v6, 48/142 173 and 3/4 Spanish anchors and failed 24 frozen tests (the R-U seam tests, the ear-verified R.11/R.12 production pins, the pinned chunk structure). Branch `ws1-wave3-anchor-extension-held` deleted at SHA `f1a3371a83fa90d51b1a684a7744cd2c19243d1c`; not merged, not to be resurrected.
+- [OPEN · NON-BLOCKING] Standalone `%`, `&`, `@` tokens are still dropped by `normalizeForForcedAlignment` (the matcher's `canonicalize` reads them as "percent"/"and"/"at") — same defect family as the amount drop, out of this fix's scope; only a `%` attached to a number is handled.
+- [OPEN · NON-BLOCKING] Bare non-English integers up to 9999 still read in ENGLISH words in the matcher (`canonicalize("12","es")` → "twelve") while forced alignment speaks the language ("doce"), so a Spanish/French/German/Portuguese script digit cannot match its aligned word — the documented per-language digit-word gap, deliberately untouched (it would move the Spanish golden). Amounts and numbers above 9999 are language-aware.
+- [OPEN · NON-BLOCKING] Broken `cloud/` harness scripts — `cloud/build_chunk_plan.ts` fails under `tsx` (`import.meta.env` undefined) and `cloud/run_local_fa.sh` hardcodes stale paths (`Vibe Coding Projects`) and only the v6 arm. The U8 parity gate was re-run with equivalents (`scripts/chunkPlanCorpora.ts`, `cloud/u8_cloud_align.py`, the `session_p_regen` Rust test).
+- [OPEN · NON-BLOCKING] Orphaned-file projects — project records `7aae8238`, `98565b12`, `9fcbdb83`, `2de45e28` whose files are orphaned; not investigated this session.
+- Open-count arithmetic: 37 (Wave 2 landing) + 4 (the four lines above) − 0 closures = **41/40**; the defect fix and the anchor-extension discard are outside the count by construction.
 
 ### Deferred Tasks
 - [DEFERRED · ASR ENGINE LIMITATION] Row 52 ("Llívia") — Whisper never transcribed isolated token; owner ruling 2026-09-03
