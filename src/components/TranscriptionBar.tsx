@@ -17,32 +17,10 @@ export function TranscriptionBar({
 }: TranscriptionBarProps): React.ReactElement | null {
   if (status.phase === 'idle') return null;
 
-  if (status.phase === 'transcribing') {
-    return (
-      <div
-        role="status"
-        aria-live="polite"
-        className="flex items-center gap-3 px-4 py-1.5 bg-indigo-950/90 border-b border-indigo-800/50 text-sm"
-      >
-        <div className="flex-1 relative h-1.5 bg-indigo-900 rounded-full overflow-hidden">
-          <div
-            className="absolute inset-y-0 left-0 bg-indigo-400 rounded-full transition-all duration-300 ease-out"
-            style={{ width: `${status.percent}%` }}
-          />
-        </div>
-        <span className="shrink-0 text-xs text-indigo-300 tabular-nums">
-          Transcribing… {status.percent}%
-        </span>
-        <button
-          onClick={onCancel}
-          aria-label="Cancel transcription"
-          className="shrink-0 p-0.5 rounded hover:bg-indigo-800/60 focus:outline-none focus-visible:ring-1 focus-visible:ring-indigo-400 text-indigo-400 hover:text-indigo-200 transition-colors text-xs leading-none"
-        >
-          ✕
-        </button>
-      </div>
-    );
-  }
+  // Wave 3 U4.6 — progress is silent. The 0–100% transcription bar no
+  // longer renders (both engines); the Build Timeline click shows the honest
+  // phase instead. Failures below stay loud.
+  if (status.phase === 'transcribing') return null;
 
   if (status.phase === 'done') {
     return (

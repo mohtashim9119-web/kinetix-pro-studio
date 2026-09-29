@@ -108,7 +108,7 @@ export function UnappliedTranscriptBanner({
         className="shrink-0 px-3 py-1.5 rounded-lg bg-white/15 hover:bg-white/25 disabled:opacity-50
                    disabled:cursor-not-allowed transition-colors"
       >
-        {busy ? 'Applying…' : 'Apply Sync to Timeline'}
+        {busy ? 'Building…' : 'Build Timeline'}
       </button>
       <button
         type="button"

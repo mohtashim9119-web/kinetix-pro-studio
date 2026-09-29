@@ -196,6 +196,8 @@ describe('Apply Sync commit writes provenance in the same object as faWordTiming
     const body = src.slice(start, end);
     expect(body).toContain('transcriptTokens: tokens');
     expect(body).toContain('timingProvenance:');
-    expect(body).toContain('stampWhisperProvenance');
+    // Wave 3 U2 — stamped by the arm that actually ran (`transcribeForHost`'s
+    // `stamp`: whisper, or whisper-cloud + the gateway's model/revision).
+    expect(body).toContain('transcription: stamp({');
   });
 });

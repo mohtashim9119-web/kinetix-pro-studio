@@ -885,3 +885,11 @@ export const WPM_HARD_IMPOSSIBLE_MIN = 220;
  *  SWAPPABLE — propose a different value in review if it proves too tight
  *  or too loose in practice. */
 export const SCENE_DENSITY_WORDS_PER_SEC = 3.5;
+
+// --- Engine-switch boundary delta (Wave 3, amount-drop fix Commit 2) ---------
+// A re-sync of the SAME audio and script under a DIFFERENT timing engine (cloud
+// <-> local) should land every cut where it already was. A cut that moves by
+// more than this is worth naming to the user, with both engines and both times.
+// 0.1s is the operator's stated figure (the parity gate's own "within 100ms"),
+// not a fitted value.
+export const BOUNDARY_DELTA_THRESHOLD_SEC = 0.1;

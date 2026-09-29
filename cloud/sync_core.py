@@ -1,0 +1,584 @@
+"""Kinetix cloud sync — pure service logic (Wave 3 U0).
+
+No Modal, no FastAPI, no network. Everything here is imported by
+`cloud/sync_service.py` (the deployed gateway + GPU worker) and exercised
+directly by `cloud/test_sync_core.py`. Keeping it import-light is what lets
+the auth, cache-key, validation, retention, and metering rules be tested on
+a laptop without a Modal account.
+
+Cache keys are content hashes end to end (plan-v3 Wave 3 item 2, the
+`services/spine.ts` convention): the transcript stage keys on the audio
+hash, the alignment stage on the audio hash plus a hash of the chunk plan
+actually sent. Both keys fold in the exact engine revision, so a model or
+decode-parameter change can never return a stale cached result.
+
+Wave 3 U3 — the alignment key also folds in the language pack's own
+revision: the model repo commit AND a digest of the vocab + cardinal files
+baked into the image beside it (`pack_digests`). Those files steer the
+decoder, and they change in this repo without the model repo moving.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import math
+import re
+from pathlib import Path
+from typing import Any
+
+SERVICE_SCHEMA = 1
+
+# ---------------------------------------------------------------------------
+# Engine identity. Every value here is folded into cache keys and returned
+# to the desktop app as provenance (`TimingProvenance`, src/types.ts), so a
+# change to any of them is, by construction, a cache miss.
+# ---------------------------------------------------------------------------
+
+WHISPER_MODEL = "dropbox-dash/faster-whisper-large-v3-turbo"
+# Hugging Face commit of the CTranslate2 conversion (license: mit). Pinned
+# here and seeded into a revision-named volume directory — the measurement
+# harness seeded unpinned, so its provenance could not name the model.
+WHISPER_REVISION = "0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf"
+FASTER_WHISPER_VERSION = "1.1.1"
+CTRANSLATE2_VERSION = "4.8.2"
+# Decode parameters are part of engine identity: the parity measurements in
+# docs/architecture/cloud-asr-measurements.md were taken with exactly these.
+WHISPER_DECODE = {
+    "beam_size": 5,
+    "word_timestamps": True,
+    "vad_filter": False,
+    "condition_on_previous_text": True,
+}
+
+FA_REPO = "mohtashim9/kinetix-fa-models"
+FA_REVISION = "f618960d71728eba5f12528d5571838a10d262bf"
+ORT_VERSION = "1.23.2"
+# Bumped whenever cloud/fa_engine.py's algorithm changes.
+FA_ENGINE_PORT_VERSION = 1
+FA_LANGS = ("en", "es", "fr", "de", "pt")
+
+TRANSCRIBE_ENGINE_REV = (
+    f"{WHISPER_MODEL}@{WHISPER_REVISION}"
+    f"+faster-whisper-{FASTER_WHISPER_VERSION}+ct2-{CTRANSLATE2_VERSION}"
+    f"+{json.dumps(WHISPER_DECODE, sort_keys=True, separators=(',', ':'))}"
+)
+ALIGN_ENGINE_REV = f"{FA_REPO}@{FA_REVISION}+ort-{ORT_VERSION}+port-{FA_ENGINE_PORT_VERSION}"
+
+
+def transcribe_provenance(detected_language: str | None) -> dict[str, Any]:
+    return {
+        "engine": "whisper-cloud",
+        "model": WHISPER_MODEL,
+        "modelVersion": f"{WHISPER_REVISION}+faster-whisper-{FASTER_WHISPER_VERSION}+ct2-{CTRANSLATE2_VERSION}",
+        "language": detected_language,
+    }
+
+
+def align_provenance(language: str) -> dict[str, Any]:
+    return {
+        "engine": "fa-cloud",
+        "model": f"{FA_REPO}/{language}",
+        "modelVersion": f"{FA_REVISION}+ort-{ORT_VERSION}+port-{FA_ENGINE_PORT_VERSION}",
+        "language": language,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Limits. The one-hour cap is enforced here at upload (plan-v3 Wave 3 item
+# 9); the client pre-flight and the worker timeout are the other two layers.
+# ---------------------------------------------------------------------------
+
+MAX_AUDIO_SEC = 3600.0
+# ffprobe on an Opus container reports a few ms past the encoded length
+# (the measured one-hour fixture probes at 3600.0065 s).
+AUDIO_DURATION_TOLERANCE_SEC = 1.0
+# Measured: one hour of 16 kHz mono libopus CBR 16 kbps is exactly 7,477,405
+# bytes. CBR makes size a reliable proxy for duration, so an oversize body
+# is refused from Content-Length before a byte of it is buffered.
+OPUS_HOUR_BYTES = 7_477_405
+MAX_UPLOAD_BYTES = OPUS_HOUR_BYTES + OPUS_HOUR_BYTES // 50
+
+# Third layer: the worker's own execution timeout (Modal counts it from the
+# moment the container starts running the call — queue wait for a T4 is not
+# in it and is not billed). Sized from the measurements for a full-cap hour:
+#   transcribe 110.5 s warm + the 30 s hand-off hold it may carry (the hold
+#   is inside the same call) + ~4 s model load  ->  ~145 s; align 66 s warm.
+# 600 s is ~4x the slowest honest call: room for a slow T4 or a cold model
+# volume, and a hard ceiling of 600 s x USD_PER_WORKER_SEC (~$0.125) on any
+# one job, so no job can bill unbounded GPU time. The client's own wall
+# limit (cloud_gateway.rs JOB_WALL_LIMIT, 25 min) also covers the GPU queue.
+WARM_HOUR_TRANSCRIBE_SEC = 110.5
+WARM_HOUR_ALIGN_SEC = 66.0
+WORKER_TIMEOUT_SEC = 10 * 60
+MAX_CHUNKS = 5000
+MAX_CHUNK_TEXT_CHARS = 20_000
+
+# ---------------------------------------------------------------------------
+# Retention (operator D4): cached audio 7 days after last use, results 30
+# days, nothing used for training, logs hold hashes/durations/GPU-seconds
+# only — never transcript text.
+# ---------------------------------------------------------------------------
+
+AUDIO_RETENTION_SEC = 7 * 86_400
+RESULT_RETENTION_SEC = 30 * 86_400
+
+# ---------------------------------------------------------------------------
+# Cost. Published Modal rates on the measurement day
+# (docs/architecture/cloud-asr-measurements.md): T4 $0.59/h, CPU
+# $0.0473/core/h, memory $0.008/GiB/h, for the worker's cpu=2, memory=8 GiB.
+# A per-job estimate only; `modal billing report` is the source of truth.
+# ---------------------------------------------------------------------------
+
+WORKER_CPU_CORES = 2
+WORKER_MEMORY_GIB = 8
+USD_PER_WORKER_SEC = (0.59 + 0.0473 * WORKER_CPU_CORES + 0.008 * WORKER_MEMORY_GIB) / 3600.0
+
+HEX64 = re.compile(r"^[0-9a-f]{64}$")
+TRANSCRIBE_LANGS = ("auto",) + FA_LANGS
+STAGES = ("transcribe", "align")
+TERMINAL_STATUSES = ("done", "failed", "cancelled")
+
+
+class ValidationError(ValueError):
+    """A request the gateway refuses with a typed 4xx, never a 500."""
+
+    def __init__(self, code: str, detail: str) -> None:
+        super().__init__(f"{code}: {detail}")
+        self.code = code
+        self.detail = detail
+
+
+def sha256_hex(data: bytes | str) -> str:
+    if isinstance(data, str):
+        data = data.encode("utf-8")
+    return hashlib.sha256(data).hexdigest()
+
+
+# ---------------------------------------------------------------------------
+# Auth. The Modal Secret holds {sha256(key): member} — never a raw key — so
+# the secret itself cannot be replayed as a credential.
+# ---------------------------------------------------------------------------
+
+
+def parse_key_registry(raw: str | None) -> dict[str, str]:
+    if not raw:
+        return {}
+    parsed = json.loads(raw)
+    if not isinstance(parsed, dict):
+        raise ValueError("key registry must be a JSON object of {sha256: member}")
+    out: dict[str, str] = {}
+    for digest, member in parsed.items():
+        if not isinstance(digest, str) or not HEX64.match(digest):
+            raise ValueError(f"key registry entry {digest!r} is not a sha256 hex digest")
+        if not isinstance(member, str) or not member:
+            raise ValueError(f"key registry entry {digest!r} has no member name")
+        out[digest] = member
+    return out
+
+
+def authenticate(authorization: str | None, registry: dict[str, str]) -> str | None:
+    """The member name for a valid `Bearer <key>` header, else None."""
+    if not authorization:
+        return None
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not token.strip():
+        return None
+    return registry.get(sha256_hex(token.strip()))
+
+
+# ---------------------------------------------------------------------------
+# Request validation.
+# ---------------------------------------------------------------------------
+
+
+def validate_audio_hash(audio_hash: Any) -> str:
+    if not isinstance(audio_hash, str) or not HEX64.match(audio_hash):
+        raise ValidationError("bad-audio-hash", "audioHash must be a lowercase sha256 hex digest")
+    return audio_hash
+
+
+def validate_upload_size(content_length: int | None) -> None:
+    if content_length is None:
+        raise ValidationError("length-required", "Content-Length is required")
+    if content_length <= 0:
+        raise ValidationError("empty-audio", "audio body is empty")
+    if content_length > MAX_UPLOAD_BYTES:
+        raise ValidationError(
+            "too-long",
+            f"audio body is {content_length} bytes; the one-hour cap at 16 kbps Opus is {MAX_UPLOAD_BYTES}",
+        )
+
+
+def validate_probe(codec: str | None, duration_sec: float | None) -> float:
+    if codec != "opus":
+        raise ValidationError("not-opus", f"expected Opus audio, got codec {codec!r}")
+    if duration_sec is None or not math.isfinite(duration_sec) or duration_sec <= 0:
+        raise ValidationError("bad-duration", "could not read a positive audio duration")
+    if duration_sec > MAX_AUDIO_SEC + AUDIO_DURATION_TOLERANCE_SEC:
+        raise ValidationError(
+            "too-long", f"audio is {duration_sec:.1f}s; the cap is {MAX_AUDIO_SEC:.0f}s"
+        )
+    return duration_sec
+
+
+def validate_language(stage: str, language: Any) -> str:
+    allowed = TRANSCRIBE_LANGS if stage == "transcribe" else FA_LANGS
+    if language not in allowed:
+        raise ValidationError(
+            "unsupported-language", f"{stage} language must be one of {', '.join(allowed)}; got {language!r}"
+        )
+    return language
+
+
+def canonical_chunks(chunks: Any, audio_duration_sec: float | None) -> list[dict[str, Any]]:
+    """Validated, key-ordered chunk plan: the exact bytes that get hashed."""
+    if not isinstance(chunks, list) or not chunks:
+        raise ValidationError("bad-chunks", "chunks must be a non-empty list")
+    if len(chunks) > MAX_CHUNKS:
+        raise ValidationError("bad-chunks", f"at most {MAX_CHUNKS} chunks")
+    ceiling = (audio_duration_sec or MAX_AUDIO_SEC) + AUDIO_DURATION_TOLERANCE_SEC
+    out: list[dict[str, Any]] = []
+    for i, chunk in enumerate(chunks):
+        if not isinstance(chunk, dict):
+            raise ValidationError("bad-chunks", f"chunk {i} is not an object")
+        start, end, text = chunk.get("startSec"), chunk.get("endSec"), chunk.get("text")
+        if not all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in (start, end)):
+            raise ValidationError("bad-chunks", f"chunk {i} startSec/endSec must be numbers")
+        start, end = float(start), float(end)
+        if not (math.isfinite(start) and math.isfinite(end)) or start < 0 or end <= start or end > ceiling:
+            raise ValidationError("bad-chunks", f"chunk {i} window [{start}, {end}] is out of range")
+        if not isinstance(text, str) or len(text) > MAX_CHUNK_TEXT_CHARS:
+            raise ValidationError("bad-chunks", f"chunk {i} text must be a string under {MAX_CHUNK_TEXT_CHARS} chars")
+        out.append({"startSec": start, "endSec": end, "text": text})
+    return out
+
+
+def chunk_plan_hash(chunks: list[dict[str, Any]]) -> str:
+    return sha256_hex(json.dumps(chunks, sort_keys=True, separators=(",", ":"), ensure_ascii=False))
+
+
+# ---------------------------------------------------------------------------
+# Cache keys — the two stages (plan-v3 Wave 3 item 2: two cached stages,
+# not atomic-or-nothing).
+# ---------------------------------------------------------------------------
+
+
+def pack_digests(vocab_dir: str | Path) -> dict[str, str]:
+    """Per-language digest of the decoder-side pack files (vocab + cardinal).
+
+    Refuses to guess: a missing file is an error at import, not a key that
+    silently stops covering the pack.
+    """
+    root = Path(vocab_dir)
+    out: dict[str, str] = {}
+    for lang in FA_LANGS:
+        h = hashlib.sha256()
+        for name in (f"fa-vocab-{lang}.json", f"fa-cardinal-{lang}.json"):
+            data = (root / name).read_bytes()
+            h.update(name.encode("utf-8") + b"\0" + len(data).to_bytes(8, "big") + data)
+        out[lang] = h.hexdigest()
+    return out
+
+
+def pack_revision(language: str, digests: dict[str, str]) -> str:
+    """The revision of ONE language pack: model repo commit + its file digest."""
+    return f"{FA_REPO}/{language}@{FA_REVISION}+files-{digests[language]}"
+
+
+def transcript_cache_key(audio_hash: str, language: str) -> str:
+    return sha256_hex(f"transcribe|{SERVICE_SCHEMA}|{audio_hash}|{language}|{TRANSCRIBE_ENGINE_REV}")
+
+
+def alignment_cache_key(audio_hash: str, plan_hash: str, language: str, pack_rev: str) -> str:
+    return sha256_hex(f"align|{SERVICE_SCHEMA}|{audio_hash}|{plan_hash}|{language}|{pack_rev}|{ALIGN_ENGINE_REV}")
+
+
+def audio_path(root: str, audio_hash: str) -> str:
+    return f"{root}/audio/{audio_hash}.opus"
+
+
+def audio_meta_path(root: str, audio_hash: str) -> str:
+    return f"{root}/audio/{audio_hash}.json"
+
+
+def result_path(root: str, stage: str, cache_key: str) -> str:
+    return f"{root}/results/{stage}/{cache_key}.json"
+
+
+# ---------------------------------------------------------------------------
+# Retention.
+# ---------------------------------------------------------------------------
+
+
+def audio_expired(last_used_at: float, now: float) -> bool:
+    return now - last_used_at > AUDIO_RETENTION_SEC
+
+
+def result_expired(created_at: float, now: float) -> bool:
+    return now - created_at > RESULT_RETENTION_SEC
+
+
+# ---------------------------------------------------------------------------
+# Jobs and metering. A meter line carries hashes, durations, and seconds —
+# the D4 log contract — and never any transcript or script text.
+# ---------------------------------------------------------------------------
+
+
+def new_job(
+    job_id: str,
+    member: str,
+    stage: str,
+    audio_hash: str,
+    language: str,
+    cache_key: str,
+    audio_duration_sec: float | None,
+    now: float,
+) -> dict[str, Any]:
+    return {
+        "jobId": job_id,
+        "member": member,
+        "stage": stage,
+        "audioHash": audio_hash,
+        "language": language,
+        "cacheKey": cache_key,
+        "audioDurationSec": audio_duration_sec,
+        "status": "queued",
+        "createdAt": now,
+        "startedAt": None,
+        "finishedAt": None,
+        "callId": None,
+        "workerSec": None,
+        "error": None,
+    }
+
+
+def meter_line(job: dict[str, Any], outcome: str, worker_sec: float, now: float) -> dict[str, Any]:
+    worker_sec = max(0.0, float(worker_sec))
+    return {
+        "ts": now,
+        "jobId": job["jobId"],
+        "member": job["member"],
+        "stage": job["stage"],
+        "audioHash": job["audioHash"],
+        "language": job["language"],
+        "audioDurationSec": job.get("audioDurationSec"),
+        "outcome": outcome,
+        # Wave 3 U7 — which container: a batch's "one boot" is checkable as
+        # one distinct task id across its lines.
+        "taskId": job.get("taskId"),
+        "workerSec": round(worker_sec, 3),
+        "estimatedUsd": round(worker_sec * USD_PER_WORKER_SEC, 6),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Wave 3 U5 — cancel honesty. Whether a job started is decided by ONE
+# put-if-absent on `start_key`: the worker writes the second its billing
+# began from, DELETE writes CANCELLED_BEFORE_START. Exactly one wins, so a
+# cancel never meters $0 for work that ran and never meters work that didn't.
+# ---------------------------------------------------------------------------
+
+CANCELLED_BEFORE_START = "CANCELLED"
+
+
+def start_key(job_id: str) -> str:
+    return f"start:{job_id}"
+
+
+def cancelled_key(job_id: str) -> str:
+    """The cancelled record, kept apart from the job record so a worker's
+    late "running" write can never un-cancel a job."""
+    return f"cancelled:{job_id}"
+
+
+def cancel_charge(claim: Any, now: float) -> tuple[bool, float]:
+    """(started, billed seconds) for a cancel, from the start claim the
+    cancel lost to. A claim DELETE itself won is (False, 0.0)."""
+    if isinstance(claim, (int, float)) and not isinstance(claim, bool):
+        return True, max(0.0, now - float(claim))
+    return False, 0.0
+
+
+def first_job_billing(booted_at: float, created_at: float | None) -> tuple[float, float]:
+    """(billed_from, residue seconds) for a container's first job. The job
+    pays for the boot only if the container booted for it: a container Modal
+    started for an earlier job (one cancelled while it was starting) and kept
+    warm must not bill that job's start-up to the next one. The gap before the
+    job existed is residue, metered as its own `boot-unused` line."""
+    if created_at is None or created_at <= booted_at:
+        return booted_at, 0.0
+    return created_at, created_at - booted_at
+
+
+def boot_residue_line(task_id: str | None, booted_at: float, now: float) -> dict[str, Any]:
+    """A GPU container that booted and exited without running a job — the
+    usual cause is a job cancelled while its container was still starting.
+    No job is charged for it, but the container's seconds were real, so the
+    meter shows them under their own outcome instead of hiding them."""
+    worker_sec = max(0.0, now - booted_at)
+    return {
+        "ts": now,
+        "jobId": f"boot-{task_id or int(booted_at * 1000)}",
+        "member": None,
+        "stage": "container",
+        "audioHash": None,
+        "language": None,
+        "audioDurationSec": None,
+        "outcome": "boot-unused",
+        "taskId": task_id,
+        "workerSec": round(worker_sec, 3),
+        "estimatedUsd": round(worker_sec * USD_PER_WORKER_SEC, 6),
+    }
+
+
+def inflight_key(member: str, cache_key: str) -> str:
+    """Wave 3 U4 — the jobs-dict key naming a member's non-terminal job for
+    one cache key. A client retry after a lost poll resubmits the SAME
+    request; the gateway answers with the job already running instead of
+    spawning (and billing) a second one."""
+    return f"inflight:{member}:{cache_key}"
+
+
+def reusable_inflight(job: dict[str, Any] | None, member: str) -> bool:
+    return job is not None and job.get("member") == member and job.get("status") not in TERMINAL_STATUSES
+
+
+# ---------------------------------------------------------------------------
+# Wave 3 U4.5 — one boot per sync ("sync intent"). A transcription job may ask
+# to be HELD: after its transcript is written, its GPU container waits (at
+# most HOLD_FOR_PLAN_SEC) for the client's coverage check + chunk plan, then
+# runs the alignment in the SAME container. The client releases the hold at
+# once when there is nothing to align (spine incomplete, coverage mismatch,
+# alignment already cached) — the GPU is never held waiting for FILES, only
+# for the seconds the client needs to plan. The hand-off is one atomic
+# put-if-absent on `handoff_key`: the worker closing the hold and the gateway
+# handing it a job cannot both win, so an alignment is never lost (a closed
+# hold just means a normal spawn).
+# ---------------------------------------------------------------------------
+
+HOLD_FOR_PLAN_SEC = 30.0
+# Wave 3 U7 — the bulk queue chains many jobs through ONE container: any job
+# may be held (not only a transcription) and handed the next. Modal's timeout
+# is per CALL, so a chain must stay well inside it: once a call has run this
+# long it stops holding, and the queue's next job spawns normally (a second
+# boot, said so in the batch report). 300 s of a 600 s timeout leaves room for
+# the one job that starts just under the budget (<= ~145 s for a full hour).
+CHAIN_BUDGET_SEC = 300.0
+HANDOFF_RELEASE = "RELEASE"
+HANDOFF_CLOSED = "CLOSED"
+
+
+def handoff_key(job_id: str) -> str:
+    return f"handoff:{job_id}"
+
+
+def handoff_target(value: Any) -> str | None:
+    """The job id a hold was handed, or None for release/closed/absent."""
+    if not isinstance(value, str) or not value or value in (HANDOFF_RELEASE, HANDOFF_CLOSED):
+        return None
+    return value
+
+
+def can_hold_for(holder: dict[str, Any] | None, member: str) -> bool:
+    """A job the next job may be handed to: this member's job (either stage —
+    U7 chains a whole queue) that asked to be held and has not been
+    released/closed by its own record."""
+    return (
+        holder is not None
+        and holder.get("member") == member
+        and holder.get("stage") in STAGES
+        and bool(holder.get("hold"))
+        and holder.get("status") in ("queued", "running", "done")
+    )
+
+
+BATCH_GAP_SEC = 120.0
+
+
+def batch_summaries(lines: list[dict[str, Any]], gap_sec: float = BATCH_GAP_SEC) -> list[dict[str, Any]]:
+    """Wave 3 U7 — the billing report's batches. Meter lines are grouped into
+    runs whose consecutive lines are less than `gap_sec` apart (a bulk queue
+    finishes jobs back to back). Per batch: projects (distinct audio), GPU
+    jobs, distinct containers (`boots` — 1 means the queue rode one cold
+    start), the seconds the container was merely held between jobs, the
+    unused-boot residue, and the rate-card total."""
+    ordered = sorted(lines, key=lambda line: line["ts"])
+    groups: list[list[dict[str, Any]]] = []
+    for line in ordered:
+        if groups and line["ts"] - groups[-1][-1]["ts"] < gap_sec:
+            groups[-1].append(line)
+        else:
+            groups.append([line])
+    out: list[dict[str, Any]] = []
+    for group in groups:
+        work = [line for line in group if line["outcome"] in ("done", "failed", "cancelled")]
+        held = sum(line["workerSec"] for line in group if line["outcome"] == "held")
+        residue = sum(line["workerSec"] for line in group if line["outcome"] == "boot-unused")
+        boots = {line.get("taskId") for line in group if line.get("taskId")}
+        total_sec = sum(line["workerSec"] for line in group)
+        out.append({
+            "from": group[0]["ts"],
+            "to": group[-1]["ts"],
+            "projects": len({line["audioHash"] for line in work if line.get("audioHash")}),
+            "jobs": len(work),
+            "cacheHits": sum(1 for line in group if line["outcome"] == "cache-hit"),
+            "boots": len(boots),
+            "heldSec": round(held, 3),
+            "bootResidueSec": round(residue, 3),
+            "workerSec": round(total_sec, 3),
+            "estimatedUsd": round(total_sec * USD_PER_WORKER_SEC, 6),
+        })
+    return out
+
+
+def may_hold(call_age_sec: float) -> bool:
+    """Whether a container whose call has run `call_age_sec` may still wait
+    for a hand-off (see CHAIN_BUDGET_SEC)."""
+    return call_age_sec < CHAIN_BUDGET_SEC
+
+
+def lookup_reply(result: dict[str, Any] | None, audio_duration_sec: float | None) -> dict[str, Any]:
+    """Wave 3 U3 — the answer to "is this stage already computed?".
+
+    A hit carries the result itself, so the client needs no job, no upload,
+    and no encode: nothing is spawned and nothing is metered. A miss says
+    whether the gateway already holds the audio, so the client knows before
+    encoding whether it has anything to send at all.
+    """
+    if result is not None:
+        return {"cached": True, "result": result}
+    return {
+        "cached": False,
+        "audioPresent": audio_duration_sec is not None,
+        "audioDurationSec": audio_duration_sec,
+    }
+
+
+def hit_line(member: str, stage: str, audio_hash: str, language: str, now: float) -> dict[str, Any]:
+    """A cache hit served by lookup — counted for the billing report's
+    reconciliation, but NOT a meter line: it never spent a GPU-second. Same
+    D4 contract as the meter: hashes only, no text."""
+    return {"ts": now, "member": member, "stage": stage, "audioHash": audio_hash, "language": language}
+
+
+def public_job(job: dict[str, Any]) -> dict[str, Any]:
+    """The job as the desktop app sees it: no call ids, no member names."""
+    return {
+        "jobId": job["jobId"],
+        "stage": job["stage"],
+        "status": job["status"],
+        "cached": bool(job.get("cached")),
+        "audioDurationSec": job.get("audioDurationSec"),
+        "createdAt": job.get("createdAt"),
+        "startedAt": job.get("startedAt"),
+        "finishedAt": job.get("finishedAt"),
+        "workerSec": job.get("workerSec"),
+        "estimatedUsd": (
+            round(float(job["workerSec"]) * USD_PER_WORKER_SEC, 6) if job.get("workerSec") is not None else None
+        ),
+        "error": job.get("error"),
+        # Wave 3 U4.5 — the container that ran it (None until it ran).
+        "taskId": job.get("taskId"),
+        "handedOff": bool(job.get("handedOff")),
+    }

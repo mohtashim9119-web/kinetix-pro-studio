@@ -41,7 +41,8 @@
 
 import type { TranscriptToken, VideoSegment } from '../types';
 import type { SilenceInterval } from './silenceDetector';
-import { alignQueryToSubject, normalize, normalizeSceneDoc, type TokenAlignment } from './whisperService';
+import { alignQueryToSubject, normalizeSceneDoc, type TokenAlignment } from './whisperService';
+import { expandTokensToWords } from './transcriptWords';
 import { alignQueryToSubjectAsync } from './hirschbergMatchClient';
 import { computeFaAnchors, type FaAnchor, type FaRun } from './faAnchors';
 import { normalizeForForcedAlignment, type FaLanguageCode, type FaCardinalData } from './faTextNormalize';
@@ -211,12 +212,10 @@ function buildRunContextInputs(
   // `languageCode` (Phase 3c, qi-bookkeeping-only — see textNormalize.ts's
   // own doc comment): omitted by every call site except this one's own
   // caller, so the frozen English path never takes the non-English branch.
-  const tokenWords: Array<{ word: string; tokenIdx: number }> = [];
-  for (let i = 0; i < tokens.length; i++) {
-    for (const word of normalize(tokens[i]!.text, languageCode)) {
-      if (word.length > 0) tokenWords.push({ word, tokenIdx: i });
-    }
-  }
+  // Amount runs split across tokens are read as one amount — the SAME helper
+  // `whisperService.ts`'s buildSegmentAlignmentInputs uses, so the two cannot
+  // disagree about the subject space.
+  const tokenWords: Array<{ word: string; tokenIdx: number }> = expandTokensToWords(tokens, languageCode).words;
 
   // Mirrors extractSegmentAlignments's `queryWords` construction — every
   // segment's scene-doc-normalized words, concatenated in segment order.
@@ -263,8 +262,9 @@ function finishRunContext(
   segQiRanges: Array<{ start: number; end: number }>,
   rawTokens: RawScriptToken[],
   totalQi: number,
+  languageCode?: FaLanguageCode,
 ): RunContext {
-  const { anchors, runs } = computeFaAnchors(alignment, tokens, silences, audioDuration, subjectTokenIdx);
+  const { anchors, runs } = computeFaAnchors(alignment, tokens, silences, audioDuration, subjectTokenIdx, languageCode);
   const unscripted = detectUnscriptedRuns(alignment.matchedSubjectOf, subjectTokenIdx, segQiRanges, tokens);
 
   return { runs, anchors, rawTokens, totalQi, unscripted };
@@ -281,7 +281,7 @@ function computeRunContextUncached(
   const { subjectWords, subjectTokenIdx, queryWords, rawTokens, segQiRanges } =
     buildRunContextInputs(segments, tokens, languageCode);
   const alignment = alignQueryToSubject(queryWords, subjectWords);
-  return finishRunContext(alignment, tokens, silences, audioDuration, subjectTokenIdx, segQiRanges, rawTokens, queryWords.length);
+  return finishRunContext(alignment, tokens, silences, audioDuration, subjectTokenIdx, segQiRanges, rawTokens, queryWords.length, languageCode);
 }
 
 /**
@@ -324,7 +324,7 @@ export async function computeRunContextAsync(
   const { subjectWords, subjectTokenIdx, queryWords, rawTokens, segQiRanges } =
     buildRunContextInputs(segments, tokens, languageCode);
   const alignment = await alignQueryToSubjectAsync(queryWords, subjectWords, undefined, signal);
-  const result = finishRunContext(alignment, tokens, silences, audioDuration, subjectTokenIdx, segQiRanges, rawTokens, queryWords.length);
+  const result = finishRunContext(alignment, tokens, silences, audioDuration, subjectTokenIdx, segQiRanges, rawTokens, queryWords.length, languageCode);
 
   runContextComputeCount++;
   lastRunContextCall = { segments, tokens, silences, audioDuration, languageCode, result };

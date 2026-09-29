@@ -1,0 +1,424 @@
+{
+ "_provenance": {
+  "audio": "3. Voiceover.mp3 (14-segment project), sha256 ab5e4f1864cf92ccb9b24555a97bc329ad25907de99a49cc7bd87dd2414f9983",
+  "durationSec": 32.69,
+  "note": "Amount-drop regression fixture. tokens are the two engines' raw transcripts of the SAME audio in their own dialects (cloud: faster-whisper words, '$11' ',000.'; local: whisper.cpp -ml 1 tokens, '$' '11' ',' '000'). silences: silenceDetector.ts algorithm on the native-rate left channel."
+ },
+ "tokens": [
+  {
+   "startSec": 0.0,
+   "endSec": 0.28,
+   "text": "You"
+  },
+  {
+   "startSec": 0.28,
+   "endSec": 0.38,
+   "text": "are"
+  },
+  {
+   "startSec": 0.38,
+   "endSec": 0.8,
+   "text": "24."
+  },
+  {
+   "startSec": 1.16,
+   "endSec": 1.26,
+   "text": "The"
+  },
+  {
+   "startSec": 1.26,
+   "endSec": 1.48,
+   "text": "year"
+  },
+  {
+   "startSec": 1.48,
+   "endSec": 1.62,
+   "text": "is"
+  },
+  {
+   "startSec": 1.62,
+   "endSec": 2.28,
+   "text": "2003."
+  },
+  {
+   "startSec": 2.96,
+   "endSec": 3.46,
+   "text": "You"
+  },
+  {
+   "startSec": 3.46,
+   "endSec": 3.76,
+   "text": "have,"
+  },
+  {
+   "startSec": 3.76,
+   "endSec": 4.0,
+   "text": "in"
+  },
+  {
+   "startSec": 4.0,
+   "endSec": 4.12,
+   "text": "your"
+  },
+  {
+   "startSec": 4.12,
+   "endSec": 4.46,
+   "text": "savings"
+  },
+  {
+   "startSec": 4.46,
+   "endSec": 4.86,
+   "text": "account,"
+  },
+  {
+   "startSec": 5.2,
+   "endSec": 5.58,
+   "text": "$11"
+  },
+  {
+   "startSec": 5.58,
+   "endSec": 6.04,
+   "text": ",000."
+  },
+  {
+   "startSec": 6.64,
+   "endSec": 7.2,
+   "text": "You"
+  },
+  {
+   "startSec": 7.2,
+   "endSec": 7.34,
+   "text": "need"
+  },
+  {
+   "startSec": 7.34,
+   "endSec": 7.44,
+   "text": "a"
+  },
+  {
+   "startSec": 7.44,
+   "endSec": 7.7,
+   "text": "car."
+  },
+  {
+   "startSec": 7.98,
+   "endSec": 8.5,
+   "text": "You"
+  },
+  {
+   "startSec": 8.5,
+   "endSec": 8.64,
+   "text": "go"
+  },
+  {
+   "startSec": 8.64,
+   "endSec": 8.76,
+   "text": "to"
+  },
+  {
+   "startSec": 8.76,
+   "endSec": 8.92,
+   "text": "a"
+  },
+  {
+   "startSec": 8.92,
+   "endSec": 9.26,
+   "text": "used"
+  },
+  {
+   "startSec": 9.26,
+   "endSec": 9.58,
+   "text": "lot"
+  },
+  {
+   "startSec": 9.58,
+   "endSec": 9.8,
+   "text": "on"
+  },
+  {
+   "startSec": 9.8,
+   "endSec": 9.9,
+   "text": "a"
+  },
+  {
+   "startSec": 9.9,
+   "endSec": 10.28,
+   "text": "Saturday"
+  },
+  {
+   "startSec": 10.28,
+   "endSec": 10.5,
+   "text": "in"
+  },
+  {
+   "startSec": 10.5,
+   "endSec": 10.78,
+   "text": "April."
+  },
+  {
+   "startSec": 11.18,
+   "endSec": 11.82,
+   "text": "The"
+  },
+  {
+   "startSec": 11.82,
+   "endSec": 12.22,
+   "text": "salesman"
+  },
+  {
+   "startSec": 12.22,
+   "endSec": 12.52,
+   "text": "walks"
+  },
+  {
+   "startSec": 12.52,
+   "endSec": 12.64,
+   "text": "you"
+  },
+  {
+   "startSec": 12.64,
+   "endSec": 12.78,
+   "text": "to"
+  },
+  {
+   "startSec": 12.78,
+   "endSec": 12.88,
+   "text": "a"
+  },
+  {
+   "startSec": 12.88,
+   "endSec": 13.62,
+   "text": "2001"
+  },
+  {
+   "startSec": 13.62,
+   "endSec": 14.1,
+   "text": "Honda"
+  },
+  {
+   "startSec": 14.1,
+   "endSec": 14.48,
+   "text": "Civic"
+  },
+  {
+   "startSec": 14.48,
+   "endSec": 14.96,
+   "text": "with"
+  },
+  {
+   "startSec": 14.96,
+   "endSec": 15.52,
+   "text": "84"
+  },
+  {
+   "startSec": 15.52,
+   "endSec": 16.26,
+   "text": ",000"
+  },
+  {
+   "startSec": 16.26,
+   "endSec": 16.6,
+   "text": "miles"
+  },
+  {
+   "startSec": 16.6,
+   "endSec": 16.86,
+   "text": "on"
+  },
+  {
+   "startSec": 16.86,
+   "endSec": 16.98,
+   "text": "it."
+  },
+  {
+   "startSec": 17.48,
+   "endSec": 18.04,
+   "text": "The"
+  },
+  {
+   "startSec": 18.04,
+   "endSec": 18.28,
+   "text": "Civic"
+  },
+  {
+   "startSec": 18.28,
+   "endSec": 18.52,
+   "text": "is"
+  },
+  {
+   "startSec": 18.52,
+   "endSec": 19.02,
+   "text": "technically"
+  },
+  {
+   "startSec": 19.02,
+   "endSec": 19.62,
+   "text": "gray."
+  },
+  {
+   "startSec": 20.16,
+   "endSec": 20.62,
+   "text": "The"
+  },
+  {
+   "startSec": 20.62,
+   "endSec": 20.82,
+   "text": "Civic"
+  },
+  {
+   "startSec": 20.82,
+   "endSec": 21.06,
+   "text": "has"
+  },
+  {
+   "startSec": 21.06,
+   "endSec": 21.32,
+   "text": "cloth"
+  },
+  {
+   "startSec": 21.32,
+   "endSec": 21.78,
+   "text": "seats."
+  },
+  {
+   "startSec": 22.1,
+   "endSec": 22.58,
+   "text": "The"
+  },
+  {
+   "startSec": 22.58,
+   "endSec": 22.78,
+   "text": "Civic"
+  },
+  {
+   "startSec": 22.78,
+   "endSec": 23.0,
+   "text": "has"
+  },
+  {
+   "startSec": 23.0,
+   "endSec": 23.1,
+   "text": "a"
+  },
+  {
+   "startSec": 23.1,
+   "endSec": 23.34,
+   "text": "tape"
+  },
+  {
+   "startSec": 23.34,
+   "endSec": 23.6,
+   "text": "deck"
+  },
+  {
+   "startSec": 23.6,
+   "endSec": 23.8,
+   "text": "that"
+  },
+  {
+   "startSec": 23.8,
+   "endSec": 23.92,
+   "text": "the"
+  },
+  {
+   "startSec": 23.92,
+   "endSec": 24.32,
+   "text": "salesman"
+  },
+  {
+   "startSec": 24.32,
+   "endSec": 24.54,
+   "text": "tells"
+  },
+  {
+   "startSec": 24.54,
+   "endSec": 24.78,
+   "text": "you"
+  },
+  {
+   "startSec": 24.78,
+   "endSec": 25.38,
+   "text": "also"
+  },
+  {
+   "startSec": 25.38,
+   "endSec": 25.76,
+   "text": "plays"
+  },
+  {
+   "startSec": 25.76,
+   "endSec": 26.2,
+   "text": "CDs"
+  },
+  {
+   "startSec": 26.2,
+   "endSec": 26.54,
+   "text": "through"
+  },
+  {
+   "startSec": 26.54,
+   "endSec": 26.7,
+   "text": "an"
+  },
+  {
+   "startSec": 26.7,
+   "endSec": 27.04,
+   "text": "adapter."
+  },
+  {
+   "startSec": 27.48,
+   "endSec": 28.08,
+   "text": "You"
+  },
+  {
+   "startSec": 28.08,
+   "endSec": 28.26,
+   "text": "pay"
+  },
+  {
+   "startSec": 28.26,
+   "endSec": 28.62,
+   "text": "$9"
+  },
+  {
+   "startSec": 28.62,
+   "endSec": 29.54,
+   "text": ",400"
+  },
+  {
+   "startSec": 29.54,
+   "endSec": 30.1,
+   "text": "in"
+  },
+  {
+   "startSec": 30.1,
+   "endSec": 30.54,
+   "text": "cash."
+  },
+  {
+   "startSec": 30.88,
+   "endSec": 31.44,
+   "text": "You"
+  },
+  {
+   "startSec": 31.44,
+   "endSec": 31.72,
+   "text": "drive"
+  },
+  {
+   "startSec": 31.72,
+   "endSec": 31.9,
+   "text": "the"
+  },
+  {
+   "startSec": 31.9,
+   "endSec": 32.14,
+   "text": "Civic"
+  },
+  {
+   "startSec": 32.14,
+   "endSec": 32.42,
+   "text": "home."
+  }
+ ]
+}

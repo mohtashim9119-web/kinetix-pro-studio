@@ -34,7 +34,7 @@
 // because it ships with the JS bundle the app already is.
 // ---------------------------------------------------------------------------
 
-import type { FaCardinalData, FaLanguageCode } from './faTextNormalize';
+import type { FaAmountWords, FaCardinalData, FaLanguageCode } from './faTextNormalize';
 import { vocabCharsFromRawVocab } from './faTextNormalize';
 
 import vocabEn from '../../scripts/fixtures/fa-vocab-en.json';
@@ -48,6 +48,8 @@ import cardinalEs from '../../scripts/fixtures/fa-cardinal-es.json';
 import cardinalFr from '../../scripts/fixtures/fa-cardinal-fr.json';
 import cardinalDe from '../../scripts/fixtures/fa-cardinal-de.json';
 import cardinalPt from '../../scripts/fixtures/fa-cardinal-pt.json';
+
+import amountWords from '../../scripts/fixtures/fa-amount-words.json';
 
 /** A language's normalization inputs, ready for
  *  `normalizeForForcedAlignment`/`computeFaChunkPlan`'s `vocabChars`/
@@ -69,12 +71,22 @@ const RAW_VOCAB: Readonly<Record<FaLanguageCode, { vocab: Record<string, number>
 // (`_provenance`, `ctcMarginExposure`, ...) beyond `FaCardinalData` —
 // `faTextNormalize.ts`'s own doc comment on that interface says so
 // explicitly ("this generator reads only the fields it composes with").
+const AMOUNT_WORDS = amountWords.languages as Readonly<Record<FaLanguageCode, FaAmountWords>>;
+
+/** The cardinal JSON plus the language's amount words
+ *  (`fa-amount-words.json`, deliberately a separate file — see its
+ *  `_provenance.digestNote`). Attached HERE, once, so every caller that gets
+ *  its `cardinalData` from this loader reads amounts the same way. */
+export function withAmountWords(cardinal: FaCardinalData, language: FaLanguageCode): FaCardinalData {
+  return { ...cardinal, amount: AMOUNT_WORDS[language] };
+}
+
 const RAW_CARDINAL: Readonly<Record<FaLanguageCode, FaCardinalData>> = {
-  en: cardinalEn as FaCardinalData,
-  es: cardinalEs as FaCardinalData,
-  fr: cardinalFr as FaCardinalData,
-  de: cardinalDe as FaCardinalData,
-  pt: cardinalPt as FaCardinalData,
+  en: withAmountWords(cardinalEn as FaCardinalData, 'en'),
+  es: withAmountWords(cardinalEs as FaCardinalData, 'es'),
+  fr: withAmountWords(cardinalFr as FaCardinalData, 'fr'),
+  de: withAmountWords(cardinalDe as FaCardinalData, 'de'),
+  pt: withAmountWords(cardinalPt as FaCardinalData, 'pt'),
 };
 
 const cache = new Map<FaLanguageCode, FaLanguageData>();

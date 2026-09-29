@@ -1,0 +1,225 @@
+{
+ "_provenance": {
+  "purpose": "M4 discipline + alignment-key record. BEFORE = production-shaped chunk plans (computeFaChunkPlan with the language's vocab + cardinal data) built at commit 983bb2c, i.e. before the amount-drop fix. AFTER = the same plans built by the amount-drop fix.",
+  "digest": "sha256 over JSON.stringify(chunks.map({endSec,startSec,text})), first 16 hex — the same function src/services/chunkPlanM4.test.ts and scripts/print-chunk-plan-digest.ts use.",
+  "planHash": "cloud/sync_core.py chunk_plan_hash(chunks) — what the gateway folds into the alignment cache key.",
+  "alignmentKey": "cloud/sync_core.py alignment_cache_key(audioHash, planHash, language, pack_revision) with pack digests computed from scripts/fixtures (vocab + cardinal only; fa-amount-words.json is deliberately outside them).",
+  "corpora": "v6 / 173 / spanish are read from the committed scripts/fixtures/phase4-* CSVs; 14seg-* from scripts/fixtures/amount-14seg-* (two engines' transcripts of the SAME audio)."
+ },
+ "corpora": {
+  "v6": {
+   "language": "en",
+   "audioHash": "23c5eaba60b95dff774c840100665240fc024b3f8c1415ac65b98dfac2978492",
+   "prod": {
+    "chunks": 273,
+    "digest": "f9b2118d0a0add65",
+    "digestAfter": "f9b2118d0a0add65"
+   },
+   "raw": {
+    "chunks": 273,
+    "digest": "3af058c528e50190",
+    "digestAfter": "3af058c528e50190"
+   },
+   "planHash": "f9b2118d0a0add656a2ac6e070f3acef366cead6748dcc648333c3c0f50be754",
+   "alignmentKey": "780c239056b177b2b1eef745e061599813d3cba98a64d4f10ad2cafe459ec98a"
+  },
+  "173": {
+   "language": "en",
+   "audioHash": "65625303d37ae6c38b231a5ba6288aa44982c2ced4fa3d811918c51b92657280",
+   "prod": {
+    "chunks": 112,
+    "digest": "e2f27ddd3c41bcb1",
+    "digestAfter": "e2f27ddd3c41bcb1"
+   },
+   "raw": {
+    "chunks": 112,
+    "digest": "4a72d6a09806fc69",
+    "digestAfter": "4a72d6a09806fc69"
+   },
+   "planHash": "e2f27ddd3c41bcb1e7e39e7259a4175af1c15ba96b765243b1bb1e055141c56e",
+   "alignmentKey": "a5e3ea4e51800ab7ed5cd86f7da6749e7a6fcb7676d703cde403733ed94bea34"
+  },
+  "spanish": {
+   "language": "es",
+   "audioHash": "4d9f295ffa74456485cf9cf70d53e786c35202a2fe3c8a38d80e3e4f653aa216",
+   "prod": {
+    "chunks": 5,
+    "digest": "c31b0dc4f1e7a193",
+    "digestAfter": "c31b0dc4f1e7a193"
+   },
+   "raw": {
+    "chunks": 5,
+    "digest": "94a9fef79a73ee0d",
+    "digestAfter": "94a9fef79a73ee0d"
+   },
+   "planHash": "c31b0dc4f1e7a1937a6ef3692360eb45a3a6268fcdb96cc75f14edf37f0f16ac",
+   "alignmentKey": "d7d4a2d59eea8254c8e8c7c04985c7f34884e6d441516c9b6ab572409fec7661"
+  }
+ },
+ "amountBearing": {
+  "14seg-cloud": {
+   "language": "en",
+   "audioHash": "ab5e4f1864cf92ccb9b24555a97bc329ad25907de99a49cc7bd87dd2414f9983",
+   "before": {
+    "digest": "e2c0c2dd6a1371d1",
+    "planHash": "e2c0c2dd6a1371d144cdb88f1218aff660e747e48387375a6bff0440ad7e5e66",
+    "alignmentKey": "dcd30a62edb91f87d3b0b2bd5e08d222a4a6ab40d4ef6c73646951fb24180077",
+    "chunks": [
+     {
+      "startSec": 0,
+      "endSec": 3.38,
+      "text": "you are twenty four the year is two thousand and three you"
+     },
+     {
+      "startSec": 3.38,
+      "endSec": 7.12,
+      "text": "have in your savings account you"
+     },
+     {
+      "startSec": 7.12,
+      "endSec": 11.74,
+      "text": "need a car you go to a used lot on a saturday in april the"
+     },
+     {
+      "startSec": 11.74,
+      "endSec": 17.92,
+      "text": "salesman walks you to a two thousand one honda civic with eighty four thousand miles on it the"
+     },
+     {
+      "startSec": 17.92,
+      "endSec": 20.52,
+      "text": "civic is technically gray the"
+     },
+     {
+      "startSec": 20.52,
+      "endSec": 22.5,
+      "text": "civic has cloth seats the"
+     },
+     {
+      "startSec": 22.5,
+      "endSec": 28.02,
+      "text": "civic has a tape deck that the salesman tells you also plays cds through an adapter you"
+     },
+     {
+      "startSec": 28.02,
+      "endSec": 31.34,
+      "text": "pay in cash you"
+     },
+     {
+      "startSec": 31.34,
+      "endSec": 32.69,
+      "text": "drive the civic home"
+     }
+    ]
+   },
+   "after": {
+    "digest": "eee208793c8d9d8c",
+    "planHash": "eee208793c8d9d8c01952c36bb7b2f862981c992c942ccd922280addd388c5b0",
+    "alignmentKey": "2b2a43019ad234d2089c44ed44b7e9efdd7a77bdedbb5b62e33e21e8c91f5d26",
+    "chunks": [
+     {
+      "startSec": 0,
+      "endSec": 3.38,
+      "text": "you are twenty four the year is two thousand and three you"
+     },
+     {
+      "startSec": 3.38,
+      "endSec": 7.12,
+      "text": "have in your savings account eleven thousand dollars you"
+     },
+     {
+      "startSec": 7.12,
+      "endSec": 11.74,
+      "text": "need a car you go to a used lot on a saturday in april the"
+     },
+     {
+      "startSec": 11.74,
+      "endSec": 17.92,
+      "text": "salesman walks you to a two thousand one honda civic with eighty four thousand miles on it the"
+     },
+     {
+      "startSec": 17.92,
+      "endSec": 20.52,
+      "text": "civic is technically gray the"
+     },
+     {
+      "startSec": 20.52,
+      "endSec": 22.5,
+      "text": "civic has cloth seats the"
+     },
+     {
+      "startSec": 22.5,
+      "endSec": 28.02,
+      "text": "civic has a tape deck that the salesman tells you also plays cds through an adapter you"
+     },
+     {
+      "startSec": 28.02,
+      "endSec": 31.34,
+      "text": "pay nine thousand four hundred dollars in cash you"
+     },
+     {
+      "startSec": 31.34,
+      "endSec": 32.69,
+      "text": "drive the civic home"
+     }
+    ]
+   },
+   "changedChunkIndexes": [
+    1,
+    7
+   ]
+  },
+  "14seg-local": {
+   "language": "en",
+   "audioHash": "ab5e4f1864cf92ccb9b24555a97bc329ad25907de99a49cc7bd87dd2414f9983",
+   "before": {
+    "digest": "f8f8dcae1d745455",
+    "planHash": "f8f8dcae1d74545578fc60dd2d8e1f18ce40d869fa0697c20b190aacf6d96ab2",
+    "alignmentKey": "f66d9bd02e38e202a02fecd4ce782e646d582b2a98656aa785d13e9475b6c87e",
+    "chunks": [
+     {
+      "startSec": 0,
+      "endSec": 3.38,
+      "text": "you are twenty four the year is two thousand and three you have in your"
+     },
+     {
+      "startSec": 3.38,
+      "endSec": 20.52,
+      "text": "savings account you need a car you go to a used lot on a saturday in april the salesman walks you to a two thousand one honda civic with eighty four thousand miles on it the civic is technically gray the civic has"
+     },
+     {
+      "startSec": 20.52,
+      "endSec": 32.69,
+      "text": "cloth seats the civic has a tape deck that the salesman tells you also plays cds through an adapter you pay in cash you drive the civic home"
+     }
+    ]
+   },
+   "after": {
+    "digest": "3202b64d46c8313b",
+    "planHash": "3202b64d46c8313b5a797d28f0ac5de2194ab5409821af037690752041bbd2bb",
+    "alignmentKey": "235a9545dc001d9f63446a6a2ff3901a92f548f84d528d74175f0c2ee6a2d455",
+    "chunks": [
+     {
+      "startSec": 0,
+      "endSec": 3.38,
+      "text": "you are twenty four the year is two thousand and three you have in your"
+     },
+     {
+      "startSec": 3.38,
+      "endSec": 20.52,
+      "text": "savings account eleven thousand dollars you need a car you go to a used lot on a saturday in april the salesman walks you to a two thousand one honda civic with eighty four thousand miles on it the civic is technically gray the civic has"
+     },
+     {
+      "startSec": 20.52,
+      "endSec": 32.69,
+      "text": "cloth seats the civic has a tape deck that the salesman tells you also plays cds through an adapter you pay nine thousand four hundred dollars in cash you drive the civic home"
+     }
+    ]
+   },
+   "changedChunkIndexes": [
+    1,
+    2
+   ]
+  }
+ }
+}

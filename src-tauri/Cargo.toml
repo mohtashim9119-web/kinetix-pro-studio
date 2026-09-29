@@ -25,7 +25,7 @@ tauri-plugin-log = "2"
 uuid = { version = "1", features = ["v4"] }
 rfd = { version = "0.15", features = ["tokio"] }
 base64 = "0.22"
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.12", features = ["json", "gzip"] }
 tauri-plugin-shell = "2"
 
 # Optional: real ONNX forward pass for forced alignment (WS1 Task 5, Slice D2).
@@ -87,6 +87,10 @@ crc32fast = "1.5"
 # resolved in this workspace's graph, and `hermit-abi` is cfg-gated to a
 # target this project does not build.
 num_cpus = "1.16"
+# Wave 3 U1 — `cloud_gateway.rs` polls the sync gateway with
+# `tokio::time::sleep`. Already in the graph via tauri/reqwest with exactly
+# these features enabled; the direct edge adds no package to Cargo.lock.
+tokio = { version = "1", features = ["time", "sync"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

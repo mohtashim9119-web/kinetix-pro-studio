@@ -46,6 +46,8 @@ import type { TranscriptToken } from '../types';
 import type { TokenAlignment, TokenAlignmentOp } from './whisperService';
 import type { SilenceInterval } from './silenceDetector';
 import { canonicalize } from './textNormalize';
+import { findAmountGroups } from './transcriptWords';
+import type { FaLanguageCode } from './faTextNormalize';
 import {
   ANCHOR_AGREEMENT_SEC,
   MIN_ANCHOR_WORD_CHARS,
@@ -238,8 +240,17 @@ function computeAnchors(
   tokens: readonly TranscriptToken[],
   silences: readonly SilenceInterval[],
   subjectTokenIdx: ArrayLike<number>,
+  languageCode?: FaLanguageCode,
 ): FaAnchor[] {
   const anchors: FaAnchor[] = [];
+  // A token that is one FRAGMENT of a multi-token amount ("$11" ",000.") never
+  // stands alone as an anchor word: its own canonical text is not the word the
+  // matcher attributed to it (transcriptWords.ts spreads the amount's words
+  // across its member tokens).
+  const amountFragments = new Set<number>();
+  for (const g of findAmountGroups(tokens, languageCode ?? 'en')) {
+    for (let k = g.start; k <= g.end; k++) amountFragments.add(k);
+  }
   const seams = tokenSeamIndex(tokens); // R-U — computed once per run, not per candidate
   for (const op of alignment.ops) {
     if (op.type !== 'match') continue;
@@ -249,6 +260,7 @@ function computeAnchors(
     if (tokenIdx === undefined || tokenIdx < 0) continue;
     const token = tokens[tokenIdx];
     if (!token) continue;
+    if (amountFragments.has(tokenIdx)) continue;
     if (!isDistinctive(token.text)) continue; // R-O
     if (contiguousMatchRunLength(alignment.ops, op.qi) < RUN_SURVIVAL_MIN_RUN_LONG) continue; // R.1(b)
     const silence = findAgreeingSilence(token.startSec, silences, seams); // R.1(c) + I6 + R-U
@@ -300,8 +312,9 @@ export function computeFaAnchors(
   silences: readonly SilenceInterval[],
   audioDuration: number,
   subjectTokenIdx: ArrayLike<number>,
+  languageCode?: FaLanguageCode,
 ): FaAnchorResult {
-  const anchors = computeAnchors(alignment, tokens, silences, subjectTokenIdx);
+  const anchors = computeAnchors(alignment, tokens, silences, subjectTokenIdx, languageCode);
 
   interface Boundary {
     time: number;

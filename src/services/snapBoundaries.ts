@@ -686,6 +686,11 @@ export function snapCoveredBoundaries(
     spokenGapWidth: number;
     searchStart: number;
     searchEnd: number;
+    /** The current scene's TRAILING script words were never found in the audio
+     *  (`AlignResult.unmatchedTailWords`). Its last MATCHED word is then not
+     *  where its speech ends, so this pair's cut is placed by silence geometry
+     *  against the NEXT scene's first word — see Pass 3. */
+    tailUnmatched: boolean;
     /** Every silence eligible to be THIS pair's boundary — not filling a gap
      *  between two tokens of either segment's own matched span
      *  (`fillsTokenGapWithinSpan`, alignment evidence), AND in the window AND
@@ -758,7 +763,8 @@ export function snapCoveredBoundaries(
       isBoundarySilenceCandidate(s, searchStart, searchEnd),
     );
 
-    plans.push({ lastSpokenEnd, nextSpokenStart, spokenMid, spokenGapWidth, searchStart, searchEnd, overlapping });
+    const tailUnmatched = (currAlign.unmatchedTailWords?.length ?? 0) > 0;
+    plans.push({ lastSpokenEnd, nextSpokenStart, spokenMid, spokenGapWidth, searchStart, searchEnd, tailUnmatched, overlapping });
   }
 
   // --- Pass 2 — assign each contested silence to exactly one pair ----------
@@ -843,10 +849,18 @@ export function snapCoveredBoundaries(
 
     let gap: SilenceInterval | undefined;
     if (candidates.length > 0) {
+      // HONEST TAIL (amount-drop fix, Commit 2). Normally the cut goes to the
+      // candidate silence nearest the pair's spoken MIDPOINT. When the current
+      // scene's tail words were never found, the audio between its last
+      // matched word and the next scene's first word IS its unmatched tail
+      // (a spoken amount, say) — so the midpoint says nothing, and the silence
+      // hugging the LAST matched word ("account" | "$11,000") is the wrong one.
+      // The silence that adjoins the NEXT scene's first word is the cut.
+      const anchorSec = plan.tailUnmatched ? nextSpokenStart : spokenMid;
       gap = candidates.reduce((best, s) => {
         const sCenter = (s.startSec + s.endSec) / 2;
         const bestCenter = (best.startSec + best.endSec) / 2;
-        return Math.abs(sCenter - spokenMid) < Math.abs(bestCenter - spokenMid) ? s : best;
+        return Math.abs(sCenter - anchorSec) < Math.abs(bestCenter - anchorSec) ? s : best;
       });
     }
 

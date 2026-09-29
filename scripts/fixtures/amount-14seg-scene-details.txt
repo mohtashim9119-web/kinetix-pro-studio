@@ -1,0 +1,41 @@
+[IMAGE: 002_age_24]
+You are twenty four.
+
+[IMAGE: 003_year_2003]
+The year is two thousand and three.
+
+[IMAGE: 004_savings_account]
+You have in your savings account $11,000.
+
+[IMAGE: 005_need_a_car]
+You need a car.
+
+[IMAGE: 006_used_lot]
+You go to a used lot,
+
+[IMAGE: 007_saturday_april]
+On a Saturday in April.
+
+[IMAGE: 008_salesman_walks]
+The salesman walks you to a
+
+[IMAGE: 009_civic_stats]
+Two thousand one Honda Civic with eighty four thousand miles on it.
+
+[IMAGE: 010_technically_gray]
+The Civic is technically gray.
+
+[IMAGE: 011_cloth_seats]
+The Civic has cloth seats.
+
+[IMAGE: 012_tape_deck]
+The Civic has a tape deck that the salesman tells you,
+
+[IMAGE: 013_cd_adapter]
+also plays CDs through an adapter.
+
+[IMAGE: 014_pay_cash]
+You pay $9,400 in cash.
+
+[IMAGE: 015_drive_home]
+You drive the Civic home.

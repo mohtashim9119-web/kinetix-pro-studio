@@ -26,6 +26,24 @@ function record(overrides: Partial<FaPauseRecord> = {}): FaPauseRecord {
   };
 }
 
+describe('faSyncPauseStore — Wave 3 U4 cloud fields', () => {
+  it('round-trips host, audioHash and stage', () => {
+    const r = record({ reason: 'offline', host: 'cloud', audioHash: 'a'.repeat(64), stage: 'transcribe' });
+    saveFaPause(r);
+    expect(readFaPause('proj-1')).toEqual(r);
+  });
+  it('a pre-U4 record (no host) still reads — as it always did', () => {
+    saveFaPause(record());
+    expect(readFaPause('proj-1')?.host).toBeUndefined();
+  });
+  it('refuses a malformed host/stage rather than guessing', () => {
+    localStorage.setItem('kinetix:fa-pause:v1:proj-1', JSON.stringify({ ...record(), host: 'moon' }));
+    expect(readFaPause('proj-1')).toBeNull();
+    localStorage.setItem('kinetix:fa-pause:v1:proj-1', JSON.stringify({ ...record(), stage: 'align' }));
+    expect(readFaPause('proj-1')).toBeNull();
+  });
+});
+
 describe('faSyncPauseStore', () => {
   it('reads back exactly what was saved', () => {
     saveFaPause(record());

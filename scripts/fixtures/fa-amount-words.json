@@ -1,0 +1,60 @@
+{
+  "_provenance": {
+    "purpose": "Spoken words for AMOUNT tokens (currency symbol, thousands separator, decimal, percent) - the one data source shared by faTextNormalize.ts, textNormalize.ts (matcher canonicalize), src-tauri/src/fa/text.rs and cloud/fa_engine.py. Cardinal magnitudes still come from fa-cardinal-<lang>.json.",
+    "why": "normalizeForForcedAlignment used to DROP any token that was not a bare integer, so '$11,000.' never reached forced alignment and the neighbouring words were stretched over the amount's speech. An amount now reads as its spoken words: '$11,000' -> 'eleven thousand dollars'.",
+    "digestNote": "Deliberately NOT part of cloud/sync_core.py pack_digests (vocab + cardinal only): adding this file must not change the alignment cache key of any chunk plan that carries no amount. Amount-bearing plans change key through their chunk TEXT (plan hash), which is the honest reason to re-align them.",
+    "grammar": [
+      "An amount token is one whitespace token that, after edge punctuation is stripped, is: [currency symbol] number [%] or number [currency symbol|%], where number is digits with thousands separators and/or a decimal part. A bare integer with none of those (2001, 10) is NOT an amount and keeps its existing reading (including the year reading).",
+      "en separators: ',' thousands, '.' decimal. es/fr/de/pt: '.' thousands, ',' decimal (the convention canonicalize() already applies).",
+      "Reading: cardinal(integer part) [pointWord + each decimal digit as its own cardinal] [currency word: 'one' form iff the value is exactly 1 with no decimals, else 'other'] [percentWord]. Currency and percent are spoken AFTER the number.",
+      "The integer part is always the plain cardinal, never the year reading ('$1998' is money, not a year)."
+    ]
+  },
+  "languages": {
+    "en": {
+      "pointWord": "point",
+      "percentWord": "percent",
+      "currency": {
+        "$": { "one": "dollar", "other": "dollars" },
+        "€": { "one": "euro", "other": "euros" },
+        "£": { "one": "pound", "other": "pounds" }
+      }
+    },
+    "es": {
+      "pointWord": "coma",
+      "percentWord": "por ciento",
+      "currency": {
+        "$": { "one": "dólar", "other": "dólares" },
+        "€": { "one": "euro", "other": "euros" },
+        "£": { "one": "libra", "other": "libras" }
+      }
+    },
+    "fr": {
+      "pointWord": "virgule",
+      "percentWord": "pour cent",
+      "currency": {
+        "$": { "one": "dollar", "other": "dollars" },
+        "€": { "one": "euro", "other": "euros" },
+        "£": { "one": "livre", "other": "livres" }
+      }
+    },
+    "de": {
+      "pointWord": "komma",
+      "percentWord": "prozent",
+      "currency": {
+        "$": { "one": "dollar", "other": "dollar" },
+        "€": { "one": "euro", "other": "euro" },
+        "£": { "one": "pfund", "other": "pfund" }
+      }
+    },
+    "pt": {
+      "pointWord": "vírgula",
+      "percentWord": "por cento",
+      "currency": {
+        "$": { "one": "dólar", "other": "dólares" },
+        "€": { "one": "euro", "other": "euros" },
+        "£": { "one": "libra", "other": "libras" }
+      }
+    }
+  }
+}

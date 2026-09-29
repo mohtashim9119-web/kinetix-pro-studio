@@ -123,11 +123,51 @@ import { runForcedAlignmentForSync, FA_SUPPORTED_LANGUAGES, type FaFailureKind, 
 import { computeSyncEngineKey, resolveSyncEngine, probeFaReadiness } from './services/faPreflight';
 import { saveFaPause, readFaPause, clearFaPause, type FaPauseRecord } from './services/faSyncPauseStore';
 import {
+  stampCloudProvenance,
   stampFaProvenance,
   stampWhisperProvenance,
+  stampTimingFindings,
+  describeStampedEngine,
+  transcriptionHost,
   whisperDegradedKind,
+  type GatewayProvenance,
 } from './services/timingProvenance';
-import type { TimingProvenance } from './types';
+import {
+  clearRunHostOverride,
+  hostForRun,
+  onSyncEngineHostChange,
+  readRunHostOverride,
+  readSyncEngineHost,
+  saveRunHostOverride,
+  shouldStartStaging,
+} from './services/syncEngineHost';
+import { CloudStageError, cloudPauseReason, hasHeldTranscription, onCloudPhase, releaseHeldTranscription, transcribeForHost } from './services/cloudSyncEngine';
+import {
+  CLOUD_CANCEL_COPY,
+  SETTLE_TIMEOUT_MS,
+  describeCloudCancel,
+  hasStoppingCloudRuns,
+  settleCloudCancels,
+  takeCancelReceiptsSince,
+} from './services/cloudCancelReceipts';
+import {
+  BUILD_TIMELINE_COPY,
+  waitForStagingTranscript,
+  type StagingTranscriptState,
+  type StagingTranscriptWait,
+} from './services/buildTimelineGate';
+import {
+  INTENT_PHASE_COPY,
+  cancelOtherSyncIntents,
+  cancelSyncIntent,
+  clearSyncIntentSuppression,
+  getSyncIntent,
+  isSyncIntentSuppressed,
+  startSyncIntent,
+  subscribeSyncIntents,
+} from './services/cloudSyncIntent';
+import { decideStagingStart, isBulkAutoFireSuppressed, peekCloudTranscript } from './services/bulkContext';
+import type { TimingFinding, TimingProvenance } from './types';
 import {
   detectUnspokenScriptSegmentsFromWhisperFullAsync,
   applyUnspokenScriptGate,
@@ -170,6 +210,10 @@ import {
   validateBoundaryQuality,
   validateWordCoverage,
   validateSceneDensity,
+  validateTailWords,
+  validateNumericWords,
+  validateEngineBoundaryDelta,
+  computeBoundaryDeltas,
   type BoundaryQualityMeasurement,
 } from './services/syncContracts';
 import { buildWpmCheckLogEntry } from './services/syncWpmGate';
@@ -206,6 +250,7 @@ import {
   buildFaGateClosedEntry,
   buildFaNotCompiledEntry,
   buildFaUserChoseWhisperEntry,
+  buildHostOverrideEntry,
   buildMediaImportEntry,
   buildMediaNameCollisionEntry,
   buildMediaMatchEntry,
@@ -320,6 +365,7 @@ import { TextLayersPanel } from './components/TextLayersPanel';
 import { BottomDrawer } from './components/BottomDrawer';
 import { SyncLoadingOverlay } from './components/SyncLoadingOverlay';
 import { SyncPausedDialog } from './components/SyncPausedDialog';
+import { CloudTranscriptionPausedDialog } from './components/CloudTranscriptionPausedDialog';
 import { WhisperModelFailureDialog, WHISPER_MODEL_FAILURE_COPY } from './components/WhisperModelFailureDialog';
 const StockSearchModal = lazy(() =>
   import('./components/StockSearchModal').then(m => ({ default: m.StockSearchModal }))
@@ -339,6 +385,8 @@ import { Timeline } from './components/Timeline';
 import { PreviewStage, type AutoGradeSampler, type PreviewStageHandle } from './components/PreviewStage';
 import { SpeedBadge, SPEED_LADDER } from './components/SpeedBadge';
 import { ProjectDashboard } from './components/ProjectDashboard';
+import { BulkProjectsModal } from './components/BulkProjectsModal';
+import { bulkBatchRunner } from './services/bulkSyncQueue';
 import { NewProjectModal, type NewProjectChoices } from './components/NewProjectModal';
 import { ProjectSettingsModal } from './components/ProjectSettingsModal';
 import { AppSettingsModal } from './components/AppSettingsModal';
@@ -1895,6 +1943,11 @@ export default function App() {
   // next attempt (see `runForcedAlignmentForSync`'s own
   // `skipLocalCoverageCheck` doc comment).
   const faSkipCoverageCheckOnceRef = useRef<boolean>(false);
+  // Wave 3 U4 — "run this sync on this computer" after a cloud pause: one
+  // project + one voiceover hash, carried from staging through Apply Sync
+  // and cleared when that Apply Sync commits. Persisted per project (U4
+  // hotfix: survives a reload — `syncEngineHost.ts`); the standing
+  // Cloud/Local choice is never written (see `hostForRun`).
   // plan-v3 item 5 — whole-run cancel. A fresh controller is created at the
   // start of every handleApplySyncFromFiles call and overwrites this ref
   // unconditionally, so the Cancel button always aborts the CURRENTLY
@@ -2204,6 +2257,11 @@ export default function App() {
   // The pure matcher's output lives here; the screen renders it verbatim.
   const [folderRelink, setFolderRelink] = useState<FolderRelinkView | null>(null);
   const [showNewProjectModal, setShowNewProjectModal] = useState(false);
+  // Wave 3 U7.5 — the Bulk Projects rows modal lives here, not in the
+  // dashboard: finishing a timeline opens that project in the editor, which
+  // unmounts the dashboard, and the modal must survive that.
+  const [bulkRowCount, setBulkRowCount] = useState<number | null>(null);
+  const [dashboardVersion, setDashboardVersion] = useState(0);
   const [showProjectSettingsModal, setShowProjectSettingsModal] = useState(false);
   // WS2 T4.1 — the machine-global settings surface. Separate flag from
   // `showProjectSettingsModal` so both can be up at once: Project Settings
@@ -2294,6 +2352,15 @@ export default function App() {
   // same render (rapid re-stage, double-fire) must see each other's writes immediately;
   // a post-render-only mirror lets the second one read a one-render-stale value.
   const pendingVoiceoverRef = useRef<PendingVoiceoverSync | null>(null);
+  // Wave 3 U4.6 — the staged voiceover's transcript readiness, mirrored by
+  // an effect below, and the early-click waiters it wakes.
+  const stagingTranscriptStateRef = useRef<StagingTranscriptState>({ ready: true, paused: false });
+  const stagingTranscriptWaitersRef = useRef(new Set<() => void>());
+  // Wave 3 U5 — the staged voiceover whose cloud transcription the human
+  // cancelled from the Build Timeline overlay. Keyed by the pending asset id,
+  // so replacing the voiceover makes it stale on its own.
+  const [stagingCancelledAssetId, setStagingCancelledAssetId] = useState<string | null>(null);
+  const stagingCancelledAssetIdRef = useRef<string | null>(null);
   const setPendingVoiceoverSync = useCallback((value: PendingVoiceoverSync | null) => {
     pendingVoiceoverRef.current = value;
     setPendingVoiceover(value);
@@ -3631,7 +3698,7 @@ export default function App() {
   // handleApplySyncFromFiles commits. onSegmentsUpdated is a no-op — this
   // call is cache-only, it never mutates live segments (only Apply Sync does).
   // --------------------------------------------------------------------------
-  const handleVoiceoverStaged = useCallback((file: File) => {
+  const handleVoiceoverStaged = useCallback((file: File, opts?: { rerun?: boolean; explicit?: boolean }) => {
     if (!isTauri()) return;
 
     const incomingIdentity = getFileIdentity(file);
@@ -3641,7 +3708,13 @@ export default function App() {
     // session. Don't cancel/restart an in-flight job or mint a redundant
     // asset + blob URL for a file we're already tracking.
     const previous = pendingVoiceoverRef.current;
-    if (previous && getFileIdentity(previous.file) === incomingIdentity) {
+    // U4 hotfix — an explicit re-run (a pause dialog's answer) restarts
+    // staging for the same file; only a plain re-drop is a no-op.
+    if (!shouldStartStaging({
+      pendingIdentity: previous ? getFileIdentity(previous.file) : undefined,
+      incomingIdentity,
+      rerun: opts?.rerun === true,
+    })) {
       return;
     }
 
@@ -3676,6 +3749,12 @@ export default function App() {
       // need to recompute it.
       setPendingVoiceoverSync({ file, asset, audioHash });
 
+      // Wave 3 U3 — no speculative cloud encode/upload here (U2 had one).
+      // The staging transcription below asks the gateway's cache FIRST
+      // (`runStageCacheFirst`) and prepares the audio only on a miss, so a
+      // voiceover the cloud has already transcribed is never re-encoded or
+      // re-uploaded.
+
       // Same-content detection: this exact audio was already transcribed and
       // its tokens are still cached — skip the Whisper run entirely. Apply
       // Sync stays enabled via the lastTranscribedAudioHash clause below.
@@ -3689,6 +3768,30 @@ export default function App() {
         // gets stuck disabled with no event left that could re-enable it.
         setProject(p => ({ ...p, lastTranscribedAssetId: asset.id }));
         return;
+      }
+
+      // Wave 3 U7.5 — a bulk project that has not built yet may not start
+      // cloud work from a drop or a restore. It only PEEKS at the gateway's
+      // cache (free: no upload, no job, no meter line): a hit falls through
+      // to the ordinary cache-served transcription below; a miss leaves the
+      // voiceover waiting for the project's own Transcribe click.
+      const stagingDecision = decideStagingStart({
+        project: projectRef.current,
+        host: hostForRun(readSyncEngineHost(), readRunHostOverride(projectRef.current.id), {
+          projectId: projectRef.current.id, audioHash,
+        }),
+        explicit: opts?.explicit === true,
+        rerun: opts?.rerun === true,
+      });
+      if (stagingDecision === 'lookup-first') {
+        const cachedOnCloud = await peekCloudTranscript(audioHash, projectRef.current.language);
+        if (pendingVoiceoverRef.current?.asset.id !== asset.id) return;
+        if (!cachedOnCloud) {
+          URL.revokeObjectURL(asset.url);
+          setPendingVoiceoverSync(null);
+          setRestoredUnadoptedAudioHash(audioHash);
+          return;
+        }
       }
 
       // Genuinely different content (neither guard above fired): clear the
@@ -3728,6 +3831,10 @@ export default function App() {
       // can not be found here") on a handle that worked minutes earlier.
       setPendingVoiceoverSync({ file, asset: { ...asset, duration }, audioHash });
       transcriptionTargetIdRef.current = asset.id;
+      const stagingHost = hostForRun(readSyncEngineHost(), readRunHostOverride(projectRef.current.id), {
+        projectId: projectRef.current.id,
+        audioHash,
+      });
       const outcome = await startTranscription(
         asset,
         duration,
@@ -3751,6 +3858,13 @@ export default function App() {
           // plan-v3 Wave 2 item 4 — already computed above; avoids hashing
           // this file a second time inside useWhisper.
           audioHash,
+          // Wave 3 U4 — a one-run "transcribe on this computer" answer to a
+          // cloud pause applies to exactly this project + audio.
+          host: stagingHost,
+          // Wave 3 U4.5 — on the cloud, keep the GPU container for this
+          // audio's alignment (one boot per sync). The spine effect below
+          // releases it at once if there is nothing to align yet.
+          cloudHold: stagingHost === 'cloud',
           // WS2 T4.7 Requirement 3 — flush the just-written
           // `unappliedTranscript` immediately, past `usePersistProject`'s
           // 500 ms debounce.
@@ -3835,6 +3949,18 @@ export default function App() {
       lastTranscribedAudioHash: projectRef.current.lastTranscribedAudioHash,
       cachedTokenCount: projectRef.current.transcriptTokens?.length ?? 0,
     });
+    // Wave 3 U7.5 — a bulk project's batch leaves its transcript in the cloud
+    // cache, not on the project. Adopt the voiceover only when that cache
+    // already holds it (a free peek): then Build Timeline is live and the
+    // reveal is two cache hits. Otherwise the ordinary refusal below applies.
+    if (!adoptable && isBulkAutoFireSuppressed(projectRef.current)
+      && hostForRun(readSyncEngineHost(), readRunHostOverride(projectRef.current.id), {
+        projectId: projectRef.current.id, audioHash,
+      }) === 'cloud'
+      && await peekCloudTranscript(audioHash, projectRef.current.language)) {
+      handleVoiceoverStaged(file, { explicit: true }); // already peeked: no second lookup
+      return true;
+    }
     if (!adoptable) {
       // Refused: the slot stays, showing an explicit Transcribe affordance
       // instead. stagedVoiceoverNeedsExplicitTranscribe needs this hash at
@@ -3848,8 +3974,25 @@ export default function App() {
   }, [handleVoiceoverStaged]);
 
   const handleVoiceoverTranscribeRequested = useCallback((file: File): void => {
-    handleVoiceoverStaged(file);
+    handleVoiceoverStaged(file, { explicit: true });
   }, [handleVoiceoverStaged]);
+
+  // Wave 3 U4 — CloudTranscriptionPausedDialog's answers. Both re-drive the
+  // SAME staging path an explicit "Transcribe this file" uses; the retry is a
+  // cloud cache lookup first, so nothing already done is paid for twice.
+  const handleCloudTranscriptionRetry = useCallback((): void => {
+    const pending = pendingVoiceoverRef.current;
+    dismissError();
+    if (pending) handleVoiceoverStaged(pending.file, { rerun: true });
+  }, [dismissError, handleVoiceoverStaged]);
+
+  const handleCloudTranscriptionUseLocal = useCallback((reason: string): void => {
+    const pending = pendingVoiceoverRef.current;
+    dismissError();
+    if (!pending?.audioHash) return;
+    saveRunHostOverride({ projectId: projectRef.current.id, audioHash: pending.audioHash, host: 'local', reason });
+    handleVoiceoverStaged(pending.file, { rerun: true });
+  }, [dismissError, handleVoiceoverStaged]);
 
   const handleApplySyncFromFiles = async (): Promise<ApplySyncResult> => {
     // THE ONE READ OF THE LIVE STAGED STATE, and it is the first statement on
@@ -3921,12 +4064,105 @@ export default function App() {
      *  on, not a new mechanism. `totalSegments` defaults to 0 since most call
      *  sites below run before segments are parsed; the one call site after
      *  parsing passes the real count. */
-    const cancelledResult = (totalSegments = 0): ApplySyncResult => {
+    //
+    // Wave 3 U5 — cancel honesty. The line says what the cancel cost, from
+    // the gateway's own receipts (before submit / while queued = no charge
+    // for the job; mid-run = the completed seconds, billed), and the timeline
+    // is left exactly as it was — including a re-transcription this run had
+    // already swapped in, which is put back.
+    let runOnCloud = false;
+    let heldReleased = false;
+    let transcriptPatchUndo: Partial<Project> | null = null;
+    const cancelledResult = async (totalSegments = 0): Promise<Extract<ApplySyncResult, { ok: false }>> => {
       console.warn('[sync] cancelled by user');
-      logSyncAbort('Sync cancelled.', totalSegments);
+      if (hasStoppingCloudRuns()) setSyncStageMessage(CLOUD_CANCEL_COPY.stopping);
+      await settleCloudCancels();
+      if (transcriptPatchUndo) {
+        const undo = transcriptPatchUndo;
+        projectRef.current = { ...projectRef.current, ...undo };
+        setProject(p => ({ ...p, ...undo }));
+      }
+      const cancelMessage = `Sync cancelled. ${describeCloudCancel(
+        takeCancelReceiptsSince(syncRunAt), { cloud: runOnCloud, heldReleased },
+      )}`;
+      logSyncAbort(cancelMessage, totalSegments);
       setIsProcessing(false);
-      return { ok: false, message: 'Sync cancelled.' };
+      return { ok: false, message: cancelMessage };
     };
+
+    // Wave 3 U5 — this click asks again for a spine whose background run the
+    // human cancelled earlier (see cancelSyncIntent).
+    clearSyncIntentSuppression();
+
+    // Wave 3 U5 — an earlier click's cancel stopped this voiceover's cloud
+    // transcription; this click asks for it again. Re-staging mints a fresh
+    // pending record whose hash lands asynchronously, so the wait below uses
+    // the hash already known.
+    let restartedStagingHash: string | undefined;
+    const cancelledStaging = pendingVoiceoverRef.current;
+    if (
+      staged.voiceoverFile
+      && cancelledStaging !== null
+      && cancelledStaging.file === staged.voiceoverFile.file
+      && stagingCancelledAssetIdRef.current === cancelledStaging.asset.id
+    ) {
+      stagingCancelledAssetIdRef.current = null;
+      setStagingCancelledAssetId(null);
+      restartedStagingHash = cancelledStaging.audioHash;
+      handleVoiceoverStaged(cancelledStaging.file, { rerun: true });
+    }
+
+    // Wave 3 U4.6 — EARLY-CLICK REVEAL. On the cloud, Build Timeline is
+    // clickable while the staged voiceover is still transcribing; the click
+    // waits for that transcript (showing the cloud's own phase) and then runs
+    // the ordinary pipeline, whose alignment takes the transcription's held
+    // container — still one boot. Deliberately BEFORE step 2: persisting the
+    // staged voiceover clears the pending reference, and the staging run only
+    // writes its tokens back while it still owns that reference. A pause or a
+    // cancel here keeps the staged files — nothing was built yet.
+    const pendingForWait = pendingVoiceoverRef.current;
+    const waitAudioHash = pendingForWait?.audioHash ?? restartedStagingHash;
+    if (
+      staged.voiceoverFile
+      && pendingForWait !== null
+      && pendingForWait.file === staged.voiceoverFile.file
+      && waitAudioHash !== undefined
+      && !stagingTranscriptStateRef.current.ready
+      && hostForRun(readSyncEngineHost(), readRunHostOverride(projectRef.current.id), {
+        projectId: projectRef.current.id,
+        audioHash: waitAudioHash,
+      }) === 'cloud'
+    ) {
+      runOnCloud = true;
+      setSyncStageMessage(INTENT_PHASE_COPY.transcribing);
+      const offPhase = onCloudPhase(waitAudioHash, phase => setSyncStageMessage(INTENT_PHASE_COPY[phase]));
+      let waited: StagingTranscriptWait;
+      try {
+        waited = await waitForStagingTranscript(
+          () => stagingTranscriptStateRef.current, stagingTranscriptWaitersRef.current, syncAbortController.signal,
+        );
+      } finally {
+        offPhase();
+      }
+      if (waited === 'aborted') {
+        // Wave 3 U5 — a real stop: the cloud transcription is cancelled on
+        // the gateway (not left running to bill and auto-align), the staged
+        // files are kept, and the next click starts it again.
+        const stagingAssetId = pendingVoiceoverRef.current?.asset.id ?? null;
+        cancelTranscription();
+        stagingCancelledAssetIdRef.current = stagingAssetId;
+        setStagingCancelledAssetId(stagingAssetId);
+        const result = await cancelledResult(0);
+        return { ...result, holdStaged: true };
+      }
+      if (waited !== 'ready') {
+        const waitMessage = BUILD_TIMELINE_COPY.stagingPausedMessage;
+        logSyncAbort(waitMessage, 0);
+        setIsProcessing(false);
+        return { ok: false, message: waitMessage, holdStaged: true };
+      }
+      setSyncStageMessage(INTENT_PHASE_COPY.ready);
+    }
 
     // 1. Read text files — strip RTF markup if the file is an .rtf document
     const scriptText = staged.scriptFile
@@ -4114,6 +4350,138 @@ export default function App() {
     //    normal case: Apply Sync is gated until staging-time transcription
     //    reaches 'done'), align inline so the very first commit is already
     //    ms-perfect. No character-based timing ever reaches the screen.
+    // Wave 3 U2 — an engine switch never silently reuses the other engine's
+    // transcript (cloud-asr-plan.md: "a later fallback run against the same
+    // audio must not silently replace cloud tokens, and a later cloud run must
+    // not silently replace local ones; the user, or an explicit re-run,
+    // chooses"). The standing host IS the user's choice, so a cached
+    // transcript produced by the OTHER host is re-transcribed here, through
+    // the same `transcribeForHost` seam staging uses — on the cloud that is a
+    // gateway cache hit whenever this audio was transcribed there before.
+    // Legacy/unstamped transcripts count as local (they can only have come
+    // from whisper.cpp).
+    const engineHost = hostForRun(readSyncEngineHost(), readRunHostOverride(projectRef.current.id), {
+      projectId: projectRef.current.id,
+      audioHash,
+    });
+    // Wave 3 U4.5 — REVEAL. On the cloud, a background intent may already be
+    // aligning this exact spine; wait for it (showing what the cloud is
+    // actually doing) instead of starting a second run. Its result lands in
+    // the gateway cache, so the pipeline below reads it as two cache hits.
+    // Waits only on work that is really pending; cancel stops the wait.
+    if (engineHost === 'cloud') runOnCloud = true;
+    if (engineHost === 'cloud' && audioHash) {
+      const engineKey = await computeSyncEngineKey(projectRef.current, 'cloud');
+      const intent = getSyncIntent(`${audioHash}|${scriptHash}|${engineKey}`);
+      if (intent && !intent.outcome) {
+        const showPhase = (): void => {
+          const live = getSyncIntent(intent.spineKey);
+          if (live) setSyncStageMessage(INTENT_PHASE_COPY[live.phase]);
+        };
+        showPhase();
+        const off = subscribeSyncIntents(showPhase);
+        try {
+          await Promise.race([
+            intent.promise,
+            new Promise<void>(resolve => syncAbortController.signal.addEventListener('abort', () => resolve(), { once: true })),
+          ]);
+        } finally {
+          off();
+        }
+        const revealCancelled = syncAbortController.signal.aborted;
+        if (revealCancelled) {
+          // Wave 3 U5 — stop the background run too, or it keeps aligning
+          // (and billing) after the human said stop.
+          heldReleased = hasHeldTranscription(audioHash);
+          setSyncStageMessage(CLOUD_CANCEL_COPY.stopping);
+          await Promise.race([
+            cancelSyncIntent(intent.spineKey),
+            new Promise<void>(resolve => setTimeout(resolve, SETTLE_TIMEOUT_MS)),
+          ]);
+          return cancelledResult(newSegmentsRaw.length);
+        }
+        setSyncStageMessage(INTENT_PHASE_COPY.ready);
+      }
+    }
+    const cachedTranscriptHost = transcriptionHost(projectRef.current.timingProvenance?.transcription) ?? 'local';
+    if ((projectRef.current.transcriptTokens?.length ?? 0) > 0 && cachedTranscriptHost !== engineHost) {
+      setSyncStageMessage(engineHost === 'cloud' ? 'Transcribing on the cloud…' : 'Transcribing on this computer…');
+      try {
+        const fresh = await transcribeForHost({
+          host: engineHost,
+          asset: voiceoverAsset,
+          durationSecs: audioDuration,
+          language: projectRef.current.language,
+          onProgress: () => {},
+          signal: syncAbortController.signal,
+          audioHash,
+        });
+        const stampLanguage = projectRef.current.language ?? fresh.detectedLanguage;
+        const patch: Partial<Project> = {
+          transcriptTokens: fresh.tokens,
+          lastTranscribedAssetId: voiceoverAsset.id,
+          lastTranscribedAudioHash: audioHash ?? projectRef.current.lastTranscribedAudioHash,
+          language: stampLanguage,
+          detectedLanguage: fresh.detectedLanguage ?? projectRef.current.detectedLanguage,
+          timingProvenance: {
+            ...projectRef.current.timingProvenance,
+            transcription: fresh.stamp({ language: stampLanguage, completedAt: Date.now() }),
+          },
+        };
+        // The rest of this run reads `projectRef`, which otherwise only
+        // advances on the next render.
+        const undo: Partial<Project> = {};
+        for (const key of Object.keys(patch) as (keyof Project)[]) {
+          (undo as Record<string, unknown>)[key] = projectRef.current[key];
+        }
+        transcriptPatchUndo = undo;
+        projectRef.current = { ...projectRef.current, ...patch };
+        setProject(p => ({ ...p, ...patch }));
+      } catch (err) {
+        if (err instanceof DOMException && err.name === 'AbortError') return cancelledResult(newSegmentsRaw.length);
+        // Wave 3 U4 — a cloud failure here (past its one retry) PAUSES and
+        // asks, same record and dialog as an alignment pause — never a toast
+        // the user can miss, never a silent switch to local.
+        if (err instanceof CloudStageError) {
+          const reason = cloudPauseReason(err.cloud);
+          const pauseRecord: FaPauseRecord = {
+            projectId: projectRef.current.id,
+            syncRunId,
+            reason,
+            detail: err.message,
+            timestamp: syncRunAt,
+            host: 'cloud',
+            audioHash,
+            stage: 'transcribe',
+          };
+          saveFaPause(pauseRecord);
+          setProject(prev => appendSyncLogEntries(
+            prev,
+            [buildFaPausedEntry(syncRunId, reason, err.message, syncRunAt)],
+            {
+              syncRunId,
+              timestamp: syncRunAt,
+              totalSegments: newSegmentsRaw.length,
+              coveredSegments: 0,
+              skippedSegments: 0,
+              aborted: true,
+              abortReason: 'fa-paused',
+            },
+          ));
+          setFaPauseDialog(pauseRecord);
+          setIsProcessing(false);
+          return { ok: false, message: SYNC_PAUSED_MESSAGE, holdStaged: true };
+        }
+        const msg = `Couldn't re-transcribe for the selected sync engine — sync aborted. ${err instanceof Error ? err.message : String(err)}`;
+        showToast(msg);
+        logSyncAbort(msg, newSegmentsRaw.length);
+        setIsProcessing(false);
+        return { ok: false, message: msg };
+      } finally {
+        setSyncStageMessage(null);
+      }
+    }
+
     const cachedTokensReady = !!voiceoverAsset
       && (projectRef.current.lastTranscribedAssetId === voiceoverAsset.id
           // plan-v3 Wave 2 item 4 / A5 — content-hash fallback, replacing the
@@ -4150,6 +4518,11 @@ export default function App() {
     // `faWordTimings`. Undefined when this run never produced a new timing
     // set (the character-based fallback), so a prior stamp is left intact.
     let nextTimingProvenance: Project['timingProvenance'] | undefined;
+    // Amount-drop fix, Commit 2 — scene-level findings this run's checks raised
+    // (tail words unmatched, unmatched number/amount, weak match), staged here
+    // and stamped onto `nextTimingProvenance` at the commit boundary so they
+    // persist WITH the timing they qualify, not only as rotating log lines.
+    const stagedTimingFindings: TimingFinding[] = [];
     // Boundary-quality checker (waveform-watcher program, Phase 1) — captured
     // only on the cachedTokensReady/Whisper-snapped branch below, since only
     // that branch has real per-segment token alignments to check a fallback
@@ -4231,7 +4604,12 @@ export default function App() {
       // is decided. `forceWhisperReason` (a one-off per-run override) is
       // folded in HERE, at the call site, never inside the resolver — see
       // its doc comment for why.
-      const engineResolution = await resolveSyncEngine(projectRef.current);
+      const engineResolution = await resolveSyncEngine(projectRef.current, engineHost);
+      // Wave 3 U4 — the user's one-run answer to a cloud pause, on the record.
+      const runOverride = readRunHostOverride(projectRef.current.id);
+      if (engineHost !== readSyncEngineHost() && runOverride) {
+        ruleLogEntries.push(buildHostOverrideEntry(syncRunId, runOverride.reason, syncRunAt));
+      }
       const faGateOpen = engineResolution.gateOpen && forceWhisperReason === null;
       // WS1 Session M — FA readiness PRE-FLIGHT, before inference. When the gate
       // is open, report up front whether forced alignment can actually run
@@ -4241,14 +4619,21 @@ export default function App() {
       // attempted — `runForcedAlignmentForSync` stays the single typed
       // authority on what actually happened.
       if (faGateOpen) {
-        const preflight = engineResolution.preflight!;
-        ruleLogEntries.push(buildFaPreflightEntry(syncRunId, preflight, syncRunAt));
+        // Wave 3 U2 — the cloud resolution carries no local preflight (the
+        // gateway, not this build, runs the alignment).
+        if (engineResolution.preflight) {
+          ruleLogEntries.push(buildFaPreflightEntry(syncRunId, engineResolution.preflight, syncRunAt));
+        }
       } else if (forceWhisperReason !== null) {
         // plan-v3 item 4 — the user answered a SyncPausedDialog with "use
         // Whisper timing" for this one run. Distinct from the gate-closed
         // entry below: the toggle is still ON, this is a one-off, EXPLICIT
         // choice, not a silent standing default.
         ruleLogEntries.push(buildFaUserChoseWhisperEntry(syncRunId, forceWhisperReason, syncRunAt));
+      } else if (engineResolution.host === 'cloud') {
+        // FA toggle off under Cloud: say so; the local-compile probe below
+        // describes this build, which is not what would run the alignment.
+        ruleLogEntries.push(buildFaGateClosedEntry(syncRunId, syncRunAt));
       } else if (isFaCapable()) {
         // WS2 Step 3 A5 (bug 2 visibility fix) — the gate being closed used to
         // produce NO Sync Log signal at all (this whole block was skipped).
@@ -4298,6 +4683,8 @@ export default function App() {
             audioHash,
             // G4 Unit 4 — one-shot bypass, consumed above this branch.
             skipLocalCoverageCheck,
+            // Wave 3 U2 — cloud or local compute for the same chunk plan.
+            engineResolution.host,
           )
         : {
             status: 'degraded',
@@ -4322,6 +4709,8 @@ export default function App() {
           reason: faRun.reason,
           detail: faRun.detail,
           timestamp: syncRunAt,
+          host: engineResolution.host,
+          audioHash,
         };
         saveFaPause(pauseRecord);
         setProject(prev => appendSyncLogEntries(
@@ -4360,26 +4749,26 @@ export default function App() {
           && faRun.reason !== 'ctc-infeasible-chunk'
           ? { kind: whisperDegradedKind(faRun.reason) }
           : undefined;
-        const transcription: TimingProvenance = stampWhisperProvenance({
-          language: stampLang,
-          completedAt: syncRunAt,
-          degraded: transcriptionDegraded,
-        });
+        // Wave 3 U2 — the transcript's own record says which host produced
+        // it (staging, or the engine-switch re-transcription above, stamped
+        // it); the cloud FA result carries the gateway's model + revision.
+        const cachedTranscription = projectRef.current.timingProvenance?.transcription;
+        const stampTranscription = (degraded: TimingProvenance['degraded']): TimingProvenance =>
+          cachedTranscription?.engine === 'whisper-cloud'
+            ? stampCloudProvenance(cachedTranscription as GatewayProvenance & TimingProvenance, { language: stampLang, completedAt: syncRunAt, degraded })
+            : stampWhisperProvenance({ language: stampLang, completedAt: syncRunAt, degraded });
+        const stampAlignment = (degraded: TimingProvenance['degraded']): TimingProvenance => {
+          const cloudProvenance = faRun.status === 'ok' || faRun.status === 'degraded' ? faRun.cloudProvenance : undefined;
+          return cloudProvenance
+            ? stampCloudProvenance(cloudProvenance, { language: stampLang, completedAt: syncRunAt, degraded })
+            : stampFaProvenance({ language: stampLang, completedAt: syncRunAt, degraded });
+        };
+        const transcription: TimingProvenance = stampTranscription(transcriptionDegraded);
         let alignment: TimingProvenance | undefined;
         if (faRun.status === 'ok') {
-          alignment = stampFaProvenance({
-            language: stampLang,
-            completedAt: syncRunAt,
-            degraded: faRun.silenceError !== undefined
-              ? { kind: 'silence-detect-failed' }
-              : undefined,
-          });
+          alignment = stampAlignment(faRun.silenceError !== undefined ? { kind: 'silence-detect-failed' } : undefined);
         } else if (faRun.status === 'degraded' && faRun.reason === 'ctc-infeasible-chunk') {
-          alignment = stampFaProvenance({
-            language: stampLang,
-            completedAt: syncRunAt,
-            degraded: { kind: 'fa-chunk-infeasible' },
-          });
+          alignment = stampAlignment({ kind: 'fa-chunk-infeasible' });
         }
         nextTimingProvenance = { transcription, alignment };
       }
@@ -4426,6 +4815,16 @@ export default function App() {
         anchorSourceForRun,
         faTokens ? faTokens.length : projectRef.current.transcriptTokens!.length,
         syncRunAt,
+        // Wave 3 U2 — names the cloud model + revision when the gateway
+        // produced the timings this run commits (the provenance just staged).
+        (() => {
+          const committed = faCompleted ? nextTimingProvenance?.alignment : nextTimingProvenance?.transcription;
+          if (!committed || (committed.engine !== 'fa-cloud' && committed.engine !== 'whisper-cloud')) return undefined;
+          // Wave 3 U3 — only the alignment stage runs inside Apply Sync; say
+          // when the gateway's cache answered it.
+          const cached = faCompleted && (faRun.status === 'ok' || faRun.status === 'degraded') && faRun.cloudCached === true;
+          return { model: committed.model, modelVersion: committed.modelVersion, cached };
+        })(),
       ));
       // R.5 — the excisions this run's chunk plan actually made, surfaced by
       // `runForcedAlignmentForSync` from the same `computeRunContext` pass
@@ -4726,6 +5125,41 @@ export default function App() {
       // own count===1 fallback).
       const wordCoverageViolations = validateWordCoverage(kept, keptAlignments);
       const wordCoverageEntry = buildGroupedViolationEntry(syncRunId, wordCoverageViolations, syncRunAt);
+      // Escalation (Commit 2 (d)): a scene under the word-coverage floor is
+      // ALSO stamped onto the timing provenance, by committed scene id.
+      if (wordCoverageViolations.length > 0) {
+        stagedTimingFindings.push({
+          kind: 'weak-match',
+          sceneIds: wordCoverageViolations
+            .map(v => kept[(v.detail as { segmentIndex: number } | undefined)?.segmentIndex ?? -1]?.id)
+            .filter((id): id is string => id !== undefined),
+          detail: wordCoverageViolations.map(v => v.message).join(' '),
+        });
+      }
+
+      // Honest-boundary tripwires (Commit 2 (a)/(b)) — a scene whose TAIL script
+      // words nothing claimed (its cut was placed by silence geometry, not from
+      // the last matched word), and any written number/amount that failed to
+      // match. Same kept/keptAlignments pair and grouping as the checks above;
+      // warn-only, never blocks.
+      const tailViolations = validateTailWords(kept, keptAlignments);
+      const tailEntry = buildGroupedViolationEntry(syncRunId, tailViolations, syncRunAt);
+      if (tailViolations.length > 0) {
+        stagedTimingFindings.push({
+          kind: 'tail-unmatched',
+          sceneIds: tailViolations.map(v => (v.detail as { segmentId: string }).segmentId),
+          detail: tailViolations.map(v => v.message).join(' '),
+        });
+      }
+      const numericViolations = validateNumericWords(kept, keptAlignments);
+      const numericEntry = buildGroupedViolationEntry(syncRunId, numericViolations, syncRunAt);
+      if (numericViolations.length > 0) {
+        stagedTimingFindings.push({
+          kind: 'numeric-unmatched',
+          sceneIds: numericViolations.map(v => (v.detail as { segmentId: string }).segmentId),
+          detail: numericViolations.map(v => v.message).join(' '),
+        });
+      }
 
       // G4 Unit 3 — POST-match per-scene density (STATUS.md Wave 2 queue item
       // 2). Sibling of the word-coverage check right above: same kept/
@@ -4760,6 +5194,8 @@ export default function App() {
         ...(skipped.length > 0 ? buildSkipLogEntries(syncRunId, skipped, syncRunAt) : []),
         ...(rescued.length > 0 ? buildRescueLogEntries(syncRunId, rescued, syncRunAt) : []),
         ...(wordCoverageEntry ? [wordCoverageEntry] : []),
+        ...(tailEntry ? [tailEntry] : []),
+        ...(numericEntry ? [numericEntry] : []),
         ...(sceneDensityEntry ? [sceneDensityEntry] : []),
         buildSyncInfoEntry(syncRunId, aligned.segments.length, kept.length, skipped.length, syncRunAt),
       ];
@@ -5380,7 +5816,42 @@ export default function App() {
     // the spine must record the project's STANDING toggle position so a
     // later toggle flip (with nothing re-staged) is what makes the NEXT
     // Apply Sync's "already synced" comparison see a real difference.
-    const syncEngineKey = await computeSyncEngineKey(projectRef.current);
+    // Wave 3 U4 — the host THIS run used (a one-run local override stamps a
+    // local key, so the standing Cloud choice later reads as "not synced
+    // with this engine" — honest, and re-syncable).
+    const syncEngineKey = await computeSyncEngineKey(projectRef.current, engineHost);
+
+    // Commit 2 (c) — ENGINE-SWITCH BOUNDARY DELTA. Same audio, same script,
+    // different engine key (the Cloud/Local toggle flipped): every cut should
+    // land where it already was. Any cut that moved by more than 100ms is named
+    // once, with old/new times and BOTH engines, and stamped onto the timing
+    // provenance. Compared against the segments this sync is replacing; a
+    // changed script or audio makes movement expected, so those never compare.
+    {
+      const priorSpine = projectRef.current.lastSyncSpine;
+      if (
+        priorSpine?.engineKey !== undefined
+        && priorSpine.engineKey !== syncEngineKey
+        && audioHash !== undefined
+        && priorSpine.audioHash === audioHash
+        && priorSpine.scriptHash === scriptHash
+      ) {
+        const deltas = computeBoundaryDeltas(previousSegments, lockRestoredSegments);
+        if (deltas.length > 0) {
+          const previousEngine = describeStampedEngine(projectRef.current.timingProvenance);
+          const nextEngine = describeStampedEngine(nextTimingProvenance);
+          const violations = validateEngineBoundaryDelta(deltas, previousEngine, nextEngine);
+          const deltaEntry = buildGroupedViolationEntry(syncRunId, violations, syncRunAt);
+          if (deltaEntry) pendingLogEntries = [...pendingLogEntries, deltaEntry];
+          stagedTimingFindings.push({
+            kind: 'boundary-delta',
+            sceneIds: deltas.map(d => d.segmentId),
+            detail: violations.map(v => v.message).join(' '),
+          });
+        }
+      }
+      nextTimingProvenance = stampTimingFindings(nextTimingProvenance, stagedTimingFindings);
+    }
 
     // 8. Single atomic state update — segments are already final.
     //    New-layer headings (Path B Decision 2) never move on re-sync; only
@@ -5544,6 +6015,8 @@ export default function App() {
     // fact written. That asymmetry is deliberate: a retained transcript is
     // visible and one click from being discarded, while a wrongly-cleared one
     // is gone. The conservative direction is the recoverable one.
+    // Wave 3 U4 — the one-run override is spent once its run commits.
+    clearRunHostOverride(projectRef.current.id);
     return { ok: true };
   };
 
@@ -5583,6 +6056,19 @@ export default function App() {
       await handleApplySyncFromFiles();
     })();
   }, [handleStagedFilesChange, showToast, faPauseDialog]);
+
+  // Wave 3 U4 — the G3 offline contract's local option: this sync, this
+  // voiceover, on this computer; never the standing default.
+  // Arms the one-run override, then takes the SAME path as Retry (so the
+  // staged-snapshot hydrate stays one read, in one place).
+  const handleSyncPausedUseLocal = useCallback((): void => {
+    const pause = faPauseDialog;
+    if (!pause?.audioHash) return;
+    saveRunHostOverride({
+      projectId: liveProjectRef.current.id, audioHash: pause.audioHash, host: 'local', reason: pause.reason,
+    });
+    handleSyncPausedRetry();
+  }, [faPauseDialog, handleSyncPausedRetry]);
 
   const handleSyncPausedUseWhisper = useCallback((): void => {
     setFaPauseDialog(null);
@@ -6603,6 +7089,31 @@ export default function App() {
   // reads the persisted project value for an unstaged slot and stamps the
   // spine from exactly that same commit — see handleApplySyncFromFiles'
   // step 1 / step 8), so only a slot that IS staged needs a fresh hash.
+  // Wave 3 U2 — the standing Cloud/Local choice, mirrored into state so the
+  // "already synced" comparison below re-runs the moment it changes (an
+  // engine switch is a real change: every cloud engineKey differs from
+  // every local one).
+  const [syncEngineHost, setSyncEngineHostState] = useState(readSyncEngineHost);
+  useEffect(() => onSyncEngineHostChange(setSyncEngineHostState), []);
+  // Wave 3 U4.6 — on the cloud, a staged voiceover that is transcribing
+  // right now does not grey Build Timeline: the click is a reveal and waits
+  // with the honest phase. Local keeps click-to-run (greyed, "Transcribing…").
+  // A voiceover that is NOT transcribing (restored, needs an explicit
+  // Transcribe) still greys on both engines.
+  const cloudStagingInFlight = pendingVoiceover !== null
+    && transcriptionStatus.phase === 'transcribing'
+    && transcriptionTargetIdRef.current === pendingVoiceover.asset.id
+    && hostForRun(syncEngineHost, readRunHostOverride(project.id), {
+      projectId: project.id,
+      audioHash: pendingVoiceover.audioHash,
+    }) === 'cloud';
+  // Wave 3 U5 — a cancelled cloud staging run leaves the button live: the
+  // next click starts the transcription again and waits on it.
+  const cloudStagingCancelled = pendingVoiceover !== null
+    && stagingCancelledAssetId === pendingVoiceover.asset.id
+    && transcriptionStatus.phase === 'idle';
+  const buildTimelineWaitsOnTranscription = applySyncDisabled
+    && (voiceoverNeedsExplicitTranscribe || !(cloudStagingInFlight || cloudStagingCancelled));
   const [spineUnchanged, setSpineUnchanged] = useState(false);
   useEffect(() => {
     let cancelled = false;
@@ -6644,7 +7155,7 @@ export default function App() {
       // run, must make the comparison fail even when neither hash moved —
       // re-checked fresh every time this effect fires, so it always reads
       // current readiness rather than a stale snapshot.
-      const engineKey = await computeSyncEngineKey(project);
+      const engineKey = await computeSyncEngineKey(project, syncEngineHost);
       if (cancelled) return;
 
       setSpineUnchanged(audioHash !== undefined && spineEquals(spine, { audioHash, scriptHash, engineKey }));
@@ -6654,11 +7165,102 @@ export default function App() {
     project.lastSyncSpine, project.script, project.sceneDetails,
     project.faHighPrecisionSync, project.language, project.detectedLanguage,
     stagedVoiceoverFile, stagedScriptFile, stagedSceneFile, pendingVoiceover,
+    syncEngineHost,
   ]);
   // Operator-approved copy (Wave 2 G1 sign-off). Reason + hint combined into
   // one tooltip sentence pair; the button's own visible label ("Already
   // synced" — see DropZonePanel's applySyncSpineUnchangedReason ternary)
   // carries the stated-reason requirement visibly, not hover-only.
+  // Wave 3 U4.5 — the cloud sync intent. When the spine is complete on the
+  // cloud (script + scene doc + a voiceover with its CLOUD transcript) and
+  // not already synced, align in the background — in the staging
+  // transcription's held container when it is still there (one boot) — so
+  // the Apply Sync click only reveals. Anything short of that releases a
+  // held container at once: the GPU never waits for files. Inputs are the
+  // SAME values Apply Sync feeds `parseProjectData` / the FA runner, so the
+  // reveal's alignment lookup is a cache hit. Local path: untouched.
+  useEffect(() => {
+    if (isProcessing) return; // Apply Sync is running; it owns this spine now.
+    let cancelled = false;
+    const p = project;
+    const audioHash = pendingVoiceover?.audioHash ?? p.lastTranscribedAudioHash;
+    if (!audioHash) return;
+    const host = hostForRun(syncEngineHost, readRunHostOverride(p.id), { projectId: p.id, audioHash });
+    const noIntent = (): void => {
+      releaseHeldTranscription(audioHash);
+      cancelOtherSyncIntents(undefined);
+    };
+    if (host !== 'cloud') { noIntent(); return; }
+    // Wave 3 U7.5 — a bulk project that has not built yet never starts cloud
+    // work on its own; the batch or its own click does.
+    if (isBulkAutoFireSuppressed(p)) { noIntent(); return; }
+    const tokens = p.transcriptTokens;
+    const cloudTranscriptForThisAudio = (tokens?.length ?? 0) > 0
+      && p.lastTranscribedAudioHash === audioHash
+      && p.timingProvenance?.transcription?.engine === 'whisper-cloud';
+    // No transcript yet: staging is still running (nothing is held yet).
+    if (!cloudTranscriptForThisAudio) return;
+    const voiceoverAsset = pendingVoiceover?.audioHash === audioHash ? pendingVoiceover.asset : voiceover;
+    void (async () => {
+      const scriptText = stagedScriptFile ? stripRtfIfNeeded(await stagedScriptFile.text()) : p.script;
+      const sceneText = stagedSceneFile ? stripRtfIfNeeded(await stagedSceneFile.text()) : p.sceneDetails;
+      if (cancelled) return;
+      if (!scriptText.trim() || !sceneText.trim() || !voiceoverAsset) { noIntent(); return; }
+      const resolution = await resolveSyncEngine(p, 'cloud');
+      if (cancelled) return;
+      if (!resolution.gateOpen) { noIntent(); return; }
+      const scriptHash = await computeScriptHash(scriptText, sceneText);
+      if (cancelled) return;
+      const spine = { audioHash, scriptHash, engineKey: resolution.key };
+      if (p.lastSyncSpine && spineEquals(p.lastSyncSpine, spine)) { noIntent(); return; }
+      // Same duration rule Apply Sync uses.
+      const audioDurationSec = voiceoverAsset.duration !== undefined && voiceoverAsset.duration > 0
+        ? voiceoverAsset.duration
+        : audioRef.current?.src === voiceoverAsset.url ? (audioRef.current?.duration || 0) : 0;
+      if (!(audioDurationSec > 0)) { noIntent(); return; }
+      const spineKey = `${audioHash}|${scriptHash}|${resolution.key}`;
+      // Wave 3 U5 — the human cancelled this spine's run; only a click (or a
+      // real change, which is a new key) starts it again.
+      if (isSyncIntentSuppressed(spineKey)) { noIntent(); return; }
+      cancelOtherSyncIntents(spineKey);
+      if (getSyncIntent(spineKey)) return;
+      const entry = startSyncIntent({
+        spineKey,
+        voiceover: voiceoverAsset,
+        audioHash,
+        audioDurationSec,
+        tokens: tokens!,
+        language: resolveFaLanguage(p),
+        prepareSegments: () => parseProjectData(
+          scriptText, sceneText, p.assets, audioDurationSec, p.segments, p.defaultTextOverlay ?? false,
+        ),
+      });
+      void entry.promise.then(outcome => {
+        if (outcome.status !== 'paused') return;
+        // Pause-and-ask inside the background job: the SAME restart-safe
+        // dialog and log entry Apply Sync raises — never silent.
+        const runId = mintSyncLogId();
+        const at = Date.now();
+        const record: FaPauseRecord = {
+          projectId: p.id, syncRunId: runId, reason: outcome.faRun.reason, detail: outcome.faRun.detail,
+          timestamp: at, host: 'cloud', audioHash,
+        };
+        saveFaPause(record);
+        setProject(prev => appendSyncLogEntries(
+          prev, [buildFaPausedEntry(runId, outcome.faRun.reason, outcome.faRun.detail, at)], undefined,
+        ));
+        setFaPauseDialog(record);
+      });
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    isProcessing, project.transcriptTokens, project.lastTranscribedAudioHash, project.timingProvenance,
+    project.script, project.sceneDetails, project.lastSyncSpine, project.faHighPrecisionSync,
+    project.language, project.detectedLanguage, project.segments,
+    stagedScriptFile, stagedSceneFile, pendingVoiceover, voiceover, syncEngineHost,
+  ]);
+
   const applySyncSpineUnchangedReason = spineUnchanged
     ? "Your audio and script haven't changed since the last sync. Edit the script or swap the voiceover to re-sync."
     : undefined;
@@ -6677,6 +7279,26 @@ export default function App() {
     && (transcriptionStatus.kind === 'model-not-found' || transcriptionStatus.kind === 'model-hash-mismatch')
       ? transcriptionStatus.kind
       : null;
+  // Wave 3 U4 — a cloud staging failure past its one retry: the pause dialog
+  // replaces TranscriptionBar's strip (never shown alongside it).
+  const cloudTranscriptionPause =
+    transcriptionStatus.phase === 'error' && transcriptionStatus.cloudReason
+      ? { reason: transcriptionStatus.cloudReason, detail: transcriptionStatus.message }
+      : null;
+
+  // Wave 3 U4.6 — what an early Build Timeline click waits on (see the
+  // early-click reveal in handleApplySyncFromFiles). Mirrored after every
+  // render, AFTER `projectRef` is (that effect is declared earlier), so a
+  // waiter woken by "ready" already reads the fresh transcript. A failure
+  // wakes it as "paused": the pause/model dialog is the loud surface; the
+  // click never hangs on a run that has stopped.
+  useEffect(() => {
+    stagingTranscriptStateRef.current = {
+      ready: transcriptionReady,
+      paused: cloudTranscriptionPause !== null || whisperModelFailureKind !== null,
+    };
+    for (const wake of [...stagingTranscriptWaitersRef.current]) wake();
+  });
 
   usePlayback({
     isPlaying,
@@ -7659,6 +8281,52 @@ export default function App() {
   // latest version of handleSwitchProject.
   handleSwitchProjectRef.current = handleSwitchProject;
 
+  // Wave 3 U7.5 — finish a bulk project's timeline: the app's OWN Build
+  // Timeline, run for it. The cloud work is already done (results sit in the
+  // gateway cache), so this is cache hits: open the project, wait for its
+  // staged files to restore and its transcript to be adopted, run Apply Sync,
+  // save. After it the project is a fully built timeline on disk, so Open
+  // project needs no second click. Refs, because the modal outlives renders.
+  const bulkLatest = useRef({ switchProject: handleSwitchProject, applySync: handleApplySyncFromFiles, saveNow });
+  bulkLatest.current = { switchProject: handleSwitchProject, applySync: handleApplySyncFromFiles, saveNow };
+  const bulkBuildReadyRef = useRef({ projectId: '', ready: false, built: false, why: '' });
+  bulkBuildReadyRef.current = {
+    projectId: project.id,
+    // Already a finished timeline (a resumed batch, or opened and built by hand).
+    built: !showDashboard && !!project.lastSyncSpine && project.segments.length > 0 && stagedVoiceoverFile === null,
+    why: showDashboard ? 'the project is not open' : stagedVoiceoverFile === null ? 'its staged files are still restoring'
+      : !transcriptionReady ? 'its transcript is not ready' : applySyncDisabled ? 'Build Timeline is not available' : isProcessing ? 'a sync is already running' : '',
+    ready: !showDashboard && !isProcessing && stagedVoiceoverFile !== null
+      && transcriptionReady && !applySyncDisabled,
+  };
+  const finalizeBulkProject = useCallback(async (id: string): Promise<{ ok: boolean; message?: string }> => {
+    await bulkLatest.current.switchProject(id);
+    const deadline = Date.now() + 90_000;
+    for (;;) {
+      const s = bulkBuildReadyRef.current;
+      if (s.projectId === id && s.built) return { ok: true };
+      if (s.projectId === id && s.ready) break;
+      if (Date.now() > deadline) {
+        return { ok: false, message: `Timed out waiting: ${s.projectId === id ? s.why : 'the project did not open'}.` };
+      }
+      await new Promise(r => setTimeout(r, 100));
+    }
+    const result = await bulkLatest.current.applySync();
+    if (!result.ok) return { ok: false, message: result.message };
+    await bulkLatest.current.saveNow();
+    return { ok: true };
+  }, []);
+  // Wave 3 U7.8 — the batch is a persistent background job (bulkBatch.ts):
+  // App gives it the editor-side finish, and on boot it picks up where it stopped.
+  useEffect(() => { bulkBatchRunner(parseProjectData).setFinalizer(finalizeBulkProject); }, [finalizeBulkProject]);
+  const bulkResumed = useRef(false);
+  useEffect(() => {
+    if (isHydrating || bulkResumed.current) return;
+    bulkResumed.current = true;
+    bulkBatchRunner(parseProjectData).resume();
+  }, [isHydrating]);
+
+
   const SHOW_GLOBAL_TEXT_LAYERS_IN_RIGHT_PANEL = false;
 
   if (isHydrating) {
@@ -7683,6 +8351,18 @@ export default function App() {
       onNewProject={() => setShowNewProjectModal(true)}
       onOpenAppSettings={() => setShowAppSettingsModal(true)}
       onAssetCleanupFailed={showToast}
+      parseProjectData={parseProjectData}
+      onBulkStart={setBulkRowCount}
+      metasVersion={dashboardVersion}
+      bulkOpen={bulkRowCount !== null}
+      onProjectsDeleted={ids => {
+        // The editor may still hold a project the dashboard just deleted (the
+        // last one opened): drop it, so it cannot be written back or resumed.
+        if (!ids.includes(project.id)) return;
+        setProjectSilent(makeDefaultProject());
+        setHistory(emptyHistory<Project>());
+        clearLastOpenedProjectId();
+      }}
     />
   ) : (
     /* `data-project-id` is the editor's rendered project IDENTITY. It exists so
@@ -7742,7 +8422,7 @@ export default function App() {
             onVoiceoverRestored={handleVoiceoverRestored}
             onVoiceoverTranscribeRequested={handleVoiceoverTranscribeRequested}
             voiceoverNeedsExplicitTranscribe={voiceoverNeedsExplicitTranscribe}
-            applySyncDisabled={applySyncDisabled}
+            applySyncDisabled={buildTimelineWaitsOnTranscription}
             applySyncSpineUnchangedReason={applySyncSpineUnchangedReason}
             onUndo={handleUndo}
             onRedo={handleRedo}
@@ -7813,7 +8493,7 @@ export default function App() {
             onActiveLeftTabChange={setActiveLeftTab}
             isPlaying={isPlaying}
           />
-          {transcriptionStatus.phase !== 'idle' && whisperModelFailureKind === null && (
+          {transcriptionStatus.phase !== 'idle' && transcriptionStatus.phase !== 'transcribing' && whisperModelFailureKind === null && cloudTranscriptionPause === null && (
             <div className="flex-shrink-0">
               <TranscriptionBar
                 status={transcriptionStatus}
@@ -8772,8 +9452,9 @@ export default function App() {
           detail={faPauseDialog.detail}
           timestamp={faPauseDialog.timestamp}
           onRetry={handleSyncPausedRetry}
-          onUseWhisper={handleSyncPausedUseWhisper}
+          onUseWhisper={faPauseDialog.stage === 'transcribe' ? undefined : handleSyncPausedUseWhisper}
           onCancel={handleSyncPausedCancel}
+          onUseLocal={faPauseDialog.host === 'cloud' && faPauseDialog.audioHash ? handleSyncPausedUseLocal : undefined}
         />
       )}
 
@@ -8785,6 +9466,16 @@ export default function App() {
           once would put this dialog on top, blocking the download UI it just
           opened) and re-appears on its own if the model is still missing
           after that modal closes. */}
+      {cloudTranscriptionPause !== null && (
+        <CloudTranscriptionPausedDialog
+          reason={cloudTranscriptionPause.reason}
+          detail={cloudTranscriptionPause.detail}
+          onRetry={handleCloudTranscriptionRetry}
+          onUseLocal={() => handleCloudTranscriptionUseLocal(cloudTranscriptionPause.reason)}
+          onCancel={dismissError}
+        />
+      )}
+
       {whisperModelFailureKind !== null && !showManageModelsModal && (
         <WhisperModelFailureDialog
           kind={whisperModelFailureKind}
@@ -8803,6 +9494,16 @@ export default function App() {
           whichever view is up. The dashboard stays mounted behind it and is
           only unmounted once `handleNewProjectConfirm` swaps in the new
           project, so cancelling needs no view restore. */}
+      {bulkRowCount !== null && (
+        <BulkProjectsModal
+          initialCount={bulkRowCount}
+          createBlankProject={makeDefaultProject}
+          parseProjectData={parseProjectData}
+          onProjectsCreated={() => setDashboardVersion(v => v + 1)}
+          onOpenProject={id => { setBulkRowCount(null); void handleSwitchProject(id); }}
+          onClose={() => { setBulkRowCount(null); setDashboardVersion(v => v + 1); setShowDashboard(true); }}
+        />
+      )}
       {showNewProjectModal && (
         <NewProjectModal
           onConfirm={handleNewProjectConfirm}

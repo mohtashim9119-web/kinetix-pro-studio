@@ -173,7 +173,7 @@ export function checkTimelineIsGapless(
   return (
     `Timeline is not continuous: a ${first.amountSec.toFixed(3)}s ${shape} before `
     + `segment ${first.index + 1}${more}. Exporting would desynchronise the video from `
-    + `the audio and misplace headings. Re-run Apply Sync, or adjust the segment `
+    + `the audio and misplace headings. Re-run Build Timeline, or adjust the segment `
     + `boundaries, before exporting.`
   );
 }

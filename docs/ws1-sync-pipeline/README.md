@@ -5,6 +5,7 @@ Living docs for the forced-alignment timing-source upgrade and its measurement p
 | Doc | Purpose |
 |---|---|
 | [`sync-pipeline-v2-plan.md`](sync-pipeline-v2-plan.md) | Accepted v2 architecture, rules register, and measurement programme |
+| [`wave3-operator-rulings-2026-09-27.md`](wave3-operator-rulings-2026-09-27.md) | Wave 3: U3 cache (as built), U4.5 sync-intent and U4.6 flow-UI designs, unit order |
 | [`stage1-live-run-prep.md`](stage1-live-run-prep.md) | Stage 1 live acceptance runbook |
 | [`stage1-mover-audit.md`](stage1-mover-audit.md) | 24-row blind ear-scoring dossier for Apply Sync movers |
 | [`measurements/README.md`](measurements/README.md) | Index for WS1 research-phase CSV/JSON (not `scripts/fixtures/`) |

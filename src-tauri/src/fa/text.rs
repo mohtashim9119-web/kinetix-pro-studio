@@ -270,6 +270,44 @@ pub struct FaCardinalData {
     pub scale: Vec<FaScaleLevel>,
     #[serde(rename = "yearReading")]
     pub year_reading: FaYearReading,
+    /// The language's amount words (`scripts/fixtures/fa-amount-words.json`),
+    /// attached by [`with_amount_words`] — deliberately NOT part of the
+    /// cardinal JSON (its digest keys the cloud alignment cache). `None` =
+    /// amount tokens keep the pre-amount behavior (dropped). Mirrors
+    /// `FaCardinalData.amount`.
+    #[serde(default)]
+    pub amount: Option<FaAmountWords>,
+}
+
+/// Mirrors `FaAmountWords` — one language's entry of `fa-amount-words.json`.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct FaAmountWords {
+    #[serde(rename = "pointWord")]
+    pub point_word: String,
+    #[serde(rename = "percentWord")]
+    pub percent_word: String,
+    pub currency: HashMap<String, FaCurrencyWords>,
+}
+
+/// One currency symbol's spoken forms.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct FaCurrencyWords {
+    pub one: String,
+    pub other: String,
+}
+
+/// `scripts/fixtures/fa-amount-words.json`, embedded like the vocab/cardinal
+/// files so this crate carries no amount-word table of its own.
+const AMOUNT_WORDS_JSON: &str = include_str!("../../../scripts/fixtures/fa-amount-words.json");
+
+/// Attaches `language`'s amount words to `data`. Panics only on a malformed
+/// embedded file (a build-time data bug), mirroring `load_cardinal_data`.
+pub fn with_amount_words(mut data: FaCardinalData, language: Language) -> FaCardinalData {
+    let parsed: serde_json::Value =
+        serde_json::from_str(AMOUNT_WORDS_JSON).expect("embedded fa-amount-words.json must parse");
+    let entry = parsed["languages"][language.code()].clone();
+    data.amount = Some(serde_json::from_value(entry).expect("fa-amount-words.json language entry must match FaAmountWords"));
+    data
 }
 
 /// Reads and parses a `fa-cardinal-<lang>.json` file at `path` (caller-
@@ -446,7 +484,8 @@ fn select_year_candidate(n: u64, policy: &Option<FaYearSelectionPolicy>) -> Stri
 
 /// Entry point replacing the four former per-language `expand_*_cardinal`
 /// functions below — now shared across all five languages and fully data-
-/// driven. Mirrors `expandCardinalToken`.
+/// driven. Mirrors `expandCardinalToken`. The result is lowercased (German's
+/// scale words are capitalized in the data; a capital is not a vocab char).
 fn expand_cardinal_token(stripped: &str, data: &FaCardinalData) -> Option<String> {
     if stripped.is_empty() || !stripped.chars().all(|c| c.is_ascii_digit()) {
         return None;
@@ -458,9 +497,140 @@ fn expand_cardinal_token(stripped: &str, data: &FaCardinalData) -> Option<String
     let yr = &data.year_reading;
     if stripped.len() == 4 && n >= yr.range_min && n <= yr.range_max {
         let candidate = select_year_candidate(n, &yr.selection_policy);
-        return Some(compose_year_reading(n, &candidate, data));
+        return Some(compose_year_reading(n, &candidate, data).to_lowercase());
     }
-    Some(cardinal_to_words(n, data))
+    Some(cardinal_to_words(n, data).to_lowercase())
+}
+
+// ---------------------------------------------------------------------------
+// AMOUNT tokens — byte-identical port of `faTextNormalize.ts`'s amount
+// section (grammar, reading order, plural rule). Pinned against the shared
+// `scripts/fixtures/fa-amount-lockstep.json` corpus, which the TS and Python
+// sides read too.
+// ---------------------------------------------------------------------------
+
+const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
+
+/// Mirrors `AmountParts`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AmountParts {
+    pub int_digits: String,
+    pub frac_digits: Option<String>,
+    pub currency: Option<char>,
+    pub percent: bool,
+}
+
+fn is_amount_currency(c: char) -> bool {
+    matches!(c, '$' | '€' | '£')
+}
+
+/// The integer half of the core: all digits, or `d{1,3}(SEP d{3})+`. Returns
+/// (digits without separators, saw a separator).
+fn parse_amount_int(part: &str, thousands: char) -> Option<(String, bool)> {
+    if part.is_empty() {
+        return None;
+    }
+    if part.chars().all(|c| c.is_ascii_digit()) {
+        return Some((part.to_string(), false));
+    }
+    let groups: Vec<&str> = part.split(thousands).collect();
+    if groups.len() < 2 {
+        return None;
+    }
+    for (i, g) in groups.iter().enumerate() {
+        if !g.chars().all(|c| c.is_ascii_digit()) {
+            return None;
+        }
+        let ok = if i == 0 { (1..=3).contains(&g.len()) } else { g.len() == 3 };
+        if !ok {
+            return None;
+        }
+    }
+    Some((groups.concat(), true))
+}
+
+/// Mirrors `parseAmountToken`. `None` for anything that is not an amount —
+/// including a BARE integer, which keeps its existing cardinal/year reading.
+pub fn parse_amount_token(stripped: &str, language: Language) -> Option<AmountParts> {
+    let mut s = stripped;
+    let mut currency: Option<char> = None;
+    let mut percent = false;
+    if let Some(first) = s.chars().next() {
+        if is_amount_currency(first) {
+            currency = Some(first);
+            s = &s[first.len_utf8()..];
+        }
+    }
+    if s.ends_with('%') {
+        percent = true;
+        s = &s[..s.len() - 1];
+    }
+    if currency.is_none() {
+        if let Some(last) = s.chars().last() {
+            if is_amount_currency(last) {
+                currency = Some(last);
+                s = &s[..s.len() - last.len_utf8()];
+            }
+        }
+    }
+    let (thousands, decimal) = if language == Language::En { (',', '.') } else { ('.', ',') };
+    let (int_part, frac) = match s.find(decimal) {
+        Some(at) => (&s[..at], Some(&s[at + decimal.len_utf8()..])),
+        None => (s, None),
+    };
+    let frac_digits = match frac {
+        Some(f) => {
+            if f.is_empty() || !f.chars().all(|c| c.is_ascii_digit()) {
+                return None;
+            }
+            Some(f.to_string())
+        }
+        None => None,
+    };
+    let (int_digits, saw_sep) = parse_amount_int(int_part, thousands)?;
+    if currency.is_none() && !percent && !saw_sep && frac_digits.is_none() {
+        return None; // bare integer
+    }
+    if int_digits.len() > 1 && int_digits.starts_with('0') {
+        return None;
+    }
+    match int_digits.parse::<u64>() {
+        Ok(n) if n <= MAX_SAFE_INTEGER => {}
+        _ => return None,
+    }
+    Some(AmountParts { int_digits, frac_digits, currency, percent })
+}
+
+/// Mirrors `spokenAmount`. `None` when the data carries no amount words for
+/// this language/symbol.
+pub fn spoken_amount(parts: &AmountParts, data: &FaCardinalData) -> Option<String> {
+    let words = data.amount.as_ref()?;
+    let n: u64 = parts.int_digits.parse().ok()?;
+    let mut out = cardinal_to_words(n, data).to_lowercase();
+    if let Some(frac) = &parts.frac_digits {
+        out.push(' ');
+        out.push_str(&words.point_word);
+        for d in frac.chars() {
+            out.push(' ');
+            out.push_str(&cardinal_0_to_99(d.to_digit(10).unwrap() as u64, data).to_lowercase());
+        }
+    }
+    if let Some(sym) = parts.currency {
+        let c = words.currency.get(&sym.to_string())?;
+        out.push(' ');
+        out.push_str(if n == 1 && parts.frac_digits.is_none() { &c.one } else { &c.other });
+    }
+    if parts.percent {
+        out.push(' ');
+        out.push_str(&words.percent_word);
+    }
+    Some(out)
+}
+
+/// Mirrors `expandAmountToken`.
+fn expand_amount_token(stripped: &str, language: Language, data: &FaCardinalData) -> Option<String> {
+    let parts = parse_amount_token(stripped, language)?;
+    spoken_amount(&parts, data)
 }
 
 // ---------------------------------------------------------------------------
@@ -766,7 +936,8 @@ pub fn normalize_word(raw_word: &str, language: Language, vocab_chars: &HashSet<
         };
     }
 
-    let cardinal_expansion = expand_cardinal_token(stripped, cardinal_data);
+    let cardinal_expansion = expand_amount_token(stripped, language, cardinal_data)
+        .or_else(|| expand_cardinal_token(stripped, cardinal_data));
     let candidate: String = cardinal_expansion.clone().unwrap_or_else(|| stripped.to_string());
 
     if cardinal_expansion.is_none() && stripped.chars().any(|c| c.is_ascii_digit()) {
@@ -1815,5 +1986,91 @@ mod nfc_completeness_guard {
             uncovered.len(),
             uncovered.join("\n")
         );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Amount lockstep — the Rust arm of the three-way corpus.
+//
+// `scripts/fixtures/fa-amount-lockstep.json` is ONE corpus read by three
+// independent suites (`src/services/faAmountLockstep.test.ts`, this module,
+// `cloud/test_fa_amount_lockstep.py`); each must reproduce it per word
+// (`representable` + `mapped`) and as the joined chunk text. Reason strings are
+// deliberately not compared — each side words its own.
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod amount_lockstep {
+    use super::*;
+
+    #[derive(serde::Deserialize)]
+    struct Corpus {
+        entries: Vec<Entry>,
+    }
+    #[derive(serde::Deserialize)]
+    struct Entry {
+        language: String,
+        input: String,
+        words: Vec<Word>,
+        text: String,
+    }
+    #[derive(serde::Deserialize)]
+    struct Word {
+        input: String,
+        representable: bool,
+        mapped: Option<String>,
+    }
+
+    fn fixtures_dir() -> std::path::PathBuf {
+        std::path::PathBuf::from(format!("{}/../scripts/fixtures", env!("CARGO_MANIFEST_DIR")))
+    }
+
+    #[test]
+    fn rust_reproduces_the_shared_amount_corpus_for_every_entry() {
+        let raw = std::fs::read_to_string(fixtures_dir().join("fa-amount-lockstep.json")).unwrap();
+        let corpus: Corpus = serde_json::from_str(&raw).unwrap();
+        assert!(corpus.entries.len() >= 40, "the shared corpus must not shrink");
+
+        let mut mismatches = Vec::new();
+        let mut seen: HashSet<String> = HashSet::new();
+        for e in &corpus.entries {
+            seen.insert(e.language.clone());
+            let lang = Language::from_code(&e.language).unwrap();
+            let vocab = vocab_chars_from_path(&fixtures_dir().join(format!("fa-vocab-{}.json", lang.code()))).unwrap();
+            let card = cardinal_data_from_path(&fixtures_dir().join(format!("fa-cardinal-{}.json", lang.code()))).unwrap();
+            let card = with_amount_words(card, lang);
+            let got = normalize_for_forced_alignment(&e.input, lang, &vocab, &card);
+
+            if got.text != e.text {
+                mismatches.push(format!("{} {:?}: text {:?} != {:?}", e.language, e.input, got.text, e.text));
+            }
+            if got.words.len() != e.words.len() {
+                mismatches.push(format!("{} {:?}: {} words != {}", e.language, e.input, got.words.len(), e.words.len()));
+                continue;
+            }
+            for (g, w) in got.words.iter().zip(&e.words) {
+                if g.input != w.input || g.representable != w.representable || g.mapped != w.mapped {
+                    mismatches.push(format!(
+                        "{} {:?}: word {:?} rep={} mapped={:?} != {:?} rep={} mapped={:?}",
+                        e.language, e.input, g.input, g.representable, g.mapped, w.input, w.representable, w.mapped
+                    ));
+                }
+            }
+        }
+        assert_eq!(seen.len(), 5, "the corpus must cover all five languages");
+        assert!(mismatches.is_empty(), "Rust diverged from the shared amount corpus:\n{}", mismatches.join("\n"));
+    }
+
+    #[test]
+    fn the_headline_amounts_read_as_words() {
+        let vocab = vocab_chars_from_path(&fixtures_dir().join("fa-vocab-en.json")).unwrap();
+        let card = with_amount_words(
+            cardinal_data_from_path(&fixtures_dir().join("fa-cardinal-en.json")).unwrap(),
+            Language::En,
+        );
+        let t = |s: &str| normalize_for_forced_alignment(s, Language::En, &vocab, &card).text;
+        assert_eq!(t("you have in your savings account $11,000."), "you have in your savings account eleven thousand dollars");
+        assert_eq!(t("you pay $9,400 in cash."), "you pay nine thousand four hundred dollars in cash");
+        assert_eq!(t("2001"), "two thousand one"); // bare integer unchanged
+        assert_eq!(t("$"), ""); // a lone symbol is still not an amount
     }
 }

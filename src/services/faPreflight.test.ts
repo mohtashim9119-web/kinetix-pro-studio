@@ -198,7 +198,7 @@ describe('computeSyncEngineKey — the engine half of the honest-Apply-Sync spin
 describe('resolveSyncEngine — the single toggle+pack+model resolver', () => {
   it('gate closed: engine "whisper", ready, no preflight, no backend call', async () => {
     const r = await resolveSyncEngine({ faHighPrecisionSync: false });
-    expect(r).toEqual({ engine: 'whisper', gateOpen: false, ready: true, preflight: undefined, key: 'whisper' });
+    expect(r).toEqual({ engine: 'whisper', gateOpen: false, ready: true, preflight: undefined, key: 'whisper', host: 'local' });
     expect(mockInvoke).not.toHaveBeenCalled();
   });
 

@@ -114,7 +114,7 @@ export function ReviewMappingModal({
         <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-3 space-y-3">
           {segments.length === 0 && (
             <p className="text-[11px] text-[#6a6a6a] italic px-1 py-6">
-              No segments yet — apply sync to generate.
+              No segments yet — build the timeline to generate them.
             </p>
           )}
           {rows.map((row) => row.type === 'heading' ? (

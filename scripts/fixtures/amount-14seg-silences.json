@@ -1,0 +1,57 @@
+{
+ "_provenance": {
+  "audio": "3. Voiceover.mp3 (14-segment project), sha256 ab5e4f1864cf92ccb9b24555a97bc329ad25907de99a49cc7bd87dd2414f9983",
+  "durationSec": 32.69,
+  "note": "Amount-drop regression fixture. tokens are the two engines' raw transcripts of the SAME audio in their own dialects (cloud: faster-whisper words, '$11' ',000.'; local: whisper.cpp -ml 1 tokens, '$' '11' ',' '000'). silences: silenceDetector.ts algorithm on the native-rate left channel."
+ },
+ "silences": [
+  {
+   "startSec": 2.72,
+   "endSec": 3.38
+  },
+  {
+   "startSec": 4.92,
+   "endSec": 5.22
+  },
+  {
+   "startSec": 6.56,
+   "endSec": 7.12
+  },
+  {
+   "startSec": 7.78,
+   "endSec": 8.44
+  },
+  {
+   "startSec": 10.82,
+   "endSec": 11.74
+  },
+  {
+   "startSec": 14.52,
+   "endSec": 14.84
+  },
+  {
+   "startSec": 16.94,
+   "endSec": 17.92
+  },
+  {
+   "startSec": 19.72,
+   "endSec": 20.52
+  },
+  {
+   "startSec": 21.92,
+   "endSec": 22.5
+  },
+  {
+   "startSec": 24.82,
+   "endSec": 25.14
+  },
+  {
+   "startSec": 27.14,
+   "endSec": 28.02
+  },
+  {
+   "startSec": 30.6,
+   "endSec": 31.34
+  }
+ ]
+}

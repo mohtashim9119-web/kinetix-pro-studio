@@ -11,14 +11,16 @@
 // older) envelope get `'unknown'` — never a guess from `faHighPrecisionSync`,
 // `anchorSource`, or which token array happens to be present.
 //
-// Cloud engine names are Wave 3. This module only stamps `whisper` | `fa` |
-// `unknown`.
+// Wave 3 U2 — cloud runs stamp `whisper-cloud` | `fa-cloud` with the model
+// and revision the gateway itself reported (`stampCloudProvenance`), never a
+// client-side guess.
 // ---------------------------------------------------------------------------
 
 import type {
   Project,
   TimingDegradedKind,
   TimingEngine,
+  TimingFinding,
   TimingProvenance,
 } from '../types';
 
@@ -113,6 +115,36 @@ export function stampFaProvenance(args: {
   };
 }
 
+/** The engine-level record the gateway returns with every result
+ *  (`cloud/sync_core.py`'s `transcribe_provenance` / `align_provenance`). */
+export interface GatewayProvenance {
+  engine: 'whisper-cloud' | 'fa-cloud';
+  model: string;
+  modelVersion: string;
+}
+
+export function stampCloudProvenance(
+  gateway: GatewayProvenance,
+  args: { language?: string; completedAt: number; degraded?: TimingProvenance['degraded'] },
+): TimingProvenance {
+  return {
+    engine: gateway.engine,
+    model: gateway.model,
+    modelVersion: gateway.modelVersion,
+    schemaVersion: TIMING_PROVENANCE_SCHEMA_VERSION,
+    language: args.language,
+    completedAt: args.completedAt,
+    ...(args.degraded ? { degraded: args.degraded } : {}),
+  };
+}
+
+/** Which host produced a transcription record. `undefined` for none/legacy. */
+export function transcriptionHost(p: TimingProvenance | undefined): 'local' | 'cloud' | undefined {
+  if (p?.engine === 'whisper') return 'local';
+  if (p?.engine === 'whisper-cloud') return 'cloud';
+  return undefined;
+}
+
 /**
  * v4→v5 load-path migration. Labels existing timing arrays `'unknown'`.
  * Never inspects `faHighPrecisionSync` / `anchorSource` / token shape to
@@ -144,4 +176,30 @@ export function whisperDegradedKind(
   if (reason === 'ctc-infeasible-chunk') return 'fa-chunk-infeasible';
   if (reason === 'silence-detect-failed') return 'silence-detect-failed';
   return reason;
+}
+
+/**
+ * Amount-drop fix, Commit 2 — persist a run's scene-level findings WITH the
+ * timing they qualify. They go on the ALIGNMENT stamp when this run produced
+ * one (forced alignment is what places the cuts), else on the transcription
+ * stamp; a run with no stamp at all (the character-based fallback, which has
+ * no alignment to qualify) is returned untouched. Never touches `degraded`
+ * and never blocks anything — a finding is a record, not a verdict.
+ */
+export function stampTimingFindings(
+  provenance: Project['timingProvenance'] | undefined,
+  findings: readonly TimingFinding[],
+): Project['timingProvenance'] | undefined {
+  if (!provenance || findings.length === 0) return provenance;
+  const target = provenance.alignment ? 'alignment' : provenance.transcription ? 'transcription' : undefined;
+  if (!target) return provenance;
+  return { ...provenance, [target]: { ...provenance[target]!, findings: [...findings] } };
+}
+
+/** The engine a stamp names, for a finding that has to name two of them. */
+export function describeStampedEngine(provenance: Project['timingProvenance'] | undefined): string {
+  const t = provenance?.transcription?.engine;
+  const a = provenance?.alignment?.engine;
+  if (!t && !a) return 'an earlier engine (not recorded)';
+  return [t, a].filter((e): e is NonNullable<typeof e> => e !== undefined && e !== 'unknown').join(' + ') || 'an earlier engine (not recorded)';
 }

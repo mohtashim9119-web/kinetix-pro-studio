@@ -337,6 +337,9 @@ export function buildContractViolationEntry(
 const RULE_FINDING_KIND: Partial<Record<string, SyncLogFindingKind>> = {
   'low-word-coverage': 'weak-match',
   'scene-density': 'scene-density',
+  'tail-words-unmatched': 'tail-unmatched',
+  'numeric-word-unmatched': 'numeric-unmatched',
+  'engine-boundary-delta': 'boundary-delta',
 };
 
 function findingForRule(rule: string, count: number): Pick<SyncLogEntry, 'finding'> {
@@ -360,6 +363,10 @@ const GROUPED_RULE_SUMMARIES: Record<string, (count: number) => string> = {
     `${n} scenes matched fewer than ${Math.round(WORD_COVERAGE_MIN_RATIO * 100)}% of their words.`,
   // G4 Unit 3 — per-scene density gate.
   'scene-density': (n) => `${n} scenes matched words denser than natural speech — check for leftover/duplicated text.`,
+  'tail-words-unmatched': (n) =>
+    `${n} scenes ended on words that were not found in the audio — their cuts were placed from the silence before the next scene.`,
+  'numeric-word-unmatched': (n) => `${n} scenes have a number or amount that did not match the audio.`,
+  'engine-boundary-delta': (n) => `${n} cuts moved by more than 0.1s when the timing engine changed.`,
 };
 
 function summarizeGroupedRule(rule: string, count: number): string {
@@ -477,14 +484,26 @@ export function buildSyncEngineEntry(
   engine: 'forced-alignment' | 'whisper',
   tokenCount: number,
   timestamp: number = Date.now(),
+  /** Wave 3 U2 — present when the cloud gateway produced these timings: the
+   *  provenance actually stamped on the project, named in the line so the
+   *  log alone answers "which engine, which model, which revision". */
+  cloud?: { model: string; modelVersion: string; cached?: boolean },
 ): SyncLogEntry {
+  const fa = engine === 'forced-alignment';
+  // Wave 3 U3 — a cache-served run says so: the same engine and revision
+  // produced these timings earlier, and this run sent and spent nothing.
+  const fromCache = cloud?.cached ? ', served from the cloud cache — nothing uploaded, no GPU charge' : '';
+  const where = cloud ? ` on the cloud (${cloud.model} @ ${cloud.modelVersion.slice(0, 12)}${fromCache})` : '';
+  const kind = fa
+    ? (cloud ? 'engine-forced-alignment-cloud' : 'engine-forced-alignment')
+    : (cloud ? 'engine-whisper-cloud' : 'engine-whisper');
   return makeSyncLogEntry(
     syncRunId,
     'info',
-    engine === 'forced-alignment'
-      ? `Timing engine: forced alignment (${tokenCount} aligned word(s)).`
-      : `Timing engine: Whisper transcript (${tokenCount} token(s)).`,
-    { severity: 'info', finding: { kind: engine === 'forced-alignment' ? 'engine-forced-alignment' : 'engine-whisper' } },
+    fa
+      ? `Timing engine: forced alignment${where} (${tokenCount} aligned word(s)).`
+      : `Timing engine: Whisper transcript${where} (${tokenCount} token(s)).`,
+    { severity: 'info', finding: { kind } },
     timestamp,
   );
 }
@@ -541,8 +560,12 @@ const FA_PAUSED_TEXT: Record<FaFailureKind | FaVictimPauseReason, { what: string
     fix: 'Close other applications and try again, or continue with Whisper timing.',
   },
   offline: {
-    what: 'the cloud alignment engine could not be reached',
-    fix: 'Check your network connection, then try again, or switch to local alignment.',
+    what: 'the cloud sync engine could not be reached (after one automatic retry)',
+    fix: 'Check your network connection, then try again, or run this sync on this computer.',
+  },
+  'cloud-auth': {
+    what: 'the cloud sync server did not accept this computer’s key',
+    fix: 'Check the key in App Settings → Sync Engine → Cloud sync, or run this sync on this computer.',
   },
   // FIX 1 REDO (Wave 1 hotfix) item 4 — every covered segment's committed FA
   // span overlapped an infeasible chunk, so there is no healthy FA timing
@@ -845,8 +868,27 @@ export function buildFaUserChoseWhisperEntry(
       owningRule: 'FA',
       severity: 'warning',
       reason: pausedReason,
-      fixHint: 'Run Apply Sync again to retry forced alignment.',
+      fixHint: 'Run Build Timeline again to retry forced alignment.',
     },
+    timestamp,
+  );
+}
+
+/**
+ * Wave 3 U4 — a cloud run paused and the user chose to run THIS sync on this
+ * computer. Explicit and one-off: the standing Cloud/Local choice is unchanged,
+ * which is why the log says so.
+ */
+export function buildHostOverrideEntry(
+  syncRunId: string,
+  pausedReason: string,
+  timestamp: number = Date.now(),
+): SyncLogEntry {
+  return makeSyncLogEntry(
+    syncRunId,
+    'info',
+    `The cloud run paused (${pausedReason}) and you chose to run this sync on this computer. Your Cloud setting is unchanged.`,
+    { severity: 'info', fixHint: 'Run the sync again once the cloud is reachable to use the cloud engine.' },
     timestamp,
   );
 }
@@ -1248,7 +1290,7 @@ export function buildFaVictimRetimedLogEntry(
     {
       owningRule: 'FA',
       severity: 'warning',
-      fixHint: 'Review the re-timed scenes — their boundaries come from Whisper, not forced alignment. Accept the estimate, or re-run Apply Sync after tightening the affected scene tags.',
+      fixHint: 'Review the re-timed scenes — their boundaries come from Whisper, not forced alignment. Accept the estimate, or re-run Build Timeline after tightening the affected scene tags.',
       finding: { kind: 'fa-victim-retimed', count: victims.length },
       ruleDetail: {
         reason: `${victims.length} FA victim segment(s), engine fa degraded reason fa-chunk-infeasible; ${totalWords} word(s) marked Estimated from Whisper timing.`,

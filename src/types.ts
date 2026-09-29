@@ -381,11 +381,15 @@ export interface UnappliedTranscript {
  * — the v4→v5 load path labels that `'unknown'`, NEVER inferred from which
  * tokens happen to be present or from the FA toggle.
  *
- * Engines are the ones this wave actually produces: `whisper` | `fa`.
- * `unknown` is the only honest label for pre-stamp data. Cloud values arrive
- * in Wave 3 and are not named here.
+ * Local engines: `whisper` (whisper.cpp) | `fa` (local ONNX FA). Cloud
+ * engines (Wave 3 U2): `whisper-cloud` (faster-whisper on the sync gateway)
+ * | `fa-cloud` (the gateway's ONNX FA port). Recorded distinctly because the
+ * two are measurably NOT interchangeable (cloud-asr-measurements.md: 295 ms
+ * mean token delta for transcription; 108 English FA words > 50 ms), so a
+ * project must always say which one produced its timings. `unknown` is the
+ * only honest label for pre-stamp data.
  */
-export type TimingEngine = 'whisper' | 'fa' | 'unknown';
+export type TimingEngine = 'whisper' | 'fa' | 'whisper-cloud' | 'fa-cloud' | 'unknown';
 
 /** Why a committed timing set is flagged degraded rather than clean. */
 export type TimingDegradedKind =
@@ -410,6 +414,25 @@ export interface TimingProvenance {
     chunkCount?: number;
     sceneIds?: string[];
   };
+  /** Scene-level findings this run's checks raised, persisted WITH the timing
+   *  they qualify (a sync-log entry alone rotates out at MAX_LOG_ENTRIES and
+   *  says nothing once the project is reopened). Additive and optional. */
+  findings?: TimingFinding[];
+}
+
+/** What a scene-level timing check found — see `TimingProvenance.findings`. */
+export type TimingFindingKind =
+  | 'tail-unmatched'
+  | 'numeric-unmatched'
+  | 'boundary-delta'
+  | 'weak-match';
+
+export interface TimingFinding {
+  kind: TimingFindingKind;
+  /** Committed segment ids the finding names. */
+  sceneIds: string[];
+  /** One human line — the same facts the sync-log entry carries. */
+  detail: string;
 }
 
 export interface TranscriptToken {
@@ -629,6 +652,13 @@ export interface Project {
    * value never disables the button (there is nothing proven unchanged),
    * it only enables the new gate once a first stamp exists. */
   lastSyncSpine?: SyncSpine;
+  /** Wave 3 U7.5 — created by Bulk Projects. Until this project's first
+   *  successful build (`lastSyncSpine` set) NOTHING may start cloud work for
+   *  it on its own: only the batch button or its own explicit Build
+   *  Timeline / Transcribe click. Set once at creation, persists across
+   *  reloads, never cleared — the "after first build" half is derived from
+   *  `lastSyncSpine` (`services/bulkContext.ts`). */
+  bulkContext?: boolean;
   /** WS2 T4.1 Step 2 — what THIS project's freshly minted segments start their
    *  `showOverlay` at, seeded ONCE at creation from App Settings' New Project
    *  Defaults (`services/appDefaults.ts`) and never re-read from that global
@@ -847,7 +877,18 @@ export type SyncLogFindingKind =
   | 'freeze-frame'
   | 'engine-forced-alignment'
   | 'engine-whisper'
-  | 'engine-character';
+  /** Wave 3 U2 — the same two engine lines when the cloud gateway ran them. */
+  | 'engine-forced-alignment-cloud'
+  | 'engine-whisper-cloud'
+  | 'engine-character'
+  /** A scene's last script words were not found in the audio; its cut was
+   *  placed from the silence before the NEXT scene's first word, not from the
+   *  last word that matched. */
+  | 'tail-unmatched'
+  /** A script word carrying digits or a currency symbol did not match. */
+  | 'numeric-unmatched'
+  /** A re-sync under a different timing engine moved a cut by > 0.1s. */
+  | 'boundary-delta';
 
 export interface SyncLogEntry {
   id: string;
@@ -1071,4 +1112,7 @@ export type TranscriptionStatus =
       message: string;
       jobId: string;
       kind?: 'model-not-found' | 'model-hash-mismatch' | 'already-running' | 'inference-failed';
+      /** Wave 3 U4 — set when the CLOUD engine failed (past its one retry):
+       *  drives CloudTranscriptionPausedDialog instead of the inline strip. */
+      cloudReason?: 'offline' | 'cloud-auth' | 'inference-failed';
     };

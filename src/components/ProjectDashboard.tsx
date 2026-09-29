@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef, useCallback } from 'react';
+import React, { useEffect, useState, useRef, useCallback, useSyncExternalStore } from 'react';
 import { Plus, Trash2, Search, Check, Loader2, Settings, ChevronDown, Play, Image as ImageIcon } from 'lucide-react';
 import type { ProjectMeta } from '../types';
 import { loadAllMetas, loadProject, deleteProjectData } from '../services/projectStore';
@@ -7,6 +7,13 @@ import { deleteAllAssets } from '../services/assetStore';
 import { deleteProjectAssetsNativeStrict } from '../services/nativeAssetStore';
 import { deleteAllWaveforms } from '../services/waveformStore';
 import { mediaVaultUnreference } from '../services/mediaVaultClient';
+import { isTauri } from '../services/tauriFfmpeg';
+import { readSyncEngineHost, onSyncEngineHostChange, type SyncEngineHost } from '../services/syncEngineHost';
+import { bulkBatchRunner, queueProjectsForCloudSync } from '../services/bulkSyncQueue';
+import type { CloudQueueDeps } from '../services/cloudQueueJob';
+import { SyncQueuePanel } from './SyncQueuePanel';
+import { BulkCountDialog } from './BulkProjectsModal';
+import { BULK_COPY } from '../services/bulkContext';
 import './ProjectDashboard.css';
 
 /**
@@ -47,6 +54,24 @@ interface Props {
    * always does — a failed cleanup must never simply be silent.
    */
   onAssetCleanupFailed?: (message: string) => void;
+  /**
+   * Wave 3 U7 — App.tsx's `parseProjectData`, injected so the bulk queue can
+   * plan a stored project's scenes without importing the app. The "Sync on
+   * cloud" action appears only when this is given.
+   */
+  parseProjectData?: CloudQueueDeps['parseProjectData'];
+  /**
+   * Wave 3 U7.5 — "Bulk Projects" asked for N rows. Nothing is created yet:
+   * App hosts the rows modal (it must outlive the dashboard while timelines are
+   * finished in the editor) and projects appear here when Build Timeline runs.
+   */
+  onBulkStart?: (count: number) => void;
+  /** Bumped by App when projects were created/removed behind the dashboard. */
+  metasVersion?: number;
+  /** The rows modal is open: the queue is shown there, not here too. */
+  bulkOpen?: boolean;
+  /** Ids just deleted, so the editor can drop one it still holds in memory. */
+  onProjectsDeleted?: (ids: string[]) => void;
 }
 
 function formatDate(ts: number): string {
@@ -68,12 +93,24 @@ export function ProjectDashboard({
   onNewProject,
   onOpenAppSettings,
   onAssetCleanupFailed,
+  parseProjectData,
+  onBulkStart,
+  metasVersion = 0,
+  bulkOpen = false,
+  onProjectsDeleted,
 }: Props): React.ReactElement {
+  const [engineHost, setEngineHost] = useState<SyncEngineHost>(readSyncEngineHost);
+  useEffect(() => onSyncEngineHostChange(setEngineHost), []);
   const [metas, setMetas] = useState<ProjectMeta[]>([]);
   const [search, setSearch] = useState('');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [showBulkConfirm, setShowBulkConfirm] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
+  // Wave 3 U7.5 — Bulk Projects: the "how many?" step, then the rows modal.
+  const [bulkAsking, setBulkAsking] = useState(false);
+  // The persistent batch: reachable from here until it is cleared, even after a reload.
+  const batch = bulkBatchRunner(parseProjectData);
+  const batchRows = useSyncExternalStore(l => batch.subscribe(l), () => batch.snapshot());
   const [storage, setStorage] = useState<{ usage: number; quota: number } | null>(null);
 
   const searchRef = useRef<HTMLInputElement>(null);
@@ -87,7 +124,7 @@ export function ProjectDashboard({
     enteringIds.current = new Set(data.filter(m => !seenProjectIds.has(m.id)).map(m => m.id));
     data.forEach(m => seenProjectIds.add(m.id));
     setMetas(data);
-  }, []);
+  }, [metasVersion]);
 
   useEffect(() => {
     void navigator.storage?.estimate?.().then(({ usage, quota }) => {
@@ -150,35 +187,41 @@ export function ProjectDashboard({
     // bytes may remain on disk, which the user is now told rather than
     // never finding out.
     const cleanupFailures: string[] = [];
+    // Each cleanup step is independent and bounded: one that throws or hangs
+    // (a stuck IndexedDB, a native call) must never keep the project record
+    // alive — that was how deleted projects came back after a reload.
+    const step = async (label: string, id: string, work: () => Promise<unknown>): Promise<void> => {
+      try {
+        await Promise.race([
+          work(),
+          new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timed out')), 10_000)),
+        ]);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        cleanupFailures.push(`${id}: ${label}: ${message}`);
+        console.error(`[ProjectDashboard] ${label} FAILED for deleted project ${id}:`, message);
+      }
+    };
     for (const id of ids) {
-      // G6 Step 6 (dead-feature-gap fix) — read the project's assets BEFORE
-      // any deletion, so the media-vault reference this project holds on
-      // each distinct contentHash can be dropped. Project gone means all its
-      // references are gone, same as if every asset had been deleted
-      // individually. Best-effort: a project record that fails to load
-      // (already-corrupt/missing) simply has no known contentHashes to
-      // unreference — mirrors this loop's existing non-fatal cleanup
-      // posture for waveforms/staged files.
+      // G6 Step 6 — read the project's assets BEFORE any deletion, so the
+      // media-vault reference it holds on each contentHash can be dropped.
       const loaded = await loadProject(id).catch(() => null);
       const contentHashes = new Set(
         (loaded?.project.assets ?? []).map(a => a.contentHash).filter((h): h is string => !!h),
       );
 
-      await deleteAllAssets(id);
-      await deleteAllWaveforms(id);
-      // WS2-50 — a deleted project's staged slots go with it. Without this the
-      // rows outlive the only thing that could ever restore them.
-      await deleteAllStagedForProject(id);
-      try {
-        await deleteProjectAssetsNativeStrict(id);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        cleanupFailures.push(`${id}: ${message}`);
-        console.error(`[ProjectDashboard] native asset cleanup FAILED for deleted project ${id}:`, message);
-      }
-      await Promise.all(Array.from(contentHashes, hash => mediaVaultUnreference(hash, id)));
-      await deleteProjectData(id);
+      // The record and registry entry FIRST: this is what "deleted" means to the user.
+      await step('project record removal', id, () => deleteProjectData(id));
+      await step('asset cleanup', id, () => deleteAllAssets(id));
+      await step('waveform cleanup', id, () => deleteAllWaveforms(id));
+      // WS2-50 — a deleted project's staged slots go with it.
+      await step('staged files cleanup', id, () => deleteAllStagedForProject(id));
+      await step('native asset cleanup', id, () => deleteProjectAssetsNativeStrict(id));
+      await step('media vault cleanup', id, () => Promise.all(Array.from(contentHashes, hash => mediaVaultUnreference(hash, id))));
     }
+    // A deleted project leaves the persistent bulk batch too.
+    bulkBatchRunner(parseProjectData).forget(ids);
+    onProjectsDeleted?.(ids);
     setMetas(prev => prev.filter(m => !selectedIds.has(m.id)));
     setSelectedIds(new Set());
     setShowBulkConfirm(false);
@@ -220,6 +263,16 @@ export function ProjectDashboard({
         </div>
 
         <div className="kxd-actions">
+          {onBulkStart && parseProjectData && (
+            <button className="kxd-btn kxd-btn-quiet" data-testid="dashboard-bulk-projects" onClick={() => setBulkAsking(true)}>
+              {BULK_COPY.button}
+            </button>
+          )}
+          {onBulkStart && batchRows.length > 0 && (
+            <button className="kxd-btn kxd-btn-quiet" data-testid="dashboard-bulk-batch" onClick={() => onBulkStart(0)}>
+              {BULK_COPY.batchButton(batchRows.length)}
+            </button>
+          )}
           <button className="kxd-btn kxd-btn-accent" onClick={onNewProject}>
             <Plus size={14} strokeWidth={2.2} aria-hidden="true" />
             New Project
@@ -301,6 +354,7 @@ export function ProjectDashboard({
 
       <main className="kxd-main custom-scrollbar">
         <div className="kxd-main-inner">
+          {!bulkOpen && <SyncQueuePanel />}
           <div className="kxd-section-head">
             <h1>Recent projects</h1>
             <div>
@@ -313,6 +367,19 @@ export function ProjectDashboard({
                   <button className="kxd-text-btn" onClick={handleSelectAllToggle}>
                     {allVisibleSelected ? 'Deselect all' : 'Select all'}
                   </button>
+                  {parseProjectData && isTauri() && engineHost === 'cloud' && (
+                    <button
+                      className="kxd-text-btn"
+                      data-testid="dashboard-sync-on-cloud"
+                      onClick={() => {
+                        const chosen = metas.filter(m => selectedIds.has(m.id));
+                        queueProjectsForCloudSync(chosen, parseProjectData);
+                        setSelectedIds(new Set());
+                      }}
+                    >
+                      Sync on cloud
+                    </button>
+                  )}
                   <button className="kxd-btn-sm-danger" onClick={() => setShowBulkConfirm(true)}>
                     <Trash2 size={13} aria-hidden="true" />
                     Delete
@@ -432,6 +499,13 @@ export function ProjectDashboard({
           )}
         </div>
       </main>
+
+      {bulkAsking && (
+        <BulkCountDialog
+          onCancel={() => setBulkAsking(false)}
+          onConfirm={count => { setBulkAsking(false); onBulkStart?.(count); }}
+        />
+      )}
 
       {showBulkConfirm && (
         <div className="kxd-dialog-scrim">

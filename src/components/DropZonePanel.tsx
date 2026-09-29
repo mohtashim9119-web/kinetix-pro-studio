@@ -54,6 +54,7 @@ import {
   getStagedFilesForProject,
 } from '../services/stagedFilesStore';
 import { shouldClearStagedAfterSync } from '../services/applySyncAbort';
+import { BUILD_TIMELINE_COPY, missingSlotsReason } from '../services/buildTimelineGate';
 import { MediaBlock, type MediaIngestOutcome } from './MediaBlock';
 import { classifyAndIngestBundleZip } from '../services/bundleIngest';
 import { isMacOSMetadataPath } from '../services/macosMetadata';
@@ -1150,6 +1151,24 @@ export function DropZonePanel({
     + (voiceoverPersisted ? 1 : 0) + persistedAssetCount;
   const allReady = readyCount === 4;
 
+  // Wave 3 U4.6 — Build Timeline needs all four slots (operator product
+  // ruling; the engine itself needs only the spine). A slot is filled when
+  // it is staged OR already persisted, so a bundle zip fills all four at once.
+  const missingReason = missingSlotsReason({
+    script: !!staged.scriptFile || !!scriptPersisted,
+    scene: !!staged.sceneFile || !!scenePersisted,
+    voiceover: !!staged.voiceoverFile || !!voiceoverPersisted,
+    media: staged.assetFiles.length > 0 || staged.zipFiles.length > 0 || persistedAssetCount > 0,
+  });
+  const buildTimelineDisabled = !!missingReason || applySyncDisabled || isStagedEmpty
+    || !!applySyncSpineUnchangedReason;
+  const buildTimelineTitle = missingReason
+    ?? (applySyncDisabled
+      ? BUILD_TIMELINE_COPY.transcribingTitle
+      : isStagedEmpty
+        ? BUILD_TIMELINE_COPY.nothingStagedTitle
+        : applySyncSpineUnchangedReason);
+
   // ---------------------------------------------------------------------------
   // Render
   // ---------------------------------------------------------------------------
@@ -1598,15 +1617,22 @@ export function DropZonePanel({
 
           </div>{/* end scrollable */}
 
-          {/* Pinned bottom: Apply Sync */}
+          {/* Pinned bottom: Build Timeline */}
           <div className="flex-shrink-0 px-4 pb-4 pt-3 border-t border-[var(--kx-line)]">
-            <p className="text-center text-[11.5px] text-[var(--kx-faint)] mb-2.5">
-              Generates{' '}
-              <span className="text-[var(--kx-muted)] font-medium">{segments.length} segments</span>
-              {' · '}
-              <span className="text-[var(--kx-muted)] font-medium">{formatTime(totalDuration)}</span>
-              {' '}timeline
-            </p>
+            {missingReason ? (
+              // U4.6 — the stated reason is visible, not hover-only.
+              <p className="text-center text-[11.5px] text-[var(--kx-accent-2)] mb-2.5" role="status">
+                {missingReason}
+              </p>
+            ) : (
+              <p className="text-center text-[11.5px] text-[var(--kx-faint)] mb-2.5">
+                Generates{' '}
+                <span className="text-[var(--kx-muted)] font-medium">{segments.length} segments</span>
+                {' · '}
+                <span className="text-[var(--kx-muted)] font-medium">{formatTime(totalDuration)}</span>
+                {' '}timeline
+              </p>
+            )}
             <div className="flex items-stretch gap-2">
             {/* Undo / Redo — disabled, not hidden: a control that disappears
                 makes users hunt for it. The tooltip names the specific edit,
@@ -1643,16 +1669,10 @@ export function DropZonePanel({
             </button>
             <button
               onClick={handleApplySync}
-              disabled={applySyncDisabled || isStagedEmpty || !!applySyncSpineUnchangedReason}
-              title={
-                applySyncDisabled
-                  ? 'Waiting for transcription to finish…'
-                  : isStagedEmpty
-                    ? 'Stage a new file to sync'
-                    : applySyncSpineUnchangedReason
-              }
+              disabled={buildTimelineDisabled}
+              title={buildTimelineTitle}
               className="flex-1 min-w-0 h-12 rounded-[13px] flex items-center justify-center gap-2.5
-                         font-semibold text-[14.5px] tracking-[0.3px] text-[#1a1003]
+                         whitespace-nowrap font-semibold text-[14.5px] tracking-[0.3px] text-[#1a1003]
                          bg-gradient-to-b from-[var(--kx-accent-2)] to-[var(--kx-accent)]
                          shadow-[0_6px_20px_rgba(255,138,60,.28),inset_0_1px_0_rgba(255,255,255,.22)]
                          hover:brightness-105 active:scale-[.99]
@@ -1660,12 +1680,14 @@ export function DropZonePanel({
                          disabled:text-[var(--kx-faint)] disabled:shadow-none disabled:cursor-not-allowed
                          transition-all"
             >
-              <RefreshCw size={17} className={applySyncDisabled ? 'animate-spin' : ''} />
-              {applySyncDisabled
-                ? 'Syncing…'
-                : applySyncSpineUnchangedReason
-                  ? 'Already synced'
-                  : 'Apply sync'}
+              <RefreshCw size={17} className={applySyncDisabled && !missingReason ? 'animate-spin' : ''} />
+              {missingReason
+                ? BUILD_TIMELINE_COPY.label
+                : applySyncDisabled
+                  ? BUILD_TIMELINE_COPY.transcribingLabel
+                  : applySyncSpineUnchangedReason
+                    ? BUILD_TIMELINE_COPY.syncedLabel
+                    : BUILD_TIMELINE_COPY.label}
             </button>
             </div>
           </div>
@@ -2038,7 +2060,7 @@ export function DropZonePanel({
             )}
             {segments.length === 0 && (
               <p className="text-[12px] text-[var(--kx-faint)] italic px-1 py-2">
-                No segments yet — apply sync to generate.
+                No segments yet — build the timeline to generate them.
               </p>
             )}
           </div>

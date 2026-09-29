@@ -2,6 +2,7 @@ import { invoke, Channel } from '@tauri-apps/api/core';
 import type { Asset, VideoSegment, TranscriptToken } from '../types';
 import type { SilenceInterval } from './silenceDetector';
 import { canonicalize, canonicalizeSceneDoc } from './textNormalize';
+import { expandTokensToWords, isAmountSeparatorToken } from './transcriptWords';
 import { SUPPORTED_LANGUAGE_CODES } from '../constants';
 // WS2 Wave 2 Group 2 (G2 completion, Unit 1) — `hirschbergMatchClient.ts`
 // itself imports `alignQueryToSubject` FROM this file (its fallback path,
@@ -479,6 +480,16 @@ export interface AlignResult {
    *  reusing `audioRegion` so a caller can tell "recovered" and "matched
    *  directly" apart without also checking `recoveredVia`. */
   recoveredRegion?: { startSec: number; endSec: number };
+  /** The scene's TRAILING script words (canonical) that no transcript word
+   *  claimed — everything after its last matched word. Present only on a
+   *  `matched` segment with at least one such word. The last matched word is
+   *  then NOT where the scene's speech ends, so `snapCoveredBoundaries` must not
+   *  place the cut from it (see `snapBoundaries.ts`, tail-unmatched mode). */
+  unmatchedTailWords?: string[];
+  /** Script tokens (as written: "$11,000.") that carry digits or a currency
+   *  symbol and had at least one canonical word left unmatched. Present only on
+   *  a `matched` segment with at least one such token. */
+  unmatchedNumericTokens?: string[];
 }
 
 /**
@@ -948,6 +959,9 @@ export function buildSegmentAlignmentInputs(
   queryWords: string[];
   segRanges: Array<{ start: number; end: number }>;
   subjectWords: string[];
+  /** Script tokens carrying digits/currency, with the query-word range each
+   *  produced — so a caller can say WHICH written token failed to match. */
+  numericSpans: Array<{ segIndex: number; text: string; qiStart: number; qiEnd: number }>;
 } {
   // Expand each token into all its words — Whisper tokens may contain multiple
   // words (e.g. " hello world") and every word must be individually matchable.
@@ -955,13 +969,10 @@ export function buildSegmentAlignmentInputs(
   // individually finer timestamp) — good enough for the rescue window check,
   // which only needs to place a word within a multi-second slot, not sub-token
   // precision.
-  const tokenWords: Array<{ word: string; tokenIdx: number; startSec: number }> = [];
-  for (let i = 0; i < tokens.length; i++) {
-    const words = normalize(tokens[i]!.text, languageCode);
-    for (const word of words) {
-      if (word.length > 0) tokenWords.push({ word, tokenIdx: i, startSec: tokens[i]!.startSec });
-    }
-  }
+  // Amount runs an engine split across tokens ("$11" ",000." / "$" "11" ","
+  // "000") are read as ONE amount first — see transcriptWords.ts.
+  const tokenWords: Array<{ word: string; tokenIdx: number; startSec: number }> =
+    expandTokensToWords(tokens, languageCode).words;
 
   // Build the query (all segments' canonicalized words, in order) with each
   // segment's contiguous word range recorded for per-segment extraction (§3.1.1).
@@ -969,7 +980,9 @@ export function buildSegmentAlignmentInputs(
   // an empty range — classification-neutral; they never crash the aligner.
   const queryWords: string[] = [];
   const segRanges: Array<{ start: number; end: number }> = [];
-  for (const seg of segments) {
+  const numericSpans: Array<{ segIndex: number; text: string; qiStart: number; qiEnd: number }> = [];
+  for (let segIndex = 0; segIndex < segments.length; segIndex++) {
+    const seg = segments[segIndex];
     const start = queryWords.length;
     // WS4 Feature 1 — the scene-doc side is stripped of stage directions before
     // tokenizing (normalizeSceneDoc). `seg.text` itself is untouched: only this
@@ -977,9 +990,26 @@ export function buildSegmentAlignmentInputs(
     const words = seg?.text && seg.text.trim() ? normalizeSceneDoc(seg.text, languageCode) : [];
     for (const w of words) if (w.length > 0) queryWords.push(w);
     segRanges.push({ start, end: queryWords.length });
+
+    // Which written tokens carry digits/currency, and which query words each
+    // produced. Only for a segment that has any (a number-free script pays
+    // nothing). The per-token counts must add up to the whole-segment count
+    // (the same guard faChunkPlan's qi bookkeeping asserts); a segment whose
+    // stage-direction stripping makes them disagree simply reports no spans.
+    if (seg?.text && /[0-9$€£%]/.test(seg.text)) {
+      const spans: typeof numericSpans = [];
+      let qi = start;
+      for (const raw of seg.text.split(/\s+/)) {
+        if (raw.length === 0) continue;
+        const produced = normalizeSceneDoc(raw, languageCode).filter(w => w.length > 0).length;
+        if (/[0-9$€£%]/.test(raw)) spans.push({ segIndex, text: raw, qiStart: qi, qiEnd: qi + produced });
+        qi += produced;
+      }
+      if (qi === queryWords.length) numericSpans.push(...spans);
+    }
   }
 
-  return { tokenWords, queryWords, segRanges, subjectWords: tokenWords.map(t => t.word) };
+  return { tokenWords, queryWords, segRanges, subjectWords: tokenWords.map(t => t.word), numericSpans };
 }
 
 /**
@@ -1050,7 +1080,7 @@ export function extractSegmentAlignments(
   }
   extractAlignmentsComputeCount++;
 
-  const { tokenWords, queryWords, segRanges, subjectWords } = buildSegmentAlignmentInputs(segments, tokens, languageCode);
+  const { tokenWords, queryWords, segRanges, subjectWords, numericSpans } = buildSegmentAlignmentInputs(segments, tokens, languageCode);
   const matchedSubjectOf = precomputedMatchedSubjectOf ?? alignQueryToSubject(queryWords, subjectWords).matchedSubjectOf;
 
   // Every transcript-word index any segment TRULY matched, system-wide — the
@@ -1484,10 +1514,29 @@ export function extractSegmentAlignments(
       );
     }
 
+    // Honest-tail bookkeeping (amount-drop fix, Commit 2). `occ` is this
+    // segment's FINAL per-word occupancy (a rescue that was adopted replaced it
+    // wholesale), so the words after its last non-null entry are exactly the
+    // scene's tail that nothing claimed.
+    let lastClaimed = totalWords;
+    while (lastClaimed > 0 && occ[lastClaimed - 1] === null) lastClaimed--;
+    const unmatchedTailWords = lastClaimed < totalWords
+      ? queryWords.slice(range.start + lastClaimed, range.end)
+      : [];
+    const unmatchedNumericTokens = numericSpans
+      .filter(sp => sp.segIndex === si)
+      .filter(sp => {
+        for (let q = sp.qiStart; q < sp.qiEnd; q++) if (occ[q - range.start] === null) return true;
+        return false;
+      })
+      .map(sp => sp.text);
+
     results.push({
       t0, t1, firstTokenIdx, lastTokenIdx, confidence, matched,
       matchedWords: matchedCount, totalWords, longestRun,
       audioRegion: { startSec: t0, endSec: rawT1 },
+      ...(unmatchedTailWords.length > 0 ? { unmatchedTailWords } : {}),
+      ...(unmatchedNumericTokens.length > 0 ? { unmatchedNumericTokens } : {}),
       ...(recoveredVia !== null
         ? { recoveredVia, recoveredRegion: { startSec: t0, endSec: rawT1 } }
         : {}),
@@ -1640,6 +1689,13 @@ export function filterMalformedTokens(
     // never match a scene-doc word, but its timestamps can still be picked as a
     // segment edge. Drop it here rather than letting it anchor a boundary.
     if (normalize(text, languageCode).length === 0) {
+      // ...except the "," inside an amount ("$" "11" "," "000"): it is the
+      // only evidence that "11" "000" is one number, and it can never be a
+      // segment edge (it sits between two digit tokens of the same amount).
+      if (isAmountSeparatorToken(text, tokens[index - 1], tokens[index + 1])) {
+        kept.push(t);
+        continue;
+      }
       drop('empty-text');
       continue;
     }
@@ -1792,11 +1848,7 @@ export function classifyCoverage(alignments: SegmentAlignment[]): SegmentCoverag
  * sequence itself.
  */
 export function countTranscriptWords(tokens: TranscriptToken[], languageCode?: AlignmentLanguageCode): number {
-  let count = 0;
-  for (const t of tokens) {
-    for (const w of normalize(t.text, languageCode)) if (w.length > 0) count++;
-  }
-  return count;
+  return expandTokensToWords(tokens, languageCode).words.length;
 }
 
 export interface CoverageSummary {

@@ -42,6 +42,7 @@ import { X } from 'lucide-react';
 import { isWebCodecsExportCapable, isWebCodecsExportToggleOn, setWebCodecsExportToggle } from '../hooks/useExport';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 import { ModelsSection } from './ModelsSection';
+import { CloudSyncSection } from './CloudSyncSection';
 import { StorageSettingsSection } from './StorageSettingsSection';
 import { SUPPORTED_LANGUAGES } from '../constants';
 import { resolveDimensions } from '../services/resolutionConfig';
@@ -234,6 +235,9 @@ export function AppSettingsModal({ onClose, onOpenStorageRelocation, storageRefr
             Downloaded once per computer and shared by every project. Downloads and deletions here
             take effect immediately — they are not held until Save.
           </p>
+          {/* Wave 3 U1 — the cloud key row. Immediate like the Models rows
+              below it; the Cloud/Local picker itself is U7. */}
+          <CloudSyncSection />
           <ModelsSection />
         </section>
 

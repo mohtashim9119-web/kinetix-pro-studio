@@ -142,7 +142,7 @@ export function FaPackStatus({ language }: Props): React.ReactElement {
           <span className="flex items-start gap-1.5" style={{ color: WARN }}>
             <AlertTriangle size={11} className="shrink-0 mt-0.5" />
             <span>
-              No alignment pack exists for “{state.language}”. Running Apply Sync with high-precision
+              No alignment pack exists for “{state.language}”. Building the timeline with high-precision
               sync on will pause and ask you whether to continue with standard timing for this
               project — it will not switch silently (§M3.10 C6, Wave 1).
             </span>
@@ -177,7 +177,7 @@ export function FaPackStatus({ language }: Props): React.ReactElement {
           <span className="flex items-start gap-1.5" style={{ color: WARN }}>
             <AlertTriangle size={11} className="shrink-0 mt-0.5" />
             <span>
-              The {labelFor(state.language)} alignment pack is not installed — running Apply Sync
+              The {labelFor(state.language)} alignment pack is not installed — building the timeline
               will pause and ask you whether to continue with standard timing, not switch silently.{' '}
               <button
                 onClick={() => setShowInstaller(true)}

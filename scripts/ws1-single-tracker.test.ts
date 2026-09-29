@@ -149,6 +149,11 @@ const ALLOWLIST = new Set<string>([
   // the two whisper binaries. Zero code edits made. Dated, docs-only, not a
   // live tracker.
   'docs/ws1-sync-pipeline/ws1-wave1-list-reconciliation-2026-09-19.md',
+  // Wave 3 (2026-09-27) — operator rulings for U4.5 / U4.6 plus U3's as-built
+  // cache design, recorded beside the plan-v3 body (operator-signed, not
+  // edited). A fixed rulings record like operator-product-rulings-2026-09-19.md
+  // above, not a tracker: status stays in docs/STATUS.md.
+  'docs/ws1-sync-pipeline/wave3-operator-rulings-2026-09-27.md',
 ]);
 
 function walk(dir: string, out: string[] = []): string[] {

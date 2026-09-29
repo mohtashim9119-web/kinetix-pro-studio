@@ -86,6 +86,7 @@ describe('SyncPausedDialog', () => {
       'inference-failed', 'already-running', 'out-of-memory', 'offline',
       'hopeless-local-coverage', // G4 Unit 4
       'not-compiled', // G6 Step 0a
+      'cloud-auth', // Wave 3 U4
     ] as const;
     for (const reason of reasons) {
       root = createRoot(container);
@@ -114,6 +115,46 @@ describe('SyncPausedDialog', () => {
       );
     });
     expect(container.textContent).toContain('no model.onnx found for language en');
+  });
+
+  // Wave 3 U4 — the G3 offline contract's local option. Fails on U3's code.
+  it('a CLOUD pause offers "run this sync on this computer" (this run only) and names the retry as the cloud', async () => {
+    const onUseLocal = vi.fn();
+    const onRetry = vi.fn();
+    root = createRoot(container);
+    await act(async () => {
+      root.render(
+        <SyncPausedDialog reason="offline" timestamp={Date.now()} onRetry={onRetry} onUseWhisper={() => {}} onCancel={() => {}} onUseLocal={onUseLocal} />,
+      );
+    });
+    const local = container.querySelector<HTMLButtonElement>('[data-testid="sync-paused-use-local"]');
+    expect(local).not.toBeNull();
+    expect(local!.textContent).toContain('this computer');
+    expect(local!.textContent).toMatch(/this run only/);
+    expect(container.querySelector('[data-testid="sync-paused-retry"]')!.textContent).toBe('Try the cloud again');
+    expect(container.textContent).toMatch(/one automatic retry/);
+    await act(async () => { local!.click(); });
+    expect(onUseLocal).toHaveBeenCalledTimes(1);
+    expect(onRetry).not.toHaveBeenCalled();
+  });
+
+  it('a LOCAL pause renders exactly as before — no local option, the original retry label', async () => {
+    root = createRoot(container);
+    await act(async () => {
+      root.render(<SyncPausedDialog reason="zero-words" timestamp={Date.now()} onRetry={() => {}} onUseWhisper={() => {}} onCancel={() => {}} />);
+    });
+    expect(container.querySelector('[data-testid="sync-paused-use-local"]')).toBeNull();
+    expect(container.querySelector('[data-testid="sync-paused-retry"]')!.textContent).toBe('Try forced alignment again');
+    expect(container.querySelectorAll('button')).toHaveLength(3);
+  });
+
+  it('a pause before any transcript for the engine existed offers no Whisper option', async () => {
+    root = createRoot(container);
+    await act(async () => {
+      root.render(<SyncPausedDialog reason="offline" timestamp={Date.now()} onRetry={() => {}} onCancel={() => {}} onUseLocal={() => {}} />);
+    });
+    expect(container.querySelector('[data-testid="sync-paused-use-whisper"]')).toBeNull();
+    expect(container.querySelectorAll('button')).toHaveLength(3);
   });
 
   it('G6 Step 0a — the not-compiled reason says the build is not compiled in, never that anything is merely "turned off"', async () => {

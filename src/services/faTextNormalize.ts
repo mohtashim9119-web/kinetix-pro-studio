@@ -336,6 +336,18 @@ export interface FaCardinalData {
   hundred: FaHundredConfig;
   scale: FaScaleLevel[];
   yearReading: FaYearReading;
+  /** The language's amount words (`scripts/fixtures/fa-amount-words.json`),
+   *  attached by the loader — NOT read from the cardinal JSON itself, so that
+   *  file's digest (and every alignment cache key derived from it) is
+   *  untouched. Absent = amount tokens keep the pre-amount behavior (dropped). */
+  amount?: FaAmountWords;
+}
+
+/** One language's entry of `scripts/fixtures/fa-amount-words.json`. */
+export interface FaAmountWords {
+  pointWord: string;
+  percentWord: string;
+  currency: Record<string, { one: string; other: string }>;
 }
 
 /** `null`/`undefined` and `{type: "concatenate"}` both insert nothing;
@@ -533,9 +545,118 @@ function expandCardinalToken(stripped: string, data: FaCardinalData): string | u
   if (!Number.isSafeInteger(n)) return undefined;
   const yr = data.yearReading;
   if (stripped.length === 4 && n >= yr.rangeMin && n <= yr.rangeMax) {
-    return composeYearReading(n, selectYearCandidate(n, yr.selectionPolicy), data);
+    return composeYearReading(n, selectYearCandidate(n, yr.selectionPolicy), data).toLowerCase();
   }
-  return cardinalToWords(n, data);
+  // Lowercased: German's scale words are capitalized in the data ("Million"),
+  // and a capital is not a vocab character — it used to drop the whole token.
+  return cardinalToWords(n, data).toLowerCase();
+}
+
+// ---------------------------------------------------------------------------
+// AMOUNT tokens (currency symbol, thousands separator, decimal, percent).
+//
+// Before this section, any token that was not a bare integer and contained a
+// digit ('$11,000.', '84,000', '2.5', '50%') was DROPPED ("contains a digit —
+// number expansion is Phase 3b, out of scope"), so the words never reached
+// forced alignment and the CTC path stretched the neighbouring words over the
+// amount's speech (the stranded-"you" / previous-scene-tail-missing defect).
+// An amount now reads as its spoken words. The grammar and the words are the
+// SAME on every side: `scripts/fixtures/fa-amount-words.json` (words) and the
+// rules below are mirrored byte-for-byte in `src-tauri/src/fa/text.rs` and
+// `cloud/fa_engine.py`, pinned by the shared `fa-amount-lockstep.json` corpus.
+// `textNormalize.ts`'s matcher-side `canonicalize` calls `expandAmountToken`
+// too, so the script side, the transcript side and the aligner's input can
+// never read the same amount three different ways.
+// ---------------------------------------------------------------------------
+
+/** Currency symbols an amount may carry. */
+export const AMOUNT_CURRENCY_SYMBOLS: ReadonlySet<string> = new Set(['$', '€', '£']);
+
+/** The parsed pieces of one amount token. */
+export interface AmountParts {
+  /** Integer part, separators removed, no leading zero unless exactly "0". */
+  intDigits: string;
+  /** Decimal digits (may be empty-free), or null when there is no decimal part. */
+  fracDigits: string | null;
+  /** '$' | '€' | '£' | null. */
+  currency: string | null;
+  percent: boolean;
+}
+
+const AMOUNT_CORE_EN = /^(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d+))?$/;
+const AMOUNT_CORE_OTHER = /^(\d{1,3}(?:\.\d{3})+|\d+)(?:,(\d+))?$/;
+
+/**
+ * Parses one already-edge-stripped, lowercased token as an amount. Returns
+ * `undefined` for anything that is not one — including a BARE integer (no
+ * symbol, separator, decimal or percent), which keeps its existing cardinal/
+ * year reading.
+ */
+export function parseAmountToken(stripped: string, languageCode: FaLanguageCode): AmountParts | undefined {
+  let s = stripped;
+  let currency: string | null = null;
+  let percent = false;
+  const first = s[0];
+  if (first !== undefined && AMOUNT_CURRENCY_SYMBOLS.has(first)) {
+    currency = first;
+    s = s.slice(1);
+  }
+  if (s.endsWith('%')) {
+    percent = true;
+    s = s.slice(0, -1);
+  }
+  const last = s[s.length - 1];
+  if (currency === null && last !== undefined && AMOUNT_CURRENCY_SYMBOLS.has(last)) {
+    currency = last;
+    s = s.slice(0, -1);
+  }
+  const m = (languageCode === 'en' ? AMOUNT_CORE_EN : AMOUNT_CORE_OTHER).exec(s);
+  if (!m) return undefined;
+  const rawInt = m[1]!;
+  const fracDigits = m[2] ?? null;
+  const hasSeparator = /[.,]/.test(rawInt) || fracDigits !== null;
+  if (currency === null && !percent && !hasSeparator) return undefined; // bare integer
+  const intDigits = rawInt.replace(/[.,]/g, '');
+  if (intDigits.length > 1 && intDigits[0] === '0') return undefined;
+  if (!Number.isSafeInteger(Number(intDigits))) return undefined;
+  return { intDigits, fracDigits, currency, percent };
+}
+
+/** The spoken reading of parsed amount parts, or `undefined` when the data
+ *  carries no amount words for this language/symbol (caller keeps its legacy
+ *  path). Plain cardinal for the integer part — never the year reading. */
+export function spokenAmount(parts: AmountParts, data: FaCardinalData): string | undefined {
+  const words = data.amount;
+  if (!words) return undefined;
+  const n = Number(parts.intDigits);
+  let out = cardinalToWords(n, data).toLowerCase();
+  if (parts.fracDigits !== null) {
+    out += ` ${words.pointWord}`;
+    for (const d of parts.fracDigits) out += ` ${cardinal0to99(Number(d), data).toLowerCase()}`;
+  }
+  if (parts.currency !== null) {
+    const c = words.currency[parts.currency];
+    if (!c) return undefined;
+    out += ` ${n === 1 && parts.fracDigits === null ? c.one : c.other}`;
+  }
+  if (parts.percent) out += ` ${words.percentWord}`;
+  return out;
+}
+
+/** Amount token -> spoken words, or `undefined` (not an amount / no data). */
+export function expandAmountToken(
+  stripped: string,
+  languageCode: FaLanguageCode,
+  data: FaCardinalData,
+): string | undefined {
+  const parts = parseAmountToken(stripped, languageCode);
+  return parts ? spokenAmount(parts, data) : undefined;
+}
+
+/** Cardinal reading of any safe integer via the language's own data — the
+ *  matcher-side `canonicalize` uses this to lift its former 9999 cap. */
+export function cardinalWords(n: number, data: FaCardinalData): string {
+  return cardinalToWords(n, data).toLowerCase();
 }
 
 /** Normalizes one already-whitespace-isolated word: NFC + lowercase, the
@@ -571,7 +692,8 @@ function normalizeWord(
     };
   }
 
-  const cardinalExpansion = expandCardinalToken(stripped, cardinalData);
+  const cardinalExpansion = expandAmountToken(stripped, languageCode, cardinalData)
+    ?? expandCardinalToken(stripped, cardinalData);
   const candidate = cardinalExpansion ?? stripped;
 
   if (cardinalExpansion === undefined && DIGIT_RE.test(stripped)) {
