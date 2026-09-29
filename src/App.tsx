@@ -126,6 +126,8 @@ import {
   stampCloudProvenance,
   stampFaProvenance,
   stampWhisperProvenance,
+  stampTimingFindings,
+  describeStampedEngine,
   transcriptionHost,
   whisperDegradedKind,
   type GatewayProvenance,
@@ -165,7 +167,7 @@ import {
   subscribeSyncIntents,
 } from './services/cloudSyncIntent';
 import { decideStagingStart, isBulkAutoFireSuppressed, peekCloudTranscript } from './services/bulkContext';
-import type { TimingProvenance } from './types';
+import type { TimingFinding, TimingProvenance } from './types';
 import {
   detectUnspokenScriptSegmentsFromWhisperFullAsync,
   applyUnspokenScriptGate,
@@ -208,6 +210,10 @@ import {
   validateBoundaryQuality,
   validateWordCoverage,
   validateSceneDensity,
+  validateTailWords,
+  validateNumericWords,
+  validateEngineBoundaryDelta,
+  computeBoundaryDeltas,
   type BoundaryQualityMeasurement,
 } from './services/syncContracts';
 import { buildWpmCheckLogEntry } from './services/syncWpmGate';
@@ -4512,6 +4518,11 @@ export default function App() {
     // `faWordTimings`. Undefined when this run never produced a new timing
     // set (the character-based fallback), so a prior stamp is left intact.
     let nextTimingProvenance: Project['timingProvenance'] | undefined;
+    // Amount-drop fix, Commit 2 — scene-level findings this run's checks raised
+    // (tail words unmatched, unmatched number/amount, weak match), staged here
+    // and stamped onto `nextTimingProvenance` at the commit boundary so they
+    // persist WITH the timing they qualify, not only as rotating log lines.
+    const stagedTimingFindings: TimingFinding[] = [];
     // Boundary-quality checker (waveform-watcher program, Phase 1) — captured
     // only on the cachedTokensReady/Whisper-snapped branch below, since only
     // that branch has real per-segment token alignments to check a fallback
@@ -5114,6 +5125,41 @@ export default function App() {
       // own count===1 fallback).
       const wordCoverageViolations = validateWordCoverage(kept, keptAlignments);
       const wordCoverageEntry = buildGroupedViolationEntry(syncRunId, wordCoverageViolations, syncRunAt);
+      // Escalation (Commit 2 (d)): a scene under the word-coverage floor is
+      // ALSO stamped onto the timing provenance, by committed scene id.
+      if (wordCoverageViolations.length > 0) {
+        stagedTimingFindings.push({
+          kind: 'weak-match',
+          sceneIds: wordCoverageViolations
+            .map(v => kept[(v.detail as { segmentIndex: number } | undefined)?.segmentIndex ?? -1]?.id)
+            .filter((id): id is string => id !== undefined),
+          detail: wordCoverageViolations.map(v => v.message).join(' '),
+        });
+      }
+
+      // Honest-boundary tripwires (Commit 2 (a)/(b)) — a scene whose TAIL script
+      // words nothing claimed (its cut was placed by silence geometry, not from
+      // the last matched word), and any written number/amount that failed to
+      // match. Same kept/keptAlignments pair and grouping as the checks above;
+      // warn-only, never blocks.
+      const tailViolations = validateTailWords(kept, keptAlignments);
+      const tailEntry = buildGroupedViolationEntry(syncRunId, tailViolations, syncRunAt);
+      if (tailViolations.length > 0) {
+        stagedTimingFindings.push({
+          kind: 'tail-unmatched',
+          sceneIds: tailViolations.map(v => (v.detail as { segmentId: string }).segmentId),
+          detail: tailViolations.map(v => v.message).join(' '),
+        });
+      }
+      const numericViolations = validateNumericWords(kept, keptAlignments);
+      const numericEntry = buildGroupedViolationEntry(syncRunId, numericViolations, syncRunAt);
+      if (numericViolations.length > 0) {
+        stagedTimingFindings.push({
+          kind: 'numeric-unmatched',
+          sceneIds: numericViolations.map(v => (v.detail as { segmentId: string }).segmentId),
+          detail: numericViolations.map(v => v.message).join(' '),
+        });
+      }
 
       // G4 Unit 3 — POST-match per-scene density (STATUS.md Wave 2 queue item
       // 2). Sibling of the word-coverage check right above: same kept/
@@ -5148,6 +5194,8 @@ export default function App() {
         ...(skipped.length > 0 ? buildSkipLogEntries(syncRunId, skipped, syncRunAt) : []),
         ...(rescued.length > 0 ? buildRescueLogEntries(syncRunId, rescued, syncRunAt) : []),
         ...(wordCoverageEntry ? [wordCoverageEntry] : []),
+        ...(tailEntry ? [tailEntry] : []),
+        ...(numericEntry ? [numericEntry] : []),
         ...(sceneDensityEntry ? [sceneDensityEntry] : []),
         buildSyncInfoEntry(syncRunId, aligned.segments.length, kept.length, skipped.length, syncRunAt),
       ];
@@ -5772,6 +5820,38 @@ export default function App() {
     // local key, so the standing Cloud choice later reads as "not synced
     // with this engine" — honest, and re-syncable).
     const syncEngineKey = await computeSyncEngineKey(projectRef.current, engineHost);
+
+    // Commit 2 (c) — ENGINE-SWITCH BOUNDARY DELTA. Same audio, same script,
+    // different engine key (the Cloud/Local toggle flipped): every cut should
+    // land where it already was. Any cut that moved by more than 100ms is named
+    // once, with old/new times and BOTH engines, and stamped onto the timing
+    // provenance. Compared against the segments this sync is replacing; a
+    // changed script or audio makes movement expected, so those never compare.
+    {
+      const priorSpine = projectRef.current.lastSyncSpine;
+      if (
+        priorSpine?.engineKey !== undefined
+        && priorSpine.engineKey !== syncEngineKey
+        && audioHash !== undefined
+        && priorSpine.audioHash === audioHash
+        && priorSpine.scriptHash === scriptHash
+      ) {
+        const deltas = computeBoundaryDeltas(previousSegments, lockRestoredSegments);
+        if (deltas.length > 0) {
+          const previousEngine = describeStampedEngine(projectRef.current.timingProvenance);
+          const nextEngine = describeStampedEngine(nextTimingProvenance);
+          const violations = validateEngineBoundaryDelta(deltas, previousEngine, nextEngine);
+          const deltaEntry = buildGroupedViolationEntry(syncRunId, violations, syncRunAt);
+          if (deltaEntry) pendingLogEntries = [...pendingLogEntries, deltaEntry];
+          stagedTimingFindings.push({
+            kind: 'boundary-delta',
+            sceneIds: deltas.map(d => d.segmentId),
+            detail: violations.map(v => v.message).join(' '),
+          });
+        }
+      }
+      nextTimingProvenance = stampTimingFindings(nextTimingProvenance, stagedTimingFindings);
+    }
 
     // 8. Single atomic state update — segments are already final.
     //    New-layer headings (Path B Decision 2) never move on re-sync; only

@@ -27,6 +27,7 @@ import {
   WORD_COVERAGE_MIN_MISSING,
   SCENE_DENSITY_WORDS_PER_SEC,
   SILENCE_MIN_DETECTABLE_SEC,
+  BOUNDARY_DELTA_THRESHOLD_SEC,
 } from './syncConstants';
 
 /** One contract violation — shared shape across every pair's validator (§3
@@ -513,4 +514,136 @@ export function validateSceneDensity(
   }
 
   return violations;
+}
+
+// ---------------------------------------------------------------------------
+// Amount-drop fix, Commit 2 — HONEST-BOUNDARY TRIPWIRES (Contract 3→4).
+//
+// Three read-only validators. Like the word-coverage/density pair above they
+// never block, never change which scenes survive and never move a cut by
+// themselves — they name what already happened, as a `finding`-stamped entry
+// (and, at the wiring site, as a scene-level finding persisted on the timing
+// provenance). The one BEHAVIOR change this commit makes is in
+// `snapBoundaries.ts` (a cut is no longer derived from the last MATCHED word
+// when the scene's tail words were never found); these validators are how that
+// change is made visible.
+// ---------------------------------------------------------------------------
+
+export const TAIL_WORDS_FIX_HINT =
+  "Check that these words were actually spoken here. If they were, re-run the sync; if the cut is still off, drag it to where the scene really ends.";
+export const NUMERIC_WORD_FIX_HINT =
+  'Check how this number or amount is spoken in the audio (and how it is written in the script) — they may not be the same amount.';
+export const BOUNDARY_DELTA_FIX_HINT =
+  'Listen to these cuts. If the earlier positions were right, drag them back or re-sync under the previous timing engine.';
+
+/** A scene whose LAST script words nothing claimed: the last matched word is
+ *  not where its speech ends. */
+export function validateTailWords(
+  segments: VideoSegment[],
+  alignments: SegmentAlignment[],
+): ContractViolation[] {
+  const violations: ContractViolation[] = [];
+  for (let i = 0; i < segments.length; i++) {
+    const seg = segments[i];
+    const words = alignments[i]?.unmatchedTailWords;
+    if (!seg || !words || words.length === 0) continue;
+    const segmentName = truncateForDisplay(seg.text ?? '');
+    const list = words.join(' ');
+    violations.push({
+      contract: '3->4',
+      rule: 'tail-words-unmatched',
+      severity: 'warning',
+      message: `Segment ${i + 1} ("${segmentName}") ends on words that were not found in the audio ("${list}") — ` +
+        "its cut was placed from the silence before the next scene's first word, not from the last word that matched.",
+      fixHint: TAIL_WORDS_FIX_HINT,
+      detail: { segmentIndex: i, segmentName, segmentId: seg.id, words },
+    });
+  }
+  return violations;
+}
+
+/** A scene with a written number/amount ("$11,000.") that did not fully match. */
+export function validateNumericWords(
+  segments: VideoSegment[],
+  alignments: SegmentAlignment[],
+): ContractViolation[] {
+  const violations: ContractViolation[] = [];
+  for (let i = 0; i < segments.length; i++) {
+    const seg = segments[i];
+    const tokens = alignments[i]?.unmatchedNumericTokens;
+    if (!seg || !tokens || tokens.length === 0) continue;
+    const segmentName = truncateForDisplay(seg.text ?? '');
+    violations.push({
+      contract: '3->4',
+      rule: 'numeric-word-unmatched',
+      severity: 'warning',
+      message: `Segment ${i + 1} ("${segmentName}") has a number or amount that did not match the audio: ${tokens.map(t => `"${t}"`).join(', ')}.`,
+      fixHint: NUMERIC_WORD_FIX_HINT,
+      detail: { segmentIndex: i, segmentName, segmentId: seg.id, tokens },
+    });
+  }
+  return violations;
+}
+
+/** One cut that moved between two syncs of the same audio and script. */
+export interface BoundaryDelta {
+  /** 0-based committed index of the scene that STARTS at this cut. */
+  segmentIndex: number;
+  segmentId: string;
+  oldStartSec: number;
+  newStartSec: number;
+}
+
+/**
+ * Cuts (segment starts, except the first) that moved by more than
+ * `thresholdSec` between `previous` and `next`. Scenes are paired by their
+ * text, in order — ids are re-derived per sync — and a scene with no
+ * counterpart (added, removed, reworded) is never compared: this reports an
+ * ENGINE's disagreement, not an edit.
+ */
+export function computeBoundaryDeltas(
+  previous: readonly VideoSegment[],
+  next: readonly VideoSegment[],
+  thresholdSec: number = BOUNDARY_DELTA_THRESHOLD_SEC,
+): BoundaryDelta[] {
+  const pool = new Map<string, VideoSegment[]>();
+  for (const p of previous) {
+    const key = (p.text ?? '').replace(/\s+/g, ' ').trim();
+    const list = pool.get(key);
+    if (list) list.push(p); else pool.set(key, [p]);
+  }
+  const deltas: BoundaryDelta[] = [];
+  for (let i = 0; i < next.length; i++) {
+    const n = next[i]!;
+    const key = (n.text ?? '').replace(/\s+/g, ' ').trim();
+    const p = pool.get(key)?.shift();
+    if (!p || i === 0) continue;
+    // Committed times are 3-decimal values; compare at that precision so an
+    // exactly-100ms move is not tipped over by floating-point noise.
+    if (Math.round(Math.abs(n.startTime - p.startTime) * 1000) / 1000 > thresholdSec) {
+      deltas.push({ segmentIndex: i, segmentId: n.id, oldStartSec: p.startTime, newStartSec: n.startTime });
+    }
+  }
+  return deltas;
+}
+
+/** The engine-switch tripwire: `deltas` came from `computeBoundaryDeltas` and
+ *  the two engines are named in every message. */
+export function validateEngineBoundaryDelta(
+  deltas: readonly BoundaryDelta[],
+  previousEngine: string,
+  nextEngine: string,
+): ContractViolation[] {
+  return deltas.map(d => ({
+    contract: '3->4' as const,
+    rule: 'engine-boundary-delta',
+    severity: 'warning' as const,
+    message: `The cut before segment ${d.segmentIndex + 1} moved ${d.oldStartSec.toFixed(3)}s → ${d.newStartSec.toFixed(3)}s ` +
+      `(${Math.abs(d.newStartSec - d.oldStartSec).toFixed(3)}s) when the timing engine changed from ${previousEngine} to ${nextEngine}.`,
+    fixHint: BOUNDARY_DELTA_FIX_HINT,
+    detail: {
+      segmentIndex: d.segmentIndex, segmentId: d.segmentId,
+      oldStartSec: d.oldStartSec, newStartSec: d.newStartSec, previousEngine, nextEngine,
+    },
+  }));
 }

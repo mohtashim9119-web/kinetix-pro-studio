@@ -414,6 +414,25 @@ export interface TimingProvenance {
     chunkCount?: number;
     sceneIds?: string[];
   };
+  /** Scene-level findings this run's checks raised, persisted WITH the timing
+   *  they qualify (a sync-log entry alone rotates out at MAX_LOG_ENTRIES and
+   *  says nothing once the project is reopened). Additive and optional. */
+  findings?: TimingFinding[];
+}
+
+/** What a scene-level timing check found — see `TimingProvenance.findings`. */
+export type TimingFindingKind =
+  | 'tail-unmatched'
+  | 'numeric-unmatched'
+  | 'boundary-delta'
+  | 'weak-match';
+
+export interface TimingFinding {
+  kind: TimingFindingKind;
+  /** Committed segment ids the finding names. */
+  sceneIds: string[];
+  /** One human line — the same facts the sync-log entry carries. */
+  detail: string;
 }
 
 export interface TranscriptToken {
@@ -861,7 +880,15 @@ export type SyncLogFindingKind =
   /** Wave 3 U2 — the same two engine lines when the cloud gateway ran them. */
   | 'engine-forced-alignment-cloud'
   | 'engine-whisper-cloud'
-  | 'engine-character';
+  | 'engine-character'
+  /** A scene's last script words were not found in the audio; its cut was
+   *  placed from the silence before the NEXT scene's first word, not from the
+   *  last word that matched. */
+  | 'tail-unmatched'
+  /** A script word carrying digits or a currency symbol did not match. */
+  | 'numeric-unmatched'
+  /** A re-sync under a different timing engine moved a cut by > 0.1s. */
+  | 'boundary-delta';
 
 export interface SyncLogEntry {
   id: string;

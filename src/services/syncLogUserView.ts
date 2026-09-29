@@ -209,6 +209,13 @@ const FINDING_ATTENTION: Record<SyncLogFindingKind, AttentionKind | undefined> =
   'engine-whisper-cloud': undefined,
   'engine-whisper': undefined,
   'engine-character': undefined,
+  // A cut placed from silence geometry because the scene's tail words were not
+  // found, and a written amount that never matched: both mean this scene's
+  // timing is not fully measured from its own words.
+  'tail-unmatched': 'estimated-timings',
+  'numeric-unmatched': 'estimated-timings',
+  // Informational: two engines disagreed about a cut. Details only.
+  'boundary-delta': undefined,
 };
 
 /** The ten-kind mapping for ONE entry, independent of when it was logged.
