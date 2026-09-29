@@ -59,6 +59,7 @@ import type { FaWordSpan } from './faBoundaryTypes';
 import type { SyncEngineHost } from './syncEngineHost';
 import { stampCloudProvenance, stampWhisperProvenance, type GatewayProvenance } from './timingProvenance';
 import { transcribeWithProgress } from './whisperService';
+import { checkAudioDuration } from './cloudAudioLimit';
 import { recordCancelReceipt, trackStoppingRun } from './cloudCancelReceipts';
 
 // ---------------------------------------------------------------------------
@@ -73,10 +74,14 @@ const inFlightAudio = new Map<string, Promise<CloudUpload & { encoded: boolean }
  * stale rejection; a successful one is forgotten too — the Rust-side Opus
  * cache and the gateway's HEAD make every later call cheap anyway.
  */
-export function prepareCloudAudioOnce(file: Blob, audioHash: string): Promise<CloudUpload & { encoded: boolean }> {
+export function prepareCloudAudioOnce(
+  file: Blob,
+  audioHash: string,
+  options: { durationSec?: number } = {},
+): Promise<CloudUpload & { encoded: boolean }> {
   const existing = inFlightAudio.get(audioHash);
   if (existing) return existing;
-  const attempt = prepareCloudAudio(file, audioHash).finally(() => {
+  const attempt = prepareCloudAudio(file, audioHash, options).finally(() => {
     inFlightAudio.delete(audioHash);
   });
   inFlightAudio.set(audioHash, attempt);
@@ -251,6 +256,9 @@ export async function runStageCacheFirst<R>(
     onEvent?: (event: CloudJobEvent) => void;
     /** Wave 3 U4 — told once, before the retry's wait, with the first failure. */
     onRetry?: (error: CloudError) => void;
+    /** Wave 3 U6 — the voiceover's probed length. Over the one-hour cap the
+     *  run is refused before anything is asked of the network. */
+    audioDurationSec?: number;
   } = {},
 ): Promise<CloudStageRun<R>> {
   try {
@@ -269,11 +277,15 @@ export async function runStageCacheFirst<R>(
 async function attemptStageCacheFirst<R>(
   request: CloudJobRequest,
   audio: () => Promise<Blob>,
-  options: { signal?: AbortSignal; onEvent?: (event: CloudJobEvent) => void },
+  options: { signal?: AbortSignal; onEvent?: (event: CloudJobEvent) => void; audioDurationSec?: number },
 ): Promise<CloudStageRun<R>> {
-  const { signal, onEvent } = options;
+  const { signal, onEvent, audioDurationSec } = options;
   const cancelled: CloudError = { kind: 'cancelled' };
   if (signal?.aborted) throw cancelled;
+  // Wave 3 U6 — before even the (free) lookup: nothing over an hour can be
+  // cached, and a refusal must cost no network, no encode, no upload.
+  const overLong = checkAudioDuration(audioDurationSec);
+  if (overLong) throw overLong;
   const lookup = await lookupCloudCache<R>(request);
   if (lookup.cached) return { result: lookup.result, cached: true, uploaded: false, encoded: false, retried: false };
   if (signal?.aborted) throw cancelled;
@@ -281,7 +293,7 @@ async function attemptStageCacheFirst<R>(
   let uploaded = false;
   let encoded = false;
   const prepare = async (): Promise<void> => {
-    const prep = await prepareCloudAudioOnce(await audio(), request.audioHash);
+    const prep = await prepareCloudAudioOnce(await audio(), request.audioHash, { durationSec: audioDurationSec });
     uploaded ||= prep.uploaded;
     encoded ||= prep.encoded;
     if (signal?.aborted) throw cancelled;
@@ -403,6 +415,7 @@ export async function transcribeViaCloud(args: {
       () => assetBlob(asset),
       {
         signal,
+        audioDurationSec: durationSecs,
         onEvent: e => {
           onProgress(cloudProgressPercent(e, durationSecs));
           const phase = phaseForEvent('transcribe', e);
@@ -426,7 +439,7 @@ export async function transcribeViaCloud(args: {
     if (err instanceof DOMException) throw err;
     const cloud = toCloudError(err);
     if (cloud.kind === 'cancelled') throw abortError();
-    throw new CloudStageError(cloud, `Cloud transcription failed: ${describeForStaging(cloud)}`);
+    throw new CloudStageError(cloud, cloud.kind === 'tooLong' && cloud.estimatedSec !== undefined ? cloud.detail : `Cloud transcription failed: ${describeForStaging(cloud)}`);
   }
 }
 

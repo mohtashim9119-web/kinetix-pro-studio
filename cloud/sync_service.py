@@ -55,8 +55,8 @@ GPU_SCALEDOWN_WINDOW_SEC = 2
 GATEWAY_SCALEDOWN_WINDOW_SEC = 60
 
 # Third layer of the one-hour cap: a job that runs past this is killed by
-# Modal. A warm hour measured 110 s (transcribe) and 66 s (align) on T4.
-JOB_TIMEOUT_SEC = 20 * 60
+# Modal. The number and its reasoning live in `sync_core.WORKER_TIMEOUT_SEC`.
+JOB_TIMEOUT_SEC = core.WORKER_TIMEOUT_SEC
 
 CACHE_ROOT = "/cache"
 WHISPER_ROOT = "/whisper"

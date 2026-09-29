@@ -22,13 +22,16 @@
 
 import { invoke, Channel } from '@tauri-apps/api/core';
 import type { FaWordSpan } from './faBoundaryTypes';
+import { checkAudioDuration, checkOpusBytes } from './cloudAudioLimit';
 
 export type CloudError =
   | { kind: 'notConfigured' }
   | { kind: 'unreachable'; detail: string }
   | { kind: 'timeout'; detail: string }
   | { kind: 'auth' }
-  | { kind: 'tooLong'; detail: string }
+  /** `estimatedSec` — set when the CLIENT refused (Wave 3 U6); absent when
+   *  the gateway's 413 did, whose detail is a technical byte count. */
+  | { kind: 'tooLong'; detail: string; estimatedSec?: number }
   | { kind: 'rejected'; status: number; code: string; detail: string }
   | { kind: 'server'; status: number; detail: string }
   | { kind: 'jobFailed'; jobId: string; code: string; detail: string }
@@ -67,7 +70,10 @@ export function describeCloudError(error: CloudError): string {
     case 'unreachable': return 'Could not reach the cloud sync server. Check your internet connection.';
     case 'timeout': return 'The cloud sync server did not answer in time.';
     case 'auth': return 'The cloud sync server did not accept this key.';
-    case 'tooLong': return 'This audio is longer than the one-hour cloud limit.';
+    case 'tooLong':
+      return error.estimatedSec !== undefined
+        ? error.detail
+        : 'This audio is longer than the one-hour cloud limit. Split it or use Local.';
     case 'rejected': return `The cloud sync server refused the request (${error.code}): ${error.detail}`;
     case 'server': return `The cloud sync server had an error (HTTP ${error.status}).`;
     case 'jobFailed': return `The cloud job failed (${error.code}).`;
@@ -207,15 +213,27 @@ export function cloudPing(): Promise<CloudPing> {
  * gateway first). `audioHash` is the spine's `computeAudioHash(file)`; Rust
  * re-hashes the bytes and refuses a mismatch.
  */
-export async function prepareCloudAudio(file: Blob, audioHash: string): Promise<CloudUpload & { encoded: boolean }> {
+export async function prepareCloudAudio(
+  file: Blob,
+  audioHash: string,
+  options: { durationSec?: number } = {},
+): Promise<CloudUpload & { encoded: boolean }> {
+  // Wave 3 U6 — the free refusals, in order of cheapness: the probed
+  // duration (before the original crosses IPC or ffmpeg runs), then the
+  // Opus byte count (before it is uploaded).
+  const overLong = checkAudioDuration(options.durationSec);
+  if (overLong) throw overLong;
   const cachedBytes = await call<number | null>('cloud_opus_cached', { audioHash });
+  let opusBytes = cachedBytes;
   let encoded = false;
-  if (cachedBytes === null) {
+  if (opusBytes === null) {
     const bytes = new Uint8Array(await file.arrayBuffer());
     await call<string>('cloud_stage_audio_raw', bytes, { headers: { 'audio-hash': audioHash } });
-    await call<number>('cloud_encode_opus', { audioHash });
+    opusBytes = await call<number>('cloud_encode_opus', { audioHash });
     encoded = true;
   }
+  const tooBig = checkOpusBytes(opusBytes, options.durationSec);
+  if (tooBig) throw tooBig;
   const upload = await call<CloudUpload>('cloud_upload_audio', { audioHash });
   return { ...upload, encoded };
 }

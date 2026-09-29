@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 from pathlib import Path
 
@@ -322,3 +323,53 @@ def test_a_warm_container_never_bills_an_earlier_jobs_boot_to_the_next_job():
     # from the moment it existed; the 18 s before it are residue.
     billed_from, residue = core.first_job_billing(100.0, 118.0)
     assert billed_from == 118.0 and residue == pytest.approx(18.0)
+
+
+# --- Wave 3 U6: the one-hour cap, gateway + worker layers -----------------
+
+
+def test_exactly_one_hour_passes_every_gateway_layer():
+    core.validate_upload_size(core.OPUS_HOUR_BYTES)
+    assert core.validate_probe("opus", core.MAX_AUDIO_SEC) == core.MAX_AUDIO_SEC
+    assert core.validate_probe("opus", core.MAX_AUDIO_SEC + core.AUDIO_DURATION_TOLERANCE_SEC)
+
+
+def test_just_over_one_hour_is_refused_at_both_gateway_layers_with_the_typed_code():
+    with pytest.raises(core.ValidationError) as size:
+        core.validate_upload_size(core.MAX_UPLOAD_BYTES + 1)
+    with pytest.raises(core.ValidationError) as probe:
+        core.validate_probe("opus", core.MAX_AUDIO_SEC + core.AUDIO_DURATION_TOLERANCE_SEC + 0.01)
+    # The client maps HTTP 413 / `too-long` to FaFailureKind `tooLong`.
+    assert size.value.code == probe.value.code == "too-long"
+
+
+def test_an_honest_hour_inside_the_byte_margin_is_not_refused_by_size():
+    # 1% over the nominal hour of bytes: the size rail lets it through, the
+    # probe (real duration) is the precise judge.
+    core.validate_upload_size(int(core.OPUS_HOUR_BYTES * 1.01))
+    assert core.MAX_UPLOAD_BYTES == core.OPUS_HOUR_BYTES + core.OPUS_HOUR_BYTES // 50
+
+
+def test_worker_timeout_bounds_a_full_hour_job_with_headroom_and_a_cost_ceiling():
+    # The slowest honest call: transcribe + its hand-off hold + model load.
+    honest = core.WARM_HOUR_TRANSCRIBE_SEC + core.HOLD_FOR_PLAN_SEC + 5
+    assert core.WORKER_TIMEOUT_SEC >= 3 * honest
+    assert core.WORKER_TIMEOUT_SEC >= 3 * core.WARM_HOUR_ALIGN_SEC
+    # ...and no job can bill more than ~13 cents of GPU time.
+    assert core.WORKER_TIMEOUT_SEC * core.USD_PER_WORKER_SEC < 0.13
+    # The client's wall limit (queue + run) must outlast the worker's.
+    rust = (Path(__file__).resolve().parent.parent / "src-tauri/src/cloud_gateway.rs").read_text()
+    wall = int(re.search(r"JOB_WALL_LIMIT: Duration = Duration::from_secs\((\d+) \* 60\)", rust).group(1)) * 60
+    assert wall > core.WORKER_TIMEOUT_SEC
+
+
+def test_limits_match_the_client_constants_in_ts():
+    ts = (Path(__file__).resolve().parent.parent / "src/services/cloudAudioLimit.ts").read_text()
+
+    def const(name: str) -> int:
+        return int(re.search(rf"export const {name} = ([0-9_]+);", ts).group(1).replace("_", ""))
+
+    assert const("OPUS_HOUR_BYTES") == core.OPUS_HOUR_BYTES
+    assert const("MAX_AUDIO_SEC") == core.MAX_AUDIO_SEC
+    assert const("AUDIO_DURATION_TOLERANCE_SEC") == core.AUDIO_DURATION_TOLERANCE_SEC
+    assert "OPUS_HOUR_BYTES + Math.floor(OPUS_HOUR_BYTES / 50)" in ts

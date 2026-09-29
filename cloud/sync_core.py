@@ -98,6 +98,19 @@ AUDIO_DURATION_TOLERANCE_SEC = 1.0
 # is refused from Content-Length before a byte of it is buffered.
 OPUS_HOUR_BYTES = 7_477_405
 MAX_UPLOAD_BYTES = OPUS_HOUR_BYTES + OPUS_HOUR_BYTES // 50
+
+# Third layer: the worker's own execution timeout (Modal counts it from the
+# moment the container starts running the call — queue wait for a T4 is not
+# in it and is not billed). Sized from the measurements for a full-cap hour:
+#   transcribe 110.5 s warm + the 30 s hand-off hold it may carry (the hold
+#   is inside the same call) + ~4 s model load  ->  ~145 s; align 66 s warm.
+# 600 s is ~4x the slowest honest call: room for a slow T4 or a cold model
+# volume, and a hard ceiling of 600 s x USD_PER_WORKER_SEC (~$0.125) on any
+# one job, so no job can bill unbounded GPU time. The client's own wall
+# limit (cloud_gateway.rs JOB_WALL_LIMIT, 25 min) also covers the GPU queue.
+WARM_HOUR_TRANSCRIBE_SEC = 110.5
+WARM_HOUR_ALIGN_SEC = 66.0
+WORKER_TIMEOUT_SEC = 10 * 60
 MAX_CHUNKS = 5000
 MAX_CHUNK_TEXT_CHARS = 20_000
 
