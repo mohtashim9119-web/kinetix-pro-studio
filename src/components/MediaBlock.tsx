@@ -37,7 +37,8 @@ import { formatTime } from '../services/timeFormat';
 import { getAsset } from '../services/assetStore';
 import { sha256Hex, ingestLooseFiles, type MediaIngestCounts, type OfflineReconnect } from '../services/mediaIngest';
 import { ingestZip, ZipTooLargeError } from '../services/zipIngest';
-import { mediaVaultGenerateThumbnail, mediaVaultReadThumbnail } from '../services/mediaVaultClient';
+import { mediaVaultGenerateThumbnailDetailed, mediaVaultReadThumbnail } from '../services/mediaVaultClient';
+import { assetHealth, ASSET_HEALTH_COPY } from '../services/assetHealth';
 import { ASSET_DRAG_MIME } from '../services/assetDragChannel';
 import type { MediaMatchSummary } from '../services/matchMediaToScenes';
 
@@ -88,6 +89,10 @@ interface MediaBlockProps {
    *  owner instead of ingesting directly, so a BUNDLE zip (script + scene doc
    *  + voiceover + media) is recognised and routed, not swallowed as media. */
   onZipsChosen?: (files: File[]) => void;
+  /** Wave 3 B2 — a decode/thumbnail probe FAILED on present bytes. The owner
+   *  flags the asset (`Asset.corrupt`) and stamps the typed finding; nothing
+   *  is deleted. Absent -> the tile still shows its corrupt state locally. */
+  onAssetCorrupt?: (assetId: string, reason: NonNullable<Asset['corrupt']>) => void;
 }
 
 /** Wave 3 U9 — what the parent drives through a ref: media dropped anywhere
@@ -207,12 +212,16 @@ export function usageCount(segments: VideoSegment[], assetId: string, voiceoverI
   return assetId === voiceoverId ? segmentUses + 1 : segmentUses;
 }
 
+type ThumbResult = { url: string } | { corrupt: true } | null;
+
 /** Hashes a video asset's bytes (from its staged `File`, falling back to the
  *  IndexedDB-stored blob for an asset restored across a reload — same
  *  fallback `resolveVoiceoverDuration` in App.tsx already uses) and asks the
- *  vault to generate/read back its thumbnail. `null` on ANY failure — every
- *  failure mode renders identically here (fall back to the type icon). */
-async function loadVideoThumbnailUrl(projectId: string, asset: Asset): Promise<string | null> {
+ *  vault to generate/read back its thumbnail. `{ corrupt: true }` ONLY when
+ *  the vault ran ffmpeg and it could not read a frame; every other failure
+ *  (no Tauri, IPC error, unreadable bytes here) is `null` — no verdict, the
+ *  tile falls back to the type icon. */
+async function loadVideoThumbnailUrl(projectId: string, asset: Asset): Promise<ThumbResult> {
   try {
     let bytes: Uint8Array;
     if (asset.file) {
@@ -223,14 +232,33 @@ async function loadVideoThumbnailUrl(projectId: string, asset: Asset): Promise<s
       bytes = new Uint8Array(await stored.blob.arrayBuffer());
     }
     const contentHash = await sha256Hex(bytes);
-    const generated = await mediaVaultGenerateThumbnail(contentHash);
-    if (!generated) return null;
+    const outcome = await mediaVaultGenerateThumbnailDetailed(contentHash);
+    if (outcome === 'failed') return { corrupt: true };
+    if (outcome !== 'generated') return null;
     const thumbBytes = await mediaVaultReadThumbnail(contentHash);
     if (!thumbBytes) return null;
-    return URL.createObjectURL(new Blob([thumbBytes.slice()], { type: 'image/jpeg' }));
+    return { url: URL.createObjectURL(new Blob([thumbBytes.slice()], { type: 'image/jpeg' })) };
   } catch (err) {
     console.warn('[MediaBlock] thumbnail load failed, falling back to an icon:', asset.id, err);
     return null;
+  }
+}
+
+/** An <img> error is not proof of corruption (a revoked blob URL errors too),
+ *  so re-decode the STORED bytes: `true` = definitively undecodable. */
+async function imageBytesUndecodable(projectId: string, asset: Asset): Promise<boolean> {
+  try {
+    const blob = asset.file ?? (await getAsset(projectId, asset.id))?.blob;
+    if (!blob || typeof createImageBitmap !== 'function') return false;
+    try {
+      const bmp = await createImageBitmap(blob);
+      bmp.close?.();
+      return false;
+    } catch {
+      return true;
+    }
+  } catch {
+    return false;
   }
 }
 
@@ -324,6 +352,7 @@ export const MediaBlock = forwardRef<MediaBlockHandle, MediaBlockProps>(function
   onMatchMedia,
   onDeleteAllMedia,
   onZipsChosen,
+  onAssetCorrupt,
 }, ref) {
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('all');
@@ -336,6 +365,9 @@ export const MediaBlock = forwardRef<MediaBlockHandle, MediaBlockProps>(function
   const [confirmDeleteAll, setConfirmDeleteAll] = useState(false);
   const [videoThumbUrls, setVideoThumbUrls] = useState<Record<string, string>>({});
   const thumbRequestedRef = useRef<Set<string>>(new Set());
+  const imageCheckedRef = useRef<Set<string>>(new Set());
+  const onAssetCorruptRef = useRef(onAssetCorrupt);
+  onAssetCorruptRef.current = onAssetCorrupt;
 
   const filesInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
@@ -388,10 +420,13 @@ export const MediaBlock = forwardRef<MediaBlockHandle, MediaBlockProps>(function
     for (const { asset } of rows) {
       if (asset.type !== 'video') continue;
       if (thumbRequestedRef.current.has(asset.id)) continue;
+      if (asset.unresolved || asset.corrupt) continue; // offline / already known-bad: no probe (and retried if it comes back)
       thumbRequestedRef.current.add(asset.id);
-      void loadVideoThumbnailUrl(projectId, asset).then(url => {
-        if (cancelled || url === null) return;
-        setVideoThumbUrls(prev => ({ ...prev, [asset.id]: url }));
+      void loadVideoThumbnailUrl(projectId, asset).then(result => {
+        if (result === null) return;
+        if ('corrupt' in result) { onAssetCorruptRef.current?.(asset.id, 'no-frame'); return; }
+        if (cancelled) return;
+        setVideoThumbUrls(prev => ({ ...prev, [asset.id]: result.url }));
       });
     }
     return () => { cancelled = true; };
@@ -749,6 +784,7 @@ export const MediaBlock = forwardRef<MediaBlockHandle, MediaBlockProps>(function
                 data-testid="media-block-tile"
                 data-asset-id={asset.id}
                 data-unresolved={asset.unresolved ? 'true' : 'false'}
+                data-health={assetHealth(asset)}
                 // Media workflow Unit 3 — drag onto a timeline segment to
                 // assign it (dedicated asset channel; payload = asset id).
                 draggable={editingAssetId !== asset.id}
@@ -770,8 +806,22 @@ export const MediaBlock = forwardRef<MediaBlockHandle, MediaBlockProps>(function
                     <span data-testid="asset-offline-badge" className="text-[9px]">Offline</span>
                     <Link2 size={11} />
                   </button>
+                ) : asset.corrupt ? (
+                  <div data-testid="media-block-corrupt" className="w-full h-full flex flex-col items-center justify-center gap-1 text-[var(--kx-danger)]">
+                    <AlertCircle size={18} />
+                    <span className="text-[9px]">Can't read file</span>
+                  </div>
                 ) : thumbUrl ? (
-                  <img src={thumbUrl} alt="" draggable={false} className="w-full h-full object-cover" />
+                  <img
+                    src={thumbUrl} alt="" draggable={false} className="w-full h-full object-cover"
+                    onError={() => {
+                      if (asset.type !== 'image' || imageCheckedRef.current.has(asset.id)) return;
+                      imageCheckedRef.current.add(asset.id);
+                      void imageBytesUndecodable(projectId, asset).then(bad => {
+                        if (bad) onAssetCorruptRef.current?.(asset.id, 'image-decode');
+                      });
+                    }}
+                  />
                 ) : (
                   <div className="w-full h-full flex items-center justify-center">
                     <TypeIcon size={20} className="text-[var(--kx-faint)]" />
@@ -807,6 +857,26 @@ export const MediaBlock = forwardRef<MediaBlockHandle, MediaBlockProps>(function
                 >
                   {uses === 0 ? 'Unused' : `${uses}×`}
                 </button>
+
+                {(() => {
+                  const health = assetHealth(asset);
+                  const copy = ASSET_HEALTH_COPY[health];
+                  const tone = health === 'available'
+                    ? 'bg-black/60 text-[var(--kx-ready)]'
+                    : health === 'unverified'
+                      ? 'bg-black/70 text-[var(--kx-accent-2)]'
+                      : 'bg-black/80 text-[var(--kx-danger)]';
+                  return (
+                    <span
+                      data-testid="media-block-health-chip"
+                      data-health={health}
+                      title={copy.title}
+                      className={`absolute top-[22px] left-1 text-[8px] leading-none rounded px-1 py-0.5 ${tone}`}
+                    >
+                      {copy.label}
+                    </span>
+                  );
+                })()}
 
                 <div className="absolute inset-x-0 top-0 bg-gradient-to-b from-black/60 to-transparent px-1 py-0.5 pr-6">
                   <TileName

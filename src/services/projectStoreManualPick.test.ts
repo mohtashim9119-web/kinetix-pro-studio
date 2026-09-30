@@ -104,4 +104,16 @@ describe('B0 — manual-pick marker persistence', () => {
     expect(loaded.project.segments[0]!.assetAssignedBy).toBe('manual');
     expect(loaded.project.segments[1]!.assetAssignedBy).toBeUndefined();
   });
+
+  it('B2: Asset.corrupt survives save -> load (the chip does not need a re-probe after a reload)', async () => {
+    const id = computeContentKey('Scene.', 0);
+    const project = baseProject(
+      [{ id, text: 'Scene.', startTime: 0, duration: 2, showOverlay: true, assetId: 'a1' } as VideoSegment],
+      { assets: [{ id: 'a1', name: 'a1.mp4', url: '', type: 'video', contentHash: 'h1', corrupt: 'no-frame' }] as Project['assets'] },
+    );
+    expect((await saveProject(project)).ok).toBe(true);
+    const loaded = await loadProjectDetailed('p-b0');
+    if (!loaded || !loaded.ok) throw new Error('load failed');
+    expect(loaded.project.assets[0]!.corrupt).toBe('no-frame');
+  });
 });

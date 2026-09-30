@@ -21,7 +21,7 @@ vi.mock('../services/zipIngest', () => ({
 const mockGenerateThumbnail = vi.fn();
 const mockReadThumbnail = vi.fn();
 vi.mock('../services/mediaVaultClient', () => ({
-  mediaVaultGenerateThumbnail: (...args: unknown[]) => mockGenerateThumbnail(...args),
+  mediaVaultGenerateThumbnailDetailed: (...args: unknown[]) => mockGenerateThumbnail(...args),
   mediaVaultReadThumbnail: (...args: unknown[]) => mockReadThumbnail(...args),
 }));
 
@@ -39,7 +39,7 @@ beforeEach(() => {
   document.body.appendChild(container);
   mockIngestLooseFiles.mockReset();
   mockIngestZip.mockReset();
-  mockGenerateThumbnail.mockReset().mockResolvedValue(false);
+  mockGenerateThumbnail.mockReset().mockResolvedValue('unavailable');
   mockReadThumbnail.mockReset().mockResolvedValue(null);
   sessionStorage.clear();
 });
@@ -879,5 +879,77 @@ describe('U9 — ONE import door for files, folders and zips', () => {
     await act(async () => { input.dispatchEvent(new Event('change', { bubbles: true })); });
     expect(onZipsChosen).toHaveBeenCalledWith([z]);
     expect(mockIngestZip).not.toHaveBeenCalled();
+  });
+});
+
+// Wave 3 B1/B2 — typed per-asset states on the single surface.
+describe('B1/B2 — per-asset state chips and corrupt handling', () => {
+  const renderBlock = async (assets: Asset[], extra: Partial<React.ComponentProps<typeof MediaBlock>> = {}) => {
+    root = createRoot(container);
+    await act(async () => {
+      root.render(
+        <MediaBlock
+          projectId="p1" assets={assets} segments={[]} voiceoverId={undefined}
+          onDeleteAsset={noop} onOpenRelinkMedia={noop} onHighlightUsage={noop}
+          onIngestComplete={noop} onIngestError={noop} {...extra}
+        />,
+      );
+    });
+  };
+  const chipOf = (id: string) =>
+    container.querySelector(`[data-testid="media-block-tile"][data-asset-id="${id}"] [data-testid="media-block-health-chip"]`);
+
+  it('every tile carries exactly one chip: available / unverified / missing / corrupt', async () => {
+    await renderBlock([
+      makeAsset({ id: 'ok', contentHash: 'h' }),
+      makeAsset({ id: 'un' }),
+      makeAsset({ id: 'gone', contentHash: 'h2', unresolved: true }),
+      makeAsset({ id: 'bad', contentHash: 'h3', corrupt: 'image-decode' }),
+    ]);
+    expect(chipOf('ok')?.getAttribute('data-health')).toBe('available');
+    expect(chipOf('un')?.getAttribute('data-health')).toBe('unverified');
+    expect(chipOf('gone')?.getAttribute('data-health')).toBe('missing');
+    expect(chipOf('bad')?.getAttribute('data-health')).toBe('corrupt');
+  });
+
+  it('a corrupt tile is never blank: it says it cannot be read, and stays deletable', async () => {
+    await renderBlock([makeAsset({ id: 'bad', corrupt: 'no-frame' })]);
+    expect(container.querySelector('[data-testid="media-block-corrupt"]')?.textContent).toContain("Can't read file");
+    expect(container.querySelector('[title="Delete"]')).not.toBeNull();
+  });
+
+  it('missing -> reconnect flips the chip to available through the same surface', async () => {
+    await renderBlock([makeAsset({ id: 'gone', contentHash: 'h', unresolved: true })]);
+    expect(chipOf('gone')?.getAttribute('data-health')).toBe('missing');
+    root.unmount();
+    container.innerHTML = '';
+    await renderBlock([makeAsset({ id: 'gone', contentHash: 'h' })]);
+    expect(chipOf('gone')?.getAttribute('data-health')).toBe('available');
+  });
+
+  it('a video whose frame cannot be read (ffmpeg ran, failed) is reported corrupt exactly once', async () => {
+    mockGenerateThumbnail.mockResolvedValue('failed');
+    const onAssetCorrupt = vi.fn();
+    const video = makeAsset({ id: 'v1', type: 'video', name: 'clip.mp4', file: new File([new Uint8Array([1, 2])], 'clip.mp4') });
+    await renderBlock([video], { onAssetCorrupt });
+    await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+    expect(onAssetCorrupt).toHaveBeenCalledTimes(1);
+    expect(onAssetCorrupt).toHaveBeenCalledWith('v1', 'no-frame');
+  });
+
+  it('NO verdict when the probe is merely unavailable (no Tauri / IPC error): never flagged corrupt', async () => {
+    mockGenerateThumbnail.mockResolvedValue('unavailable');
+    const onAssetCorrupt = vi.fn();
+    const video = makeAsset({ id: 'v1', type: 'video', name: 'clip.mp4', file: new File([new Uint8Array([1, 2])], 'clip.mp4') });
+    await renderBlock([video], { onAssetCorrupt });
+    await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+    expect(onAssetCorrupt).not.toHaveBeenCalled();
+  });
+
+  it('an already-corrupt or offline video is not probed again', async () => {
+    const video = makeAsset({ id: 'v1', type: 'video', corrupt: 'no-frame', file: new File(['x'], 'v.mp4') });
+    await renderBlock([video, makeAsset({ id: 'v2', type: 'video', unresolved: true })]);
+    await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+    expect(mockGenerateThumbnail).not.toHaveBeenCalled();
   });
 });

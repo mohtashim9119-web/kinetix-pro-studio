@@ -163,6 +163,16 @@ export interface Asset {
    */
   unresolved?: boolean;
   /**
+   * Wave 3 U9 B1/B2 — set when a decode/thumbnail/probe of this asset's bytes
+   * FAILED although the bytes are present: 'image-decode' (the browser could
+   * not decode the image) or 'no-frame' (ffmpeg could not read a frame from
+   * the video). Persisted with the project so the chip survives a reload
+   * without re-probing; never set for an offline asset (that is `unresolved`)
+   * or for an environment that cannot probe (no ffmpeg / no Tauri). Nothing is
+   * deleted because of it — the user replaces or deletes the file.
+   */
+  corrupt?: 'image-decode' | 'no-frame';
+  /**
    * G6 Step 5 — sha256 of this asset's bytes, hex-encoded (same algorithm
    * and encoding `services/mediaIngest.ts`'s `sha256Hex` and the media
    * vault's own Rust hasher use). Enrichment only — `assetId` stays the
@@ -893,7 +903,15 @@ export type SyncLogFindingKind =
   /** A script word carrying digits or a currency symbol did not match. */
   | 'numeric-unmatched'
   /** A re-sync under a different timing engine moved a cut by > 0.1s. */
-  | 'boundary-delta';
+  | 'boundary-delta'
+  /** Wave 3 U9 B1 — per-asset media states, one kind each (never prose-matched):
+   *  bytes offline; hash never computed so identity is unverified; bytes present
+   *  but undecodable; scenes re-pointed from a corrupt file to a same-named
+   *  re-upload. */
+  | 'asset-missing'
+  | 'asset-unverified'
+  | 'asset-corrupt'
+  | 'asset-replaced';
 
 export interface SyncLogEntry {
   id: string;

@@ -364,6 +364,8 @@ interface Props {
   onRenameAsset?: (assetId: string, newName: string) => void;
   /** Media workflow Unit 2 — the Media block's "Match media to scenes". */
   onMatchMedia?: () => MediaMatchSummary | void;
+  /** Wave 3 B2 — a Media tile's decode/thumbnail probe failed on present bytes. */
+  onAssetCorrupt?: (assetId: string, reason: NonNullable<Asset['corrupt']>) => void;
   /** G5 — a bundle zip (dropped on any of the 4 slots below) that failed
    *  validation: corrupt/oversized archive, or bundle-shaped but missing one
    *  of its four required pieces. Logs ONE grouped sync-log finding naming
@@ -533,6 +535,7 @@ export function DropZonePanel({
   onIngestError,
   onRenameAsset,
   onMatchMedia,
+  onAssetCorrupt,
   onBundleImportFailed,
   onApplySync,
   onStagedFilesChange,
@@ -1550,6 +1553,7 @@ export function DropZonePanel({
                 onIngestError={onIngestError}
                 onRenameAsset={onRenameAsset}
                 onMatchMedia={onMatchMedia}
+                onAssetCorrupt={onAssetCorrupt}
                 onDeleteAllMedia={handleAssetsClear}
                 onZipsChosen={(files) => void addFiles(files)}
               />

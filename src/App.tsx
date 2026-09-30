@@ -329,6 +329,7 @@ import type { RecoveryAsset, RecoverySegment } from './components/recovery/degra
 import { writeAssetBlobNative, deleteAssetNative, deleteProjectAssetsNative } from './services/nativeAssetStore';
 import { mediaVaultUnreference, mediaVaultRename } from './services/mediaVaultClient';
 import { applyAssetRename } from './services/mediaRename';
+import { buildAssetHealthEntry, repointFromCorrupt } from './services/assetHealth';
 import { vaultHashesToUnreference } from './services/vaultUnreferencePlan';
 import { unbindDeletedAssets } from './services/unbindDeletedAssets';
 import { matchMediaToScenes, summarizeMediaMatch, type MediaMatchSummary } from './services/matchMediaToScenes';
@@ -6590,6 +6591,33 @@ export default function App() {
     return entry ? appendSyncLogEntries(next, [entry]) : next;
   };
 
+  // Wave 3 U9 B1/B2 — a decode/thumbnail probe failed on PRESENT bytes: flag
+  // the asset (persisted, so the chip survives a reload) and stamp ONE typed
+  // 'asset-corrupt' finding. Idempotent per asset. Nothing is deleted.
+  const handleAssetCorrupt = useCallback((assetId: string, reason: NonNullable<Asset['corrupt']>) => {
+    setProject(prev => {
+      const asset = prev.assets.find(a => a.id === assetId);
+      if (!asset || asset.corrupt || asset.unresolved) return prev;
+      const flagged = { ...asset, corrupt: reason };
+      return appendSyncLogEntries(
+        { ...prev, assets: prev.assets.map(a => (a.id === assetId ? flagged : a)) },
+        [buildAssetHealthEntry(mintSyncLogId(), 'asset-corrupt', [flagged])],
+      );
+    });
+  }, []);
+
+  // One typed 'asset-missing' finding per asset per session, the moment it is
+  // seen offline (a relink/re-upload that resolves it re-arms nothing — the
+  // existing reconnect finding covers the way back).
+  const stampedMissingRef = useRef<Set<string>>(new Set());
+  const missingAssetKey = project.assets.filter(a => a.unresolved).map(a => a.id).join(',');
+  useEffect(() => {
+    const fresh = projectRef.current.assets.filter(a => a.unresolved && !stampedMissingRef.current.has(a.id));
+    if (fresh.length === 0) return;
+    for (const a of fresh) stampedMissingRef.current.add(a.id);
+    setProject(prev => appendSyncLogEntries(prev, [buildAssetHealthEntry(mintSyncLogId(), 'asset-missing', fresh)]));
+  }, [missingAssetKey]);
+
   // Shared delete handler — used by DropZonePanel post-sync assets list
   const handleDeleteAsset = useCallback((assetId: string) => {
     setProject(prev => {
@@ -6657,17 +6685,26 @@ export default function App() {
   }) => {
     setProject(prev => {
       const allAssets = [...prev.assets, ...outcome.assets];
+      // B2 — a same-named healthy re-upload takes over a corrupt file's scenes
+      // (the corrupt asset itself is kept, unused, for the user to delete).
+      const repoint = repointFromCorrupt(prev.assets, outcome.assets, prev.segments);
       const next = {
         ...prev,
         assets: allAssets,
-        segments: autoMatchSegments(allAssets, prev.segments),
+        segments: autoMatchSegments(allAssets, repoint.segments),
         voiceoverId: resolveZipImportVoiceoverId(outcome.assets, allAssets, prev.voiceoverId),
       };
       const total = outcome.counts.imported + outcome.counts.deduped + outcome.counts.unsupportedSkipped + outcome.counts.failed;
       const nestedZipsSkipped = outcome.nestedZipsSkipped ?? [];
-      if (total === 0 && nestedZipsSkipped.length === 0) return next;
+      const replacedEntries = repoint.replaced.length > 0
+        ? [buildAssetHealthEntry(mintSyncLogId(), 'asset-replaced', repoint.replaced)]
+        : [];
+      if (total === 0 && nestedZipsSkipped.length === 0) {
+        return replacedEntries.length > 0 ? appendSyncLogEntries(next, replacedEntries) : next;
+      }
       return appendSyncLogEntries(next, [
         buildMediaImportEntry(mintSyncLogId(), outcome.source, outcome.counts, Date.now(), outcome.duplicateNames, nestedZipsSkipped),
+        ...replacedEntries,
       ]);
     });
 
@@ -8444,6 +8481,7 @@ export default function App() {
             onIngestError={handleMediaIngestError}
             onRenameAsset={handleRenameAsset}
             onMatchMedia={handleMatchMedia}
+            onAssetCorrupt={handleAssetCorrupt}
             onBundleImportFailed={handleBundleImportFailed}
             onApplySync={handleApplySyncFromFiles}
             stagedFilesClearSignal={stagedFilesClearSignal}
