@@ -1,6 +1,7 @@
 # Project Status
 
-Last updated: 2026-10-01 — registry follow-up pack landed on `main` (merge `f962d23`, `ws1-registry-relocation` → `main`; folds into 1.2.0, no installer rebuild). Open count **40 → 41 → 40**: +1 storage-root relocation races the registry gate (41/40, a one-line cap breach) and CLOSED in the same edit by `97df04e` — net **40/40**, breach resolved; trail in the registry follow-up block below.
+Last updated: 2026-10-01 — v1.2.0 bulk-queue landing on `main` (merge `08f1bd7`, `ws1-bulk-queue` → `main`). Open count unchanged at **40/40** (at cap) — found-and-fixed is prose, outside the count. Landed unverified per operator instruction; operator verification on the built 1.2.0 precedes distribution; fix-forward is 1.2.1.
+Prior header (2026-10-01): registry follow-up pack landed on `main` (merge `f962d23`, `ws1-registry-relocation` → `main`; folds into 1.2.0, no installer rebuild). Open count **40 → 41 → 40**: +1 storage-root relocation races the registry gate (41/40, a one-line cap breach) and CLOSED in the same edit by `97df04e` — net **40/40**, breach resolved; trail in the registry follow-up block below.
 Prior header (2026-10-01): v1.1.1 hotfix: media-vault registry corruption class fixed and landed on `main` (merge `85f515e`, `ws1-registry-lock` → `main`). Open count unchanged at **40/40** (at cap) — found-and-fixed is prose, outside the count.
 Prior header (2026-09-30): Wave 3 CLOSED: U9 media unification + hardening landed on `main` (merge `d90c6fd`, `ws1-wave3-media-unify` → `main`), release v1.1.0.
 Open count **38 → 40** (**40/40, AT CAP, not over**): +1 manual binding markers not carried across a full re-sync, +1 spot re-sync
@@ -142,6 +143,20 @@ Two follow-ups to the v1.1.1 registry-corruption fix, both operator-directed. No
 **Unit 2 — recovery notice scoping (`8b44253`).** The media-library recovery surface is no longer an eleventh sync-log category: the sync-log user view is back to its ten run-scoped kinds, pinned by a test. The recovery is an event-scoped, dismissible launch notice that shows only while the persisted finding is unacknowledged (dismissing acknowledges it durably); Storage settings' "Media library repairs" block remains the durable record.
 
 **Noticed, not changed.** Relocating back into a root that still holds a stale earlier copy fails verification when the stale copy has files the source lacks (pre-existing behaviour of the copy-verify flow, unrelated to the registry); not added to the count.
+
+### v1.2.0 — bulk finish, one container, hide-never-close drawer (merge `08f1bd7`, `ws1-bulk-queue` → `main`, release `246e4d0`)
+Landed unverified, per operator instruction: the operator verifies on the built 1.2.0, and distribution is the gate. Fix-forward is 1.2.1. Zero sync-math changes (chunk-plan M4 and golden replay green on the branch before the merge).
+
+What landed (`edf917b`, branch merge of `origin/main` at `fe91035` / `cf8157e`): row 2's finish adopts the cached transcript by the batch language key and force-starts only on a lookup miss; a transcription finish owns is not cancelled by the project switch. A paused intent releases the held GPU container before and while the dialog is up, and a transcribe-to-align gap over 10 seconds warns (`HOLD_FOR_PLAN_SEC` stays 30). `gpu_boot_allowed` refuses a boot for a lookup, a handoff, or a second container (`max_containers=1`, `buffer_containers=0`). Each bulk row checkpoints `staged → transcript-cached → aligned → built`; retry is a free cache lookup; a content re-key resets. Reveal persists word timings, provenance, plan hash, and alignment key; an unchanged hash serves locally. The billing report prints per-row lines and a boot-unused total. The bulk window is a drawer that hides and never closes: no overlay, the editor stays usable, and each row has stage chips, retry, and open.
+
+**FOUND AND FIXED — recorded here in prose, outside the open count** (amount-defect precedent):
+- The second project in a bulk batch timed out with "its transcript is not ready" while that transcript was already `cached: true` on the gateway. Finish was a passive 90-second poll of `transcriptionReady`; bulk auto-fire suppression never started the editor's own transcription.
+- The shared whisper instance was cancelled by the project switch before the row's adopt could commit tokens.
+- A peek under `auto` missed a transcript the batch had stored under `en`.
+- An operator prompt between transcribe and align left the GPU container holding for the full 30-second window.
+- A submission that a live container could serve booted a second container that did no work (`boot-unused`).
+
+- Open-count arithmetic: 40 (registry follow-up) → **40/40, unchanged** — no new open line; the defects above are closed in this landing.
 
 ### Deferred Tasks
 - [DEFERRED · ASR ENGINE LIMITATION] Row 52 ("Llívia") — Whisper never transcribed isolated token; owner ruling 2026-09-03
