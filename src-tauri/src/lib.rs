@@ -41,6 +41,7 @@ mod atomic_stage;
 // Wave 3 U1 — the only module that talks to the cloud sync gateway.
 mod cloud_gateway;
 mod storage_root;
+mod storage_consistency;
 mod whisper;
 
 use base64::Engine as _;
@@ -689,6 +690,8 @@ pub fn run() {
             media_vault::media_vault_generate_thumbnail,
             media_vault::media_vault_read_thumbnail,
             media_vault::media_vault_unreference,
+            media_vault::media_vault_unreference_project,
+            storage_consistency::storage_consistency_scan,
             media_vault::media_vault_rename,
             relink::relink_pick_folder,
             relink::relink_list_folder,

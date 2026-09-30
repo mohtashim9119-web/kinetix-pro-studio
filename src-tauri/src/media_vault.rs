@@ -518,6 +518,54 @@ pub fn media_vault_unreference(
     unreference_project(&root, &content_hash, &project_id)
 }
 
+/// How many vault entries (and how many bytes of them) one project id holds a
+/// reference on.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ProjectRefTotals {
+    pub entries: u64,
+    pub bytes: u64,
+}
+
+/// Read-only: project id -> the vault references it holds. Feeds the storage
+/// consistency scan (`storage_consistency.rs`). A missing registry is an
+/// empty map, not an error (`load_registry`'s own contract).
+pub fn project_reference_totals(root: &Path) -> Result<HashMap<String, ProjectRefTotals>, String> {
+    let mut out: HashMap<String, ProjectRefTotals> = HashMap::new();
+    for entry in load_registry(root)?.entries.values() {
+        for id in &entry.referenced_by_project_ids {
+            let t = out.entry(id.clone()).or_default();
+            t.entries += 1;
+            t.bytes += entry.size_bytes;
+        }
+    }
+    Ok(out)
+}
+
+/// Drops EVERY reference `project_id` holds, whatever the project record
+/// still lists. Deleting a project used to unreference only the hashes its
+/// record listed at that moment, so a reference taken at import time for an
+/// asset the record no longer (or never) listed stayed behind forever —
+/// pinning the blob against reclaim. Returns how many references were dropped.
+pub fn unreference_project_everywhere(root: &Path, project_id: &str) -> Result<u64, String> {
+    let mut registry = load_registry(root)?;
+    let mut dropped = 0u64;
+    for entry in registry.entries.values_mut() {
+        let before = entry.referenced_by_project_ids.len();
+        entry.referenced_by_project_ids.retain(|p| p != project_id);
+        dropped += (before - entry.referenced_by_project_ids.len()) as u64;
+    }
+    if dropped > 0 {
+        save_registry(root, &registry)?;
+    }
+    Ok(dropped)
+}
+
+#[tauri::command]
+pub fn media_vault_unreference_project(app: tauri::AppHandle, project_id: String) -> Result<u64, String> {
+    let root = resolve_storage_root(&app)?;
+    unreference_project_everywhere(&root, &project_id)
+}
+
 /// G6 Step 6 — read-only counterpart to `reclaim_unreferenced_blobs`, for
 /// `size_report`'s "reclaimable" figure. Same shape as
 /// `project_mirror::store_backups_stale_bytes` (the read-only twin of its
