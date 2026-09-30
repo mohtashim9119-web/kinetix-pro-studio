@@ -85,6 +85,10 @@ interface Props {
   /** Names of the project's assets currently offline (`Asset.unresolved`) —
    *  attention kind 7. Live project state, not a log entry. */
   offlineAssetNames?: string[];
+  /** Plain-language lines for unacknowledged media-library recoveries (kind 11). */
+  vaultRecoveryNotices?: string[];
+  /** Called when the user dismisses the kind-11 line, so the finding is acknowledged durably. */
+  onAcknowledgeVaultRecovery?: () => void;
   /** The live timeline (`project.segments`), used only to resolve a grouped
    *  finding's scene to a jump target (`resolveAttentionItemSegmentId`). */
   segments?: { id: string; text?: string }[];
@@ -506,7 +510,8 @@ const TONE_CLASSES: Record<AttentionLine['tone'], { dot: string; text: string }>
 };
 
 export function SyncLogPanel({
-  syncLog, syncRunSummaries, offlineAssetNames, segments = [], onClearLog, onOpenModelsModal, onSeekToSegment,
+  syncLog, syncRunSummaries, offlineAssetNames, vaultRecoveryNotices, onAcknowledgeVaultRecovery,
+  segments = [], onClearLog, onOpenModelsModal, onSeekToSegment,
 }: Props): React.ReactElement {
   // Collapsed by default only when there's nothing to show — an empty section
   // shouldn't occupy the panel, but a run that just skipped scenes should be
@@ -536,11 +541,12 @@ export function SyncLogPanel({
   // Newest first. `syncLog` is append-ordered (oldest first) on the Project;
   // reverse a COPY so the prop array is never mutated.
   const entries = [...syncLog].reverse();
-  const view = buildSyncLogUserView(syncLog, syncRunSummaries, offlineAssetNames);
+  const view = buildSyncLogUserView(syncLog, syncRunSummaries, offlineAssetNames, vaultRecoveryNotices);
 
   const [dismissed, setDismissed] = useState<Set<string>>(readStoredDismissed);
   const dismissKey = (kind: string): string => `${kind}@${view.windowKey}`;
   const dismissLine = (kind: string): void => {
+    if (kind === 'vault-registry-recovered') onAcknowledgeVaultRecovery?.();
     setDismissed(prev => {
       const next = new Set(prev);
       next.add(dismissKey(kind));

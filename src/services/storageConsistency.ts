@@ -12,10 +12,13 @@ export type ConsistencyFindingKind =
   | 'recordNotOnDashboard'
   | 'dashboardWithoutRecord'
   | 'dataWithoutRecord'
-  | 'emptyStoreDir';
+  | 'emptyStoreDir'
+  | 'vaultRegistryUnparseable'
+  | 'vaultEntryWithoutBlob'
+  | 'vaultBlobSizeMismatch';
 
 export interface ConsistencyPath {
-  role: 'storeRecord' | 'assets' | 'mirrorRecord' | 'storeDir' | 'vaultRefs';
+  role: 'storeRecord' | 'assets' | 'mirrorRecord' | 'storeDir' | 'vaultRefs' | 'vaultRegistry' | 'vaultBlob';
   /** Empty for `vaultRefs` (a set of registry entries, not a path). */
   path: string;
   bytes: number;
@@ -60,5 +63,11 @@ export function describeFinding(f: ConsistencyFinding): string {
         : `Files belonging to ${who} remain, but the project itself is gone.`;
     case 'emptyStoreDir':
       return 'An empty project folder with no saved project inside.';
+    case 'vaultRegistryUnparseable':
+      return 'The media library index is damaged. It is repaired automatically the next time the app starts or media is imported.';
+    case 'vaultEntryWithoutBlob':
+      return `The media library lists ${f.name ? `“${f.name}”` : 'a file'}, but the file itself is missing.`;
+    case 'vaultBlobSizeMismatch':
+      return `The media library file ${f.name ? `“${f.name}” ` : ''}is not the size it was imported at.`;
   }
 }

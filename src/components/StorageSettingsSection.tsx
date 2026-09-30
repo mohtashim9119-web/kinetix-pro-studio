@@ -18,6 +18,13 @@ import {
   scanStorageConsistency,
   type ConsistencyReport,
 } from '../services/storageConsistency';
+import {
+  acknowledgeVaultRecovery,
+  describeVaultRecovery,
+  fetchVaultRecoveryFindings,
+  unacknowledgedFindings,
+  type VaultRecoveryFinding,
+} from '../services/vaultRecovery';
 
 const HAIRLINE = 'pt-6 mt-6 border-t border-white/[0.06]';
 const BLOCK_TITLE = 'text-[9px] font-black uppercase tracking-widest text-[#F27D26]';
@@ -49,6 +56,7 @@ export function StorageSettingsSection({ onOpenRelocation, refreshSignal }: Stor
   const [cleanupAllBusy, setCleanupAllBusy] = useState(false);
   const [consistency, setConsistency] = useState<ConsistencyReport | null>(null);
   const [consistencyError, setConsistencyError] = useState<string | null>(null);
+  const [vaultRecoveries, setVaultRecoveries] = useState<VaultRecoveryFinding[]>([]);
 
   const refresh = useCallback(async (): Promise<void> => {
     if (!isTauri()) return;
@@ -68,6 +76,12 @@ export function StorageSettingsSection({ onOpenRelocation, refreshSignal }: Stor
     } catch (err) {
       setConsistency(null);
       setConsistencyError(err instanceof Error ? err.message : String(err));
+    }
+    // The media-library recovery history — its own try, for the same reason.
+    try {
+      setVaultRecoveries(await fetchVaultRecoveryFindings());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
     }
   }, []);
 
@@ -185,6 +199,36 @@ export function StorageSettingsSection({ onOpenRelocation, refreshSignal }: Stor
         <p data-testid="storage-consistency-error" className="text-[10px] text-red-400 mb-4">
           Could not check project data consistency: {consistencyError}
         </p>
+      )}
+      {vaultRecoveries.length > 0 && (
+        <div className="space-y-2 mb-4" data-testid="storage-vault-recoveries">
+          <p className={BLOCK_TITLE}>Media library repairs</p>
+          {vaultRecoveries.map((f) => (
+            <div key={`${f.kind}-${f.atMs}-${f.corruptSha256}`} className="text-[10px] text-gray-300" data-testid="storage-vault-recovery">
+              <p>{describeVaultRecovery(f)}</p>
+              <p className="text-[9px] text-gray-600">
+                {new Date(f.atMs).toLocaleString()}
+                {f.mode ? ` · ${f.mode}` : ''}
+                {f.quarantinePath ? ` · damaged copy kept at ${f.quarantinePath}` : ''}
+                {f.acknowledged ? ' · dismissed' : ''}
+              </p>
+            </div>
+          ))}
+          {unacknowledgedFindings(vaultRecoveries).length > 0 && (
+            <button
+              type="button"
+              data-testid="storage-vault-recovery-dismiss"
+              onClick={() => {
+                void acknowledgeVaultRecovery()
+                  .then(() => setVaultRecoveries((prev) => prev.map((f) => ({ ...f, acknowledged: true }))))
+                  .catch((err) => setError(err instanceof Error ? err.message : String(err)));
+              }}
+              className="text-[9px] text-gray-400 hover:text-white underline"
+            >
+              Dismiss
+            </button>
+          )}
+        </div>
       )}
       {consistency && consistency.findings.length > 0 && (
         <div className="space-y-2 mb-4" data-testid="storage-consistency">
