@@ -806,6 +806,58 @@
         }
       ],
       "text": "por cento"
+    },
+    {
+      "language": "de",
+      "input": "3",
+      "note": "de: bare integer (script \"3\" vs spoken \"drei\")",
+      "words": [
+        {
+          "input": "3",
+          "representable": true,
+          "mapped": "drei"
+        }
+      ],
+      "text": "drei"
+    },
+    {
+      "language": "fr",
+      "input": "21",
+      "note": "fr: bare integer, hyphenated reading",
+      "words": [
+        {
+          "input": "21",
+          "representable": true,
+          "mapped": "vingt et un"
+        }
+      ],
+      "text": "vingt et un"
+    },
+    {
+      "language": "pt",
+      "input": "2024",
+      "note": "pt: bare year-shaped integer",
+      "words": [
+        {
+          "input": "2024",
+          "representable": true,
+          "mapped": "dois mil vinte e quatro"
+        }
+      ],
+      "text": "dois mil vinte e quatro"
+    },
+    {
+      "language": "es",
+      "input": "1998",
+      "note": "es: bare year-shaped integer",
+      "words": [
+        {
+          "input": "1998",
+          "representable": true,
+          "mapped": "mil novecientos noventa y ocho"
+        }
+      ],
+      "text": "mil novecientos noventa y ocho"
     }
   ]
 }

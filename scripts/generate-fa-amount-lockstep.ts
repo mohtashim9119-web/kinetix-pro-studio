@@ -94,6 +94,11 @@ export const AMOUNT_LOCKSTEP_CASES: Case[] = [
   { lang: 'de', input: '%', note: 'de: prozent' },
   { lang: 'pt', input: '@', note: 'pt: arroba' },
   { lang: 'pt', input: '%', note: 'pt: por cento' },
+  // -- bare integers in the language's own words (the matcher's canonicalize reads these identically) --
+  { lang: 'de', input: '3', note: 'de: bare integer (script "3" vs spoken "drei")' },
+  { lang: 'fr', input: '21', note: 'fr: bare integer, hyphenated reading' },
+  { lang: 'pt', input: '2024', note: 'pt: bare year-shaped integer' },
+  { lang: 'es', input: '1998', note: 'es: bare year-shaped integer' },
 ];
 
 const out = AMOUNT_LOCKSTEP_CASES.map(c => {
