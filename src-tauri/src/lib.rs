@@ -694,6 +694,8 @@ pub fn run() {
             media_vault::media_vault_unreference_project,
             storage_consistency::storage_consistency_scan,
             storage_quarantine::storage_quarantine_project,
+            storage_quarantine::storage_drop_project_refs,
+            storage_quarantine::storage_restore_project_refs,
             media_vault::media_vault_rename,
             relink::relink_pick_folder,
             relink::relink_list_folder,

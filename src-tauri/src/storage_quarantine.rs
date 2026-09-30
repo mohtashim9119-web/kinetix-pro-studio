@@ -456,6 +456,18 @@ pub fn restore_dropped_refs(root: &Path, id: &str) -> Result<u64, String> {
     crate::media_vault::restore_project_refs(root, id, &hashes)
 }
 
+/// IPC doors for the two directions. Nothing calls them automatically: a drop is
+/// made only on an explicit operator ruling for a specific project id.
+#[tauri::command]
+pub fn storage_drop_project_refs(app: tauri::AppHandle, id: String) -> Result<RefDropManifest, String> {
+    drop_project_refs(&crate::storage_root::resolve_storage_root(&app)?, &id)
+}
+
+#[tauri::command]
+pub fn storage_restore_project_refs(app: tauri::AppHandle, id: String) -> Result<u64, String> {
+    restore_dropped_refs(&crate::storage_root::resolve_storage_root(&app)?, &id)
+}
+
 /// Read-only listing of what is in quarantine, for a future UI.
 #[allow(dead_code)]
 pub fn list_quarantine(root: &Path) -> Vec<QuarantineManifest> {
