@@ -83,11 +83,13 @@ textarea,
   user-select: text;
 }
 
-.custom-scrollbar {
-  /* Reserve the scrollbar's track whether or not content overflows, so a
-     panel's content width is identical collapsed and expanded (a scroller
-     appearing on expand used to narrow every row by its width). */
-  scrollbar-gutter: stable;
+.custom-scrollbar.overflow-y-auto {
+  /* Always keep the (custom, 9px, transparent-track) scrollbar present so a
+     panel's content width is identical collapsed and expanded. NOT
+     `scrollbar-gutter: stable`: with a custom ::-webkit-scrollbar WebKit
+     reserves the classic ~15px gutter, which made the collapsed panel
+     NARROWER than the expanded one. */
+  overflow-y: scroll;
 }
 .custom-scrollbar::-webkit-scrollbar {
   width: 9px;

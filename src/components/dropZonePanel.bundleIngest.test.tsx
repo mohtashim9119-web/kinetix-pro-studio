@@ -269,7 +269,7 @@ describe('DropZonePanel — the Media slot collapses like the other three', () =
   it('starts expanded; the header chevron hides the body but keeps the block mounted (a drop on the collapsed header still ingests)', async () => {
     const panel = mountPanel();
     const toggle = panel.container.querySelector<HTMLButtonElement>('[data-testid="media-slot-toggle"]')!;
-    const body = () => panel.container.querySelector('[data-testid="media-block"]')!.parentElement as HTMLElement;
+    const body = () => panel.container.querySelector('[data-testid="media-block-body"]') as HTMLElement;
     expect(toggle.getAttribute('aria-expanded')).toBe('true');
     expect(body().hidden).toBe(false);
     await act(async () => { toggle.click(); });
@@ -278,5 +278,27 @@ describe('DropZonePanel — the Media slot collapses like the other three', () =
     expect(panel.container.querySelector('[data-testid="media-block"]')).not.toBeNull(); // still mounted
     await act(async () => { toggle.click(); });
     expect(body().hidden).toBe(false);
+  });
+
+  it('collapsed, the Media slot keeps exactly TWO header buttons (wand + import) so all four slots read symmetrical; the rest appear on expand', async () => {
+    const panel = mountPanel({ onMatchMedia: () => undefined });
+    const toggle = panel.container.querySelector<HTMLButtonElement>('[data-testid="media-slot-toggle"]')!;
+    await act(async () => { toggle.click(); }); // collapse
+    const visible = (root: ParentNode) => [...root.querySelectorAll<HTMLElement>('button')].filter(b => !b.closest('[hidden]'));
+    const media = panel.container.querySelector('[data-testid="media-slot"]')!;
+    const labels = visible(media).map(b => b.getAttribute('aria-label')).filter(Boolean);
+    expect(labels).toEqual(['Match media to scenes', 'Import media']);
+    await act(async () => { toggle.click(); }); // expand
+    const expanded = visible(media).map(b => b.getAttribute('aria-label')).filter(Boolean);
+    expect(expanded).toEqual(expect.arrayContaining(['Relink media', 'Delete all media']));
+  });
+
+  it('no slot shows a Ready / Pending / Empty status chip any more', async () => {
+    const panel = mountPanel({ persistedScript: 'x', persistedScriptName: 'script.txt', persistedAssetCount: 3 });
+    const text = panel.container.textContent ?? '';
+    for (const word of ['Pending', 'Empty']) expect(text).not.toContain(word);
+    expect(panel.container.querySelectorAll('[data-testid="media-slot"] [data-testid="media-block-health-chip"]').length).toBe(0);
+    // "Ready" survives only in the summary line ("All ready" / "N of 3 ready"), never as a per-slot badge.
+    expect(text.match(/\bReady\b/g) ?? []).toHaveLength(0);
   });
 });

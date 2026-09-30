@@ -184,7 +184,7 @@ function SlotRow({
         onDropFiles(Array.from(e.dataTransfer.files));
       }}
     >
-      {/* Header — chevron + type tile + label/sub-line + status chip + action buttons.
+      {/* Header — chevron + type tile + label/sub-line + action buttons (no status chips — the sub-line already says what is loaded).
           Action buttons (Replace/Browse/+Add/×) are always visible, independent of
           `expanded` — only the body below the header shows/hides on toggle. */}
       <div className="w-full flex items-center gap-2.5 px-3 py-2.5">
@@ -206,23 +206,6 @@ function SlotRow({
             <span className="text-[11.5px] text-[var(--kx-muted)] truncate">{subLine}</span>
           </span>
         </button>
-
-        {stagedFile ? (
-          <span className="flex-shrink-0 flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-[6px]
-                           bg-[var(--kx-accent-soft)] text-[var(--kx-accent-2)]">
-            <RefreshCw size={11} /> Pending
-          </span>
-        ) : persistedLabel ? (
-          <span className="flex-shrink-0 flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-[6px]
-                           bg-[var(--kx-ready-soft)] text-[var(--kx-ready)]">
-            <Check size={11} /> Ready
-          </span>
-        ) : (
-          <span className="flex-shrink-0 flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-[6px]
-                           bg-[var(--kx-surface-2)] text-[var(--kx-faint)]">
-            <AlertCircle size={11} /> Empty
-          </span>
-        )}
 
         <button
           onClick={(e) => { e.stopPropagation(); ref.current?.click(); }}
@@ -1487,61 +1470,23 @@ export function DropZonePanel({
                 void collectDroppedFiles(e.dataTransfer).then(files => addFiles(files));
               }}
             >
-              <div className="w-full flex items-center gap-2.5 px-3 py-2.5">
-                <button
-                  type="button"
-                  data-testid="media-slot-toggle"
-                  aria-expanded={expanded === 'assets'}
-                  onClick={() => toggle('assets')}
-                  className="flex-1 min-w-0 flex items-center gap-2.5 text-left"
-                >
-                  <span className="flex-none w-6 flex items-center justify-center">
-                    <ChevronRight
-                      size={13}
-                      className={`transition-transform ${expanded === 'assets' ? 'rotate-90 text-[var(--kx-accent)]' : 'text-[var(--kx-faint)]'}`}
-                    />
-                  </span>
-                  <span
-                    className="flex-none w-9 h-9 rounded-[10px] flex items-center justify-center"
-                    style={{ background: '#c084fc26', color: '#c084fc' }}
-                  >
-                    <ImageIcon size={18} />
-                  </span>
-                  <span className="flex-1 min-w-0 flex flex-col gap-0.5">
-                    <span className="text-[14px] font-semibold text-[var(--kx-text)] min-w-0 truncate">Media</span>
-                    <span className="text-[11.5px] text-[var(--kx-muted)] truncate">
-                      {allStagedAssets.length > 0
-                        ? `${allStagedAssets.length} file${allStagedAssets.length !== 1 ? 's' : ''}`
-                        : persistedAssetCount > 0
-                          ? `${persistedAssetCount} file${persistedAssetCount !== 1 ? 's' : ''}`
-                          : 'Images, videos, or ZIP archive'}
-                    </span>
-                  </span>
-                </button>
-                {allStagedAssets.length > 0 ? (
-                  <span className="flex-shrink-0 flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-[6px]
-                                   bg-[var(--kx-accent-soft)] text-[var(--kx-accent-2)]">
-                    <RefreshCw size={11} /> Pending
-                  </span>
-                ) : persistedAssetCount > 0 ? (
-                  <span className="flex-shrink-0 flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-[6px]
-                                   bg-[var(--kx-ready-soft)] text-[var(--kx-ready)]">
-                    <Check size={11} /> Ready
-                  </span>
-                ) : (
-                  <span className="flex-shrink-0 flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-[6px]
-                                   bg-[var(--kx-surface-2)] text-[var(--kx-faint)]">
-                    Optional
-                  </span>
-                )}
-              </div>
-
               {/* Collapsing only HIDES the block — it stays mounted so a drop
                   onto the collapsed header still ingests, and an import in
                   flight keeps its state. */}
-              <div hidden={expanded !== 'assets'}>
               <MediaBlock
                 ref={mediaBlockRef}
+                header={{
+                  expanded: expanded === 'assets',
+                  onToggle: () => toggle('assets'),
+                  icon: <ImageIcon size={18} />,
+                  color: '#c084fc',
+                  title: 'Media',
+                  subtitle: allStagedAssets.length > 0
+                    ? `${allStagedAssets.length} file${allStagedAssets.length !== 1 ? 's' : ''}`
+                    : persistedAssetCount > 0
+                      ? `${persistedAssetCount} file${persistedAssetCount !== 1 ? 's' : ''}`
+                      : 'Images, videos, or ZIP archive',
+                }}
                 projectId={projectId}
                 assets={assets}
                 segments={segments}
@@ -1557,7 +1502,6 @@ export function DropZonePanel({
                 onDeleteAllMedia={handleAssetsClear}
                 onZipsChosen={(files) => void addFiles(files)}
               />
-              </div>
             </div>
 
           </div>{/* end scrollable */}

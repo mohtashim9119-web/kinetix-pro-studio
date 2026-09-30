@@ -30,7 +30,7 @@
 // ---------------------------------------------------------------------------
 
 import { useState, useRef, useCallback, useMemo, useEffect, forwardRef, useImperativeHandle } from 'react';
-import { Search, Film, Image as ImageIcon, Music, Link2, Trash2, FolderPlus, FileUp, Upload, AlertCircle, Loader2, Copy, Wand2, X } from 'lucide-react';
+import { Search, Film, Image as ImageIcon, Music, Link2, Trash2, FolderPlus, FileUp, Upload, AlertCircle, Loader2, Copy, Wand2, X, ChevronRight } from 'lucide-react';
 import { ConfirmDialog } from './ConfirmDialog';
 import type { Asset, VideoSegment } from '../types';
 import { formatTime } from '../services/timeFormat';
@@ -93,6 +93,16 @@ interface MediaBlockProps {
    *  flags the asset (`Asset.corrupt`) and stamps the typed finding; nothing
    *  is deleted. Absent -> the tile still shows its corrupt state locally. */
   onAssetCorrupt?: (assetId: string, reason: NonNullable<Asset['corrupt']>) => void;
+  /** Wave 3 U9 — when given, the block renders the slot's own header (chevron,
+   *  tile, title, wand + import) and collapses its body like the other slots. */
+  header?: {
+    expanded: boolean;
+    onToggle: () => void;
+    icon: React.ReactNode;
+    color: string;
+    title: string;
+    subtitle: string;
+  };
 }
 
 /** Wave 3 U9 — what the parent drives through a ref: media dropped anywhere
@@ -353,6 +363,7 @@ export const MediaBlock = forwardRef<MediaBlockHandle, MediaBlockProps>(function
   onDeleteAllMedia,
   onZipsChosen,
   onAssetCorrupt,
+  header,
 }, ref) {
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('all');
@@ -372,6 +383,25 @@ export const MediaBlock = forwardRef<MediaBlockHandle, MediaBlockProps>(function
   const filesInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
   const [importMenuOpen, setImportMenuOpen] = useState(false);
+  const [importMenuPos, setImportMenuPos] = useState({ top: 0, right: 0 });
+  const importButtonRef = useRef<HTMLButtonElement>(null);
+  const toggleImportMenu = useCallback(() => {
+    const rect = importButtonRef.current?.getBoundingClientRect();
+    if (rect) setImportMenuPos({ top: rect.bottom + 4, right: Math.max(4, window.innerWidth - rect.right) });
+    setImportMenuOpen(o => !o);
+  }, []);
+  // Close the menu on any outside press or Escape.
+  useEffect(() => {
+    if (!importMenuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as Element | null;
+      if (!t?.closest('[data-testid="media-block-import-menu"], [data-testid="media-block-import"]')) setImportMenuOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setImportMenuOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey); };
+  }, [importMenuOpen]);
 
   // G6 polish item 4a — the project's voiceover is spine, not presentation
   // media: slot 3 (above this block) is its home, never this grid.
@@ -560,23 +590,14 @@ export const MediaBlock = forwardRef<MediaBlockHandle, MediaBlockProps>(function
     [segments, mediaAssets],
   );
 
-  return (
-    <div className="px-3 pb-3" data-testid="media-block">
-      <div className="flex items-center justify-between gap-1.5 px-1 mb-2">
-        <h3 className="text-[11px] font-semibold uppercase tracking-wide text-[var(--kx-faint)] shrink-0" data-testid="media-block-count">
-          Media ({mediaAssets.length})
-        </h3>
-        {busyLabel && (
-          <span
-            className="flex items-center gap-1 text-[10px] text-[var(--kx-faint)] min-w-0 truncate"
-            role="status"
-            aria-live="polite"
-          >
-            <Loader2 size={11} className="animate-spin shrink-0" />
-            {busyLabel}
-          </span>
-        )}
-        <div className="flex items-center gap-1.5 shrink-0">
+  // The two primary actions (wand + import) live in the slot HEADER when the
+  // block is given one (so they stay visible collapsed, keeping all four slots
+  // symmetrical), and in the toolbar otherwise.
+  const actionBtnClass = header
+    ? 'flex items-center justify-center w-8 h-8 rounded-[8px] bg-[var(--kx-surface-2)] border border-[var(--kx-line)] text-[var(--kx-muted)] hover:text-[var(--kx-text)] hover:border-[var(--kx-line-2)] transition-colors flex-shrink-0 disabled:opacity-40'
+    : 'p-1 rounded hover:bg-[var(--kx-surface-2)] text-[var(--kx-faint)] disabled:opacity-40';
+  const primaryActions = (
+    <>
           {onMatchMedia && (
             <button
               type="button"
@@ -585,13 +606,14 @@ export const MediaBlock = forwardRef<MediaBlockHandle, MediaBlockProps>(function
               aria-label="Match media to scenes"
               disabled={busy}
               onClick={() => { const summary = onMatchMedia(); setMatchSummary(summary ?? null); }}
-              className="p-1 rounded hover:bg-[var(--kx-surface-2)] text-[var(--kx-faint)] disabled:opacity-40"
+              className={actionBtnClass}
             >
               <Wand2 size={13} />
             </button>
           )}
           <div className="relative">
             <button
+              ref={importButtonRef}
               type="button"
               data-testid="media-block-import"
               title="Import media — files, folders or zips"
@@ -599,8 +621,8 @@ export const MediaBlock = forwardRef<MediaBlockHandle, MediaBlockProps>(function
               aria-haspopup="menu"
               aria-expanded={importMenuOpen}
               disabled={busy}
-              onClick={() => setImportMenuOpen(o => !o)}
-              className="p-1 rounded hover:bg-[var(--kx-surface-2)] text-[var(--kx-faint)] disabled:opacity-40"
+              onClick={toggleImportMenu}
+              className={actionBtnClass}
             >
               <Upload size={13} />
             </button>
@@ -608,7 +630,8 @@ export const MediaBlock = forwardRef<MediaBlockHandle, MediaBlockProps>(function
               <div
                 role="menu"
                 data-testid="media-block-import-menu"
-                className="absolute right-0 top-full mt-1 z-20 min-w-[170px] rounded-lg border border-[var(--kx-line-2)] bg-[var(--kx-surface)] py-1 shadow-lg"
+                style={{ top: importMenuPos.top, right: importMenuPos.right }}
+                className="fixed z-50 min-w-[170px] rounded-lg border border-[var(--kx-line-2)] bg-[var(--kx-surface)] py-1 shadow-lg"
               >
                 <button
                   type="button" role="menuitem"
@@ -629,6 +652,57 @@ export const MediaBlock = forwardRef<MediaBlockHandle, MediaBlockProps>(function
               </div>
             )}
           </div>
+    </>
+  );
+
+  return (
+    <div data-testid="media-block">
+      {header && (
+        <div className="w-full flex items-center gap-2.5 px-3 py-2.5">
+          <button
+            type="button"
+            data-testid="media-slot-toggle"
+            aria-expanded={header.expanded}
+            onClick={header.onToggle}
+            className="flex-1 min-w-0 flex items-center gap-2.5 text-left"
+          >
+            <span className="flex-none w-6 flex items-center justify-center">
+              <ChevronRight
+                size={13}
+                className={`transition-transform ${header.expanded ? 'rotate-90 text-[var(--kx-accent)]' : 'text-[var(--kx-faint)]'}`}
+              />
+            </span>
+            <span
+              className="flex-none w-9 h-9 rounded-[10px] flex items-center justify-center"
+              style={{ background: `${header.color}26`, color: header.color }}
+            >
+              {header.icon}
+            </span>
+            <span className="flex-1 min-w-0 flex flex-col gap-0.5">
+              <span className="text-[14px] font-semibold text-[var(--kx-text)] min-w-0 truncate">{header.title}</span>
+              <span className="text-[11.5px] text-[var(--kx-muted)] truncate">{header.subtitle}</span>
+            </span>
+          </button>
+          {primaryActions}
+        </div>
+      )}
+      <div hidden={header ? !header.expanded : false} className="px-3 pb-3" data-testid="media-block-body">
+      <div className="flex items-center justify-between gap-1.5 px-1 mb-2">
+        <h3 className="text-[11px] font-semibold uppercase tracking-wide text-[var(--kx-faint)] shrink-0" data-testid="media-block-count">
+          Media ({mediaAssets.length})
+        </h3>
+        {busyLabel && (
+          <span
+            className="flex items-center gap-1 text-[10px] text-[var(--kx-faint)] min-w-0 truncate"
+            role="status"
+            aria-live="polite"
+          >
+            <Loader2 size={11} className="animate-spin shrink-0" />
+            {busyLabel}
+          </span>
+        )}
+        <div className="flex items-center gap-1.5 shrink-0">
+          {!header && primaryActions}
           <button
             type="button"
             data-testid="media-block-relink-door"
@@ -931,6 +1005,7 @@ export const MediaBlock = forwardRef<MediaBlockHandle, MediaBlockProps>(function
           onCancel={() => setConfirmDeleteAsset(null)}
         />
       )}
+      </div>
     </div>
   );
 });
