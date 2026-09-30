@@ -33,10 +33,13 @@ describe('handleDeleteAsset wires up media-vault unreference (G6 Step 6)', () =>
 
   it('checks for a surviving twin (another asset with the same contentHash) before unreferencing', () => {
     const body = handleDeleteAssetBody();
-    expect(body.toLowerCase()).toContain('twin');
-    // The twin check must scan this project's OTHER assets by contentHash —
-    // not just the deleted asset's own hash in isolation.
-    expect(body).toMatch(/prev\.assets\.some\([^)]*a\.contentHash === contentHash/);
+    // Wave 3 B3: the twin check moved into the SHARED plan (single delete and
+    // delete-all use it, so they cannot disagree). The handler must go through
+    // it; the plan itself scans the REMAINING assets by contentHash.
+    expect(body).toContain('vaultHashesToUnreference(');
+    const plan = readFileSync(resolve(import.meta.dirname, 'services/vaultUnreferencePlan.ts'), 'utf-8');
+    expect(plan.toLowerCase()).toContain('twin');
+    expect(plan).toMatch(/remaining\.map\(a => a\.contentHash\)/);
   });
 
   it('unreferences only AFTER the native delete settles, not fired in parallel with it', () => {
