@@ -37,8 +37,10 @@ vi.mock('../services/waveformStore', () => ({
 }));
 
 const mockMediaVaultUnreference = vi.fn(async (_contentHash: string, _projectId: string): Promise<void> => undefined);
+const mockMediaVaultUnreferenceProject = vi.fn(async (_projectId: string): Promise<void> => undefined);
 vi.mock('../services/mediaVaultClient', () => ({
   mediaVaultUnreference: (contentHash: string, projectId: string) => mockMediaVaultUnreference(contentHash, projectId),
+  mediaVaultUnreferenceProject: (projectId: string) => mockMediaVaultUnreferenceProject(projectId),
 }));
 
 // eslint-disable-next-line import/first
@@ -87,6 +89,8 @@ beforeEach(() => {
   mockDeleteProjectAssetsNativeStrict.mockResolvedValue(undefined);
   mockLoadProject.mockResolvedValue(null);
   mockMediaVaultUnreference.mockResolvedValue(undefined);
+  mockMediaVaultUnreferenceProject.mockReset();
+  mockMediaVaultUnreferenceProject.mockResolvedValue(undefined);
 });
 afterEach(() => {
   act(() => root.unmount());
@@ -101,6 +105,9 @@ describe('ProjectDashboard bulk delete — native asset cleanup', () => {
 
     expect(mockDeleteProjectAssetsNativeStrict).toHaveBeenCalledWith('p1');
     expect(mockDeleteProjectData).toHaveBeenCalledWith('p1');
+    // Every vault reference the project holds is dropped, not just the hashes its record lists
+    // (a bulk project deleted before its build wrote its assets listed none, and leaked all 14).
+    expect(mockMediaVaultUnreferenceProject).toHaveBeenCalledWith('p1');
     expect(onFailed).not.toHaveBeenCalled();
   });
 
