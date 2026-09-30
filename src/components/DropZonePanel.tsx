@@ -56,6 +56,7 @@ import {
 import { shouldClearStagedAfterSync } from '../services/applySyncAbort';
 import { BUILD_TIMELINE_COPY, spineGateReason } from '../services/buildTimelineGate';
 import { MediaBlock, type MediaBlockHandle, type MediaIngestOutcome } from './MediaBlock';
+import { collectDroppedFiles } from '../services/droppedFiles';
 import { carriesAssetDrag } from '../services/assetDragChannel';
 import type { MediaMatchSummary } from '../services/matchMediaToScenes';
 import { classifyAndIngestBundleZip } from '../services/bundleIngest';
@@ -87,7 +88,7 @@ export const EMPTY_STAGED: StagedFiles = {
   zipFiles: [],
 };
 
-type ExpandKey = 'script' | 'scene' | 'voiceover' | null;
+type ExpandKey = 'script' | 'scene' | 'voiceover' | 'assets' | null;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -615,7 +616,7 @@ export function DropZonePanel({
   const maxSegmentDuration = Math.max(1, ...segments.map((s) => s.duration));
 
   // ── Collapsible section state ──────────────────────────────────────────────
-  const [expanded, setExpanded] = useState<ExpandKey>(null);
+  const [expanded, setExpanded] = useState<ExpandKey>('assets');
   const [slotError, setSlotError] = useState<string | null>(null);
   // G5 — bundle ingest's own confirmation line (success only; a failure uses
   // `slotError` above, matching every other slot-drop error already does).
@@ -981,8 +982,7 @@ export function DropZonePanel({
     // Staging them is only the fallback when the block is not mounted.
     const mediaBlock = mediaBlockRef.current;
     if (mediaBlock) {
-      mediaBlock.ingestFiles(assetEntries.map(a => a.file));
-      mediaBlock.ingestZips(zipEntries.map(z => z.file));
+      mediaBlock.ingestFiles([...assetEntries.map(a => a.file), ...zipEntries.map(z => z.file)]);
       assetEntries.length = 0;
       zipEntries.length = 0;
     }
@@ -1479,27 +1479,42 @@ export function DropZonePanel({
                 if (carriesAssetDrag(e.dataTransfer)) return;
                 e.preventDefault();
                 setAssetsDragOver(false);
-                void addFiles(Array.from(e.dataTransfer.files));
+                // Read the entries synchronously-started (the DataTransfer is
+                // only valid during the event), then route once they resolve.
+                void collectDroppedFiles(e.dataTransfer).then(files => addFiles(files));
               }}
             >
               <div className="w-full flex items-center gap-2.5 px-3 py-2.5">
-                <span className="flex-none w-6" aria-hidden="true" />
-                <span
-                  className="flex-none w-9 h-9 rounded-[10px] flex items-center justify-center"
-                  style={{ background: '#c084fc26', color: '#c084fc' }}
+                <button
+                  type="button"
+                  data-testid="media-slot-toggle"
+                  aria-expanded={expanded === 'assets'}
+                  onClick={() => toggle('assets')}
+                  className="flex-1 min-w-0 flex items-center gap-2.5 text-left"
                 >
-                  <ImageIcon size={18} />
-                </span>
-                <span className="flex-1 min-w-0 flex flex-col gap-0.5">
-                  <span className="text-[14px] font-semibold text-[var(--kx-text)] min-w-0 truncate">Media</span>
-                  <span className="text-[11.5px] text-[var(--kx-muted)] truncate">
-                    {allStagedAssets.length > 0
-                      ? `${allStagedAssets.length} file${allStagedAssets.length !== 1 ? 's' : ''}`
-                      : persistedAssetCount > 0
-                        ? `${persistedAssetCount} file${persistedAssetCount !== 1 ? 's' : ''}`
-                        : 'Images, videos, or ZIP archive'}
+                  <span className="flex-none w-6 flex items-center justify-center">
+                    <ChevronRight
+                      size={13}
+                      className={`transition-transform ${expanded === 'assets' ? 'rotate-90 text-[var(--kx-accent)]' : 'text-[var(--kx-faint)]'}`}
+                    />
                   </span>
-                </span>
+                  <span
+                    className="flex-none w-9 h-9 rounded-[10px] flex items-center justify-center"
+                    style={{ background: '#c084fc26', color: '#c084fc' }}
+                  >
+                    <ImageIcon size={18} />
+                  </span>
+                  <span className="flex-1 min-w-0 flex flex-col gap-0.5">
+                    <span className="text-[14px] font-semibold text-[var(--kx-text)] min-w-0 truncate">Media</span>
+                    <span className="text-[11.5px] text-[var(--kx-muted)] truncate">
+                      {allStagedAssets.length > 0
+                        ? `${allStagedAssets.length} file${allStagedAssets.length !== 1 ? 's' : ''}`
+                        : persistedAssetCount > 0
+                          ? `${persistedAssetCount} file${persistedAssetCount !== 1 ? 's' : ''}`
+                          : 'Images, videos, or ZIP archive'}
+                    </span>
+                  </span>
+                </button>
                 {allStagedAssets.length > 0 ? (
                   <span className="flex-shrink-0 flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-[6px]
                                    bg-[var(--kx-accent-soft)] text-[var(--kx-accent-2)]">
@@ -1518,6 +1533,10 @@ export function DropZonePanel({
                 )}
               </div>
 
+              {/* Collapsing only HIDES the block — it stays mounted so a drop
+                  onto the collapsed header still ingests, and an import in
+                  flight keeps its state. */}
+              <div hidden={expanded !== 'assets'}>
               <MediaBlock
                 ref={mediaBlockRef}
                 projectId={projectId}
@@ -1534,6 +1553,7 @@ export function DropZonePanel({
                 onDeleteAllMedia={handleAssetsClear}
                 onZipsChosen={(files) => void addFiles(files)}
               />
+              </div>
             </div>
 
           </div>{/* end scrollable */}

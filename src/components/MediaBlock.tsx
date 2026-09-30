@@ -30,7 +30,7 @@
 // ---------------------------------------------------------------------------
 
 import { useState, useRef, useCallback, useMemo, useEffect, forwardRef, useImperativeHandle } from 'react';
-import { Search, Film, Image as ImageIcon, Music, Link2, Trash2, FolderPlus, FileUp, FileArchive, AlertCircle, Loader2, Copy, Wand2, X } from 'lucide-react';
+import { Search, Film, Image as ImageIcon, Music, Link2, Trash2, FolderPlus, FileUp, Upload, AlertCircle, Loader2, Copy, Wand2, X } from 'lucide-react';
 import { ConfirmDialog } from './ConfirmDialog';
 import type { Asset, VideoSegment } from '../types';
 import { formatTime } from '../services/timeFormat';
@@ -338,7 +338,7 @@ export const MediaBlock = forwardRef<MediaBlockHandle, MediaBlockProps>(function
 
   const filesInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
-  const zipInputRef = useRef<HTMLInputElement>(null);
+  const [importMenuOpen, setImportMenuOpen] = useState(false);
 
   // G6 polish item 4a — the project's voiceover is spine, not presentation
   // media: slot 3 (above this block) is its home, never this grid.
@@ -450,11 +450,28 @@ export const MediaBlock = forwardRef<MediaBlockHandle, MediaBlockProps>(function
     }
   }, [onIngestComplete, onIngestError]);
 
+  // Wave 3 U9 — ONE import door. Whatever was picked (images, videos, audio,
+  // zips, any mix) goes through `importMixed`: loose media first as one batch,
+  // then each zip on its own (bounded memory, one archive at a time). When the
+  // owner supplies `onZipsChosen`, zips go to it instead so a BUNDLE zip is
+  // recognised and routed rather than swallowed as media.
+  const importMixed = useCallback(async (files: File[], routeZips: boolean): Promise<void> => {
+    const isZip = (f: File) => f.name.toLowerCase().endsWith('.zip');
+    const loose = files.filter(f => !isZip(f));
+    const zips = files.filter(isZip);
+    if (loose.length > 0) {
+      await runIngest('files', `Importing ${loose.length} file${loose.length === 1 ? '' : 's'}…`, () => ingestLooseFiles(projectId, loose, existingHashes, offlineHashes));
+    }
+    if (zips.length > 0 && routeZips && onZipsChosen) { onZipsChosen(zips); return; }
+    for (const zip of zips) {
+      await runIngest('zip', 'Importing zip…', () => ingestZip(projectId, zip, existingHashes, offlineHashes));
+    }
+  }, [projectId, runIngest, existingHashes, offlineHashes, onZipsChosen]);
+
   const handleFilesChosen = useCallback((fileList: FileList | null) => {
     if (!fileList || fileList.length === 0) return;
-    const files = Array.from(fileList);
-    void runIngest('files', `Importing ${files.length} file${files.length === 1 ? '' : 's'}…`, () => ingestLooseFiles(projectId, files, existingHashes, offlineHashes));
-  }, [projectId, runIngest, existingHashes, offlineHashes]);
+    void importMixed(Array.from(fileList), true);
+  }, [importMixed]);
 
   const handleFolderChosen = useCallback((fileList: FileList | null) => {
     if (!fileList || fileList.length === 0) return;
@@ -462,28 +479,15 @@ export const MediaBlock = forwardRef<MediaBlockHandle, MediaBlockProps>(function
     void runIngest('folder', `Importing folder (${files.length} file${files.length === 1 ? '' : 's'})…`, () => ingestLooseFiles(projectId, files, existingHashes, offlineHashes));
   }, [projectId, runIngest, existingHashes, offlineHashes]);
 
-  const handleZipChosen = useCallback((file: File | undefined) => {
-    if (!file) return;
-    if (onZipsChosen) { onZipsChosen([file]); return; }
-    // The zip's entry count isn't known without opening it (the expensive
-    // part), so this stays generic rather than guessing a number.
-    void runIngest('zip', 'Importing zip…', () => ingestZip(projectId, file, existingHashes, offlineHashes));
-  }, [projectId, runIngest, existingHashes, offlineHashes, onZipsChosen]);
-
   // Wave 3 U9 — drops on the Files tab (and bundle-less zips) enter through
   // the same doors as the toolbar, so there is ONE ingest path and one place
   // the result lands. Zips run one at a time (bounded memory).
   useImperativeHandle(ref, () => ({
-    ingestFiles: (files: File[]) => {
-      if (files.length === 0) return;
-      void runIngest('files', `Importing ${files.length} file${files.length === 1 ? '' : 's'}…`, () => ingestLooseFiles(projectId, files, existingHashes, offlineHashes));
-    },
-    ingestZips: (files: File[]) => {
-      void (async () => {
-        for (const file of files) await runIngest('zip', 'Importing zip…', () => ingestZip(projectId, file, existingHashes, offlineHashes));
-      })();
-    },
-  }), [projectId, runIngest, existingHashes, offlineHashes]);
+    // The owner has already classified these (bundles handled) — plain media
+    // only, so zips must NOT be handed back to `onZipsChosen`.
+    ingestFiles: (files: File[]) => { if (files.length > 0) void importMixed(files, false); },
+    ingestZips: (files: File[]) => { if (files.length > 0) void importMixed(files, false); },
+  }), [importMixed]);
 
   // G6 polish item 3 — bulk "Delete unused". Routes every unused asset
   // through the SAME `onDeleteAsset` prop a single-tile delete uses, so the
@@ -542,36 +546,45 @@ export const MediaBlock = forwardRef<MediaBlockHandle, MediaBlockProps>(function
               <Wand2 size={13} />
             </button>
           )}
-          <button
-            type="button"
-            title="Add loose files"
-            aria-label="Add loose files"
-            disabled={busy}
-            onClick={() => filesInputRef.current?.click()}
-            className="p-1 rounded hover:bg-[var(--kx-surface-2)] text-[var(--kx-faint)] disabled:opacity-40"
-          >
-            <FileUp size={13} />
-          </button>
-          <button
-            type="button"
-            title="Add a folder"
-            aria-label="Add a folder"
-            disabled={busy}
-            onClick={() => folderInputRef.current?.click()}
-            className="p-1 rounded hover:bg-[var(--kx-surface-2)] text-[var(--kx-faint)] disabled:opacity-40"
-          >
-            <FolderPlus size={13} />
-          </button>
-          <button
-            type="button"
-            title="Add a zip"
-            aria-label="Add a zip"
-            disabled={busy}
-            onClick={() => zipInputRef.current?.click()}
-            className="p-1 rounded hover:bg-[var(--kx-surface-2)] text-[var(--kx-faint)] disabled:opacity-40"
-          >
-            <FileArchive size={13} />
-          </button>
+          <div className="relative">
+            <button
+              type="button"
+              data-testid="media-block-import"
+              title="Import media — files, folders or zips"
+              aria-label="Import media"
+              aria-haspopup="menu"
+              aria-expanded={importMenuOpen}
+              disabled={busy}
+              onClick={() => setImportMenuOpen(o => !o)}
+              className="p-1 rounded hover:bg-[var(--kx-surface-2)] text-[var(--kx-faint)] disabled:opacity-40"
+            >
+              <Upload size={13} />
+            </button>
+            {importMenuOpen && (
+              <div
+                role="menu"
+                data-testid="media-block-import-menu"
+                className="absolute right-0 top-full mt-1 z-20 min-w-[170px] rounded-lg border border-[var(--kx-line-2)] bg-[var(--kx-surface)] py-1 shadow-lg"
+              >
+                <button
+                  type="button" role="menuitem"
+                  data-testid="media-block-import-files"
+                  onClick={() => { setImportMenuOpen(false); filesInputRef.current?.click(); }}
+                  className="w-full flex items-center gap-2 px-2.5 py-1.5 text-left text-[11px] text-[var(--kx-muted)] hover:bg-[var(--kx-surface-2)] hover:text-white"
+                >
+                  <FileUp size={12} /> Files &amp; zips…
+                </button>
+                <button
+                  type="button" role="menuitem"
+                  data-testid="media-block-import-folder"
+                  onClick={() => { setImportMenuOpen(false); folderInputRef.current?.click(); }}
+                  className="w-full flex items-center gap-2 px-2.5 py-1.5 text-left text-[11px] text-[var(--kx-muted)] hover:bg-[var(--kx-surface-2)] hover:text-white"
+                >
+                  <FolderPlus size={12} /> Folder…
+                </button>
+              </div>
+            )}
+          </div>
           <button
             type="button"
             data-testid="media-block-relink-door"
@@ -636,7 +649,7 @@ export const MediaBlock = forwardRef<MediaBlockHandle, MediaBlockProps>(function
         ref={filesInputRef}
         type="file"
         multiple
-        accept="image/*,video/*,audio/*"
+        accept="image/*,video/*,audio/*,.zip"
         className="hidden"
         onChange={(e) => { handleFilesChosen(e.target.files); e.target.value = ''; }}
       />
@@ -652,13 +665,6 @@ export const MediaBlock = forwardRef<MediaBlockHandle, MediaBlockProps>(function
         multiple
         className="hidden"
         onChange={(e) => { handleFolderChosen(e.target.files); e.target.value = ''; }}
-      />
-      <input
-        ref={zipInputRef}
-        type="file"
-        accept=".zip"
-        className="hidden"
-        onChange={(e) => { handleZipChosen(e.target.files?.[0]); e.target.value = ''; }}
       />
 
       {/* Row 1 — search (flex) + sort. */}

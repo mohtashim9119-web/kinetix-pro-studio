@@ -110,9 +110,7 @@ describe('MediaBlock', () => {
     expect(container.querySelector('[data-testid="media-block"]')).not.toBeNull();
     expect(container.querySelector('[data-testid="media-block-empty"]')).not.toBeNull();
     expect(container.querySelectorAll('[data-testid="media-block-tile"]').length).toBe(0);
-    expect(container.querySelector('[aria-label="Add loose files"]')).not.toBeNull();
-    expect(container.querySelector('[aria-label="Add a folder"]')).not.toBeNull();
-    expect(container.querySelector('[aria-label="Add a zip"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="Import media"]')).not.toBeNull();
     expect(container.querySelector('h3')?.textContent).toBe('Media (0)');
   });
 
@@ -507,7 +505,7 @@ describe('MediaBlock', () => {
         />,
       );
     });
-    const zipInput = container.querySelector('input[accept=".zip"]') as HTMLInputElement;
+    const zipInput = container.querySelector('input[type="file"][multiple]:not([webkitdirectory])') as HTMLInputElement;
     const file = new File([new Uint8Array([1])], 'archive.zip');
     setInputFiles(zipInput, [file]);
     await act(async () => { zipInput.dispatchEvent(new Event('change', { bubbles: true })); });
@@ -528,7 +526,7 @@ describe('MediaBlock', () => {
         />,
       );
     });
-    const zipInput = container.querySelector('input[accept=".zip"]') as HTMLInputElement;
+    const zipInput = container.querySelector('input[type="file"][multiple]:not([webkitdirectory])') as HTMLInputElement;
     const file = new File([new Uint8Array([1])], 'archive.zip');
     setInputFiles(zipInput, [file]);
     await act(async () => { zipInput.dispatchEvent(new Event('change', { bubbles: true })); });
@@ -811,7 +809,7 @@ describe('U9 — always-visible Media block', () => {
         />,
       );
     });
-    for (const label of ['Add loose files', 'Add a folder', 'Add a zip', 'Relink media', 'Delete all media', 'Match media to scenes']) {
+    for (const label of ['Import media', 'Relink media', 'Delete all media', 'Match media to scenes']) {
       expect(container.querySelector(`[aria-label="${label}"]`), label).not.toBeNull();
     }
     expect(container.querySelector('[data-testid="media-block-delete-unused"]')).not.toBeNull();
@@ -819,5 +817,67 @@ describe('U9 — always-visible Media block', () => {
     expect(container.querySelector('input[placeholder="Search media…"]')).not.toBeNull();
     expect(container.querySelector('[role="radiogroup"][aria-label="Filter by type"]')).not.toBeNull();
     expect(container.querySelector('[role="radiogroup"][aria-label="Filter by usage"]')).not.toBeNull();
+  });
+});
+
+describe('U9 — ONE import door for files, folders and zips', () => {
+  const COUNTS = { imported: 1, deduped: 0, unsupportedSkipped: 0, failed: 0 };
+
+  it('one icon opens a menu offering Files & zips and Folder', async () => {
+    root = createRoot(container);
+    await act(async () => {
+      root.render(
+        <MediaBlock projectId="p1" assets={[]} segments={[]} voiceoverId={undefined}
+          onDeleteAsset={noop} onOpenRelinkMedia={noop} onHighlightUsage={noop}
+          onIngestComplete={noop} onIngestError={noop} />,
+      );
+    });
+    expect(container.querySelector('[data-testid="media-block-import-menu"]')).toBeNull();
+    await act(async () => { (container.querySelector('[data-testid="media-block-import"]') as HTMLButtonElement).click(); });
+    expect(container.querySelector('[data-testid="media-block-import-files"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="media-block-import-folder"]')).not.toBeNull();
+  });
+
+  it('a mixed pick (images + a zip) imports the loose files as one batch and the zip after it, in one action', async () => {
+    mockIngestLooseFiles.mockResolvedValue({ assets: [], audioAssetId: undefined, counts: COUNTS, duplicateNames: [] });
+    mockIngestZip.mockResolvedValue({ assets: [], audioAssetId: undefined, counts: COUNTS, duplicateNames: [] });
+    const order: string[] = [];
+    mockIngestLooseFiles.mockImplementation(async () => { order.push('loose'); return { assets: [], audioAssetId: undefined, counts: COUNTS, duplicateNames: [] }; });
+    mockIngestZip.mockImplementation(async () => { order.push('zip'); return { assets: [], audioAssetId: undefined, counts: COUNTS, duplicateNames: [] }; });
+    root = createRoot(container);
+    await act(async () => {
+      root.render(
+        <MediaBlock projectId="p1" assets={[]} segments={[]} voiceoverId={undefined}
+          onDeleteAsset={noop} onOpenRelinkMedia={noop} onHighlightUsage={noop}
+          onIngestComplete={noop} onIngestError={noop} />,
+      );
+    });
+    const input = container.querySelector('input[type="file"][multiple]:not([webkitdirectory])') as HTMLInputElement;
+    const a = new File(['1'], 'a.png'); const b = new File(['2'], 'b.mp4'); const z = new File(['3'], 'pack.zip');
+    setInputFiles(input, [a, z, b]);
+    await act(async () => { input.dispatchEvent(new Event('change', { bubbles: true })); });
+    expect(mockIngestLooseFiles).toHaveBeenCalledTimes(1);
+    expect(mockIngestLooseFiles.mock.calls[0]![1]).toEqual([a, b]);
+    expect(mockIngestZip).toHaveBeenCalledTimes(1);
+    expect(order).toEqual(['loose', 'zip']);
+  });
+
+  it('with an owner router, picked zips are handed to it (bundle detection) and NOT ingested directly', async () => {
+    mockIngestLooseFiles.mockResolvedValue({ assets: [], audioAssetId: undefined, counts: COUNTS, duplicateNames: [] });
+    const onZipsChosen = vi.fn();
+    root = createRoot(container);
+    await act(async () => {
+      root.render(
+        <MediaBlock projectId="p1" assets={[]} segments={[]} voiceoverId={undefined}
+          onDeleteAsset={noop} onOpenRelinkMedia={noop} onHighlightUsage={noop}
+          onIngestComplete={noop} onIngestError={noop} onZipsChosen={onZipsChosen} />,
+      );
+    });
+    const input = container.querySelector('input[type="file"][multiple]:not([webkitdirectory])') as HTMLInputElement;
+    const z = new File(['3'], 'bundle.zip');
+    setInputFiles(input, [z]);
+    await act(async () => { input.dispatchEvent(new Event('change', { bubbles: true })); });
+    expect(onZipsChosen).toHaveBeenCalledWith([z]);
+    expect(mockIngestZip).not.toHaveBeenCalled();
   });
 });

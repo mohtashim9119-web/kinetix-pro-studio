@@ -108,12 +108,12 @@ function mountPanel(props: Partial<DropZonePanelProps> = {}): {
 }
 
 /** The three SlotRow file inputs render in this order (Script, Scene, Voiceover);
- *  index 3 is the Media block's ZIP door (Wave 3 U9 — the media slot's own
+ *  index 3 is the Media block's files-and-zips door (Wave 3 U9 — the media slot's own
  *  picker now lives in the one Media surface and hands zips to the panel's
  *  bundle-aware router). */
 function slotInput(container: HTMLElement, index: 0 | 1 | 2 | 3): HTMLInputElement {
   if (index === 3) {
-    const zip = container.querySelector<HTMLInputElement>('input[type="file"][accept=".zip"]');
+    const zip = container.querySelector<HTMLInputElement>('input[type="file"][multiple]:not([webkitdirectory])[accept*=".zip"]');
     expect(zip).not.toBeNull();
     return zip!;
   }
@@ -262,5 +262,21 @@ describe('DropZonePanel — a loose Finder drop: macOS metadata never claims a s
     expect(staged?.voiceoverFile?.file.name).toBe('3. voiceover.mp3');
     expect(staged?.assetFiles).toHaveLength(0);
     expect(mockClassify).not.toHaveBeenCalled();
+  });
+});
+
+describe('DropZonePanel — the Media slot collapses like the other three', () => {
+  it('starts expanded; the header chevron hides the body but keeps the block mounted (a drop on the collapsed header still ingests)', async () => {
+    const panel = mountPanel();
+    const toggle = panel.container.querySelector<HTMLButtonElement>('[data-testid="media-slot-toggle"]')!;
+    const body = () => panel.container.querySelector('[data-testid="media-block"]')!.parentElement as HTMLElement;
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    expect(body().hidden).toBe(false);
+    await act(async () => { toggle.click(); });
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(body().hidden).toBe(true);
+    expect(panel.container.querySelector('[data-testid="media-block"]')).not.toBeNull(); // still mounted
+    await act(async () => { toggle.click(); });
+    expect(body().hidden).toBe(false);
   });
 });
