@@ -195,7 +195,7 @@ describe('Wave 3 U7.5 — a batch of staged rows', () => {
     const [a, b] = q.snapshot().items;
     expect(a!.status).toBe('done');
     expect(b).toMatchObject({ status: 'skipped' });
-    expect(b!.detail).toBe('Can’t sync yet: Add a scene doc and media to build the timeline.');
+    expect(b!.detail).toBe('Can’t sync yet: Add a scene doc to build the timeline.');
     // B never reached the wire; the container A kept for it was let go at once.
     expect(sent.map(s => s.stage)).toEqual(['transcribe', 'align']);
     expect(wire.filter(c => c === 'cloud_run_job')).toHaveLength(2);

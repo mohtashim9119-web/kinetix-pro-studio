@@ -37,7 +37,7 @@ import {
 } from './stagedFilesPersist';
 import { deleteStagedFile, putStagedFile } from './stagedFilesStore';
 import { computeAudioHash } from './spine';
-import { BUILD_TIMELINE_COPY, missingSlots, type BuildTimelineSlots } from './buildTimelineGate';
+import { BUILD_TIMELINE_COPY, missingSpineSlots, type BuildTimelineSlots } from './buildTimelineGate';
 import { rowIncompleteReason } from './bulkContext';
 
 export type BulkAudioState = 'none' | 'preparing' | 'ready' | 'failed' | 'local';
@@ -316,11 +316,12 @@ export class BulkRowStore {
     return id;
   }
 
-  /** Rows with a name AND all four slots that have not been built yet. */
+  /** Rows with a name AND the three spine slots (script, scene doc, voiceover) that
+   *  have not been built yet — media is optional (Wave 3 U9 B5). */
   completeIds(): string[] {
     return this.order.filter(id => {
       const r = this.rows.get(id)!;
-      return !r.built && r.typedName.trim().length > 0 && missingSlots(r.slots).length === 0;
+      return !r.built && r.typedName.trim().length > 0 && missingSpineSlots(r.slots).length === 0;
     });
   }
 
@@ -418,7 +419,7 @@ export class BulkRowStore {
   }
 
   /**
-   * Build Timeline: create the projects that are real (named, four slots) and
+   * Build Timeline: create the projects that are real (named, spine slots) and
    * discard the empty drafts. A half-filled row is neither: it stays a draft,
    * with the reason it was left out.
    */
@@ -430,7 +431,7 @@ export class BulkRowStore {
       if (r.built) continue;
       const empty = r.files.length === 0 && r.typedName.trim() === '';
       if (empty) { await this.discardRow(id); continue; }
-      const missing = missingSlots(r.slots).map(slot => BUILD_TIMELINE_COPY.slotNames[slot]);
+      const missing = missingSpineSlots(r.slots).map(slot => BUILD_TIMELINE_COPY.slotNames[slot]);
       const why = rowIncompleteReason(r.typedName, missing);
       if (why) { skips[id] = why; continue; }
       const name = r.typedName.trim();

@@ -205,7 +205,7 @@ describe('SyncLogPanel user view — healthy run', () => {
     expect(rows.details).toBe(1);
     const status = container.querySelector('[data-testid="sync-status"]');
     expect(status?.getAttribute('data-state')).toBe('clear');
-    expect(status?.textContent).toBe('All clear — nothing needs your attention.');
+    expect(status?.textContent).toBe('Everything is running smoothly.');
     expect(container.querySelector('[data-testid="sync-headline"]')).toBeNull(); // summary lives inside Details
     const detailsButton = container.querySelector('[data-testid="sync-details-line"] button');
     expect(detailsButton?.getAttribute('aria-expanded')).toBe('false');

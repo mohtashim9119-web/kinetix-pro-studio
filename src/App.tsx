@@ -329,7 +329,10 @@ import type { RecoveryAsset, RecoverySegment } from './components/recovery/degra
 import { writeAssetBlobNative, deleteAssetNative, deleteProjectAssetsNative } from './services/nativeAssetStore';
 import { mediaVaultUnreference, mediaVaultRename } from './services/mediaVaultClient';
 import { applyAssetRename } from './services/mediaRename';
-import { matchMediaToScenes } from './services/matchMediaToScenes';
+import { buildAssetHealthEntry, repointFromCorrupt } from './services/assetHealth';
+import { vaultHashesToUnreference } from './services/vaultUnreferencePlan';
+import { unbindDeletedAssets } from './services/unbindDeletedAssets';
+import { matchMediaToScenes, summarizeMediaMatch, type MediaMatchSummary } from './services/matchMediaToScenes';
 import { assignAssetToSegment } from './services/assetDragChannel';
 import { reconnectOfflineAssets } from './services/reconnectOfflineAssets';
 import type { OfflineReconnect } from './services/mediaIngest';
@@ -6574,6 +6577,47 @@ export default function App() {
     handleDeleteSegmentById(id);
   }, [handleDeleteSegmentById]);
 
+  // Wave 3 U9 A4 — deleting media leaves honest placeholders AND says so: the
+  // same stamped no-asset finding a sync emits, for the scenes that just lost
+  // their file (nothing is stamped when no scene used it).
+  const stampUnboundByDelete = (next: Project, newlyUnbound: number[]): Project => {
+    if (newlyUnbound.length === 0) return next;
+    const entry = buildNoAssetSummaryEntry(
+      mintSyncLogId(),
+      next.segments.map((s, i) => (s.assetId ? null : i + 1)).filter((n): n is number => n !== null),
+      next.segments.length,
+      next.assets.filter(a => a.type !== 'audio').length,
+    );
+    return entry ? appendSyncLogEntries(next, [entry]) : next;
+  };
+
+  // Wave 3 U9 B1/B2 — a decode/thumbnail probe failed on PRESENT bytes: flag
+  // the asset (persisted, so the chip survives a reload) and stamp ONE typed
+  // 'asset-corrupt' finding. Idempotent per asset. Nothing is deleted.
+  const handleAssetCorrupt = useCallback((assetId: string, reason: NonNullable<Asset['corrupt']>) => {
+    setProject(prev => {
+      const asset = prev.assets.find(a => a.id === assetId);
+      if (!asset || asset.corrupt || asset.unresolved) return prev;
+      const flagged = { ...asset, corrupt: reason };
+      return appendSyncLogEntries(
+        { ...prev, assets: prev.assets.map(a => (a.id === assetId ? flagged : a)) },
+        [buildAssetHealthEntry(mintSyncLogId(), 'asset-corrupt', [flagged])],
+      );
+    });
+  }, []);
+
+  // One typed 'asset-missing' finding per asset per session, the moment it is
+  // seen offline (a relink/re-upload that resolves it re-arms nothing — the
+  // existing reconnect finding covers the way back).
+  const stampedMissingRef = useRef<Set<string>>(new Set());
+  const missingAssetKey = project.assets.filter(a => a.unresolved).map(a => a.id).join(',');
+  useEffect(() => {
+    const fresh = projectRef.current.assets.filter(a => a.unresolved && !stampedMissingRef.current.has(a.id));
+    if (fresh.length === 0) return;
+    for (const a of fresh) stampedMissingRef.current.add(a.id);
+    setProject(prev => appendSyncLogEntries(prev, [buildAssetHealthEntry(mintSyncLogId(), 'asset-missing', fresh)]));
+  }, [missingAssetKey]);
+
   // Shared delete handler — used by DropZonePanel post-sync assets list
   const handleDeleteAsset = useCallback((assetId: string) => {
     setProject(prev => {
@@ -6590,28 +6634,25 @@ export default function App() {
       // duplicates that Step 5's backfill mapped onto one shared hash —
       // deleting one twin must not unreference the blob while its sibling
       // still resolves through it.
-      const contentHash = asset.contentHash;
-      const hasSurvivingTwin = contentHash != null &&
-        prev.assets.some(a => a.id !== assetId && a.contentHash === contentHash);
+      const remainingAssets = prev.assets.filter(a => a.id !== assetId);
+      const hashesToRelease = vaultHashesToUnreference([asset], remainingAssets);
       void deleteAssetNative(projectIdRef.current, assetId).then(() => { // WS3 item B — native-store parity
-        if (contentHash && !hasSurvivingTwin) {
-          void mediaVaultUnreference(contentHash, projectIdRef.current);
-        }
+        for (const hash of hashesToRelease) void mediaVaultUnreference(hash, projectIdRef.current);
       });
       clearFrameRendererCache();
-      return {
+      const remaining = remainingAssets;
+      const unbound = unbindDeletedAssets(prev.segments, new Set([assetId]));
+      return stampUnboundByDelete({
         ...prev,
-        assets: prev.assets.filter(a => a.id !== assetId),
+        assets: remaining,
         voiceoverId: prev.voiceoverId === assetId ? undefined : prev.voiceoverId,
-        segments: prev.segments.map(s =>
-          s.assetId === assetId ? { ...s, assetId: undefined } : s
-        ),
+        segments: unbound.segments,
         ...(prev.voiceoverId === assetId ? {
           transcriptTokens: undefined,
           lastTranscribedAssetId: undefined,
           lastTranscribedFileIdentity: undefined,
         } : {}),
-      };
+      }, unbound.newlyUnbound);
     });
   }, []);
 
@@ -6644,17 +6685,26 @@ export default function App() {
   }) => {
     setProject(prev => {
       const allAssets = [...prev.assets, ...outcome.assets];
+      // B2 — a same-named healthy re-upload takes over a corrupt file's scenes
+      // (the corrupt asset itself is kept, unused, for the user to delete).
+      const repoint = repointFromCorrupt(prev.assets, outcome.assets, prev.segments);
       const next = {
         ...prev,
         assets: allAssets,
-        segments: autoMatchSegments(allAssets, prev.segments),
+        segments: autoMatchSegments(allAssets, repoint.segments),
         voiceoverId: resolveZipImportVoiceoverId(outcome.assets, allAssets, prev.voiceoverId),
       };
       const total = outcome.counts.imported + outcome.counts.deduped + outcome.counts.unsupportedSkipped + outcome.counts.failed;
       const nestedZipsSkipped = outcome.nestedZipsSkipped ?? [];
-      if (total === 0 && nestedZipsSkipped.length === 0) return next;
+      const replacedEntries = repoint.replaced.length > 0
+        ? [buildAssetHealthEntry(mintSyncLogId(), 'asset-replaced', repoint.replaced)]
+        : [];
+      if (total === 0 && nestedZipsSkipped.length === 0) {
+        return replacedEntries.length > 0 ? appendSyncLogEntries(next, replacedEntries) : next;
+      }
       return appendSyncLogEntries(next, [
         buildMediaImportEntry(mintSyncLogId(), outcome.source, outcome.counts, Date.now(), outcome.duplicateNames, nestedZipsSkipped),
+        ...replacedEntries,
       ]);
     });
 
@@ -6709,7 +6759,12 @@ export default function App() {
   // kept otherwise) plus one summary finding, persisted by the ordinary
   // autosave. No sync runs; timings, provenance and lastSyncSpine are never
   // touched, so "Already synced" is unaffected.
-  const handleMatchMedia = useCallback(() => {
+  const handleMatchMedia = useCallback((): MediaMatchSummary => {
+    // The digest the Media block shows comes from the live ref; the commit
+    // below recomputes against `prev` so a racing edit is never overwritten
+    // with a stale segment list. Wave 3 U9: unbound scenes (a 0-media build's
+    // [NO ASSET] placeholders) are filled by the same name-tag tiers.
+    const digest = summarizeMediaMatch(matchMediaToScenes(projectRef.current.assets, projectRef.current.segments));
     setProject(prev => {
       const result = matchMediaToScenes(prev.assets, prev.segments);
       return appendSyncLogEntries(
@@ -6717,6 +6772,7 @@ export default function App() {
         [buildMediaMatchEntry(mintSyncLogId(), result)],
       );
     });
+    return digest;
   }, []);
 
   // Media workflow Unit 3 — a Media block tile dropped on a timeline
@@ -6748,13 +6804,25 @@ export default function App() {
     Promise.all(nonAudio.map(a => deleteAsset(projectIdRef.current, a.id))).catch(err =>
       console.error('[handleDeleteAllAssets] IndexedDB delete failed:', err)
     );
-    void Promise.all(nonAudio.map(a => deleteAssetNative(projectIdRef.current, a.id))); // WS3 item B — native-store parity
+    // Release every removed blob's vault reference AFTER its native delete
+    // settles (same ordering as the single delete): blobs then read as
+    // reclaimable in storage settings — never auto-deleted here. Surviving
+    // assets (the voiceover) keep their own references.
+    const hashesToRelease = vaultHashesToUnreference(nonAudio, assetsRef.current.filter(a => a.type === 'audio'));
+    const projectIdForRelease = projectIdRef.current;
+    void Promise.all(nonAudio.map(a => deleteAssetNative(projectIdForRelease, a.id))).then(() => { // WS3 item B — native-store parity
+      for (const hash of hashesToRelease) void mediaVaultUnreference(hash, projectIdForRelease);
+    });
     clearFrameRendererCache();
-    setProject(prev => ({
-      ...prev,
-      assets: prev.assets.filter(a => a.type === 'audio'),
-      segments: prev.segments.map(s => ({ ...s, assetId: undefined })),
-    }));
+    const removed = new Set(nonAudio.map(a => a.id));
+    setProject(prev => {
+      const unbound = unbindDeletedAssets(prev.segments, removed);
+      return stampUnboundByDelete({
+        ...prev,
+        assets: prev.assets.filter(a => a.type === 'audio'),
+        segments: unbound.segments,
+      }, unbound.newlyUnbound);
+    });
   }, []);
 
   const processMediaFile = useCallback(async (file: File, detectedType: Asset['type']): Promise<void> => {
@@ -8413,6 +8481,7 @@ export default function App() {
             onIngestError={handleMediaIngestError}
             onRenameAsset={handleRenameAsset}
             onMatchMedia={handleMatchMedia}
+            onAssetCorrupt={handleAssetCorrupt}
             onBundleImportFailed={handleBundleImportFailed}
             onApplySync={handleApplySyncFromFiles}
             stagedFilesClearSignal={stagedFilesClearSignal}

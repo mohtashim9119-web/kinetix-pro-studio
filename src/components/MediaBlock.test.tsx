@@ -20,9 +20,11 @@ vi.mock('../services/zipIngest', () => ({
 
 const mockGenerateThumbnail = vi.fn();
 const mockReadThumbnail = vi.fn();
+const mockListEntries = vi.fn();
 vi.mock('../services/mediaVaultClient', () => ({
-  mediaVaultGenerateThumbnail: (...args: unknown[]) => mockGenerateThumbnail(...args),
+  mediaVaultGenerateThumbnailDetailed: (...args: unknown[]) => mockGenerateThumbnail(...args),
   mediaVaultReadThumbnail: (...args: unknown[]) => mockReadThumbnail(...args),
+  mediaVaultListEntries: (...args: unknown[]) => mockListEntries(...args),
 }));
 
 vi.mock('../services/assetStore', () => ({
@@ -39,8 +41,9 @@ beforeEach(() => {
   document.body.appendChild(container);
   mockIngestLooseFiles.mockReset();
   mockIngestZip.mockReset();
-  mockGenerateThumbnail.mockReset().mockResolvedValue(false);
+  mockGenerateThumbnail.mockReset().mockResolvedValue('unavailable');
   mockReadThumbnail.mockReset().mockResolvedValue(null);
+  mockListEntries.mockReset().mockResolvedValue([{ contentHash: 'deadbeef' }]);
   sessionStorage.clear();
 });
 
@@ -96,7 +99,7 @@ function setSelectValue(select: HTMLSelectElement, value: string): void {
 }
 
 describe('MediaBlock', () => {
-  it('renders nothing when the project has no assets', async () => {
+  it('U9: an empty project renders the block in its empty state (drop zone + add doors), never nothing', async () => {
     root = createRoot(container);
     await act(async () => {
       root.render(
@@ -107,7 +110,11 @@ describe('MediaBlock', () => {
         />,
       );
     });
-    expect(container.querySelector('[data-testid="media-block"]')).toBeNull();
+    expect(container.querySelector('[data-testid="media-block"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="media-block-empty"]')).not.toBeNull();
+    expect(container.querySelectorAll('[data-testid="media-block-tile"]').length).toBe(0);
+    expect(container.querySelector('[aria-label="Import media"]')).not.toBeNull();
+    expect(container.querySelector('h3')?.textContent).toBe('Media (0)');
   });
 
   it('renders one tile per asset', async () => {
@@ -501,7 +508,7 @@ describe('MediaBlock', () => {
         />,
       );
     });
-    const zipInput = container.querySelector('input[accept=".zip"]') as HTMLInputElement;
+    const zipInput = container.querySelector('input[type="file"][multiple]:not([webkitdirectory])') as HTMLInputElement;
     const file = new File([new Uint8Array([1])], 'archive.zip');
     setInputFiles(zipInput, [file]);
     await act(async () => { zipInput.dispatchEvent(new Event('change', { bubbles: true })); });
@@ -522,7 +529,7 @@ describe('MediaBlock', () => {
         />,
       );
     });
-    const zipInput = container.querySelector('input[accept=".zip"]') as HTMLInputElement;
+    const zipInput = container.querySelector('input[type="file"][multiple]:not([webkitdirectory])') as HTMLInputElement;
     const file = new File([new Uint8Array([1])], 'archive.zip');
     setInputFiles(zipInput, [file]);
     await act(async () => { zipInput.dispatchEvent(new Event('change', { bubbles: true })); });
@@ -568,7 +575,7 @@ describe('MediaBlock', () => {
     expect(container.querySelector('h3')?.textContent).toBe('Media (1)');
   });
 
-  it('FIXED (4a): a project whose ONLY asset is the voiceover renders nothing, same as an empty project', async () => {
+  it('FIXED (4a): a project whose ONLY asset is the voiceover shows the empty state, same as an empty project', async () => {
     const assets = [makeAsset({ id: 'voice-1', type: 'audio', name: 'narration.mp3' })];
     root = createRoot(container);
     await act(async () => {
@@ -580,7 +587,8 @@ describe('MediaBlock', () => {
         />,
       );
     });
-    expect(container.querySelector('[data-testid="media-block"]')).toBeNull();
+    expect(container.querySelector('[data-testid="media-block-empty"]')).not.toBeNull();
+    expect(container.querySelectorAll('[data-testid="media-block-tile"]').length).toBe(0);
   });
 
   // G6 polish item 3 — bulk "Delete unused".
@@ -736,5 +744,309 @@ describe('MediaBlock', () => {
     const deleteButton = container.querySelector('[title="Delete"]') as HTMLButtonElement;
     await act(async () => { deleteButton.click(); });
     expect(onDeleteAsset).toHaveBeenCalledWith('a1');
+  });
+});
+
+// Wave 3 U9 — one always-visible surface.
+describe('U9 — always-visible Media block', () => {
+  const ZERO_COUNTS = { imported: 1, deduped: 0, unsupportedSkipped: 0, failed: 0 };
+
+  it('delete-all confirms first, then leaves the block IN PLACE in its empty state (the vanishing-block bug)', async () => {
+    const onDeleteAllMedia = vi.fn();
+    const assets = [makeAsset({ id: 'a1' })];
+    root = createRoot(container);
+    const render = async (list: Asset[]) => act(async () => {
+      root.render(
+        <MediaBlock
+          projectId="p1" assets={list} segments={[makeSegment({ id: 's1', assetId: 'a1' })]} voiceoverId={undefined}
+          onDeleteAsset={noop} onOpenRelinkMedia={noop} onHighlightUsage={noop}
+          onIngestComplete={noop} onIngestError={noop} onDeleteAllMedia={onDeleteAllMedia}
+        />,
+      );
+    });
+    await render(assets);
+    await act(async () => { (container.querySelector('[data-testid="media-block-delete-all"]') as HTMLButtonElement).click(); });
+    expect(onDeleteAllMedia).not.toHaveBeenCalled();
+    expect(document.body.textContent).toContain('1 scene will show as [NO ASSET] placeholders');
+    const confirm = [...document.body.querySelectorAll('button')].find(b => b.textContent === 'Delete all')!;
+    await act(async () => { confirm.click(); });
+    expect(onDeleteAllMedia).toHaveBeenCalledTimes(1);
+
+    await render([]); // the parent removed every asset
+    expect(container.querySelector('[data-testid="media-block"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="media-block-empty"]')).not.toBeNull();
+    expect((container.querySelector('[data-testid="media-block-delete-all"]') as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('the parent can push dropped media through the same ingest doors (ref handle): files and zips', async () => {
+    mockIngestLooseFiles.mockResolvedValue({ assets: [], audioAssetId: undefined, counts: ZERO_COUNTS, duplicateNames: [] });
+    mockIngestZip.mockResolvedValue({ assets: [], audioAssetId: undefined, counts: ZERO_COUNTS, duplicateNames: [] });
+    const onIngestComplete = vi.fn();
+    const handle: { current: { ingestFiles: (f: File[]) => void; ingestZips: (f: File[]) => void } | null } = { current: null };
+    root = createRoot(container);
+    await act(async () => {
+      root.render(
+        <MediaBlock
+          ref={handle}
+          projectId="p1" assets={[]} segments={[]} voiceoverId={undefined}
+          onDeleteAsset={noop} onOpenRelinkMedia={noop} onHighlightUsage={noop}
+          onIngestComplete={onIngestComplete} onIngestError={noop}
+        />,
+      );
+    });
+    await act(async () => { handle.current!.ingestFiles([new File(['x'], 'a.png')]); });
+    expect(mockIngestLooseFiles).toHaveBeenCalledTimes(1);
+    await act(async () => { handle.current!.ingestZips([new File(['x'], 'one.zip'), new File(['y'], 'two.zip')]); });
+    expect(mockIngestZip).toHaveBeenCalledTimes(2);
+    expect(onIngestComplete).toHaveBeenCalledTimes(3);
+  });
+
+  it('every control lives in the one toolbar: add (files/folder/zip), relink, delete unused, delete all, wand, search, sort, filters', async () => {
+    root = createRoot(container);
+    await act(async () => {
+      root.render(
+        <MediaBlock
+          projectId="p1" assets={[makeAsset({ id: 'a1' })]} segments={[]} voiceoverId={undefined}
+          onDeleteAsset={noop} onOpenRelinkMedia={noop} onHighlightUsage={noop}
+          onIngestComplete={noop} onIngestError={noop} onMatchMedia={noop} onDeleteAllMedia={noop} onRenameAsset={noop}
+        />,
+      );
+    });
+    for (const label of ['Import media', 'Relink media', 'Delete all media', 'Match media to scenes']) {
+      expect(container.querySelector(`[aria-label="${label}"]`), label).not.toBeNull();
+    }
+    expect(container.querySelector('[data-testid="media-block-delete-unused"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="media-block-sort"]')).not.toBeNull();
+    expect(container.querySelector('input[placeholder="Search media…"]')).not.toBeNull();
+    expect(container.querySelector('[role="radiogroup"][aria-label="Filter by type"]')).not.toBeNull();
+    expect(container.querySelector('[role="radiogroup"][aria-label="Filter by usage"]')).not.toBeNull();
+  });
+});
+
+describe('U9 — ONE import door for files, folders and zips', () => {
+  const COUNTS = { imported: 1, deduped: 0, unsupportedSkipped: 0, failed: 0 };
+
+  it('one icon opens a menu offering Files & zips and Folder', async () => {
+    root = createRoot(container);
+    await act(async () => {
+      root.render(
+        <MediaBlock projectId="p1" assets={[]} segments={[]} voiceoverId={undefined}
+          onDeleteAsset={noop} onOpenRelinkMedia={noop} onHighlightUsage={noop}
+          onIngestComplete={noop} onIngestError={noop} />,
+      );
+    });
+    expect(container.querySelector('[data-testid="media-block-import-menu"]')).toBeNull();
+    await act(async () => { (container.querySelector('[data-testid="media-block-import"]') as HTMLButtonElement).click(); });
+    expect(container.querySelector('[data-testid="media-block-import-files"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="media-block-import-folder"]')).not.toBeNull();
+  });
+
+  it('a mixed pick (images + a zip) imports the loose files as one batch and the zip after it, in one action', async () => {
+    mockIngestLooseFiles.mockResolvedValue({ assets: [], audioAssetId: undefined, counts: COUNTS, duplicateNames: [] });
+    mockIngestZip.mockResolvedValue({ assets: [], audioAssetId: undefined, counts: COUNTS, duplicateNames: [] });
+    const order: string[] = [];
+    mockIngestLooseFiles.mockImplementation(async () => { order.push('loose'); return { assets: [], audioAssetId: undefined, counts: COUNTS, duplicateNames: [] }; });
+    mockIngestZip.mockImplementation(async () => { order.push('zip'); return { assets: [], audioAssetId: undefined, counts: COUNTS, duplicateNames: [] }; });
+    root = createRoot(container);
+    await act(async () => {
+      root.render(
+        <MediaBlock projectId="p1" assets={[]} segments={[]} voiceoverId={undefined}
+          onDeleteAsset={noop} onOpenRelinkMedia={noop} onHighlightUsage={noop}
+          onIngestComplete={noop} onIngestError={noop} />,
+      );
+    });
+    const input = container.querySelector('input[type="file"][multiple]:not([webkitdirectory])') as HTMLInputElement;
+    const a = new File(['1'], 'a.png'); const b = new File(['2'], 'b.mp4'); const z = new File(['3'], 'pack.zip');
+    setInputFiles(input, [a, z, b]);
+    await act(async () => { input.dispatchEvent(new Event('change', { bubbles: true })); });
+    expect(mockIngestLooseFiles).toHaveBeenCalledTimes(1);
+    expect(mockIngestLooseFiles.mock.calls[0]![1]).toEqual([a, b]);
+    expect(mockIngestZip).toHaveBeenCalledTimes(1);
+    expect(order).toEqual(['loose', 'zip']);
+  });
+
+  it('with an owner router, picked zips are handed to it (bundle detection) and NOT ingested directly', async () => {
+    mockIngestLooseFiles.mockResolvedValue({ assets: [], audioAssetId: undefined, counts: COUNTS, duplicateNames: [] });
+    const onZipsChosen = vi.fn();
+    root = createRoot(container);
+    await act(async () => {
+      root.render(
+        <MediaBlock projectId="p1" assets={[]} segments={[]} voiceoverId={undefined}
+          onDeleteAsset={noop} onOpenRelinkMedia={noop} onHighlightUsage={noop}
+          onIngestComplete={noop} onIngestError={noop} onZipsChosen={onZipsChosen} />,
+      );
+    });
+    const input = container.querySelector('input[type="file"][multiple]:not([webkitdirectory])') as HTMLInputElement;
+    const z = new File(['3'], 'bundle.zip');
+    setInputFiles(input, [z]);
+    await act(async () => { input.dispatchEvent(new Event('change', { bubbles: true })); });
+    expect(onZipsChosen).toHaveBeenCalledWith([z]);
+    expect(mockIngestZip).not.toHaveBeenCalled();
+  });
+});
+
+// Wave 3 B1/B2 — typed per-asset states on the single surface.
+describe('B1/B2 — per-asset state chips and corrupt handling', () => {
+  const renderBlock = async (assets: Asset[], extra: Partial<React.ComponentProps<typeof MediaBlock>> = {}) => {
+    root = createRoot(container);
+    await act(async () => {
+      root.render(
+        <MediaBlock
+          projectId="p1" assets={assets} segments={[]} voiceoverId={undefined}
+          onDeleteAsset={noop} onOpenRelinkMedia={noop} onHighlightUsage={noop}
+          onIngestComplete={noop} onIngestError={noop} {...extra}
+        />,
+      );
+    });
+  };
+  const chipOf = (id: string) =>
+    container.querySelector(`[data-testid="media-block-tile"][data-asset-id="${id}"] [data-testid="media-block-health-chip"]`);
+
+  it('every tile carries exactly one chip: available / unverified / missing / corrupt', async () => {
+    await renderBlock([
+      makeAsset({ id: 'ok', contentHash: 'h' }),
+      makeAsset({ id: 'un' }),
+      makeAsset({ id: 'gone', contentHash: 'h2', unresolved: true }),
+      makeAsset({ id: 'bad', contentHash: 'h3', corrupt: 'image-decode' }),
+    ]);
+    expect(chipOf('ok')?.getAttribute('data-health')).toBe('available');
+    expect(chipOf('un')?.getAttribute('data-health')).toBe('unverified');
+    expect(chipOf('gone')?.getAttribute('data-health')).toBe('missing');
+    expect(chipOf('bad')?.getAttribute('data-health')).toBe('corrupt');
+  });
+
+  it('a corrupt tile is never blank: it says it cannot be read, and stays deletable', async () => {
+    await renderBlock([makeAsset({ id: 'bad', corrupt: 'no-frame' })]);
+    expect(container.querySelector('[data-testid="media-block-corrupt"]')?.textContent).toContain("Can't read file");
+    expect(container.querySelector('[title="Delete"]')).not.toBeNull();
+  });
+
+  it('missing -> reconnect flips the chip to available through the same surface', async () => {
+    await renderBlock([makeAsset({ id: 'gone', contentHash: 'h', unresolved: true })]);
+    expect(chipOf('gone')?.getAttribute('data-health')).toBe('missing');
+    root.unmount();
+    container.innerHTML = '';
+    await renderBlock([makeAsset({ id: 'gone', contentHash: 'h' })]);
+    expect(chipOf('gone')?.getAttribute('data-health')).toBe('available');
+  });
+
+  it('a video whose frame cannot be read (ffmpeg ran, failed) is reported corrupt exactly once', async () => {
+    mockGenerateThumbnail.mockResolvedValue('failed');
+    const onAssetCorrupt = vi.fn();
+    const video = makeAsset({ id: 'v1', type: 'video', name: 'clip.mp4', file: new File([new Uint8Array([1, 2])], 'clip.mp4') });
+    await renderBlock([video], { onAssetCorrupt });
+    await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+    expect(onAssetCorrupt).toHaveBeenCalledTimes(1);
+    expect(onAssetCorrupt).toHaveBeenCalledWith('v1', 'no-frame');
+  });
+
+  it('NO verdict when the probe is merely unavailable (no Tauri / IPC error): never flagged corrupt', async () => {
+    mockGenerateThumbnail.mockResolvedValue('unavailable');
+    const onAssetCorrupt = vi.fn();
+    const video = makeAsset({ id: 'v1', type: 'video', name: 'clip.mp4', file: new File([new Uint8Array([1, 2])], 'clip.mp4') });
+    await renderBlock([video], { onAssetCorrupt });
+    await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+    expect(onAssetCorrupt).not.toHaveBeenCalled();
+  });
+
+  it('an already-corrupt or offline video is not probed again', async () => {
+    const video = makeAsset({ id: 'v1', type: 'video', corrupt: 'no-frame', file: new File(['x'], 'v.mp4') });
+    await renderBlock([video, makeAsset({ id: 'v2', type: 'video', unresolved: true })]);
+    await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+    expect(mockGenerateThumbnail).not.toHaveBeenCalled();
+  });
+});
+
+describe('B3 — video thumbnail blob URLs are released', () => {
+  it('OLD LEAK: createObjectURL per video thumbnail was never revoked; unmounting now revokes each', async () => {
+    mockGenerateThumbnail.mockResolvedValue('generated');
+    mockReadThumbnail.mockResolvedValue(new Uint8Array([1, 2, 3]));
+    const created: string[] = [];
+    const revoked: string[] = [];
+    const origCreate = URL.createObjectURL, origRevoke = URL.revokeObjectURL;
+    URL.createObjectURL = () => { const u = `blob:thumb-${created.length}`; created.push(u); return u; };
+    URL.revokeObjectURL = (u: string) => { revoked.push(u); };
+    try {
+      root = createRoot(container);
+      await act(async () => {
+        root.render(
+          <MediaBlock projectId="p1" segments={[]} voiceoverId={undefined}
+            assets={[makeAsset({ id: 'v1', type: 'video', name: 'c.mp4', file: new File([new Uint8Array([9])], 'c.mp4') })]}
+            onDeleteAsset={noop} onOpenRelinkMedia={noop} onHighlightUsage={noop} onIngestComplete={noop} onIngestError={noop} />,
+        );
+      });
+      await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+      expect(created.length).toBe(1);
+      expect(revoked).toEqual([]);
+      await act(async () => { root.unmount(); });
+      expect(revoked).toEqual(created);
+      root = createRoot(container); // afterEach unmounts a live root
+    } finally {
+      URL.createObjectURL = origCreate; URL.revokeObjectURL = origRevoke;
+    }
+  });
+});
+
+describe('video thumbnails — the film-strip icon must not be permanent', () => {
+  const stubUrls = () => {
+    const o = { c: URL.createObjectURL, r: URL.revokeObjectURL };
+    URL.createObjectURL = () => 'blob:thumb';
+    URL.revokeObjectURL = () => {};
+    return () => { URL.createObjectURL = o.c; URL.revokeObjectURL = o.r; };
+  };
+  const mountVideo = async (asset: Asset, segments: VideoSegment[]) => {
+    root = createRoot(container);
+    const render = (segs: VideoSegment[]) => act(async () => {
+      root.render(
+        <MediaBlock projectId="p1" assets={[asset]} segments={segs} voiceoverId={undefined}
+          onDeleteAsset={noop} onOpenRelinkMedia={noop} onHighlightUsage={noop} onIngestComplete={noop} onIngestError={noop} />,
+      );
+    });
+    await render(segments);
+    return render;
+  };
+  const thumbImg = () => container.querySelector('[data-testid="media-block-tile"] img');
+
+  it('OLD BUG: a thumbnail finishing AFTER `rows` changed mid-flight was dropped and never re-requested', async () => {
+    const restore = stubUrls();
+    try {
+      let release!: (v: string) => void;
+      mockGenerateThumbnail.mockImplementation(() => new Promise(r => { release = r; }));
+      mockReadThumbnail.mockResolvedValue(new Uint8Array([1]));
+      const video = makeAsset({ id: 'v1', type: 'video', name: 'c.mp4', contentHash: 'deadbeef' });
+      const render = await mountVideo(video, []);
+      await render([makeSegment({ id: 's1', assetId: 'v1' })]); // the project changed while ffmpeg ran -> `rows` recomputed
+      await act(async () => { release('generated'); await new Promise(r => setTimeout(r, 10)); });
+      expect(thumbImg()?.getAttribute('src')).toBe('blob:thumb');
+      expect(mockGenerateThumbnail).toHaveBeenCalledTimes(1); // requested once, not re-requested
+    } finally { restore(); }
+  });
+
+  it('uses the stored contentHash: no bytes needed (an asset resolved from the native store has no IndexedDB copy)', async () => {
+    const restore = stubUrls();
+    try {
+      mockGenerateThumbnail.mockResolvedValue('generated');
+      mockReadThumbnail.mockResolvedValue(new Uint8Array([1]));
+      await mountVideo(makeAsset({ id: 'v1', type: 'video', name: 'c.mp4', contentHash: 'abc123' }), []);
+      await act(async () => { await new Promise(r => setTimeout(r, 10)); });
+      expect(mockGenerateThumbnail).toHaveBeenCalledWith('abc123');
+      expect(thumbImg()).not.toBeNull();
+    } finally { restore(); }
+  });
+
+  it('a hash the vault never imported reads `failed` too — that is NOT corruption (no false verdict on a legacy asset)', async () => {
+    mockGenerateThumbnail.mockResolvedValue('failed');
+    mockListEntries.mockResolvedValue([]); // registry does not know this blob
+    const onAssetCorrupt = vi.fn();
+    root = createRoot(container);
+    await act(async () => {
+      root.render(
+        <MediaBlock projectId="p1" segments={[]} voiceoverId={undefined} onAssetCorrupt={onAssetCorrupt}
+          assets={[makeAsset({ id: 'v1', type: 'video', name: 'c.mp4', contentHash: 'legacy' })]}
+          onDeleteAsset={noop} onOpenRelinkMedia={noop} onHighlightUsage={noop} onIngestComplete={noop} onIngestError={noop} />,
+      );
+    });
+    await act(async () => { await new Promise(r => setTimeout(r, 10)); });
+    expect(onAssetCorrupt).not.toHaveBeenCalled();
   });
 });

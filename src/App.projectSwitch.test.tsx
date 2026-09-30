@@ -766,18 +766,13 @@ describe('WS3 recovery-ui — Machine 1: opens into recovery, re-links, reopens 
     __resetStoreGuardsForTests();
   });
 
-  /** Expands DropZonePanel's "Images & Videos" section (collapsed by
-   *  default) and clicks its "Relink Media…" door into the recovery
-   *  screen — the ONLY entry point into that screen since D6 (Round 28)
-   *  stopped opening it automatically. */
+  /** Clicks the Media block's "Relink media" toolbar door (always visible
+   *  since Wave 3 U9 — no section to expand) into the recovery screen — the
+   *  ONLY entry point into that screen since D6 (Round 28) stopped opening it
+   *  automatically. */
   async function openRelinkMediaFromFilesTab(): Promise<void> {
-    const buttons = [...container.querySelectorAll<HTMLButtonElement>('button')];
-    const sectionHeader = buttons.find((b) => b.textContent?.includes('Images & Videos'));
-    expect(sectionHeader).toBeDefined();
-    await act(async () => { sectionHeader!.click(); });
-    const relinkDoor = [...container.querySelectorAll<HTMLButtonElement>('button')]
-      .find((b) => b.textContent?.includes('Relink Media'));
-    expect(relinkDoor).toBeDefined();
+    const relinkDoor = container.querySelector<HTMLButtonElement>('[data-testid="media-block-relink-door"]');
+    expect(relinkDoor).not.toBeNull();
     await act(async () => { relinkDoor!.click(); });
     await act(async () => { await Promise.resolve(); });
   }
@@ -822,10 +817,10 @@ describe('WS3 recovery-ui — Machine 1: opens into recovery, re-links, reopens 
     // ---- The Files tab's asset row marks the unresolved asset Offline —
     //      the timeline/asset-list rendering the task asked to reuse. ----
     const assetsBadgeRow = (): Element | null =>
-      container.querySelector('[data-testid="asset-row"][data-asset-id="a1"]');
-    expect(assetsBadgeRow()).toBeNull(); // "Images & Videos" starts collapsed
-    await openRelinkMediaFromFilesTab();
+      container.querySelector('[data-testid="media-block-tile"][data-asset-id="a1"]');
+    // U9: the Media block is always visible — the Offline tile is on screen at once.
     expect(assetsBadgeRow()?.getAttribute('data-unresolved')).toBe('true');
+    await openRelinkMediaFromFilesTab();
     expect(assetsBadgeRow()?.querySelector('[data-testid="asset-offline-badge"]')).not.toBeNull();
 
     // ---- The Relink Media… entry point (Files tab) reaches the recovery

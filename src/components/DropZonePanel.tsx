@@ -54,8 +54,11 @@ import {
   getStagedFilesForProject,
 } from '../services/stagedFilesStore';
 import { shouldClearStagedAfterSync } from '../services/applySyncAbort';
-import { BUILD_TIMELINE_COPY, missingSlotsReason } from '../services/buildTimelineGate';
-import { MediaBlock, type MediaIngestOutcome } from './MediaBlock';
+import { BUILD_TIMELINE_COPY, spineGateReason } from '../services/buildTimelineGate';
+import { MediaBlock, type MediaBlockHandle, type MediaIngestOutcome } from './MediaBlock';
+import { collectDroppedFiles } from '../services/droppedFiles';
+import { carriesAssetDrag } from '../services/assetDragChannel';
+import type { MediaMatchSummary } from '../services/matchMediaToScenes';
 import { classifyAndIngestBundleZip } from '../services/bundleIngest';
 import { isMacOSMetadataPath } from '../services/macosMetadata';
 import type { MediaIngestCounts } from '../services/mediaIngest';
@@ -181,7 +184,7 @@ function SlotRow({
         onDropFiles(Array.from(e.dataTransfer.files));
       }}
     >
-      {/* Header — chevron + type tile + label/sub-line + status chip + action buttons.
+      {/* Header — chevron + type tile + label/sub-line + action buttons (no status chips — the sub-line already says what is loaded).
           Action buttons (Replace/Browse/+Add/×) are always visible, independent of
           `expanded` — only the body below the header shows/hides on toggle. */}
       <div className="w-full flex items-center gap-2.5 px-3 py-2.5">
@@ -203,23 +206,6 @@ function SlotRow({
             <span className="text-[11.5px] text-[var(--kx-muted)] truncate">{subLine}</span>
           </span>
         </button>
-
-        {stagedFile ? (
-          <span className="flex-shrink-0 flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-[6px]
-                           bg-[var(--kx-accent-soft)] text-[var(--kx-accent-2)]">
-            <RefreshCw size={11} /> Pending
-          </span>
-        ) : persistedLabel ? (
-          <span className="flex-shrink-0 flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-[6px]
-                           bg-[var(--kx-ready-soft)] text-[var(--kx-ready)]">
-            <Check size={11} /> Ready
-          </span>
-        ) : (
-          <span className="flex-shrink-0 flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-[6px]
-                           bg-[var(--kx-surface-2)] text-[var(--kx-faint)]">
-            <AlertCircle size={11} /> Empty
-          </span>
-        )}
 
         <button
           onClick={(e) => { e.stopPropagation(); ref.current?.click(); }}
@@ -360,7 +346,9 @@ interface Props {
   /** Media workflow Unit 1 — a Media block tile's inline rename. */
   onRenameAsset?: (assetId: string, newName: string) => void;
   /** Media workflow Unit 2 — the Media block's "Match media to scenes". */
-  onMatchMedia?: () => void;
+  onMatchMedia?: () => MediaMatchSummary | void;
+  /** Wave 3 B2 — a Media tile's decode/thumbnail probe failed on present bytes. */
+  onAssetCorrupt?: (assetId: string, reason: NonNullable<Asset['corrupt']>) => void;
   /** G5 — a bundle zip (dropped on any of the 4 slots below) that failed
    *  validation: corrupt/oversized archive, or bundle-shaped but missing one
    *  of its four required pieces. Logs ONE grouped sync-log finding naming
@@ -530,6 +518,7 @@ export function DropZonePanel({
   onIngestError,
   onRenameAsset,
   onMatchMedia,
+  onAssetCorrupt,
   onBundleImportFailed,
   onApplySync,
   onStagedFilesChange,
@@ -613,7 +602,7 @@ export function DropZonePanel({
   const maxSegmentDuration = Math.max(1, ...segments.map((s) => s.duration));
 
   // ── Collapsible section state ──────────────────────────────────────────────
-  const [expanded, setExpanded] = useState<ExpandKey>(null);
+  const [expanded, setExpanded] = useState<ExpandKey>('assets');
   const [slotError, setSlotError] = useState<string | null>(null);
   // G5 — bundle ingest's own confirmation line (success only; a failure uses
   // `slotError` above, matching every other slot-drop error already does).
@@ -624,7 +613,7 @@ export function DropZonePanel({
   // Ref that mirrors staged synchronously — used by handleApplySync so that
   // React batching cannot cause it to read a stale pre-update value.
   const stagedRef = useRef<StagedFiles>(EMPTY_STAGED);
-  const addAssetsRef = useRef<HTMLInputElement>(null);
+  const mediaBlockRef = useRef<MediaBlockHandle>(null);
   const [assetsDragOver, setAssetsDragOver] = useState(false);
   // Combined-look effect presets — loaded from lookPresetService on mount, kept in
   // sync with localStorage on every add/remove from EffectsPanel.
@@ -974,6 +963,16 @@ export function DropZonePanel({
       setTimeout(() => setBundleNotice(null), 6000);
     }
 
+    // Wave 3 U9 — loose media and plain media zips enter the ONE Media
+    // surface through its own ingest doors (immediate, deduped, in the grid).
+    // Staging them is only the fallback when the block is not mounted.
+    const mediaBlock = mediaBlockRef.current;
+    if (mediaBlock) {
+      mediaBlock.ingestFiles([...assetEntries.map(a => a.file), ...zipEntries.map(z => z.file)]);
+      assetEntries.length = 0;
+      zipEntries.length = 0;
+    }
+
     updateStaged(prev => {
       let { scriptFile, sceneFile, voiceoverFile } = prev;
       const assetFiles = [...prev.assetFiles];
@@ -1131,7 +1130,6 @@ export function DropZonePanel({
   const voiceoverPersisted = persistedVoiceoverName || undefined;
 
   const voiceoverAsset = assets.find(a => a.id === voiceoverId);
-  const nonAudioAssets = assets.filter(a => a.type !== 'audio');
   const voiceoverExt = voiceoverAsset?.name.split('.').pop()?.toUpperCase();
   // addedAt survives a reload (plain number); file.lastModified only survives the
   // same session — file itself is dropped during IndexedDB rehydration.
@@ -1145,21 +1143,24 @@ export function DropZonePanel({
     setExpanded(prev => (prev === key ? null : key));
 
   // ── Files tab summary row ───────────────────────────────────────────────────
-  const readyCount = [!!scriptPersisted, !!scenePersisted, !!voiceoverPersisted, persistedAssetCount > 0]
+  // Spine only (script, scene doc, voiceover) — media is optional (U9).
+  const readyCount = [!!scriptPersisted, !!scenePersisted, !!voiceoverPersisted]
     .filter(Boolean).length;
   const fileCount = (scriptPersisted ? 1 : 0) + (scenePersisted ? 1 : 0)
     + (voiceoverPersisted ? 1 : 0) + persistedAssetCount;
-  const allReady = readyCount === 4;
+  const allReady = readyCount === 3;
 
-  // Wave 3 U4.6 — Build Timeline needs all four slots (operator product
-  // ruling; the engine itself needs only the spine). A slot is filled when
-  // it is staged OR already persisted, so a bundle zip fills all four at once.
-  const missingReason = missingSlotsReason({
+  // Wave 3 U9 — Build Timeline is SPINE-ONLY (script + scene doc +
+  // voiceover). Media is optional: with none, the button stays enabled and a
+  // hint says the scenes will build as placeholders. A slot is filled when it
+  // is staged OR already persisted, so a bundle zip fills them all at once.
+  const missingReason = spineGateReason({
     script: !!staged.scriptFile || !!scriptPersisted,
     scene: !!staged.sceneFile || !!scenePersisted,
     voiceover: !!staged.voiceoverFile || !!voiceoverPersisted,
     media: staged.assetFiles.length > 0 || staged.zipFiles.length > 0 || persistedAssetCount > 0,
   });
+  const hasMedia = staged.assetFiles.length > 0 || staged.zipFiles.length > 0 || persistedAssetCount > 0;
   const buildTimelineDisabled = !!missingReason || applySyncDisabled || isStagedEmpty
     || !!applySyncSpineUnchangedReason;
   const buildTimelineTitle = missingReason
@@ -1242,7 +1243,7 @@ export function DropZonePanel({
             <span className={`flex items-center gap-1 text-[12px] font-semibold
                              ${allReady ? 'text-[var(--kx-ready)]' : 'text-[var(--kx-accent-2)]'}`}>
               {allReady ? <Check size={13} /> : <AlertCircle size={13} />}
-              {allReady ? 'All ready' : `${readyCount} of 4 ready`}
+              {allReady ? 'All ready' : `${readyCount} of 3 ready`}
             </span>
           </div>
           {/* Progress bar */}
@@ -1251,7 +1252,7 @@ export function DropZonePanel({
                             ${allReady
                               ? 'bg-gradient-to-r from-[var(--kx-ready)] to-[#7ee3b8]'
                               : 'bg-gradient-to-r from-[var(--kx-accent)] to-[var(--kx-accent-2)]'}`}
-                 style={{ width: `${(readyCount / 4) * 100}%` }} />
+                 style={{ width: `${(readyCount / 3) * 100}%` }} />
           </div>
 
           {/* Scrollable slots area */}
@@ -1447,173 +1448,61 @@ export function DropZonePanel({
               )}
             </SlotRow>
 
-            {/* Slot 4 — Images & Videos (multi-file, inline drag state). Hand-rolled (not
-                SlotRow) since it needs the asset-list + multi-file staged count, but shares
-                SlotRow's header/chip visual language and always-visible action buttons. */}
+            {/* Slot 4 — Media. ONE always-visible surface (Wave 3 U9): the slot
+                header shares SlotRow's visual language, and its body IS the
+                media library (grid, toolbar, empty-state drop zone) — there is
+                no separate vault section and no per-row asset list. Never
+                collapses, never unmounts: deleting all media leaves it in its
+                empty state. */}
             <div
+              data-testid="media-slot"
               className={`mx-3 mb-2 rounded-[13px] border overflow-hidden transition-colors
                           bg-[var(--kx-surface)] border-[var(--kx-line)] hover:border-[var(--kx-line-2)]
                           ${assetsDragOver ? 'bg-[var(--kx-accent-soft)]' : ''}`}
-              onDragOver={(e) => { e.preventDefault(); setAssetsDragOver(true); }}
+              onDragOver={(e) => { if (carriesAssetDrag(e.dataTransfer)) return; e.preventDefault(); setAssetsDragOver(true); }}
               onDragLeave={() => setAssetsDragOver(false)}
               onDrop={(e) => {
+                if (carriesAssetDrag(e.dataTransfer)) return;
                 e.preventDefault();
                 setAssetsDragOver(false);
-                void addFiles(Array.from(e.dataTransfer.files));
+                // Read the entries synchronously-started (the DataTransfer is
+                // only valid during the event), then route once they resolve.
+                void collectDroppedFiles(e.dataTransfer).then(files => addFiles(files));
               }}
             >
-              <div className="w-full flex items-center gap-2.5 px-3 py-2.5">
-                <button onClick={() => toggle('assets')} className="flex-1 min-w-0 flex items-center gap-2.5 text-left">
-                  <span className="flex-none w-6 flex items-center justify-center">
-                    <ChevronRight
-                      size={13}
-                      className={`transition-transform ${expanded === 'assets' ? 'rotate-90 text-[var(--kx-accent)]' : 'text-[var(--kx-faint)]'}`}
-                    />
-                  </span>
-                  <span
-                    className="flex-none w-9 h-9 rounded-[10px] flex items-center justify-center"
-                    style={{ background: '#c084fc26', color: '#c084fc' }}
-                  >
-                    <ImageIcon size={18} />
-                  </span>
-                  <span className="flex-1 min-w-0 flex flex-col gap-0.5">
-                    <span className="text-[14px] font-semibold text-[var(--kx-text)] min-w-0 truncate">Images &amp; Videos</span>
-                    <span className="text-[11.5px] text-[var(--kx-muted)] truncate">
-                      {allStagedAssets.length > 0
-                        ? `${allStagedAssets.length} file${allStagedAssets.length !== 1 ? 's' : ''}`
-                        : persistedAssetCount > 0
-                          ? `${persistedAssetCount} file${persistedAssetCount !== 1 ? 's' : ''}`
-                          : 'Images, videos, or ZIP archive'}
-                    </span>
-                  </span>
-                </button>
-
-                {allStagedAssets.length > 0 ? (
-                  <span className="flex-shrink-0 flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-[6px]
-                                   bg-[var(--kx-accent-soft)] text-[var(--kx-accent-2)]">
-                    <RefreshCw size={11} /> Pending
-                  </span>
-                ) : persistedAssetCount > 0 ? (
-                  <span className="flex-shrink-0 flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-[6px]
-                                   bg-[var(--kx-ready-soft)] text-[var(--kx-ready)]">
-                    <Check size={11} /> Ready
-                  </span>
-                ) : (
-                  <span className="flex-shrink-0 flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-[6px]
-                                   bg-[var(--kx-surface-2)] text-[var(--kx-faint)]">
-                    <AlertCircle size={11} /> Empty
-                  </span>
-                )}
-
-                <button
-                  onClick={(e) => { e.stopPropagation(); addAssetsRef.current?.click(); }}
-                  aria-label="Add images or videos"
-                  className="flex items-center justify-center w-8 h-8 rounded-[8px]
-                             bg-[var(--kx-surface-2)] border border-[var(--kx-line)]
-                             text-[var(--kx-muted)] hover:text-[var(--kx-text)]
-                             hover:border-[var(--kx-line-2)] transition-colors flex-shrink-0"
-                >
-                  <Plus size={13} />
-                </button>
-
-                {(allStagedAssets.length > 0 || persistedAssetCount > 0) && (
-                  <button
-                    onClick={(e) => { e.stopPropagation(); handleAssetsClear(); }}
-                    aria-label={allStagedAssets.length > 0 ? 'Clear staged assets' : 'Delete all project assets'}
-                    className="flex items-center justify-center w-8 h-8 rounded-[8px]
-                               bg-[var(--kx-surface-2)] border border-[var(--kx-line)]
-                               text-[var(--kx-faint)] hover:text-[var(--kx-danger)]
-                               hover:border-[var(--kx-danger)] transition-colors flex-shrink-0"
-                  >
-                    <X size={13} />
-                  </button>
-                )}
-              </div>
-
-              <input
-                ref={addAssetsRef}
-                type="file"
-                multiple
-                accept="image/*,video/*,.zip"
-                className="hidden"
-                onChange={(e) => { void addFiles(Array.from(e.target.files ?? [])); e.target.value = ''; }}
+              {/* Collapsing only HIDES the block — it stays mounted so a drop
+                  onto the collapsed header still ingests, and an import in
+                  flight keeps its state. */}
+              <MediaBlock
+                ref={mediaBlockRef}
+                header={{
+                  expanded: expanded === 'assets',
+                  onToggle: () => toggle('assets'),
+                  icon: <ImageIcon size={18} />,
+                  color: '#c084fc',
+                  title: 'Media',
+                  subtitle: allStagedAssets.length > 0
+                    ? `${allStagedAssets.length} file${allStagedAssets.length !== 1 ? 's' : ''}`
+                    : persistedAssetCount > 0
+                      ? `${persistedAssetCount} file${persistedAssetCount !== 1 ? 's' : ''}`
+                      : 'Images, videos, or ZIP archive',
+                }}
+                projectId={projectId}
+                assets={assets}
+                segments={segments}
+                voiceoverId={voiceoverId}
+                onDeleteAsset={onDeleteAsset}
+                onOpenRelinkMedia={onOpenRelinkMedia}
+                onHighlightUsage={onHighlightUsage}
+                onIngestComplete={onIngestComplete}
+                onIngestError={onIngestError}
+                onRenameAsset={onRenameAsset}
+                onMatchMedia={onMatchMedia}
+                onAssetCorrupt={onAssetCorrupt}
+                onDeleteAllMedia={handleAssetsClear}
+                onZipsChosen={(files) => void addFiles(files)}
               />
-
-              {expanded === 'assets' && (
-                <div className="px-3 pb-3">
-                  <div className="max-h-48 overflow-y-auto custom-scrollbar">
-                    {nonAudioAssets.length === 0 && (
-                      <p className="text-[11px] text-[var(--kx-faint)] italic px-1">No images or videos loaded.</p>
-                    )}
-                    {nonAudioAssets.map((asset) => (
-                      <div
-                        key={asset.id}
-                        className="flex items-center gap-2.5 px-3 py-1.5"
-                        data-testid="asset-row"
-                        data-asset-id={asset.id}
-                        data-unresolved={asset.unresolved ? 'true' : 'false'}
-                      >
-                        <div className="w-8 h-8 rounded-[7px] overflow-hidden flex-shrink-0
-                                        bg-[var(--kx-surface-2)] flex items-center justify-center">
-                          {asset.unresolved || !asset.url
-                            ? <Film size={13} className="text-[var(--kx-danger)]" />
-                            : asset.type === 'image'
-                              ? <img src={asset.url} className="w-full h-full object-cover" alt="" />
-                              : <Film size={13} className="text-[var(--kx-faint)]" />
-                          }
-                        </div>
-                        <span className="flex-1 min-w-0 text-[12px] text-[var(--kx-muted)] truncate">{asset.name}</span>
-                        {asset.unresolved && (
-                          <span
-                            data-testid="asset-offline-badge"
-                            className="flex-shrink-0 text-[9px] font-bold uppercase tracking-widest text-[var(--kx-danger)]
-                                       border border-[var(--kx-danger)] rounded-[6px] px-1.5 py-0.5"
-                          >
-                            Offline
-                          </span>
-                        )}
-                        <button
-                          onClick={() => onDeleteAsset(asset.id)}
-                          aria-label={`Delete ${asset.name}`}
-                          className="flex-shrink-0 w-8 h-8 rounded-[8px] flex items-center justify-center
-                                     text-[var(--kx-faint)] hover:text-[var(--kx-danger)] hover:bg-[rgba(255,107,107,.1)]
-                                     transition-colors"
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                  {/* Manual door into the recovery/relink screen — only here,
-                      only when Images & Videos is expanded, since that's
-                      where an operator is already looking at asset state. */}
-                  <button
-                    onClick={onOpenRelinkMedia}
-                    className="mt-2 w-full flex items-center justify-center gap-1.5 py-1.5 px-3
-                               text-[11px] font-medium text-[var(--kx-faint)] hover:text-[var(--kx-text)]
-                               border border-[var(--kx-line)] rounded-[8px] transition-colors"
-                  >
-                    <Link2 size={12} />
-                    Relink Media…
-                  </button>
-                </div>
-              )}
             </div>
-
-            {/* G6 Step 4 — the Media block, below the 4 slots. */}
-            <MediaBlock
-              projectId={projectId}
-              assets={assets}
-              segments={segments}
-              voiceoverId={voiceoverId}
-              onDeleteAsset={onDeleteAsset}
-              onOpenRelinkMedia={onOpenRelinkMedia}
-              onHighlightUsage={onHighlightUsage}
-              onIngestComplete={onIngestComplete}
-              onIngestError={onIngestError}
-              onRenameAsset={onRenameAsset}
-              onMatchMedia={onMatchMedia}
-            />
 
           </div>{/* end scrollable */}
 
@@ -1623,6 +1512,12 @@ export function DropZonePanel({
               // U4.6 — the stated reason is visible, not hover-only.
               <p className="text-center text-[11.5px] text-[var(--kx-accent-2)] mb-2.5" role="status">
                 {missingReason}
+              </p>
+            ) : !hasMedia ? (
+              // U9 — media is optional; the button is enabled and says what
+              // the build will produce without it.
+              <p className="text-center text-[11.5px] text-[var(--kx-accent-2)] mb-2.5" role="status" data-testid="build-timeline-no-media-hint">
+                {BUILD_TIMELINE_COPY.noMediaHint}
               </p>
             ) : (
               <p className="text-center text-[11.5px] text-[var(--kx-faint)] mb-2.5">

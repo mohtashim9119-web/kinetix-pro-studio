@@ -38,6 +38,12 @@ vi.mock('../services/stagedFilesStore', () => ({
   getStagedFilesForProject: vi.fn().mockResolvedValue([]),
 }));
 
+const mockIngestZip = vi.fn();
+vi.mock('../services/zipIngest', () => ({
+  ingestZip: (...args: unknown[]) => mockIngestZip(...args),
+  ZipTooLargeError: class ZipTooLargeError extends Error {},
+}));
+
 type DropZonePanelProps = ComponentProps<typeof DropZonePanel>;
 
 function makeProps(overrides: Partial<DropZonePanelProps> = {}): DropZonePanelProps {
@@ -101,11 +107,18 @@ function mountPanel(props: Partial<DropZonePanelProps> = {}): {
   };
 }
 
-/** The four SlotRow file inputs render in this order (Script, Scene, Voiceover),
- *  followed by the generic assets input — see DropZonePanel.tsx's own render order. */
+/** The three SlotRow file inputs render in this order (Script, Scene, Voiceover);
+ *  index 3 is the Media block's files-and-zips door (Wave 3 U9 — the media slot's own
+ *  picker now lives in the one Media surface and hands zips to the panel's
+ *  bundle-aware router). */
 function slotInput(container: HTMLElement, index: 0 | 1 | 2 | 3): HTMLInputElement {
+  if (index === 3) {
+    const zip = container.querySelector<HTMLInputElement>('input[type="file"][multiple]:not([webkitdirectory])[accept*=".zip"]');
+    expect(zip).not.toBeNull();
+    return zip!;
+  }
   const inputs = container.querySelectorAll<HTMLInputElement>('input[type="file"]');
-  expect(inputs.length).toBeGreaterThanOrEqual(4);
+  expect(inputs.length).toBeGreaterThanOrEqual(3);
   return inputs[index]!;
 }
 
@@ -124,6 +137,9 @@ function zipFile(name = 'bundle.zip'): File {
 
 beforeEach(() => {
   mockClassify.mockReset();
+  mockIngestZip.mockReset().mockResolvedValue({
+    assets: [], audioAssetId: undefined, counts: { imported: 0, deduped: 0, unsupportedSkipped: 0, failed: 0 }, duplicateNames: [],
+  });
 });
 
 describe('DropZonePanel — a bundle zip dropped on ANY slot is detected before slot-specific routing', () => {
@@ -177,14 +193,15 @@ describe('DropZonePanel — a bundle zip dropped on ANY slot is detected before 
     expect(staged?.voiceoverFile?.file.name).toBe('voice.mp3');
   });
 
-  it('a plain (non-bundle) media zip keeps the deferred zipFiles path, unchanged', async () => {
+  it('a plain (non-bundle) media zip goes straight through the Media block\'s ingest (U9: nothing left staged)', async () => {
     mockClassify.mockResolvedValue({ kind: 'not-a-bundle' });
     const panel = mountPanel();
     await dropZipOn(panel.container, 2, zipFile('photos.zip'));
 
     const staged = panel.published();
-    expect(staged?.zipFiles).toHaveLength(1);
-    expect(staged?.zipFiles[0]!.file.name).toBe('photos.zip');
+    expect(mockIngestZip).toHaveBeenCalledTimes(1);
+    expect((mockIngestZip.mock.calls[0]![1] as File).name).toBe('photos.zip');
+    expect(staged?.zipFiles ?? []).toHaveLength(0);
     expect(staged?.scriptFile).toBeNull();
     expect(staged?.voiceoverFile).toBeNull();
   });
@@ -232,10 +249,11 @@ describe('DropZonePanel — a loose Finder drop: macOS metadata never claims a s
       new File([new Uint8Array([0, 0, 1])], '.DS_Store'),
     ];
     const panel = mountPanel();
-    const input = slotInput(panel.container, 3);
-    Object.defineProperty(input, 'files', { value: files, configurable: true });
+    const slot = panel.container.querySelector('[data-testid="media-slot"]')!;
+    const drop = new Event('drop', { bubbles: true, cancelable: true });
+    Object.defineProperty(drop, 'dataTransfer', { value: { files, types: ['Files'] } });
     await act(async () => {
-      input.dispatchEvent(new Event('change', { bubbles: true }));
+      slot.dispatchEvent(drop);
       await new Promise(r => setTimeout(r, 10));
     });
     const staged = panel.published();
@@ -244,5 +262,43 @@ describe('DropZonePanel — a loose Finder drop: macOS metadata never claims a s
     expect(staged?.voiceoverFile?.file.name).toBe('3. voiceover.mp3');
     expect(staged?.assetFiles).toHaveLength(0);
     expect(mockClassify).not.toHaveBeenCalled();
+  });
+});
+
+describe('DropZonePanel — the Media slot collapses like the other three', () => {
+  it('starts expanded; the header chevron hides the body but keeps the block mounted (a drop on the collapsed header still ingests)', async () => {
+    const panel = mountPanel();
+    const toggle = panel.container.querySelector<HTMLButtonElement>('[data-testid="media-slot-toggle"]')!;
+    const body = () => panel.container.querySelector('[data-testid="media-block-body"]') as HTMLElement;
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    expect(body().hidden).toBe(false);
+    await act(async () => { toggle.click(); });
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(body().hidden).toBe(true);
+    expect(panel.container.querySelector('[data-testid="media-block"]')).not.toBeNull(); // still mounted
+    await act(async () => { toggle.click(); });
+    expect(body().hidden).toBe(false);
+  });
+
+  it('collapsed, the Media slot keeps exactly TWO header buttons (wand + import) so all four slots read symmetrical; the rest appear on expand', async () => {
+    const panel = mountPanel({ onMatchMedia: () => undefined });
+    const toggle = panel.container.querySelector<HTMLButtonElement>('[data-testid="media-slot-toggle"]')!;
+    await act(async () => { toggle.click(); }); // collapse
+    const visible = (root: ParentNode) => [...root.querySelectorAll<HTMLElement>('button')].filter(b => !b.closest('[hidden]'));
+    const media = panel.container.querySelector('[data-testid="media-slot"]')!;
+    const labels = visible(media).map(b => b.getAttribute('aria-label')).filter(Boolean);
+    expect(labels).toEqual(['Match media to scenes', 'Import media']);
+    await act(async () => { toggle.click(); }); // expand
+    const expanded = visible(media).map(b => b.getAttribute('aria-label')).filter(Boolean);
+    expect(expanded).toEqual(expect.arrayContaining(['Relink media', 'Delete all media']));
+  });
+
+  it('no slot shows a Ready / Pending / Empty status chip any more', async () => {
+    const panel = mountPanel({ persistedScript: 'x', persistedScriptName: 'script.txt', persistedAssetCount: 3 });
+    const text = panel.container.textContent ?? '';
+    for (const word of ['Pending', 'Empty']) expect(text).not.toContain(word);
+    expect(panel.container.querySelectorAll('[data-testid="media-slot"] [data-testid="media-block-health-chip"]').length).toBe(0);
+    // "Ready" survives only in the summary line ("All ready" / "N of 3 ready"), never as a per-slot badge.
+    expect(text.match(/\bReady\b/g) ?? []).toHaveLength(0);
   });
 });

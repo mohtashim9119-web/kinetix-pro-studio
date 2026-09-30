@@ -125,7 +125,7 @@ export const SYNC_LOG_USER_COPY = {
     'sync-incomplete': (): string => "Sync didn't finish — the timeline was not updated",
   } satisfies Record<AttentionKind, (n: number) => string>,
   status: {
-    clear: 'All clear — nothing needs your attention.',
+    clear: 'Everything is running smoothly.',
     attention: (n: number): string => `${n} item${plural(n)} need${plural(n, 's', '')} your attention`,
   },
   details: (n: number): string => `Details (${n} event${plural(n)})`,
@@ -216,6 +216,11 @@ const FINDING_ATTENTION: Record<SyncLogFindingKind, AttentionKind | undefined> =
   'numeric-unmatched': 'estimated-timings',
   // Informational: two engines disagreed about a cut. Details only.
   'boundary-delta': undefined,
+  // Media states are their own 'imports' surface (type 'media-import'); details only here.
+  'asset-missing': undefined,
+  'asset-unverified': undefined,
+  'asset-corrupt': undefined,
+  'asset-replaced': undefined,
 };
 
 /** The ten-kind mapping for ONE entry, independent of when it was logged.

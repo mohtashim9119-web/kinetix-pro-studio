@@ -29,16 +29,18 @@
 // makes it free.
 // ---------------------------------------------------------------------------
 
-import { useState, useRef, useCallback, useMemo, useEffect } from 'react';
-import { Search, Film, Image as ImageIcon, Music, Link2, Trash2, FolderPlus, FileUp, FileArchive, AlertCircle, Loader2, Copy, Wand2 } from 'lucide-react';
+import { useState, useRef, useCallback, useMemo, useEffect, forwardRef, useImperativeHandle } from 'react';
+import { Search, Film, Image as ImageIcon, Music, Link2, Trash2, FolderPlus, FileUp, Upload, AlertCircle, Loader2, Copy, Wand2, X, ChevronRight } from 'lucide-react';
 import { ConfirmDialog } from './ConfirmDialog';
 import type { Asset, VideoSegment } from '../types';
 import { formatTime } from '../services/timeFormat';
 import { getAsset } from '../services/assetStore';
 import { sha256Hex, ingestLooseFiles, type MediaIngestCounts, type OfflineReconnect } from '../services/mediaIngest';
 import { ingestZip, ZipTooLargeError } from '../services/zipIngest';
-import { mediaVaultGenerateThumbnail, mediaVaultReadThumbnail } from '../services/mediaVaultClient';
+import { mediaVaultGenerateThumbnailDetailed, mediaVaultListEntries, mediaVaultReadThumbnail } from '../services/mediaVaultClient';
+import { assetHealth, ASSET_HEALTH_COPY } from '../services/assetHealth';
 import { ASSET_DRAG_MIME } from '../services/assetDragChannel';
+import type { MediaMatchSummary } from '../services/matchMediaToScenes';
 
 export interface MediaIngestOutcome {
   assets: Asset[];
@@ -79,7 +81,35 @@ interface MediaBlockProps {
   /** Media workflow Unit 2 — the header's "Match media to scenes" button:
    *  re-assigns every scene whose tag names an asset (overwriting), keeps
    *  the rest. Absent -> no button. */
-  onMatchMedia?: () => void;
+  onMatchMedia?: () => MediaMatchSummary | void;
+  /** Wave 3 U9 — delete EVERY project media asset (the old slot-4 "×"). The
+   *  block confirms first; absent -> no button. */
+  onDeleteAllMedia?: () => void;
+  /** Wave 3 U9 — when present the zip door hands the chosen zip(s) to the
+   *  owner instead of ingesting directly, so a BUNDLE zip (script + scene doc
+   *  + voiceover + media) is recognised and routed, not swallowed as media. */
+  onZipsChosen?: (files: File[]) => void;
+  /** Wave 3 B2 — a decode/thumbnail probe FAILED on present bytes. The owner
+   *  flags the asset (`Asset.corrupt`) and stamps the typed finding; nothing
+   *  is deleted. Absent -> the tile still shows its corrupt state locally. */
+  onAssetCorrupt?: (assetId: string, reason: NonNullable<Asset['corrupt']>) => void;
+  /** Wave 3 U9 — when given, the block renders the slot's own header (chevron,
+   *  tile, title, wand + import) and collapses its body like the other slots. */
+  header?: {
+    expanded: boolean;
+    onToggle: () => void;
+    icon: React.ReactNode;
+    color: string;
+    title: string;
+    subtitle: string;
+  };
+}
+
+/** Wave 3 U9 — what the parent drives through a ref: media dropped anywhere
+ *  on the Files tab goes through the SAME ingest doors as the toolbar. */
+export interface MediaBlockHandle {
+  ingestFiles: (files: File[]) => void;
+  ingestZips: (files: File[]) => void;
 }
 
 type TypeFilter = 'all' | 'image' | 'video' | 'audio';
@@ -161,6 +191,26 @@ const DELETE_COPY = {
   cancelLabel: 'Cancel',
 } as const;
 
+// Wave 3 U9 — swappable copy for the one Media surface (operator sign-off
+// point, same pattern as DELETE_COPY above).
+export const MEDIA_COPY = {
+  emptyTitle: 'No media yet',
+  emptyBody: 'Drop images, videos or a zip here — or use the buttons. Media is optional: scenes without a file stay as placeholders until you add some and press Match.',
+  deleteAllTitle: 'Delete all media?',
+  deleteAllBody: (count: number, uses: number): string =>
+    `Delete ${count} file${count === 1 ? '' : 's'}?` +
+    (uses > 0 ? ` ${uses} scene${uses === 1 ? '' : 's'} will show as [NO ASSET] placeholders until you add media again.` : '') +
+    ' Their files stay in the vault until you free up cached data.',
+  deleteAllConfirmLabel: 'Delete all',
+  matchSummary: (s: MediaMatchSummary): string => {
+    let msg = `Matched ${s.matched} · ${s.unmatched} unmatched`;
+    if (s.filled > 0) msg += ` · ${s.filled} placeholder${s.filled === 1 ? '' : 's'} filled`;
+    if (s.conflicts > 0) msg += ` · ${s.conflicts} name conflict${s.conflicts === 1 ? '' : 's'} (oldest used)`;
+    if (s.manualKept > 0) msg += ` · ${s.manualKept} manual pick${s.manualKept === 1 ? '' : 's'} kept`;
+    return msg;
+  },
+} as const;
+
 /**
  * G6 polish item 4b — defense in depth. `voiceoverId` (spine reference) is
  * ALWAYS counted as used, on top of any segment references, so an asset the
@@ -172,30 +222,64 @@ export function usageCount(segments: VideoSegment[], assetId: string, voiceoverI
   return assetId === voiceoverId ? segmentUses + 1 : segmentUses;
 }
 
+type ThumbResult = { url: string } | { corrupt: true } | null;
+
 /** Hashes a video asset's bytes (from its staged `File`, falling back to the
  *  IndexedDB-stored blob for an asset restored across a reload — same
  *  fallback `resolveVoiceoverDuration` in App.tsx already uses) and asks the
- *  vault to generate/read back its thumbnail. `null` on ANY failure — every
- *  failure mode renders identically here (fall back to the type icon). */
-async function loadVideoThumbnailUrl(projectId: string, asset: Asset): Promise<string | null> {
+ *  vault to generate/read back its thumbnail. `{ corrupt: true }` ONLY when
+ *  the vault ran ffmpeg and it could not read a frame; every other failure
+ *  (no Tauri, IPC error, unreadable bytes here) is `null` — no verdict, the
+ *  tile falls back to the type icon. */
+async function loadVideoThumbnailUrl(projectId: string, asset: Asset): Promise<ThumbResult> {
   try {
-    let bytes: Uint8Array;
-    if (asset.file) {
-      bytes = new Uint8Array(await asset.file.arrayBuffer());
-    } else {
-      const stored = await getAsset(projectId, asset.id);
-      if (!stored?.blob) return null;
-      bytes = new Uint8Array(await stored.blob.arrayBuffer());
+    // The stored content hash names the vault blob directly — no need to have
+    // the bytes in hand (an asset resolved from the native store has no IndexedDB
+    // copy). Only an unhashed asset falls back to hashing its bytes.
+    let contentHash = asset.contentHash;
+    if (!contentHash) {
+      let bytes: Uint8Array;
+      if (asset.file) {
+        bytes = new Uint8Array(await asset.file.arrayBuffer());
+      } else {
+        const stored = await getAsset(projectId, asset.id);
+        if (!stored?.blob) return null;
+        bytes = new Uint8Array(await stored.blob.arrayBuffer());
+      }
+      contentHash = await sha256Hex(bytes);
     }
-    const contentHash = await sha256Hex(bytes);
-    const generated = await mediaVaultGenerateThumbnail(contentHash);
-    if (!generated) return null;
+    const outcome = await mediaVaultGenerateThumbnailDetailed(contentHash);
+    if (outcome === 'failed') {
+      // `failed` also covers "this hash was never imported into the vault" (a
+      // legacy asset): only a blob the registry KNOWS can be called unreadable.
+      const known = (await mediaVaultListEntries()).some(e => e.contentHash === contentHash);
+      return known ? { corrupt: true } : null;
+    }
+    if (outcome !== 'generated') return null;
     const thumbBytes = await mediaVaultReadThumbnail(contentHash);
     if (!thumbBytes) return null;
-    return URL.createObjectURL(new Blob([thumbBytes.slice()], { type: 'image/jpeg' }));
+    return { url: URL.createObjectURL(new Blob([thumbBytes.slice()], { type: 'image/jpeg' })) };
   } catch (err) {
     console.warn('[MediaBlock] thumbnail load failed, falling back to an icon:', asset.id, err);
     return null;
+  }
+}
+
+/** An <img> error is not proof of corruption (a revoked blob URL errors too),
+ *  so re-decode the STORED bytes: `true` = definitively undecodable. */
+async function imageBytesUndecodable(projectId: string, asset: Asset): Promise<boolean> {
+  try {
+    const blob = asset.file ?? (await getAsset(projectId, asset.id))?.blob;
+    if (!blob || typeof createImageBitmap !== 'function') return false;
+    try {
+      const bmp = await createImageBitmap(blob);
+      bmp.close?.();
+      return false;
+    } catch {
+      return true;
+    }
+  } catch {
+    return false;
   }
 }
 
@@ -275,7 +359,7 @@ function TileName({ name, onRename, onEditingChange }: {
   );
 }
 
-export function MediaBlock({
+export const MediaBlock = forwardRef<MediaBlockHandle, MediaBlockProps>(function MediaBlock({
   projectId,
   assets,
   segments,
@@ -287,7 +371,11 @@ export function MediaBlock({
   onIngestError,
   onRenameAsset,
   onMatchMedia,
-}: MediaBlockProps) {
+  onDeleteAllMedia,
+  onZipsChosen,
+  onAssetCorrupt,
+  header,
+}, ref) {
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('all');
   const [usageFilter, setUsageFilter] = useState<UsageFilter>('all');
@@ -295,12 +383,36 @@ export function MediaBlock({
   const [busy, setBusy] = useState(false);
   // Unit 3 — the tile whose name is being edited is not a drag source.
   const [editingAssetId, setEditingAssetId] = useState<string | null>(null);
+  const [matchSummary, setMatchSummary] = useState<MediaMatchSummary | null>(null);
+  const [confirmDeleteAll, setConfirmDeleteAll] = useState(false);
   const [videoThumbUrls, setVideoThumbUrls] = useState<Record<string, string>>({});
   const thumbRequestedRef = useRef<Set<string>>(new Set());
+  const imageCheckedRef = useRef<Set<string>>(new Set());
+  const onAssetCorruptRef = useRef(onAssetCorrupt);
+  onAssetCorruptRef.current = onAssetCorrupt;
 
   const filesInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
-  const zipInputRef = useRef<HTMLInputElement>(null);
+  const [importMenuOpen, setImportMenuOpen] = useState(false);
+  const [importMenuPos, setImportMenuPos] = useState({ top: 0, right: 0 });
+  const importButtonRef = useRef<HTMLButtonElement>(null);
+  const toggleImportMenu = useCallback(() => {
+    const rect = importButtonRef.current?.getBoundingClientRect();
+    if (rect) setImportMenuPos({ top: rect.bottom + 4, right: Math.max(4, window.innerWidth - rect.right) });
+    setImportMenuOpen(o => !o);
+  }, []);
+  // Close the menu on any outside press or Escape.
+  useEffect(() => {
+    if (!importMenuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as Element | null;
+      if (!t?.closest('[data-testid="media-block-import-menu"], [data-testid="media-block-import"]')) setImportMenuOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setImportMenuOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey); };
+  }, [importMenuOpen]);
 
   // G6 polish item 4a — the project's voiceover is spine, not presentation
   // media: slot 3 (above this block) is its home, never this grid.
@@ -340,22 +452,37 @@ export function MediaBlock({
   );
   const unusedCount = unusedAssetIds.length;
 
+  // Release the video-thumbnail blob URLs when the block goes away (each
+  // `createObjectURL` pins its bytes until revoked; they were never released).
+  const mountedRef = useRef(true);
+  useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; }; }, []);
+  const videoThumbUrlsRef = useRef(videoThumbUrls);
+  videoThumbUrlsRef.current = videoThumbUrls;
+  useEffect(() => () => {
+    for (const url of Object.values(videoThumbUrlsRef.current)) URL.revokeObjectURL(url);
+  }, []);
+
   // Lazily generate/fetch a thumbnail for each VISIBLE video row, once,
   // caching the resulting blob URL for the component's lifetime — not
   // reactive to scroll position (no virtualization here), but bounded to
   // whatever the current filter/search actually shows.
   useEffect(() => {
-    let cancelled = false;
     for (const { asset } of rows) {
       if (asset.type !== 'video') continue;
       if (thumbRequestedRef.current.has(asset.id)) continue;
+      if (asset.unresolved || asset.corrupt) continue; // offline / already known-bad: no probe (and retried if it comes back)
       thumbRequestedRef.current.add(asset.id);
-      void loadVideoThumbnailUrl(projectId, asset).then(url => {
-        if (cancelled || url === null) return;
-        setVideoThumbUrls(prev => ({ ...prev, [asset.id]: url }));
+      void loadVideoThumbnailUrl(projectId, asset).then(result => {
+        if (result === null) return;
+        if ('corrupt' in result) { onAssetCorruptRef.current?.(asset.id, 'no-frame'); return; }
+        // NOT gated on this effect's cleanup: the id is already in
+        // `thumbRequestedRef`, so a result dropped because `rows` changed
+        // mid-flight would never be requested again (the tile stayed a
+        // film-strip icon forever). Only an unmounted block drops it.
+        if (!mountedRef.current) { URL.revokeObjectURL(result.url); return; }
+        setVideoThumbUrls(prev => ({ ...prev, [asset.id]: result.url }));
       });
     }
-    return () => { cancelled = true; };
   }, [rows, projectId]);
 
   // G6 polish item 1 — every ingest door needs the project's own already-
@@ -412,11 +539,28 @@ export function MediaBlock({
     }
   }, [onIngestComplete, onIngestError]);
 
+  // Wave 3 U9 — ONE import door. Whatever was picked (images, videos, audio,
+  // zips, any mix) goes through `importMixed`: loose media first as one batch,
+  // then each zip on its own (bounded memory, one archive at a time). When the
+  // owner supplies `onZipsChosen`, zips go to it instead so a BUNDLE zip is
+  // recognised and routed rather than swallowed as media.
+  const importMixed = useCallback(async (files: File[], routeZips: boolean): Promise<void> => {
+    const isZip = (f: File) => f.name.toLowerCase().endsWith('.zip');
+    const loose = files.filter(f => !isZip(f));
+    const zips = files.filter(isZip);
+    if (loose.length > 0) {
+      await runIngest('files', `Importing ${loose.length} file${loose.length === 1 ? '' : 's'}…`, () => ingestLooseFiles(projectId, loose, existingHashes, offlineHashes));
+    }
+    if (zips.length > 0 && routeZips && onZipsChosen) { onZipsChosen(zips); return; }
+    for (const zip of zips) {
+      await runIngest('zip', 'Importing zip…', () => ingestZip(projectId, zip, existingHashes, offlineHashes));
+    }
+  }, [projectId, runIngest, existingHashes, offlineHashes, onZipsChosen]);
+
   const handleFilesChosen = useCallback((fileList: FileList | null) => {
     if (!fileList || fileList.length === 0) return;
-    const files = Array.from(fileList);
-    void runIngest('files', `Importing ${files.length} file${files.length === 1 ? '' : 's'}…`, () => ingestLooseFiles(projectId, files, existingHashes, offlineHashes));
-  }, [projectId, runIngest, existingHashes, offlineHashes]);
+    void importMixed(Array.from(fileList), true);
+  }, [importMixed]);
 
   const handleFolderChosen = useCallback((fileList: FileList | null) => {
     if (!fileList || fileList.length === 0) return;
@@ -424,12 +568,15 @@ export function MediaBlock({
     void runIngest('folder', `Importing folder (${files.length} file${files.length === 1 ? '' : 's'})…`, () => ingestLooseFiles(projectId, files, existingHashes, offlineHashes));
   }, [projectId, runIngest, existingHashes, offlineHashes]);
 
-  const handleZipChosen = useCallback((file: File | undefined) => {
-    if (!file) return;
-    // The zip's entry count isn't known without opening it (the expensive
-    // part), so this stays generic rather than guessing a number.
-    void runIngest('zip', 'Importing zip…', () => ingestZip(projectId, file, existingHashes, offlineHashes));
-  }, [projectId, runIngest, existingHashes, offlineHashes]);
+  // Wave 3 U9 — drops on the Files tab (and bundle-less zips) enter through
+  // the same doors as the toolbar, so there is ONE ingest path and one place
+  // the result lands. Zips run one at a time (bounded memory).
+  useImperativeHandle(ref, () => ({
+    // The owner has already classified these (bundles handled) — plain media
+    // only, so zips must NOT be handed back to `onZipsChosen`.
+    ingestFiles: (files: File[]) => { if (files.length > 0) void importMixed(files, false); },
+    ingestZips: (files: File[]) => { if (files.length > 0) void importMixed(files, false); },
+  }), [importMixed]);
 
   // G6 polish item 3 — bulk "Delete unused". Routes every unused asset
   // through the SAME `onDeleteAsset` prop a single-tile delete uses, so the
@@ -453,27 +600,19 @@ export function MediaBlock({
     }
   }, [onDeleteAsset]);
 
-  if (mediaAssets.length === 0) {
-    return null;
-  }
+  const totalUses = useMemo(
+    () => segments.filter(sg => sg.assetId && mediaAssets.some(a => a.id === sg.assetId)).length,
+    [segments, mediaAssets],
+  );
 
-  return (
-    <div className="border-t border-[var(--kx-border)] pt-3 mt-1" data-testid="media-block">
-      <div className="flex items-center justify-between px-1 mb-2">
-        <h3 className="text-[11px] font-semibold uppercase tracking-wide text-[var(--kx-faint)]">
-          Media ({mediaAssets.length})
-        </h3>
-        {busyLabel && (
-          <span
-            className="flex items-center gap-1 text-[10px] text-[var(--kx-faint)]"
-            role="status"
-            aria-live="polite"
-          >
-            <Loader2 size={11} className="animate-spin" />
-            {busyLabel}
-          </span>
-        )}
-        <div className="flex items-center gap-1.5">
+  // The two primary actions (wand + import) live in the slot HEADER when the
+  // block is given one (so they stay visible collapsed, keeping all four slots
+  // symmetrical), and in the toolbar otherwise.
+  const actionBtnClass = header
+    ? 'flex items-center justify-center w-8 h-8 rounded-[8px] bg-[var(--kx-surface-2)] border border-[var(--kx-line)] text-[var(--kx-muted)] hover:text-[var(--kx-text)] hover:border-[var(--kx-line-2)] transition-colors flex-shrink-0 disabled:opacity-40'
+    : 'p-1 rounded hover:bg-[var(--kx-surface-2)] text-[var(--kx-faint)] disabled:opacity-40';
+  const primaryActions = (
+    <>
           {onMatchMedia && (
             <button
               type="button"
@@ -481,38 +620,113 @@ export function MediaBlock({
               title="Match media to scenes — assign each scene the file its tag names"
               aria-label="Match media to scenes"
               disabled={busy}
-              onClick={onMatchMedia}
-              className="p-1 rounded hover:bg-[var(--kx-surface-2)] text-[var(--kx-faint)] disabled:opacity-40"
+              onClick={() => { const summary = onMatchMedia(); setMatchSummary(summary ?? null); }}
+              className={actionBtnClass}
             >
               <Wand2 size={13} />
             </button>
           )}
+          <div className="relative">
+            <button
+              ref={importButtonRef}
+              type="button"
+              data-testid="media-block-import"
+              title="Import media — files, folders or zips"
+              aria-label="Import media"
+              aria-haspopup="menu"
+              aria-expanded={importMenuOpen}
+              disabled={busy}
+              onClick={toggleImportMenu}
+              className={actionBtnClass}
+            >
+              <Upload size={13} />
+            </button>
+            {importMenuOpen && (
+              <div
+                role="menu"
+                data-testid="media-block-import-menu"
+                style={{ top: importMenuPos.top, right: importMenuPos.right }}
+                className="fixed z-50 min-w-[170px] rounded-lg border border-[var(--kx-line-2)] bg-[var(--kx-surface)] py-1 shadow-lg"
+              >
+                <button
+                  type="button" role="menuitem"
+                  data-testid="media-block-import-files"
+                  onClick={() => { setImportMenuOpen(false); filesInputRef.current?.click(); }}
+                  className="w-full flex items-center gap-2 px-2.5 py-1.5 text-left text-[11px] text-[var(--kx-muted)] hover:bg-[var(--kx-surface-2)] hover:text-white"
+                >
+                  <FileUp size={12} /> Files &amp; zips…
+                </button>
+                <button
+                  type="button" role="menuitem"
+                  data-testid="media-block-import-folder"
+                  onClick={() => { setImportMenuOpen(false); folderInputRef.current?.click(); }}
+                  className="w-full flex items-center gap-2 px-2.5 py-1.5 text-left text-[11px] text-[var(--kx-muted)] hover:bg-[var(--kx-surface-2)] hover:text-white"
+                >
+                  <FolderPlus size={12} /> Folder…
+                </button>
+              </div>
+            )}
+          </div>
+    </>
+  );
+
+  return (
+    <div data-testid="media-block">
+      {header && (
+        <div className="w-full flex items-center gap-2.5 px-3 py-2.5">
           <button
             type="button"
-            title="Add loose files"
-            disabled={busy}
-            onClick={() => filesInputRef.current?.click()}
-            className="p-1 rounded hover:bg-[var(--kx-surface-2)] text-[var(--kx-faint)] disabled:opacity-40"
+            data-testid="media-slot-toggle"
+            aria-expanded={header.expanded}
+            onClick={header.onToggle}
+            className="flex-1 min-w-0 flex items-center gap-2.5 text-left"
           >
-            <FileUp size={13} />
+            <span className="flex-none w-6 flex items-center justify-center">
+              <ChevronRight
+                size={13}
+                className={`transition-transform ${header.expanded ? 'rotate-90 text-[var(--kx-accent)]' : 'text-[var(--kx-faint)]'}`}
+              />
+            </span>
+            <span
+              className="flex-none w-9 h-9 rounded-[10px] flex items-center justify-center"
+              style={{ background: `${header.color}26`, color: header.color }}
+            >
+              {header.icon}
+            </span>
+            <span className="flex-1 min-w-0 flex flex-col gap-0.5">
+              <span className="text-[14px] font-semibold text-[var(--kx-text)] min-w-0 truncate">{header.title}</span>
+              <span className="text-[11.5px] text-[var(--kx-muted)] truncate">{header.subtitle}</span>
+            </span>
           </button>
+          {primaryActions}
+        </div>
+      )}
+      <div hidden={header ? !header.expanded : false} className="px-3 pb-3" data-testid="media-block-body">
+      <div className="flex items-center justify-between gap-1.5 px-1 mb-2">
+        <h3 className="text-[11px] font-semibold uppercase tracking-wide text-[var(--kx-faint)] shrink-0" data-testid="media-block-count">
+          Media ({mediaAssets.length})
+        </h3>
+        {busyLabel && (
+          <span
+            className="flex items-center gap-1 text-[10px] text-[var(--kx-faint)] min-w-0 truncate"
+            role="status"
+            aria-live="polite"
+          >
+            <Loader2 size={11} className="animate-spin shrink-0" />
+            {busyLabel}
+          </span>
+        )}
+        <div className="flex items-center gap-1.5 shrink-0">
+          {!header && primaryActions}
           <button
             type="button"
-            title="Add a folder"
-            disabled={busy}
-            onClick={() => folderInputRef.current?.click()}
-            className="p-1 rounded hover:bg-[var(--kx-surface-2)] text-[var(--kx-faint)] disabled:opacity-40"
+            data-testid="media-block-relink-door"
+            title="Relink media…"
+            aria-label="Relink media"
+            onClick={onOpenRelinkMedia}
+            className="p-1 rounded hover:bg-[var(--kx-surface-2)] text-[var(--kx-faint)]"
           >
-            <FolderPlus size={13} />
-          </button>
-          <button
-            type="button"
-            title="Add a zip"
-            disabled={busy}
-            onClick={() => zipInputRef.current?.click()}
-            className="p-1 rounded hover:bg-[var(--kx-surface-2)] text-[var(--kx-faint)] disabled:opacity-40"
-          >
-            <FileArchive size={13} />
+            <Link2 size={13} />
           </button>
           <button
             type="button"
@@ -530,14 +744,45 @@ export function MediaBlock({
               </span>
             )}
           </button>
+          {onDeleteAllMedia && (
+            <button
+              type="button"
+              data-testid="media-block-delete-all"
+              title="Delete all media"
+              aria-label="Delete all media"
+              disabled={mediaAssets.length === 0}
+              onClick={() => setConfirmDeleteAll(true)}
+              className="p-1 rounded hover:bg-[var(--kx-surface-2)] text-[var(--kx-faint)] hover:text-[var(--kx-danger)] disabled:opacity-40"
+            >
+              <X size={13} />
+            </button>
+          )}
         </div>
       </div>
+
+      {matchSummary && (
+        <div
+          data-testid="media-block-match-summary"
+          role="status"
+          className="mx-1 mb-2 flex items-start gap-1.5 rounded-lg bg-[var(--kx-surface-2)] px-2 py-1 text-[11px] text-[var(--kx-muted)]"
+        >
+          <span className="flex-1 min-w-0">{MEDIA_COPY.matchSummary(matchSummary)}</span>
+          <button
+            type="button"
+            aria-label="Dismiss match result"
+            onClick={() => setMatchSummary(null)}
+            className="shrink-0 text-[var(--kx-faint)] hover:text-white"
+          >
+            <X size={11} />
+          </button>
+        </div>
+      )}
 
       <input
         ref={filesInputRef}
         type="file"
         multiple
-        accept="image/*,video/*,audio/*"
+        accept="image/*,video/*,audio/*,.zip"
         className="hidden"
         onChange={(e) => { handleFilesChosen(e.target.files); e.target.value = ''; }}
       />
@@ -553,13 +798,6 @@ export function MediaBlock({
         multiple
         className="hidden"
         onChange={(e) => { handleFolderChosen(e.target.files); e.target.value = ''; }}
-      />
-      <input
-        ref={zipInputRef}
-        type="file"
-        accept=".zip"
-        className="hidden"
-        onChange={(e) => { handleZipChosen(e.target.files?.[0]); e.target.value = ''; }}
       />
 
       {/* Row 1 — search (flex) + sort. */}
@@ -622,7 +860,15 @@ export function MediaBlock({
         </div>
       </div>
 
-      {rows.length === 0 ? (
+      {mediaAssets.length === 0 ? (
+        <div
+          data-testid="media-block-empty"
+          className="mx-1 mb-1 rounded-[10px] border border-dashed border-[var(--kx-line-2)] px-3 py-5 text-center"
+        >
+          <p className="text-[12px] font-semibold text-[var(--kx-muted)]">{MEDIA_COPY.emptyTitle}</p>
+          <p className="mt-1 text-[11px] text-[var(--kx-faint)]">{MEDIA_COPY.emptyBody}</p>
+        </div>
+      ) : rows.length === 0 ? (
         <p className="text-[11px] text-[var(--kx-faint)] px-1 pb-2">No media matches this filter.</p>
       ) : (
         <div className="grid grid-cols-3 gap-2 px-1 pb-2" data-testid="media-block-grid">
@@ -633,6 +879,9 @@ export function MediaBlock({
               <div
                 key={asset.id}
                 data-testid="media-block-tile"
+                data-asset-id={asset.id}
+                data-unresolved={asset.unresolved ? 'true' : 'false'}
+                data-health={assetHealth(asset)}
                 // Media workflow Unit 3 — drag onto a timeline segment to
                 // assign it (dedicated asset channel; payload = asset id).
                 draggable={editingAssetId !== asset.id}
@@ -651,11 +900,25 @@ export function MediaBlock({
                     className="w-full h-full flex flex-col items-center justify-center gap-1 text-[var(--kx-danger)]"
                   >
                     <AlertCircle size={18} />
-                    <span className="text-[9px]">Offline</span>
+                    <span data-testid="asset-offline-badge" className="text-[9px]">Offline</span>
                     <Link2 size={11} />
                   </button>
+                ) : asset.corrupt ? (
+                  <div data-testid="media-block-corrupt" className="w-full h-full flex flex-col items-center justify-center gap-1 text-[var(--kx-danger)]">
+                    <AlertCircle size={18} />
+                    <span className="text-[9px]">Can't read file</span>
+                  </div>
                 ) : thumbUrl ? (
-                  <img src={thumbUrl} alt="" draggable={false} className="w-full h-full object-cover" />
+                  <img
+                    src={thumbUrl} alt="" draggable={false} className="w-full h-full object-cover"
+                    onError={() => {
+                      if (asset.type !== 'image' || imageCheckedRef.current.has(asset.id)) return;
+                      imageCheckedRef.current.add(asset.id);
+                      void imageBytesUndecodable(projectId, asset).then(bad => {
+                        if (bad) onAssetCorruptRef.current?.(asset.id, 'image-decode');
+                      });
+                    }}
+                  />
                 ) : (
                   <div className="w-full h-full flex items-center justify-center">
                     <TypeIcon size={20} className="text-[var(--kx-faint)]" />
@@ -692,6 +955,26 @@ export function MediaBlock({
                   {uses === 0 ? 'Unused' : `${uses}×`}
                 </button>
 
+                {(() => {
+                  const health = assetHealth(asset);
+                  const copy = ASSET_HEALTH_COPY[health];
+                  const tone = health === 'available'
+                    ? 'bg-black/60 text-[var(--kx-ready)]'
+                    : health === 'unverified'
+                      ? 'bg-black/70 text-[var(--kx-accent-2)]'
+                      : 'bg-black/80 text-[var(--kx-danger)]';
+                  return (
+                    <span
+                      data-testid="media-block-health-chip"
+                      data-health={health}
+                      title={copy.title}
+                      className={`absolute top-[22px] left-1 text-[8px] leading-none rounded px-1 py-0.5 ${tone}`}
+                    >
+                      {copy.label}
+                    </span>
+                  );
+                })()}
+
                 <div className="absolute inset-x-0 top-0 bg-gradient-to-b from-black/60 to-transparent px-1 py-0.5 pr-6">
                   <TileName
                     name={asset.name}
@@ -716,6 +999,17 @@ export function MediaBlock({
         />
       )}
 
+      {confirmDeleteAll && (
+        <ConfirmDialog
+          title={MEDIA_COPY.deleteAllTitle}
+          body={MEDIA_COPY.deleteAllBody(mediaAssets.length, totalUses)}
+          confirmLabel={MEDIA_COPY.deleteAllConfirmLabel}
+          cancelLabel={DELETE_COPY.cancelLabel}
+          onConfirm={() => { onDeleteAllMedia?.(); setConfirmDeleteAll(false); setMatchSummary(null); }}
+          onCancel={() => setConfirmDeleteAll(false)}
+        />
+      )}
+
       {confirmDeleteAsset && (
         <ConfirmDialog
           title={DELETE_COPY.usedTitle}
@@ -726,6 +1020,7 @@ export function MediaBlock({
           onCancel={() => setConfirmDeleteAsset(null)}
         />
       )}
+      </div>
     </div>
   );
-}
+});

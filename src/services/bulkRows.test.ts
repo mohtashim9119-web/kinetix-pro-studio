@@ -135,6 +135,20 @@ describe('BulkRowStore — draft rows, files, and creation only at Build Timelin
     new File(['a'], 'vo.wav'), new File(['i'], 'a.png'),
   ];
 
+  it('B5: a row with script + scene doc + voiceover and NO media is COMPLETE and builds (media is optional); a half-filled row still is not', async () => {
+    const { deps, created } = fakeDeps({ cloudActive: () => false });
+    const store = new BulkRowStore(deps);
+    store.init(2);
+    const ids = store.snapshot().map(r => r.projectId);
+    await store.addFiles(ids[0]!, four().slice(0, 3)); store.setTypedName(ids[0]!, 'No media');
+    await store.addFiles(ids[1]!, four().slice(0, 2)); store.setTypedName(ids[1]!, 'No voice');
+    expect(store.snapshot()[0]!.slots).toEqual({ script: true, scene: true, voiceover: true, media: false });
+    expect(store.completeIds()).toEqual([ids[0]]);
+    const out = await store.buildReady();
+    expect(created.map(c => c.name)).toEqual(['No media']);
+    expect(out.skips[ids[1]!]).toBe('Add a voiceover to build the timeline');
+  });
+
   it('init makes N EMPTY drafts: nothing is created or registered anywhere', async () => {
     const { deps, created } = fakeDeps();
     const store = new BulkRowStore(deps);
@@ -176,7 +190,7 @@ describe('BulkRowStore — draft rows, files, and creation only at Build Timelin
     expect(out.created.map(c => c.name)).toEqual(['Alpine', 'Valley']);
     expect(purged.sort()).toEqual([ids[3], ids[4]].sort());
     expect(store.snapshot().map(r => r.projectId)).toEqual([ids[0], ids[1], ids[2]]);
-    expect(out.skips[ids[2]!]).toBe('Add a scene doc, a voiceover and media to build the timeline');
+    expect(out.skips[ids[2]!]).toBe('Add a scene doc and a voiceover to build the timeline');
     expect(store.snapshot()[0]!.built).toBe(true);
     expect(store.snapshot()[2]!.built).toBe(false);
   });

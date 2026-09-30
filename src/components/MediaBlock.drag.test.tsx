@@ -14,8 +14,9 @@ import { ASSET_DRAG_MIME } from '../services/assetDragChannel';
 vi.mock('../services/mediaIngest', () => ({ sha256Hex: vi.fn(async () => 'deadbeef'), ingestLooseFiles: vi.fn() }));
 vi.mock('../services/zipIngest', () => ({ ingestZip: vi.fn(), ZipTooLargeError: class extends Error {} }));
 vi.mock('../services/mediaVaultClient', () => ({
-  mediaVaultGenerateThumbnail: vi.fn(async () => false),
+  mediaVaultGenerateThumbnailDetailed: vi.fn(async () => 'unavailable'),
   mediaVaultReadThumbnail: vi.fn(async () => null),
+  mediaVaultListEntries: vi.fn(async () => []),
 }));
 vi.mock('../services/assetStore', () => ({ getAsset: vi.fn(async () => null) }));
 

@@ -6,18 +6,27 @@
 // ---------------------------------------------------------------------------
 // Wave 3 U4.6 — the Build Timeline button's gate and copy.
 //
-// FOUR SLOTS, BY PRODUCT RULING. The sync engine only needs the spine
-// (script + scene doc + voiceover). Requiring media is the operator's ruling
-// for the "ready timeline" promise, not an engine constraint — so the cloud
-// sync intent still fires at spine complete and never waits on media
-// (App.tsx). A slot counts as filled when it is staged OR already persisted;
-// a bundle zip fills all four in one drop.
+// SPINE-ONLY, BY PRODUCT RULING (Wave 3 U9 — reverses U4.6's four-slot rule).
+// The sync engine only needs the spine (script + scene doc + voiceover), and
+// the cloud sync intent always fired at spine complete without waiting on
+// media (App.tsx, U4.5). Media is optional: build with none, add it later,
+// press Match, and the placeholder scenes fill. A slot counts as filled when
+// it is staged OR already persisted; a bundle zip fills all of them in one
+// drop.
+//
+// Bulk Projects is spine-only too (B5): rows are complete with script + scene
+// doc + voiceover, and the media chip reads "Optional". The four-slot helpers
+// (`missingSlots` / `missingSlotsReason`) remain exported for anything that
+// still needs the strict rule.
 //
 // The `no-asset` attention kind (media removed after a sync) is a separate
 // surface and stays.
 // ---------------------------------------------------------------------------
 
 export type BuildTimelineSlot = 'script' | 'scene' | 'voiceover' | 'media';
+
+/** The slots the engine actually needs. */
+export type SpineSlot = 'script' | 'scene' | 'voiceover';
 
 export interface BuildTimelineSlots {
   script: boolean;
@@ -38,6 +47,14 @@ export const BUILD_TIMELINE_COPY = {
   /** An early cloud click whose staging transcription paused or failed —
    *  the pause/model dialog is already up and carries the choice. */
   stagingPausedMessage: 'Transcription stopped — answer the dialog, then build the timeline again.',
+  /** Editor button, 0 media: enabled, with an honest hint (never a block). */
+  noMediaHint: 'No media yet — scenes will build as unmatched placeholders. Add media any time, then Match.',
+  /** Per-item copy for the spine-only gate ("Add script to build the timeline"). */
+  spineSlotNames: {
+    script: 'script',
+    scene: 'scene doc',
+    voiceover: 'voiceover',
+  } satisfies Record<SpineSlot, string>,
   slotNames: {
     script: 'a script',
     scene: 'a scene doc',
@@ -93,6 +110,23 @@ export function missingSlots(slots: BuildTimelineSlots): BuildTimelineSlot[] {
  *  media to build the timeline". `undefined` when all four are filled. */
 export function missingSlotsReason(slots: BuildTimelineSlots): string | undefined {
   const names = missingSlots(slots).map(slot => BUILD_TIMELINE_COPY.slotNames[slot]);
+  if (names.length === 0) return undefined;
+  const list = names.length === 1
+    ? names[0]
+    : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+  return `Add ${list} to build the timeline`;
+}
+
+const SPINE_ORDER: SpineSlot[] = ['script', 'scene', 'voiceover'];
+
+export function missingSpineSlots(slots: BuildTimelineSlots): SpineSlot[] {
+  return SPINE_ORDER.filter(slot => !slots[slot]);
+}
+
+/** "Add voiceover to build the timeline" / "Add script and scene doc to build
+ *  the timeline". `undefined` when the spine is complete — media never gates. */
+export function spineGateReason(slots: BuildTimelineSlots): string | undefined {
+  const names = missingSpineSlots(slots).map(slot => BUILD_TIMELINE_COPY.spineSlotNames[slot]);
   if (names.length === 0) return undefined;
   const list = names.length === 1
     ? names[0]

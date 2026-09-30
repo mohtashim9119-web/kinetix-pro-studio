@@ -99,6 +99,22 @@ export async function mediaVaultGenerateThumbnail(contentHash: string): Promise<
   }
 }
 
+/** Wave 3 B2 — the same generation, told apart: 'generated' (a thumbnail now
+ *  exists), 'failed' (Tauri ran ffmpeg and it could not read a frame — the
+ *  bytes are corrupt/0-byte/truncated), 'unavailable' (not in Tauri, or the
+ *  IPC itself threw — says NOTHING about the file, so never a corrupt verdict). */
+export type ThumbnailOutcome = 'generated' | 'failed' | 'unavailable';
+
+export async function mediaVaultGenerateThumbnailDetailed(contentHash: string): Promise<ThumbnailOutcome> {
+  if (!isTauri()) return 'unavailable';
+  try {
+    return (await invoke<boolean>('media_vault_generate_thumbnail', { contentHash })) ? 'generated' : 'failed';
+  } catch (err) {
+    console.warn('[mediaVaultClient] thumbnail IPC failed, no verdict on the file:', contentHash, err);
+    return 'unavailable';
+  }
+}
+
 /** G6 Step 4a — reads back a previously generated thumbnail. `null` outside
  *  Tauri, when none has been generated yet, or on any read failure — every
  *  case renders identically (fall back to a generic icon), so this never
