@@ -1340,8 +1340,13 @@ mod registry_race_tests {
     /// the threads interleave: a (thread, blob) pair is referenced at the end
     /// iff the LAST iteration touching that blob left it referenced.
     fn run_thread(root: &Path, t: usize, errors: &std::sync::Mutex<Vec<String>>) {
-        let pid = format!("proj-{t}");
-        for i in 0..ITERS {
+        run_actor(root, &format!("proj-{t}"), t, ITERS, errors);
+    }
+
+    /// One actor's deterministic op sequence (see `run_thread`'s contract).
+    fn run_actor(root: &Path, pid: &str, t: usize, iters: usize, errors: &std::sync::Mutex<Vec<String>>) {
+        let pid = pid.to_string();
+        for i in 0..iters {
             let k = (i * 7 + t) % DISTINCT;
             let bytes = payload(k);
             let entry = match media_vault_import_bytes(root, &pid, &bytes, &format!("n{k}.bin"), "application/octet-stream") {
@@ -1364,21 +1369,38 @@ mod registry_race_tests {
         }
     }
 
+    /// The payload indices one actor must still reference after `iters` ops.
+    fn expected_for(t: usize, iters: usize) -> BTreeSet<usize> {
+        let mut last: BTreeMap<usize, bool> = BTreeMap::new();
+        for i in 0..iters {
+            let k = (i * 7 + t) % DISTINCT;
+            last.insert(k, i % 3 != 0);
+        }
+        last.into_iter().filter(|(_, on)| *on).map(|(k, _)| k).collect()
+    }
+
     /// `project id -> set of payload indices it must still reference`.
     fn expected_refs() -> BTreeMap<String, BTreeSet<usize>> {
-        let mut out = BTreeMap::new();
-        for t in 0..THREADS {
-            let mut last: BTreeMap<usize, bool> = BTreeMap::new();
-            for i in 0..ITERS {
-                let k = (i * 7 + t) % DISTINCT;
-                last.insert(k, i % 3 != 0);
+        (0..THREADS).map(|t| (format!("proj-{t}"), expected_for(t, ITERS))).collect()
+    }
+
+    /// Final `project id -> payload indices`, read back from the registry.
+    fn actual_refs(root: &Path, projects: &[String]) -> BTreeMap<String, BTreeSet<usize>> {
+        let mut actual: BTreeMap<String, BTreeSet<usize>> =
+            projects.iter().map(|p| (p.clone(), BTreeSet::new())).collect();
+        for e in media_vault_list(root).expect("registry must still parse") {
+            let k = (0..DISTINCT)
+                .find(|k| {
+                    let mut h = Sha256::new();
+                    h.update(&payload(*k));
+                    hex_digest(&h.finish()) == e.content_hash
+                })
+                .expect("every entry is one of the imported payloads");
+            for p in &e.referenced_by_project_ids {
+                actual.get_mut(p).expect("only known projects").insert(k);
             }
-            out.insert(
-                format!("proj-{t}"),
-                last.into_iter().filter(|(_, on)| *on).map(|(k, _)| k).collect(),
-            );
         }
-        out
+        actual
     }
 
     #[test]
@@ -1414,6 +1436,110 @@ mod registry_race_tests {
             }
         }
         assert_eq!(actual, expected_refs(), "exact final reference sets");
+        fs::remove_dir_all(&root).ok();
+    }
+
+    /// Step 5 soak: 10,000 mutations across 8 threads, exact final state.
+    #[test]
+    fn soak_ten_thousand_mutations_across_eight_threads_keeps_the_exact_final_state() {
+        const SOAK_ITERS: usize = 1_250; // x 8 threads = 10,000 imports (plus renames/unrefs)
+        let root = vault_root("soak");
+        let errors = std::sync::Mutex::new(Vec::<String>::new());
+        let barrier = Barrier::new(THREADS);
+        std::thread::scope(|s| {
+            for t in 0..THREADS {
+                let (root, errors, barrier) = (&root, &errors, &barrier);
+                s.spawn(move || {
+                    barrier.wait();
+                    run_actor(root, &format!("proj-{t}"), t, SOAK_ITERS, errors);
+                });
+            }
+        });
+        let errs = errors.into_inner().unwrap();
+        assert!(errs.is_empty(), "{} failed, first: {:?}", errs.len(), errs.first());
+        let projects: Vec<String> = (0..THREADS).map(|t| format!("proj-{t}")).collect();
+        let expected: BTreeMap<String, BTreeSet<usize>> =
+            (0..THREADS).map(|t| (format!("proj-{t}"), expected_for(t, SOAK_ITERS))).collect();
+        assert_eq!(actual_refs(&root, &projects), expected);
+        // The last-good copy tracked every one of those saves and still parses.
+        assert!(strict_parse_registry(&fs::read(crate::media_vault_recovery::lastgood_file(&root)).unwrap()).is_ok());
+        assert!(crate::media_vault_recovery::read_findings(&root).unwrap().is_empty(), "no recovery was ever needed");
+        fs::remove_dir_all(&root).ok();
+    }
+
+    /// Child half of the two-process test: a no-op unless the parent spawned
+    /// this very test binary with `KINETIX_VAULT_CHILD_ROOT` set.
+    #[test]
+    fn two_process_child() {
+        let Ok(root) = std::env::var("KINETIX_VAULT_CHILD_ROOT") else { return };
+        crate::atomic_stage::TEST_SKIP_FSYNC.store(true, std::sync::atomic::Ordering::Relaxed);
+        let actor: usize = std::env::var("KINETIX_VAULT_CHILD_ACTOR").unwrap().parse().unwrap();
+        let errors = std::sync::Mutex::new(Vec::<String>::new());
+        std::thread::scope(|s| {
+            for lane in 0..2 {
+                let (root, errors) = (&root, &errors);
+                s.spawn(move || run_actor(Path::new(root), &format!("child-{actor}-{lane}"), actor * 2 + lane, ITERS, errors));
+            }
+        });
+        let errs = errors.into_inner().unwrap();
+        assert!(errs.is_empty(), "child {actor}: {} failed, first: {:?}", errs.len(), errs.first());
+    }
+
+    /// Two separate PROCESSES (plus this one) mutating one vault: the OS file
+    /// lock, not the in-process mutex, is what keeps them exact.
+    #[test]
+    fn two_processes_and_this_one_contend_for_one_vault_without_losing_an_update() {
+        let root = vault_root("two-process");
+        let exe = std::env::current_exe().unwrap();
+        let spawn_child = |actor: usize| {
+            std::process::Command::new(&exe)
+                .args(["--exact", "media_vault::registry_race_tests::two_process_child", "--test-threads=1", "--nocapture"])
+                .env("KINETIX_VAULT_CHILD_ROOT", &root)
+                .env("KINETIX_VAULT_CHILD_ACTOR", actor.to_string())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .unwrap()
+        };
+        let (a, b) = (spawn_child(0), spawn_child(1));
+
+        let errors = std::sync::Mutex::new(Vec::<String>::new());
+        std::thread::scope(|s| {
+            for t in 0..2 {
+                let (root, errors) = (&root, &errors);
+                s.spawn(move || run_actor(root, &format!("parent-{t}"), 10 + t, ITERS, errors));
+            }
+        });
+        for (name, child) in [("A", a), ("B", b)] {
+            let out = child.wait_with_output().unwrap();
+            assert!(
+                out.status.success(),
+                "child {name} failed:\n{}\n{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            );
+            assert!(
+                String::from_utf8_lossy(&out.stdout).contains("1 passed"),
+                "child {name} did not actually run the workload:\n{}",
+                String::from_utf8_lossy(&out.stdout)
+            );
+        }
+        let errs = errors.into_inner().unwrap();
+        assert!(errs.is_empty(), "parent: {} failed, first: {:?}", errs.len(), errs.first());
+
+        let mut projects = vec!["parent-0".to_string(), "parent-1".to_string()];
+        let mut expected: BTreeMap<String, BTreeSet<usize>> = BTreeMap::new();
+        expected.insert("parent-0".into(), expected_for(10, ITERS));
+        expected.insert("parent-1".into(), expected_for(11, ITERS));
+        for actor in 0..2usize {
+            for lane in 0..2usize {
+                let id = format!("child-{actor}-{lane}");
+                expected.insert(id.clone(), expected_for(actor * 2 + lane, ITERS));
+                projects.push(id);
+            }
+        }
+        assert_eq!(actual_refs(&root, &projects), expected, "no update lost across three processes");
+        assert!(strict_parse_registry(&fs::read(registry_path(&root)).unwrap()).is_ok());
         fs::remove_dir_all(&root).ok();
     }
 
