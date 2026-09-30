@@ -8,7 +8,7 @@
 // word-coverage / scene-density validators feeding buildGroupedViolationEntry)
 // — no hand-typed entry shapes, so a builder's wording or field change that
 // would break the classifier breaks these tests too.
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createRoot, type Root } from 'react-dom/client';
 import { act } from 'react';
 import { SyncLogPanel } from './SyncLogPanel';
@@ -140,13 +140,7 @@ afterEach(() => {
   localStorage.clear();
 });
 
-function mount(
-  syncLog: SyncLogEntry[],
-  syncRunSummaries?: SyncRunSummary[],
-  offlineAssetNames?: string[],
-  vaultRecoveryNotices?: string[],
-  onAcknowledgeVaultRecovery?: () => void,
-): void {
+function mount(syncLog: SyncLogEntry[], syncRunSummaries?: SyncRunSummary[], offlineAssetNames?: string[]): void {
   root = createRoot(container);
   act(() => {
     root.render(
@@ -154,8 +148,6 @@ function mount(
         syncLog={syncLog}
         syncRunSummaries={syncRunSummaries}
         offlineAssetNames={offlineAssetNames}
-        vaultRecoveryNotices={vaultRecoveryNotices}
-        onAcknowledgeVaultRecovery={onAcknowledgeVaultRecovery}
         onClearLog={() => {}}
       />,
     );
@@ -375,42 +367,38 @@ const TRIGGERS: Record<AttentionKind, () => SyncLogEntry[]> = {
   'model-missing': () => [buildWhisperModelFailureEntry(RUN, 'model-hash-mismatch', AT)],
   'language-pack-missing': () => [buildUnsupportedLanguageEntry(RUN, 'ja', AT)],
   'sync-incomplete': () => [buildSyncAbortEntry(RUN, 'Sync aborted: voiceover required.', AT)],
-  'vault-registry-recovered': () => [],
 };
+
+describe('SyncLogPanel user view — the ten-category invariant', () => {
+  // Operator ruling: the user view is exactly these ten run-scoped categories.
+  // A new kind is a ruling change, not a drive-by — app-level events (e.g. a
+  // repaired media library) are launch notices, never a sync-log category.
+  it('ATTENTION_ORDER is exactly the ten ruled kinds, in order', () => {
+    expect([...ATTENTION_ORDER]).toEqual([
+      'unmatched-scene', 'estimated-timings', 'weak-match', 'too-dense', 'script-audio-mismatch',
+      'no-media', 'offline-media', 'model-missing', 'language-pack-missing', 'sync-incomplete',
+    ]);
+    expect(ATTENTION_ORDER).toHaveLength(10);
+  });
+});
 
 describe('SyncLogPanel user view — kind mapping', () => {
   it.each(ATTENTION_ORDER.map(k => [k]))('%s lands as exactly its own line', (kind) => {
     const offline = kind === 'offline-media' ? ['broll.mp4'] : [];
-    const vault = kind === 'vault-registry-recovered' ? ['repaired'] : [];
-    const view = buildSyncLogUserView(TRIGGERS[kind](), [], offline, vault);
+    const view = buildSyncLogUserView(TRIGGERS[kind](), [], offline);
     expect(view.attention.map(l => l.kind)).toEqual([kind]);
   });
 
-  it('a log with every trigger renders all eleven lines, in order, red/amber only', () => {
+  it('a log with every trigger renders all ten lines, in order, red/amber only', () => {
     const log = ATTENTION_ORDER.flatMap(k => TRIGGERS[k]());
-    mount(log, undefined, ['broll.mp4'], ['The media library index was damaged and was repaired with nothing lost (4 media items kept).']);
+    mount(log, undefined, ['broll.mp4']);
     const lines = [...container.querySelectorAll('[data-testid="sync-attention-line"]')];
     expect(lines.map(l => l.getAttribute('data-kind'))).toEqual([...ATTENTION_ORDER]);
     expect(lines.map(l => l.getAttribute('data-tone'))).toEqual([
-      'red', 'amber', 'amber', 'amber', 'red', 'amber', 'red', 'red', 'red', 'red', 'amber',
+      'red', 'amber', 'amber', 'amber', 'red', 'amber', 'red', 'red', 'red', 'red',
     ]);
     expect(lines[0]!.textContent).toBe('1 scene not found in the voiceover');
     expect(lines[5]!.textContent).toBe('3 scenes have no media');
-  });
-
-  it('a media-library recovery raises its own amber line, outside the run window, and dismissing it acknowledges it', () => {
-    const acknowledged = vi.fn();
-    mount([], undefined, undefined, ['The media library index was damaged and was repaired with nothing lost (4 media items kept).'], acknowledged);
-    const line = container.querySelector('[data-kind="vault-registry-recovered"]')!;
-    expect(line.getAttribute('data-tone')).toBe('amber');
-    expect(line.textContent).toContain('The media library index was repaired');
-    const status = container.querySelector('[data-testid="sync-status"]')!;
-    expect(status.getAttribute('data-state')).toBe('attention');
-    const dismiss = [...line.querySelectorAll('button')].find(b => /dismiss/i.test(b.getAttribute('aria-label') ?? b.textContent ?? ''));
-    expect(dismiss, 'the line must be dismissible').toBeTruthy();
-    click(dismiss!);
-    expect(acknowledged).toHaveBeenCalledTimes(1);
-    expect(container.querySelector('[data-kind="vault-registry-recovered"]')).toBeNull();
   });
 
   it('scenes expand inside their line', () => {

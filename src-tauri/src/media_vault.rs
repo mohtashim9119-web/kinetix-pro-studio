@@ -191,22 +191,81 @@ pub(crate) const REGISTRY_LOCK_FILE: &str = ".registry.lock";
 /// RAII proof that the caller holds the registry gate. Dropping releases the
 /// file lock first, then the in-process mutex.
 pub(crate) struct RegistryGuard {
-    file: fs::File,
+    /// `None` only for a relocation gate taken on a root with no vault yet.
+    file: Option<fs::File>,
     _in_process: MutexGuard<'static, ()>,
 }
 
 impl Drop for RegistryGuard {
     fn drop(&mut self) {
-        let _ = LockExt::unlock(&self.file);
+        if let Some(file) = &self.file {
+            let _ = LockExt::unlock(file);
+        }
     }
 }
 
+/// Roots a relocation has switched AWAY from, this process lifetime. A command
+/// resolves the storage root, then waits on the gate; if a relocation took the
+/// gate in between, the root it resolved is stale, and letting it write there
+/// would land a mutation in the abandoned root — a silently lost update. The
+/// gate refuses it instead (loud; the caller retries against the new root).
+static RETIRED_ROOTS: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+
+fn canonical(root: &Path) -> PathBuf {
+    fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf())
+}
+
+/// Called by relocation, holding the gate, once the pointer names the new root.
+pub(crate) fn retire_root(old_root: &Path) {
+    let mut retired = RETIRED_ROOTS.lock().unwrap_or_else(|p| p.into_inner());
+    let c = canonical(old_root);
+    if !retired.contains(&c) {
+        retired.push(c);
+    }
+}
+
+/// A root becomes live again when something relocates INTO it (e.g. moving back).
+pub(crate) fn unretire_root(root: &Path) {
+    let c = canonical(root);
+    RETIRED_ROOTS.lock().unwrap_or_else(|p| p.into_inner()).retain(|r| *r != c);
+}
+
+/// Fails if `root` was relocated away from — checked BEFORE any byte is staged,
+/// so a stale caller leaves nothing behind in the abandoned root.
+fn ensure_root_live(root: &Path) -> Result<(), String> {
+    if RETIRED_ROOTS.lock().unwrap_or_else(|p| p.into_inner()).contains(&canonical(root)) {
+        return Err(format!(
+            "media-vault: the storage root {} was relocated while this operation was waiting; \
+             nothing was written to it — retry and it will use the new root",
+            root.display()
+        ));
+    }
+    Ok(())
+}
+
 pub(crate) fn acquire_registry_gate(root: &Path) -> Result<RegistryGuard, String> {
+    acquire_gate(root, true)
+}
+
+/// The gate for a relocation of `root`: identical, except that it does not
+/// CREATE `media-vault/` in a root that has none (the relocation must not
+/// manufacture a subtree it then has to copy). With no vault there is no lock
+/// file to take, so only the in-process mutex is held — no other process can be
+/// mutating a registry that does not exist.
+pub(crate) fn acquire_relocation_gate(root: &Path) -> Result<RegistryGuard, String> {
+    acquire_gate(root, false)
+}
+
+fn acquire_gate(root: &Path, create_vault_dir: bool) -> Result<RegistryGuard, String> {
     // A poisoned mutex means a mutation panicked mid-flight. The protected
     // state is on disk (atomic writes), not in the mutex, so continuing is
     // safe — the registry is whatever whole document was last renamed in.
     let in_process = REGISTRY_GATE.lock().unwrap_or_else(|p| p.into_inner());
+    ensure_root_live(root)?;
     let dir = media_vault_dir(root);
+    if !create_vault_dir && !dir.is_dir() {
+        return Ok(RegistryGuard { file: None, _in_process: in_process });
+    }
     fs::create_dir_all(&dir).map_err(|e| format!("media-vault: create {}: {e}", dir.display()))?;
     let lock_path = dir.join(REGISTRY_LOCK_FILE);
     let file = fs::OpenOptions::new()
@@ -220,7 +279,7 @@ pub(crate) fn acquire_registry_gate(root: &Path) -> Result<RegistryGuard, String
     let mut pause = Duration::from_millis(2);
     loop {
         match LockExt::try_lock_exclusive(&file) {
-            Ok(()) => return Ok(RegistryGuard { file, _in_process: in_process }),
+            Ok(()) => return Ok(RegistryGuard { file: Some(file), _in_process: in_process }),
             Err(e) if e.raw_os_error() == fs4::lock_contended_error().raw_os_error() => {
                 if started.elapsed() >= REGISTRY_LOCK_WAIT {
                     return Err(format!(
@@ -338,6 +397,7 @@ pub fn media_vault_import_bytes(
     display_name: &str,
     mime_type: &str,
 ) -> Result<MediaVaultEntry, String> {
+    ensure_root_live(root)?;
     let content_hash = write_blob_if_absent(root, bytes)?;
     commit_registry_entry(root, &content_hash, bytes, project_id, display_name, mime_type)
 }
