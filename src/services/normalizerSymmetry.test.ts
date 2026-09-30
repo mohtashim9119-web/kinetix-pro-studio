@@ -244,7 +244,7 @@ describe('Contract 1→2 P6 — the two text sides share one normalizer', () => 
     // word is genuine Spanish the es normalizer must pass through untouched.
     const spanishWithDigits = [
       'Nací en 1985 cerca del río',
-      'Tengo 26 años y 100 libros',
+      'Tengo 126 años y 100 libros',
       'En el año 2000 había 21 casas',
     ];
 
@@ -271,7 +271,9 @@ describe('Contract 1→2 P6 — the two text sides share one normalizer', () => 
 
     // The measured bound, pinned so it cannot rot: es-lexical rules are 1->1,
     // only the shared digit reader expands on the es path.
-    expect(canonicalize('1985', 'es')).toEqual(['nineteen', 'eighty', 'five']); // digit reader, es key
+    // Re-baselined (Commit B): the digit reader now speaks the key's language, so the pin that
+    // recorded the English reading of a Spanish digit (the matching hole) reads Spanish.
+    expect(canonicalize('1985', 'es')).toEqual(['mil', 'novecientos', 'ochenta', 'y', 'cinco']); // digit reader, es key
     expect(canonicalize('veintiseis', 'es')).toEqual(['veintiseis']);           // es cardinal: 1->1
     expect(canonicalize('del', 'es')).toEqual(['del']);                          // es contraction: not expanded
   });

@@ -286,6 +286,12 @@ pub struct FaAmountWords {
     pub point_word: String,
     #[serde(rename = "percentWord")]
     pub percent_word: String,
+    /// Spoken form of a standalone `&`.
+    #[serde(rename = "andWord")]
+    pub and_word: String,
+    /// Spoken form of a standalone `@`.
+    #[serde(rename = "atWord")]
+    pub at_word: String,
     pub currency: HashMap<String, FaCurrencyWords>,
 }
 
@@ -627,6 +633,19 @@ pub fn spoken_amount(parts: &AmountParts, data: &FaCardinalData) -> Option<Strin
     Some(out)
 }
 
+/// Mirrors `expandSymbolToken` — a STANDALONE `%` / `&` / `@` (after edge
+/// punctuation is stripped) reads as its spoken word; anything else, or no
+/// amount data, is `None`.
+fn expand_symbol_token(stripped: &str, data: &FaCardinalData) -> Option<String> {
+    let words = data.amount.as_ref()?;
+    match stripped {
+        "%" => Some(words.percent_word.clone()),
+        "&" => Some(words.and_word.clone()),
+        "@" => Some(words.at_word.clone()),
+        _ => None,
+    }
+}
+
 /// Mirrors `expandAmountToken`.
 fn expand_amount_token(stripped: &str, language: Language, data: &FaCardinalData) -> Option<String> {
     let parts = parse_amount_token(stripped, language)?;
@@ -937,6 +956,7 @@ pub fn normalize_word(raw_word: &str, language: Language, vocab_chars: &HashSet<
     }
 
     let cardinal_expansion = expand_amount_token(stripped, language, cardinal_data)
+        .or_else(|| expand_symbol_token(stripped, cardinal_data))
         .or_else(|| expand_cardinal_token(stripped, cardinal_data));
     let candidate: String = cardinal_expansion.clone().unwrap_or_else(|| stripped.to_string());
 

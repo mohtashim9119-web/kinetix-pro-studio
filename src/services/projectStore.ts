@@ -722,6 +722,8 @@ export interface AdoptionReport {
   adopted: string[];
   /** Ids present in the mirror but already present locally — left alone. */
   skippedAlreadyLocal: string[];
+  /** Subset of `skippedAlreadyLocal` whose dashboard entry was missing on this origin and was added. */
+  registeredExisting: string[];
   /** Ids present in the mirror that could not be adopted, with the reason. */
   failed: { id: string; message: string }[];
 }
@@ -757,6 +759,7 @@ export async function adoptMirroredProjects(): Promise<AdoptionReport> {
     mirrorAvailable: false,
     adopted: [],
     skippedAlreadyLocal: [],
+    registeredExisting: [],
     failed: [],
   };
 
@@ -782,8 +785,35 @@ export async function adoptMirroredProjects(): Promise<AdoptionReport> {
         await deleteMirroredProject(id);
         continue;
       }
-      if ((await osStoreRead(id)) !== null) {
+      const local = await osStoreRead(id);
+      if (local !== null) {
         report.skippedAlreadyLocal.push(id);
+        // The store is shared by every origin (dev `localhost` and the bundled
+        // `tauri://localhost`) but each origin keeps its OWN dashboard list, so a
+        // project saved by the other origin sits in the store with no dashboard
+        // entry here — files without a dashboard entry. The record is never
+        // touched (adoption stays additive); only the missing list entry is added.
+        try {
+          const metas = loadAllMetas();
+          if (!metas.some(m => m.id === id)) {
+            const stored = JSON.parse(local) as StoredProjectData;
+            if (stored?.project && Array.isArray(stored.project.segments)) {
+              metas.push(
+                mirroredMetas.get(id) ?? {
+                  id,
+                  name: stored.project.name ?? 'Recovered Project',
+                  savedAt: stored.savedAt ?? Date.now(),
+                  segmentCount: stored.project.segments.length,
+                },
+              );
+              metas.sort((a, b) => b.savedAt - a.savedAt);
+              localStorage.setItem(REGISTRY_KEY, JSON.stringify(metas));
+              report.registeredExisting.push(id);
+            }
+          }
+        } catch (err) {
+          console.warn(`[kinetix] Could not register existing project ${id} on this dashboard:`, err);
+        }
         continue;
       }
       // Validate before writing — the mirror must never be able to inject a

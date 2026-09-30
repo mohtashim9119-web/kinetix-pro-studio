@@ -13,6 +13,11 @@ import {
 } from '../services/storageRoot';
 import { formatBytes } from '../services/webcodecsExport/diskFull';
 import { invoke } from '@tauri-apps/api/core';
+import {
+  describeFinding,
+  scanStorageConsistency,
+  type ConsistencyReport,
+} from '../services/storageConsistency';
 
 const HAIRLINE = 'pt-6 mt-6 border-t border-white/[0.06]';
 const BLOCK_TITLE = 'text-[9px] font-black uppercase tracking-widest text-[#F27D26]';
@@ -42,6 +47,8 @@ export function StorageSettingsSection({ onOpenRelocation, refreshSignal }: Stor
   const [error, setError] = useState<string | null>(null);
   const [reclaimBusy, setReclaimBusy] = useState(false);
   const [cleanupAllBusy, setCleanupAllBusy] = useState(false);
+  const [consistency, setConsistency] = useState<ConsistencyReport | null>(null);
+  const [consistencyError, setConsistencyError] = useState<string | null>(null);
 
   const refresh = useCallback(async (): Promise<void> => {
     if (!isTauri()) return;
@@ -52,6 +59,15 @@ export function StorageSettingsSection({ onOpenRelocation, refreshSignal }: Stor
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+    }
+    // Separate try: a failed scan must not hide the size report, and a failed
+    // size report must not hide the scan — and neither may look like "all clear".
+    try {
+      setConsistency(await scanStorageConsistency());
+      setConsistencyError(null);
+    } catch (err) {
+      setConsistency(null);
+      setConsistencyError(err instanceof Error ? err.message : String(err));
     }
   }, []);
 
@@ -161,6 +177,45 @@ export function StorageSettingsSection({ onOpenRelocation, refreshSignal }: Stor
               <span className="text-gray-200 font-bold">{formatBytes(staleRootTotalBytes)}</span>
             </button>
           )}
+        </div>
+      )}
+
+
+      {consistencyError && (
+        <p data-testid="storage-consistency-error" className="text-[10px] text-red-400 mb-4">
+          Could not check project data consistency: {consistencyError}
+        </p>
+      )}
+      {consistency && consistency.findings.length > 0 && (
+        <div className="space-y-2 mb-4" data-testid="storage-consistency">
+          <p className={BLOCK_TITLE}>Project data that does not match the dashboard</p>
+          <p className="text-[9px] text-gray-500">
+            {consistency.findings.length} item{consistency.findings.length === 1 ? '' : 's'},{' '}
+            {formatBytes(consistency.totalBytes)}. Nothing is moved or deleted automatically.
+          </p>
+          {consistency.findings.map((f) => (
+            <div key={f.id} data-testid={`storage-consistency-${f.id}`} className="text-[10px] text-gray-300">
+              <p>{describeFinding(f)}</p>
+              <p className="text-[9px] text-gray-600 break-all">{f.id}</p>
+              {f.paths.map((p, i) => (
+                <button
+                  key={`${p.role}-${i}`}
+                  type="button"
+                  disabled={!p.path}
+                  title={p.path || 'Media library references'}
+                  onClick={() => {
+                    void invoke('reveal_in_finder', { path: p.path }).catch((err) => {
+                      setError(err instanceof Error ? err.message : String(err));
+                    });
+                  }}
+                  className="block text-left text-[9px] text-gray-500 hover:text-gray-300 disabled:hover:text-gray-500"
+                >
+                  {p.role} · {formatBytes(p.bytes)} · {p.files} file{p.files === 1 ? '' : 's'}
+                  {p.modifiedMs > 0 ? ` · ${new Date(p.modifiedMs).toLocaleString()}` : ''}
+                </button>
+              ))}
+            </div>
+          ))}
         </div>
       )}
 

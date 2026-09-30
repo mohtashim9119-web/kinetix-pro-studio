@@ -39,8 +39,8 @@
       "tag": "003_scylla_six_necks",
       "text": "Tiene seis cuellos largos,",
       "startTime": 6.05,
-      "duration": 2.16,
-      "endTime": 8.21,
+      "duration": 1.385,
+      "endTime": 7.435,
       "anchorStart": 6.05,
       "anchorSource": "whisper"
     },
@@ -49,10 +49,10 @@
       "id": "segv1_956c3e4c_0",
       "tag": "004_scylla_mouth_teeth",
       "text": "seis cabezas, tres hileras de dientes en cada boca",
-      "startTime": 8.21,
-      "duration": 2.58,
+      "startTime": 7.435,
+      "duration": 3.355,
       "endTime": 10.79,
-      "anchorStart": 8.21,
+      "anchorStart": 7.435,
       "anchorSource": "whisper"
     },
     {

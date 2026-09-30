@@ -1,8 +1,8 @@
 order,tag,text,startTime,duration,endTime,anchorSource,tokenHash
 0,002_scylla_cliff_passage,Scylla es un monstruo que vive dentro de un acantilado junto a un estrecho paso marítimo.,0,6.05,6.05,whisper,8aa3082923e5e307
-1,003_scylla_six_necks,"Tiene seis cuellos largos,",6.05,2.16,8.21,whisper,ae014906ad704b1c
-2,004_scylla_mouth_teeth,"seis cabezas, tres hileras de dientes en cada boca",8.21,2.58,10.79,whisper,9125f1b7a08fe782
-3,005_scylla_twelve_legs,y 12 patas debajo de su cuerpo.,10.79,2.08,12.87,whisper,d0ed247ed56cbc4b
+1,003_scylla_six_necks,"Tiene seis cuellos largos,",6.05,1.385,7.435,whisper,ae014906ad704b1c
+2,004_scylla_mouth_teeth,"seis cabezas, tres hileras de dientes en cada boca",7.435,3.355,10.79,whisper,9125f1b7a08fe782
+3,005_scylla_twelve_legs,y 12 patas debajo de su cuerpo.,10.79,2.08,12.87,whisper,7013c97908409587
 4,006_attack_setup,Su ataque es sencillo.,12.87,1.83,14.7,whisper,55b943721f97cc3f
 5,007_ship_approaching,"Cuando un barco pasa lo suficientemente cerca,",14.7,2.57,17.27,whisper,fd975902810a8061
 6,008_heads_moving,las seis cabezas se mueven al mismo tiempo.,17.27,2.6,19.87,whisper,d563aae55e1d06e5

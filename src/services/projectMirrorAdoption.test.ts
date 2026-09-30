@@ -186,3 +186,42 @@ describe('adoptMirroredProjects', () => {
     expect(meta.savedAt).toBe(2000);
   });
 });
+
+describe('a project already in the shared store gets its dashboard entry on this origin', () => {
+  // Measured: the store held 20 records while this origin's dashboard listed 2 — the other
+  // origin (dev vs bundled) had saved the rest, and adoption skipped them as "already local".
+  it('registers a stored, mirrored project the dashboard does not list, without touching the record', async () => {
+    await seedLocal('x1', 'Saved by the other origin', 14, 700);
+    const before = osBacking.get('x1');
+    readMirror.mockResolvedValue({
+      registry: JSON.stringify([{ id: 'x1', name: 'Saved by the other origin', savedAt: 700, segmentCount: 14 }]),
+      projects: [['x1', storedProjectJson('x1', 'Saved by the other origin', 14, 700)]],
+    });
+    expect(loadAllMetas().map(m => m.id)).not.toContain('x1');
+
+    const report = await adoptMirroredProjects();
+
+    expect(report.adopted).toEqual([]);
+    expect(report.registeredExisting).toEqual(['x1']);
+    expect(loadAllMetas().map(m => m.id)).toContain('x1');
+    expect(osBacking.get('x1')).toBe(before);
+  });
+
+  it('does not duplicate an entry the dashboard already has', async () => {
+    await seedLocal('x2', 'Listed', 3, 700);
+    localStorage.setItem('kinetix:projects:v1', JSON.stringify([{ id: 'x2', name: 'Listed', savedAt: 700, segmentCount: 3 }]));
+    readMirror.mockResolvedValue({ registry: null, projects: [['x2', storedProjectJson('x2', 'Listed', 3, 700)]] });
+    const report = await adoptMirroredProjects();
+    expect(report.registeredExisting).toEqual([]);
+    expect(loadAllMetas().filter(m => m.id === 'x2')).toHaveLength(1);
+  });
+
+  it('never re-lists a project the operator deleted', async () => {
+    await seedLocal('x3', 'Deleted', 3, 700);
+    localStorage.setItem('kinetix:deleted-projects:v1', JSON.stringify(['x3']));
+    readMirror.mockResolvedValue({ registry: null, projects: [['x3', storedProjectJson('x3', 'Deleted', 3, 700)]] });
+    const report = await adoptMirroredProjects();
+    expect(report.registeredExisting).toEqual([]);
+    expect(loadAllMetas().map(m => m.id)).not.toContain('x3');
+  });
+});

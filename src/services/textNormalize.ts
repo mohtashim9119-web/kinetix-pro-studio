@@ -41,7 +41,7 @@
 // ---------------------------------------------------------------------------
 
 import { NUMBER_WORDS } from './syncConstants';
-import { cardinalWords, expandAmountToken, type FaLanguageCode } from './faTextNormalize';
+import { cardinalWords, expandAmountToken, expandCardinalToken, type FaLanguageCode } from './faTextNormalize';
 import { loadFaLanguageData } from './faLanguageData';
 
 // --- Number-word expansion (unchanged from the former whisperService.ts home) --
@@ -89,8 +89,9 @@ function yearToWords(n: number): string[] {
 /**
  * Expands a pure-digit token to its canonical spoken word sequence.
  *
- * 0-9999 (and the 1100-2999 year reading) is the original English reader,
- * byte-for-byte. Above 9999 the former 9999 cap read the token DIGIT BY DIGIT
+ * English (and no language): 0-9999 (and the 1100-2999 year reading) is the
+ * original English reader, byte-for-byte. Any other language reads a bare
+ * integer through the shared `expandCardinalToken` (below). Above 9999 the former 9999 cap read the token DIGIT BY DIGIT
  * ("11000" -> "one one zero zero zero"), which could never match a spoken
  * "eleven thousand"; it now reads the full cardinal for any safe integer from
  * the SAME per-language data (`fa-cardinal-<lang>.json`) the forced-alignment
@@ -102,6 +103,17 @@ function yearToWords(n: number): string[] {
 function digitTokenToWords(tok: string, languageCode?: AlignmentLanguage): string[] {
   const n = Number.parseInt(tok, 10);
   if (!Number.isFinite(n)) return [tok];
+  // A non-English script reads a bare integer in ITS language's words — the
+  // same `expandCardinalToken` forced alignment uses, from the same
+  // fa-cardinal-<lang>.json — so a German script "3" and whisper's spoken
+  // "drei" are one word, not "three" against "drei". English (and no language)
+  // keeps the reader below byte-for-byte; a token the shared reader declines
+  // (leading zero, beyond the safe range) falls through to the legacy readings.
+  if (languageCode !== undefined && languageCode !== 'en') {
+    const data = loadFaLanguageData(languageCode)?.cardinalData;
+    const spoken = data ? expandCardinalToken(tok, data) : undefined;
+    if (spoken) return spoken.split(/\s+/).flatMap(resolveHyphen);
+  }
   if (tok.length === 4 && n >= 1100 && n <= 2999 && n % 100 >= 10) {
     return yearToWords(n);
   }
@@ -253,6 +265,13 @@ function expandAmountsInText(t: string, language: FaLanguageCode): string {
   });
 }
 
+/** Spoken words for `%` / `&` / `@` in `language`; English when the language's
+ *  amount data is unavailable (the historical reading). */
+function symbolWords(language: FaLanguageCode): { percent: string; and: string; at: string } {
+  const w = loadFaLanguageData(language)?.cardinalData.amount;
+  return { percent: w?.percentWord ?? 'percent', and: w?.andWord ?? 'and', at: w?.atWord ?? 'at' };
+}
+
 // --- Public entry points ----------------------------------------------------
 
 /**
@@ -318,9 +337,13 @@ export function canonicalize(text: string, languageCode?: 'en' | 'es' | 'fr' | '
   // Step 7 — currency + spoken symbols.
   t = t.replace(/\$\s?(\d+)/g, ' $1 dollars '); // "$5" -> "5 dollars" (spoken order)
   t = t.replace(/\$/g, ' dollars ');            // bare "$" -> "dollars"
-  t = t.replace(/%/g, ' percent ');
-  t = t.replace(/&/g, ' and ');
-  t = t.replace(/@/g, ' at ');
+  // The symbols read as the language's own spoken words (fa-amount-words.json —
+  // the same source forced alignment's `expandSymbolToken` reads), so a script
+  // "%" and the aligned "por ciento" are one word sequence in every language.
+  const symbols = symbolWords(languageCode ?? 'en');
+  t = t.replace(/%/g, ` ${symbols.percent} `);
+  t = t.replace(/&/g, ` ${symbols.and} `);
+  t = t.replace(/@/g, ` ${symbols.at} `);
 
   // Step 10 — strip remaining non-alphanumeric to spaces, PRESERVING the hyphen
   // (co-operate must survive as one token; the R1 carve-out below decides split).

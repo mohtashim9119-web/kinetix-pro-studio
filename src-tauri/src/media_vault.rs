@@ -89,6 +89,11 @@ fn registry_path(root: &Path) -> PathBuf {
     media_vault_dir(root).join("registry.json")
 }
 
+/// The registry file's path (for a verbatim pre-change copy).
+pub fn registry_file(root: &Path) -> PathBuf {
+    registry_path(root)
+}
+
 fn blob_path(root: &Path, content_hash: &str) -> PathBuf {
     media_vault_dir(root).join(format!("{content_hash}.bin"))
 }
@@ -518,6 +523,111 @@ pub fn media_vault_unreference(
     unreference_project(&root, &content_hash, &project_id)
 }
 
+/// How many vault entries (and how many bytes of them) one project id holds a
+/// reference on.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ProjectRefTotals {
+    pub entries: u64,
+    pub bytes: u64,
+}
+
+/// Read-only: project id -> the vault references it holds. Feeds the storage
+/// consistency scan (`storage_consistency.rs`). A missing registry is an
+/// empty map, not an error (`load_registry`'s own contract).
+pub fn project_reference_totals(root: &Path) -> Result<HashMap<String, ProjectRefTotals>, String> {
+    let mut out: HashMap<String, ProjectRefTotals> = HashMap::new();
+    for entry in load_registry(root)?.entries.values() {
+        for id in &entry.referenced_by_project_ids {
+            let t = out.entry(id.clone()).or_default();
+            t.entries += 1;
+            t.bytes += entry.size_bytes;
+        }
+    }
+    Ok(out)
+}
+
+/// Drops EVERY reference `project_id` holds, whatever the project record
+/// still lists. Deleting a project used to unreference only the hashes its
+/// record listed at that moment, so a reference taken at import time for an
+/// asset the record no longer (or never) listed stayed behind forever —
+/// pinning the blob against reclaim. Returns how many references were dropped.
+pub fn unreference_project_everywhere(root: &Path, project_id: &str) -> Result<u64, String> {
+    let mut registry = load_registry(root)?;
+    let mut dropped = 0u64;
+    for entry in registry.entries.values_mut() {
+        let before = entry.referenced_by_project_ids.len();
+        entry.referenced_by_project_ids.retain(|p| p != project_id);
+        dropped += (before - entry.referenced_by_project_ids.len()) as u64;
+    }
+    if dropped > 0 {
+        save_registry(root, &registry)?;
+    }
+    Ok(dropped)
+}
+
+/// One reference a project holds, with everything needed to put it back.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectRefRecord {
+    pub content_hash: String,
+    pub display_name: String,
+    pub size_bytes: u64,
+    pub blob_path: String,
+    pub blob_present: bool,
+    /// Other projects holding this blob. Empty => dropping this ref leaves it
+    /// unreferenced (reclaimable, never auto-deleted).
+    pub other_referencers: Vec<String>,
+}
+
+/// Read-only: every vault reference `project_id` holds.
+pub fn project_refs(root: &Path, project_id: &str) -> Result<Vec<ProjectRefRecord>, String> {
+    let mut out: Vec<ProjectRefRecord> = load_registry(root)?
+        .entries
+        .values()
+        .filter(|e| e.referenced_by_project_ids.iter().any(|p| p == project_id))
+        .map(|e| ProjectRefRecord {
+            content_hash: e.content_hash.clone(),
+            display_name: e.display_name.clone(),
+            size_bytes: e.size_bytes,
+            blob_path: blob_path(root, &e.content_hash).display().to_string(),
+            blob_present: blob_path(root, &e.content_hash).is_file(),
+            other_referencers: e
+                .referenced_by_project_ids
+                .iter()
+                .filter(|p| p.as_str() != project_id)
+                .cloned()
+                .collect(),
+        })
+        .collect();
+    out.sort_by(|a, b| a.content_hash.cmp(&b.content_hash));
+    Ok(out)
+}
+
+/// Puts back references recorded by `project_refs` (the reversal of a drop).
+/// Only re-adds to entries that still exist; returns how many were restored.
+pub fn restore_project_refs(root: &Path, project_id: &str, hashes: &[String]) -> Result<u64, String> {
+    let mut registry = load_registry(root)?;
+    let mut restored = 0u64;
+    for h in hashes {
+        if let Some(e) = registry.entries.get_mut(h) {
+            if !e.referenced_by_project_ids.iter().any(|p| p == project_id) {
+                e.referenced_by_project_ids.push(project_id.to_string());
+                restored += 1;
+            }
+        }
+    }
+    if restored > 0 {
+        save_registry(root, &registry)?;
+    }
+    Ok(restored)
+}
+
+#[tauri::command]
+pub fn media_vault_unreference_project(app: tauri::AppHandle, project_id: String) -> Result<u64, String> {
+    let root = resolve_storage_root(&app)?;
+    unreference_project_everywhere(&root, &project_id)
+}
+
 /// G6 Step 6 — read-only counterpart to `reclaim_unreferenced_blobs`, for
 /// `size_report`'s "reclaimable" figure. Same shape as
 /// `project_mirror::store_backups_stale_bytes` (the read-only twin of its
@@ -605,6 +715,34 @@ mod tests {
         assert_eq!(args[f_pos + 1], "mjpeg", "must force mjpeg — the output filename's final extension is .part, not .jpg");
         assert_eq!(args.last(), Some(&"/vault/media/abc123.thumb.jpg.part"));
         assert_eq!(args[f_pos + 1..].len(), 2, "-f mjpeg must come right before the output path, not after it");
+    }
+
+    #[test]
+    fn deleting_a_project_drops_every_reference_it_holds_even_ones_its_record_never_listed() {
+        let root = tmpdir("unref-everywhere");
+        // Real files: three imports by "proj-gone", one by "proj-keep" sharing a blob.
+        let a = media_vault_import_bytes(&root, "proj-gone", b"listed", "a.jpg", "image/jpeg").unwrap();
+        let b = media_vault_import_bytes(&root, "proj-gone", b"never listed in the record", "b.jpg", "image/jpeg").unwrap();
+        let shared = media_vault_import_bytes(&root, "proj-gone", b"shared", "c.jpg", "image/jpeg").unwrap();
+        media_vault_import_bytes(&root, "proj-keep", b"shared", "c.jpg", "image/jpeg").unwrap();
+
+        // The OLD delete path: unreference only the hashes the record lists (here: just `a`).
+        unreference_project(&root, &a.content_hash, "proj-gone").unwrap();
+        let totals = project_reference_totals(&root).unwrap();
+        assert_eq!(totals["proj-gone"].entries, 2, "old path leaves the refs the record did not list — the leak");
+
+        let dropped = unreference_project_everywhere(&root, "proj-gone").unwrap();
+        assert_eq!(dropped, 2);
+        let totals = project_reference_totals(&root).unwrap();
+        assert!(!totals.contains_key("proj-gone"));
+        assert_eq!(totals["proj-keep"].entries, 1, "other projects' references are untouched");
+        // b is now zero-ref and reclaimable; the shared blob is still held by proj-keep.
+        let reclaimed = reclaim_unreferenced_blobs(&root).unwrap();
+        assert!(reclaimed >= b.size_bytes);
+        assert!(!blob_path(&root, &b.content_hash).exists());
+        assert!(blob_path(&root, &shared.content_hash).exists());
+        // Idempotent.
+        assert_eq!(unreference_project_everywhere(&root, "proj-gone").unwrap(), 0);
     }
 
     #[test]

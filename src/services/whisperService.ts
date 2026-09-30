@@ -486,8 +486,8 @@ export interface AlignResult {
    *  then NOT where the scene's speech ends, so `snapCoveredBoundaries` must not
    *  place the cut from it (see `snapBoundaries.ts`, tail-unmatched mode). */
   unmatchedTailWords?: string[];
-  /** Script tokens (as written: "$11,000.") that carry digits or a currency
-   *  symbol and had at least one canonical word left unmatched. Present only on
+  /** Script tokens (as written: "$11,000.") that carry digits, a currency
+   *  symbol, or a `%`/`&`/`@` and had at least one canonical word left unmatched. Present only on
    *  a `matched` segment with at least one such token. */
   unmatchedNumericTokens?: string[];
 }
@@ -959,7 +959,7 @@ export function buildSegmentAlignmentInputs(
   queryWords: string[];
   segRanges: Array<{ start: number; end: number }>;
   subjectWords: string[];
-  /** Script tokens carrying digits/currency, with the query-word range each
+  /** Script tokens carrying digits/currency/`%&@`, with the query-word range each
    *  produced — so a caller can say WHICH written token failed to match. */
   numericSpans: Array<{ segIndex: number; text: string; qiStart: number; qiEnd: number }>;
 } {
@@ -996,13 +996,13 @@ export function buildSegmentAlignmentInputs(
     // nothing). The per-token counts must add up to the whole-segment count
     // (the same guard faChunkPlan's qi bookkeeping asserts); a segment whose
     // stage-direction stripping makes them disagree simply reports no spans.
-    if (seg?.text && /[0-9$€£%]/.test(seg.text)) {
+    if (seg?.text && /[0-9$€£%&@]/.test(seg.text)) {
       const spans: typeof numericSpans = [];
       let qi = start;
       for (const raw of seg.text.split(/\s+/)) {
         if (raw.length === 0) continue;
         const produced = normalizeSceneDoc(raw, languageCode).filter(w => w.length > 0).length;
-        if (/[0-9$€£%]/.test(raw)) spans.push({ segIndex, text: raw, qiStart: qi, qiEnd: qi + produced });
+        if (/[0-9$€£%&@]/.test(raw)) spans.push({ segIndex, text: raw, qiStart: qi, qiEnd: qi + produced });
         qi += produced;
       }
       if (qi === queryWords.length) numericSpans.push(...spans);

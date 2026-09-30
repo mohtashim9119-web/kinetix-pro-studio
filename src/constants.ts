@@ -195,7 +195,8 @@ export const getMotionProps = (animation: string) => {
 // Fires on first page load in dev. Add a new entry without an implementation
 // and you'll see a loud console.assert failure immediately.
 // ---------------------------------------------------------------------------
-if (import.meta.env.DEV) {
+// `?.` — `import.meta.env` is undefined outside Vite/Vitest (e.g. `cloud/build_chunk_plan.ts` under tsx).
+if (import.meta.env?.DEV) {
   const NO_OP_FILTER = 'none';
   for (const filter of FILTERS) {
     if (filter === 'none') continue; // 'none' is the explicit "no filter" identity value, not a missing implementation

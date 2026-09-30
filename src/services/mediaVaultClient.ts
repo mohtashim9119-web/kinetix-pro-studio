@@ -135,6 +135,22 @@ export async function mediaVaultUnreference(contentHash: string, projectId: stri
 }
 
 /**
+ * Drops EVERY vault reference a deleted project holds, however it got them.
+ * `mediaVaultUnreference` per listed hash misses a reference taken at import
+ * time for an asset the record never listed (or no longer lists) — e.g. a bulk
+ * project deleted before its build wrote its assets — which pinned the blob
+ * against reclaim forever. Best-effort / never throws, same posture as above.
+ */
+export async function mediaVaultUnreferenceProject(projectId: string): Promise<void> {
+  if (!isTauri()) return;
+  try {
+    await invoke<number>('media_vault_unreference_project', { projectId });
+  } catch (err) {
+    console.warn('[mediaVaultClient] unreference-project failed (non-fatal):', projectId, err);
+  }
+}
+
+/**
  * Media workflow Unit 1 — renames the vault registry's display name for
  * `contentHash` (the project's own `Asset.name` is renamed in App state).
  * Best-effort / never throws, same posture as `mediaVaultUnreference`: the

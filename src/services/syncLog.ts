@@ -365,7 +365,7 @@ const GROUPED_RULE_SUMMARIES: Record<string, (count: number) => string> = {
   'scene-density': (n) => `${n} scenes matched words denser than natural speech — check for leftover/duplicated text.`,
   'tail-words-unmatched': (n) =>
     `${n} scenes ended on words that were not found in the audio — their cuts were placed from the silence before the next scene.`,
-  'numeric-word-unmatched': (n) => `${n} scenes have a number or amount that did not match the audio.`,
+  'numeric-word-unmatched': (n) => `${n} scenes have a number, amount or symbol that did not match the audio.`,
   'engine-boundary-delta': (n) => `${n} cuts moved by more than 0.1s when the timing engine changed.`,
 };
 

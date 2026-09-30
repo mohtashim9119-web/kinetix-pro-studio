@@ -347,6 +347,10 @@ export interface FaCardinalData {
 export interface FaAmountWords {
   pointWord: string;
   percentWord: string;
+  /** Spoken form of a standalone `&`. */
+  andWord: string;
+  /** Spoken form of a standalone `@`. */
+  atWord: string;
   currency: Record<string, { one: string; other: string }>;
 }
 
@@ -538,7 +542,7 @@ function selectYearCandidate(n: number, policy: FaYearReading['selectionPolicy']
  *  gate, `textNormalize.ts:91` — same structural condition, independently
  *  re-expressed here since this module shares no code with that one);
  *  everything else gets the plain arithmetic cardinal reading. */
-function expandCardinalToken(stripped: string, data: FaCardinalData): string | undefined {
+export function expandCardinalToken(stripped: string, data: FaCardinalData): string | undefined {
   if (!/^[0-9]+$/.test(stripped)) return undefined;
   if (stripped.length > 1 && stripped[0] === '0') return undefined;
   const n = Number(stripped);
@@ -653,6 +657,19 @@ export function expandAmountToken(
   return parts ? spokenAmount(parts, data) : undefined;
 }
 
+/** A STANDALONE symbol token (exactly `%`, `&` or `@` once edge punctuation is
+ *  stripped) -> its spoken word in this language, or `undefined` (anything else,
+ *  or no amount data). A symbol inside a longer token (AT&T, @user) is not
+ *  standalone. `%` glued to a number is the amount grammar's, not this. */
+export function expandSymbolToken(stripped: string, data: FaCardinalData): string | undefined {
+  const words = data.amount;
+  if (!words) return undefined;
+  if (stripped === '%') return words.percentWord;
+  if (stripped === '&') return words.andWord;
+  if (stripped === '@') return words.atWord;
+  return undefined;
+}
+
 /** Cardinal reading of any safe integer via the language's own data — the
  *  matcher-side `canonicalize` uses this to lift its former 9999 cap. */
 export function cardinalWords(n: number, data: FaCardinalData): string {
@@ -693,6 +710,7 @@ function normalizeWord(
   }
 
   const cardinalExpansion = expandAmountToken(stripped, languageCode, cardinalData)
+    ?? expandSymbolToken(stripped, cardinalData)
     ?? expandCardinalToken(stripped, cardinalData);
   const candidate = cardinalExpansion ?? stripped;
 
