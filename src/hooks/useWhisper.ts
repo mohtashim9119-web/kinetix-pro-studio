@@ -297,7 +297,7 @@ export interface UseWhisperApi {
      *  omitting it reproduces the pre-T4.7 behaviour exactly. */
     opts?: StartTranscriptionOptions,
   ) => Promise<StartTranscriptionOutcome>;
-  cancelTranscription: () => void;
+  cancelTranscription: (protectProjectId?: string | null) => void;
   dismissError: () => void;
   /** Clears a terminal transcription status (`done` / `warning`) without
    *  touching an in-flight run. Used when the user discards an unapplied
@@ -686,7 +686,10 @@ export function useWhisper(): UseWhisperApi {
     [],
   );
 
-  const cancelTranscription = useCallback(() => {
+  const cancelTranscription = useCallback((protectProjectId?: string | null) => {
+    // A bulk finish owns this project's run. The project switch that finish
+    // itself performs must not abort the transcription it just started.
+    if (protectProjectId && inFlightProjectIdRef.current === protectProjectId) return;
     abortRef.current?.abort();
     generationRef.current++;
     // Release the gate synchronously as well as in the run's own `finally`.

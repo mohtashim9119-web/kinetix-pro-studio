@@ -249,7 +249,30 @@ def test_only_this_members_held_transcription_can_take_an_alignment():
 
 def test_hold_is_bounded_and_short():
     # Held for the client's planning seconds, never for files to arrive.
-    assert 0 < core.HOLD_FOR_PLAN_SEC <= 60
+    # Widening this is rejected: a second boot (~$0.014) costs more than
+    # sitting the window (~$0.006), and a wider window doubles idle on the
+    # syncs that already hand off in a few seconds.
+    assert core.HOLD_FOR_PLAN_SEC == 30.0
+
+
+def test_a_lookup_never_boots_and_a_held_container_blocks_a_second():
+    assert core.gpu_boot_allowed(lookup=True, handed_off=False, live_containers=0) is False
+    assert core.gpu_boot_allowed(lookup=False, handed_off=True, live_containers=0) is False
+    assert core.gpu_boot_allowed(lookup=False, handed_off=False, live_containers=1) is False
+    assert core.gpu_boot_allowed(lookup=False, handed_off=False, live_containers=0) is True
+    assert core.GPU_MAX_CONTAINERS == 1
+
+
+def test_row_summary_splits_boots_hold_and_free_cache():
+    lines = [
+        _line(1, "done", 10, audio="a" * 64, task="ta-1"),
+        _line(2, "held", 3, audio="a" * 64, task="ta-1"),
+        _line(3, "cache-hit", 0, audio="b" * 64, task=None),
+        _line(4, "boot-unused", 12, audio=None, task="ta-9"),
+    ]
+    rows = core.row_summaries(lines)
+    assert rows[0]["boots"] == 1 and rows[0]["heldSec"] == 3 and rows[0]["free"] is False
+    assert rows[1]["cached"] is True and rows[1]["free"] is True and rows[1]["estimatedUsd"] == 0
 
 
 def test_public_job_reports_the_container_and_handoff():

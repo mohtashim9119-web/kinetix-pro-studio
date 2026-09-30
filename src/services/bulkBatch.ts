@@ -30,11 +30,34 @@ export type BatchPhase =
   | 'queued' | 'cloud' | 'cloud-done' | 'finishing' | 'done' | 'finish-failed'
   | 'paused' | 'failed' | 'cancelled' | 'skipped';
 
+/** Persisted progress. Retry resumes here; a content re-key starts over. */
+export type BulkCheckpoint = 'staged' | 'transcript-cached' | 'aligned' | 'built';
+
 export interface BatchRow {
   id: string;
   name: string;
   phase: BatchPhase;
   message?: string;
+  checkpoint?: BulkCheckpoint;
+  /** `audioHash|scriptHash|engineKey` the checkpoint was written against. */
+  contentKey?: string;
+}
+
+/**
+ * Stages still to run. A checkpoint skips what the gateway cache already
+ * holds. A changed content key (or no checkpoint) starts from scratch.
+ */
+export function stagesToRun(
+  checkpoint: BulkCheckpoint | undefined,
+  contentChanged: boolean,
+): readonly ('transcribe' | 'align' | 'build')[] {
+  if (contentChanged || checkpoint === undefined) return ['transcribe', 'align', 'build'];
+  switch (checkpoint) {
+    case 'staged': return ['transcribe', 'align', 'build'];
+    case 'transcript-cached': return ['align', 'build'];
+    case 'aligned': return ['build'];
+    case 'built': return [];
+  }
 }
 
 const KEY = 'kinetix:bulk-batch:v1';
@@ -45,7 +68,7 @@ export const isBatchRowFinal = (p: BatchPhase): boolean => TERMINAL.has(p);
 export interface BatchRunnerDeps {
   queue: SyncQueue;
   /** Queues cloud jobs for these projects (`queueProjectsForCloudSync`). */
-  enqueue: (rows: { id: string; name: string }[]) => void;
+  enqueue: (rows: { id: string; name: string; checkpoint?: BulkCheckpoint; contentKey?: string }[]) => void;
   /** Does this project still exist? A deleted one is dropped, not built. */
   exists: (id: string) => boolean;
   storage?: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
@@ -110,7 +133,7 @@ export class BulkBatchRunner {
   resume(): void {
     this.forgetMissing();
     const todo = this.rows.filter(r => r.phase === 'queued' || r.phase === 'cloud');
-    if (todo.length > 0) this.deps.enqueue(todo.map(r => ({ id: r.id, name: r.name })));
+    if (todo.length > 0) this.deps.enqueue(todo.map(r => ({ id: r.id, name: r.name, checkpoint: r.checkpoint, contentKey: r.contentKey })));
     // A timeline that was mid-finish when the app stopped is finished again.
     for (const r of this.rows) if (r.phase === 'finishing') r.phase = 'cloud-done';
     this.commit();
@@ -129,6 +152,29 @@ export class BulkBatchRunner {
     this.rows = this.rows.filter(r => !ids.includes(r.id));
     for (const id of ids) this.deps.queue.cancel(id);
     if (this.rows.length !== before) this.commit();
+  }
+
+  /** Run this row again from its checkpoint. Content changes start over. */
+  retry(id: string, contentKey?: string): void {
+    const row = this.rows.find(r => r.id === id);
+    if (!row) return;
+    if (row.phase !== 'failed' && row.phase !== 'finish-failed' && row.phase !== 'paused') return;
+    if (contentKey !== undefined && row.contentKey !== undefined && contentKey !== row.contentKey) {
+      row.checkpoint = undefined;
+    }
+    row.phase = 'queued';
+    row.message = undefined;
+    this.commit();
+    this.deps.enqueue([{ id: row.id, name: row.name, checkpoint: row.checkpoint, contentKey: row.contentKey }]);
+  }
+
+  /** Stamp the content key a checkpoint belongs to (audio|script|engine). */
+  noteContent(id: string, contentKey: string): void {
+    const row = this.rows.find(r => r.id === id);
+    if (!row || row.contentKey === contentKey) return;
+    if (row.contentKey !== undefined && row.contentKey !== contentKey) row.checkpoint = undefined;
+    row.contentKey = contentKey;
+    this.commit();
   }
 
   /** The operator clears the finished part of the batch from view. */
@@ -157,18 +203,25 @@ export class BulkBatchRunner {
       const row = this.rows.find(r => r.id === item.id);
       if (!row || isBatchRowFinal(row.phase) || row.phase === 'finishing') continue;
       const next = this.mapQueue(item, row);
-      if (next && (next.phase !== row.phase || next.message !== row.message)) {
-        row.phase = next.phase; row.message = next.message; changed = true;
+      const fromPhase: BulkCheckpoint | undefined =
+        item.phase === 'Aligning on the cloud…' ? 'transcript-cached'
+        : item.phase === 'Transcribing on the cloud…' || item.phase === 'Checking the cloud…' ? (row.checkpoint ?? 'staged')
+        : undefined;
+      const checkpoint = next?.checkpoint ?? fromPhase;
+      if ((next && (next.phase !== row.phase || next.message !== row.message)) || (checkpoint && checkpoint !== row.checkpoint)) {
+        if (next) { row.phase = next.phase; row.message = next.message; }
+        if (checkpoint) row.checkpoint = checkpoint;
+        changed = true;
       }
     }
     if (changed) { this.commit(); this.pumpFinish(); }
   }
 
-  private mapQueue(item: Readonly<QueueItem>, row: BatchRow): { phase: BatchPhase; message?: string } | undefined {
+  private mapQueue(item: Readonly<QueueItem>, row: BatchRow): { phase: BatchPhase; message?: string; checkpoint?: BulkCheckpoint } | undefined {
     switch (item.status) {
       case 'queued': return row.phase === 'cloud-done' ? undefined : { phase: 'queued' };
       case 'running': return { phase: 'cloud' };
-      case 'done': return { phase: 'cloud-done' };
+      case 'done': return { phase: 'cloud-done', checkpoint: 'aligned' };
       case 'skipped':
         // "Already built" is a finished cloud state; anything else is a reason.
         return /already built/i.test(item.detail ?? '') ? { phase: 'cloud-done' } : { phase: 'skipped', message: item.detail };
@@ -199,6 +252,11 @@ export class BulkBatchRunner {
       try { result = await this.finalize(id); } catch (err) { result = { ok: false, message: err instanceof Error ? err.message : String(err) }; }
       if (!this.rows.some(r => r.id === id)) return; // deleted meanwhile
       this.set(id, result.ok ? 'done' : 'finish-failed', result.ok ? undefined : result.message);
+      if (result.ok) {
+        const row = this.rows.find(r => r.id === id);
+        if (row) row.checkpoint = 'built';
+        this.commit();
+      }
     } finally {
       this.finishing.delete(id);
     }

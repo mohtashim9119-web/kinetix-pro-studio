@@ -24,6 +24,7 @@ import hashlib
 import json
 import math
 import re
+from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
@@ -457,7 +458,23 @@ def reusable_inflight(job: dict[str, Any] | None, member: str) -> bool:
 # hold just means a normal spawn).
 # ---------------------------------------------------------------------------
 
+# Do not widen this. A second cold boot is about $0.014; sitting the full
+# window is about $0.006. Closing the client gap (release on an operator
+# prompt, hand off within a few seconds) is the cheaper fix. Widening the
+# window doubles idle cost on every sync that already hands off promptly.
 HOLD_FOR_PLAN_SEC = 30.0
+
+# One live GPU container. A lookup never boots one. A job a held container
+# can run must not boot a second — that second container shows up as
+# `boot-unused` (it did no work) while the warm one takes the job.
+GPU_MAX_CONTAINERS = 1
+
+
+def gpu_boot_allowed(*, lookup: bool, handed_off: bool, live_containers: int) -> bool:
+    """Whether this submission may start a GPU container."""
+    if lookup or handed_off:
+        return False
+    return live_containers < GPU_MAX_CONTAINERS
 # Wave 3 U7 — the bulk queue chains many jobs through ONE container: any job
 # may be held (not only a transcription) and handed the next. Modal's timeout
 # is per CALL, so a chain must stay well inside it: once a call has run this
@@ -530,6 +547,35 @@ def batch_summaries(lines: list[dict[str, Any]], gap_sec: float = BATCH_GAP_SEC)
             "estimatedUsd": round(total_sec * USD_PER_WORKER_SEC, 6),
         })
     return out
+
+
+def row_summaries(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """One line per audio (a bulk row): boots, hold, unused boot, dollars, cache."""
+    by_audio: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for line in lines:
+        audio = line.get("audioHash")
+        if audio:
+            by_audio[audio].append(line)
+    rows: list[dict[str, Any]] = []
+    for audio, group in by_audio.items():
+        work = [line for line in group if line["outcome"] in ("done", "failed", "cancelled", "cache-hit")]
+        held = sum(line["workerSec"] for line in group if line["outcome"] == "held")
+        sec = sum(line["workerSec"] for line in group)
+        cached = bool(work) and all(line["outcome"] == "cache-hit" for line in work)
+        free = sec == 0
+        rows.append({
+            "audioHash": audio,
+            "from": min(line["ts"] for line in group),
+            "jobs": len(work),
+            "boots": len({line.get("taskId") for line in group if line.get("taskId")}),
+            "heldSec": round(held, 3),
+            "workerSec": round(sec, 3),
+            "estimatedUsd": round(sec * USD_PER_WORKER_SEC, 6),
+            "cached": cached,
+            "free": free,
+        })
+    rows.sort(key=lambda row: row["from"])
+    return rows
 
 
 def may_hold(call_age_sec: float) -> bool:

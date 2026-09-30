@@ -87,7 +87,12 @@ export async function runCloudSyncIntent(
       'cloud',
     );
     if (faRun.status === 'cancelled') return { status: 'cancelled' };
-    if (faRun.status === 'paused') return { status: 'paused', faRun };
+    if (faRun.status === 'paused') {
+      // The dialog is about to block the operator. Drop the GPU hold now,
+      // before the caller paints it — a 30s unanswered hold is the team cost.
+      releaseHeldTranscription(inputs.audioHash);
+      return { status: 'paused', faRun };
+    }
     if (faRun.status === 'ok' || (faRun.status === 'degraded' && faRun.reason === 'ctc-infeasible-chunk')) {
       return { status: 'ready', handedOff: faRun.cloudHandedOff === true, cached: faRun.cloudCached === true };
     }

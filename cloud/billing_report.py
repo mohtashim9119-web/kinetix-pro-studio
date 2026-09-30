@@ -56,6 +56,24 @@ def meter_section(since_ts: float) -> None:
     print(f"  {'TOTAL':<21} worker={total_sec:8.1f} s  est=${total_usd:.4f}")
 
 
+def row_section(since_ts: float) -> None:
+    lines = modal.Function.from_name("kinetix-sync", "meter_lines").remote(since_ts)
+    rows = sync_core.row_summaries(lines)
+    unused = [line for line in lines if line["outcome"] == "boot-unused"]
+    unused_sec = sum(line["workerSec"] for line in unused)
+    unused_usd = sum(line["estimatedUsd"] for line in unused)
+    print(f"ROWS — {len(rows)} audio row(s)")
+    for row in rows:
+        start = datetime.fromtimestamp(row["from"]).strftime("%H:%M:%S")
+        flag = "cached" if row["cached"] else ("free" if row["free"] else "fresh")
+        print(
+            f"  {start}  {row['audioHash'][:8]}  boots={row['boots']:>2}  jobs={row['jobs']:>2}  "
+            f"held={row['heldSec']:6.1f} s  worker={row['workerSec']:7.1f} s  "
+            f"${row['estimatedUsd']:.4f}  {flag}"
+        )
+    print(f"  BOOT-UNUSED  containers={len(unused)}  {unused_sec:6.1f} s  ${unused_usd:.4f}")
+
+
 def batch_section(since_ts: float) -> None:
     """Wave 3 U7 — the bulk queue's batches: projects, GPU jobs, containers
     (boots), held/unused seconds and the batch total, one line each."""
@@ -109,6 +127,8 @@ def main() -> None:
     meter_section(args.since_ts)
     print()
     batch_section(args.since_ts)
+    print()
+    row_section(args.since_ts)
     print()
     hits_section(args.since_ts)
     print()

@@ -169,6 +169,8 @@ def _write_meter(line: dict[str, Any]) -> None:
     volumes={WHISPER_ROOT: whisper_vol, FA_ROOT: fa_vol, CACHE_ROOT: cache_vol},
     timeout=JOB_TIMEOUT_SEC,
     scaledown_window=GPU_SCALEDOWN_WINDOW_SEC,
+    max_containers=core.GPU_MAX_CONTAINERS,
+    buffer_containers=0,
     cpu=core.WORKER_CPU_CORES,
     memory=core.WORKER_MEMORY_GIB * 1024,
     retries=0,

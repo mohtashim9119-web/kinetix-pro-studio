@@ -23,6 +23,7 @@ import type { Project } from '../types';
 import { AUTO_DETECT, readNewProjectDefaults, NEW_PROJECT_TEXT_OVERLAY_DEFAULT_ON } from './appDefaults';
 import { FA_PROJECT_DEFAULT_ON, shouldPersistFaChoice } from './faGate';
 import { lookupCloudCache } from './cloudGateway';
+import { cloudTranscribeLanguage } from './cloudSyncEngine';
 
 /** Sane ceiling on one bulk creation. Operator-swappable. */
 export const BULK_MAX_PROJECTS = 25;
@@ -60,8 +61,9 @@ export const BULK_COPY = {
   cancelRow: 'Cancel',
   cancelAll: 'Cancel all',
   open: 'Open project',
-  close: 'Close',
-  closeNote: 'Projects are created when you press Build Timeline; rows left empty are discarded. Closing this window does not stop projects that are already building — they finish into the cloud cache, and opening the project then is free.',
+  close: 'Hide',
+  closeNote: 'Hiding this drawer does not stop a batch that is already building, and the editor stays usable. Rows left empty are discarded.',
+  retry: 'Retry',
   addProject: 'Add project',
   clearFinished: 'Clear finished',
   batchButton: (n: number): string => `Bulk builds (${n})`,
@@ -121,7 +123,7 @@ export function decideStagingStart(input: {
  *  no upload, no job, no meter line. Any failure is a miss (never a start). */
 export async function peekCloudTranscript(audioHash: string, language: string | undefined): Promise<boolean> {
   try {
-    const found = await lookupCloudCache({ stage: 'transcribe', audioHash, language: language ?? 'auto' });
+    const found = await lookupCloudCache({ stage: 'transcribe', audioHash, language: cloudTranscribeLanguage(language) });
     return found.cached;
   } catch {
     return false;

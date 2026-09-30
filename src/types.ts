@@ -647,6 +647,11 @@ export interface Project {
    *  on `timingProvenance` / `projectStore` v5 (plan-v3 item 8), not here. */
   faWordTimings?: TranscriptToken[];
   /**
+   * Cloud alignment served locally on the next Build Timeline when the audio,
+   * script, engine and plan hashes still match. Absent until a reveal writes it.
+   */
+  clientFaCache?: import('./services/clientFaCache').ClientFaCache;
+  /**
    * plan-v3 Wave 1 item 8 — one provenance record per pipeline stage.
    * The two stages can come from different engines and different runs
    * (a cached Whisper transcript re-aligned after a script edit).
