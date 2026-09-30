@@ -2238,4 +2238,61 @@ mod tests {
         );
         fs::remove_dir_all(&dir).ok();
     }
+
+    /// Unit 1 of the registry follow-up. Relocation copies `media-vault/` and
+    /// only later switches the pointer; a registry mutation landing in the OLD
+    /// root between those two moments is copied by nobody and read by nobody
+    /// after the switch — a silently lost update. The mutation below is fired
+    /// from inside the pointer-commit step (i.e. after every copy has verified,
+    /// before the switch). It must either be refused or be present at the new
+    /// root; "reported success, absent at the new root" is the defect.
+    #[test]
+    fn a_registry_mutation_between_the_vault_copy_and_the_pointer_switch_is_never_lost() {
+        crate::atomic_stage::TEST_SKIP_FSYNC.store(true, std::sync::atomic::Ordering::Relaxed);
+        let current = tmpdir("reloc-gate-old");
+        let new_root = tmpdir("reloc-gate-new");
+        let before = crate::media_vault::media_vault_import_bytes(&current, "proj-1", b"imported before", "a.png", "image/png").unwrap();
+
+        type Verdict = Result<crate::media_vault::MediaVaultEntry, String>;
+        let slot: std::sync::Arc<std::sync::Mutex<Option<Verdict>>> = Default::default();
+        let mut late: Option<std::thread::JoinHandle<()>> = None;
+        let result = relocate_managed_subtrees_with(
+            &current,
+            &new_root,
+            || {
+                let (thread_slot, root) = (slot.clone(), current.clone());
+                late = Some(std::thread::spawn(move || {
+                    let r = crate::media_vault::media_vault_import_bytes(&root, "proj-1", b"lands in the gap", "b.png", "image/png");
+                    *thread_slot.lock().unwrap() = Some(r);
+                }));
+                // Give the mutation every chance to land before the switch. A
+                // correct implementation holds it off (it cannot finish until
+                // the relocation releases its gate), so this simply times out.
+                let deadline = std::time::Instant::now() + std::time::Duration::from_millis(1500);
+                while slot.lock().unwrap().is_none() && std::time::Instant::now() < deadline {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                Ok(())
+            },
+            |_, _, _| Ok(()),
+        );
+        result.unwrap();
+        late.take().unwrap().join().unwrap();
+        let verdict = slot.lock().unwrap().take().expect("the late mutation finished");
+
+        let at_new: Vec<String> = crate::media_vault::media_vault_list(&new_root)
+            .unwrap()
+            .into_iter()
+            .map(|e| e.content_hash)
+            .collect();
+        assert!(at_new.contains(&before.content_hash), "the pre-relocation entry moved");
+        if let Ok(entry) = verdict {
+            assert!(
+                at_new.contains(&entry.content_hash),
+                "a mutation reported SUCCESS but is absent at the new root — a lost update"
+            );
+        }
+        fs::remove_dir_all(&current).ok();
+        fs::remove_dir_all(&new_root).ok();
+    }
 }
