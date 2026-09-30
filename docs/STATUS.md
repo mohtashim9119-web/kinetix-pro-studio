@@ -1,6 +1,7 @@
 # Project Status
 
-Last updated: 2026-10-01 — v1.1.1 hotfix: media-vault registry corruption class fixed and landed on `main` (merge `85f515e`, `ws1-registry-lock` → `main`). Open count unchanged at **40/40** (at cap) — found-and-fixed is prose, outside the count.
+Last updated: 2026-10-01 — registry follow-up pack landed on `main` (merge `f962d23`, `ws1-registry-relocation` → `main`; folds into 1.2.0, no installer rebuild). Open count **40 → 41 → 40**: +1 storage-root relocation races the registry gate (41/40, a one-line cap breach) and CLOSED in the same edit by `97df04e` — net **40/40**, breach resolved; trail in the registry follow-up block below.
+Prior header (2026-10-01): v1.1.1 hotfix: media-vault registry corruption class fixed and landed on `main` (merge `85f515e`, `ws1-registry-lock` → `main`). Open count unchanged at **40/40** (at cap) — found-and-fixed is prose, outside the count.
 Prior header (2026-09-30): Wave 3 CLOSED: U9 media unification + hardening landed on `main` (merge `d90c6fd`, `ws1-wave3-media-unify` → `main`), release v1.1.0.
 Open count **38 → 40** (**40/40, AT CAP, not over**): +1 manual binding markers not carried across a full re-sync, +1 spot re-sync
 (deferred to long-term backlog by operator ruling at Wave 3 close). Trail is in the Wave 3 close block below.
@@ -130,6 +131,17 @@ What landed: **serialize** — every registry mutation routes through one gate (
 
 Gates from `main`: `npm test` 4918 passed / 78 skipped (baseline 4911); `cargo test` 547 (514); `cargo test --features fa-inference` 634 (601); release build with `fa-inference` 0 warnings; `tsc`, `vite build`, `pytest cloud` 51 clean; consistency scan of the real root 0 findings. Proofs retained as tests: 8 threads × 200 mutations with exact final reference sets, a 10,000-mutation soak, a two-process contention test (verified to fail with the OS lock disabled), crash injection at every recovery phase boundary. Release 1.1.1.
 - Open-count arithmetic: 40 (Wave 3 close) → **40/40, unchanged** — no new open line; the defects above are closed in this landing.
+
+### Registry follow-up — 1.2.0 (merge `f962d23`, `ws1-registry-relocation` → `main`)
+Two follow-ups to the v1.1.1 registry-corruption fix, both operator-directed. No installer rebuild; folds into 1.2.0. Zero sync-math changes.
+
+**Open-line trail (honest arithmetic).** 40/40 at v1.1.1 → **+1** *storage-root relocation races the registry gate* (lost-update class; each registry write is whole-file atomic, so it loses an update but never corrupts the file) = **41/40, a one-line breach of the cap** → **CLOSED** in the same edit by the Unit 1 commit `97df04e` → **40/40**, breach resolved. Net zero; recorded rather than skipped because the line was real for the time it was open.
+
+**Unit 1 — relocation gate (`97df04e`, red test `70ff316`).** Relocation copied `media-vault/` and later switched the storage pointer without touching the registry gate, so a registry mutation landing in the OLD root between the copy and the switch reported success and was read by nobody afterwards. Pinned red-first on `0e84091` with a real-file test that fires an import from inside the pointer-commit step. The gate is now taken before the vault subtree is copied and held through verify, the pointer switch and the retirement of the old root; a command that resolved the old root before the switch is refused loudly (nothing staged, nothing written) instead of writing to an abandoned root; cancel or any failure drops the gate and leaves the old root authoritative and writable; relocating back un-retires a root. Two-phase crash-safety unchanged. Cost: registry mutations wait while the vault copy runs (other subtrees copy without the gate).
+
+**Unit 2 — recovery notice scoping (`8b44253`).** The media-library recovery surface is no longer an eleventh sync-log category: the sync-log user view is back to its ten run-scoped kinds, pinned by a test. The recovery is an event-scoped, dismissible launch notice that shows only while the persisted finding is unacknowledged (dismissing acknowledges it durably); Storage settings' "Media library repairs" block remains the durable record.
+
+**Noticed, not changed.** Relocating back into a root that still holds a stale earlier copy fails verification when the stale copy has files the source lacks (pre-existing behaviour of the copy-verify flow, unrelated to the registry); not added to the count.
 
 ### Deferred Tasks
 - [DEFERRED · ASR ENGINE LIMITATION] Row 52 ("Llívia") — Whisper never transcribed isolated token; owner ruling 2026-09-03
