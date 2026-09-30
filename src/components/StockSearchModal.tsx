@@ -8,6 +8,7 @@ import { motion } from 'motion/react';
 import { Plus, RefreshCw, Video, Image as ImageIcon, AlertCircle, Clock } from 'lucide-react';
 import { searchAllStock, StockResult, StockSearchResult } from '../services/stockService';
 import { useFocusTrap } from '../hooks/useFocusTrap';
+import { Z } from './overlayLayers';
 
 interface Props {
   targetSegmentId: string | null;
@@ -37,7 +38,7 @@ export function StockSearchModal({ targetSegmentId, onClose, onSelect }: Props) 
   const results = searchResult?.status === 'ok' ? searchResult.results : [];
 
   return (
-    <div className="fixed inset-0 z-[200] flex items-center justify-center p-8">
+    <div className={`fixed inset-0 ${Z.modal} flex items-center justify-center p-8`}>
       <motion.div
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}

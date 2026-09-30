@@ -26,6 +26,7 @@
 import type React from 'react';
 import { useEffect } from 'react';
 import type { CloudPauseReason } from '../services/cloudSyncEngine';
+import { Z } from './overlayLayers';
 
 export const CLOUD_TRANSCRIPTION_PAUSE_COPY = {
   title: 'Cloud transcription paused',
@@ -66,7 +67,7 @@ export function CloudTranscriptionPausedDialog({ reason, detail, onRetry, onUseL
       role="dialog"
       aria-modal="true"
       aria-label={COPY.title}
-      className="fixed inset-0 z-[600] flex items-center justify-center bg-black/80 backdrop-blur-sm"
+      className={`fixed inset-0 ${Z.dialog} flex items-center justify-center bg-black/80 backdrop-blur-sm`}
     >
       <div className="bg-[#111] border border-[#282828] rounded-2xl p-8 w-full max-w-sm shadow-2xl">
         <h2 className="text-sm font-black uppercase tracking-[0.2em] mb-4">{COPY.title}</h2>

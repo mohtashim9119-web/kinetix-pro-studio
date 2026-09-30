@@ -62,6 +62,7 @@ import type { MediaMatchSummary } from '../services/matchMediaToScenes';
 import { classifyAndIngestBundleZip } from '../services/bundleIngest';
 import { isMacOSMetadataPath } from '../services/macosMetadata';
 import type { MediaIngestCounts } from '../services/mediaIngest';
+import { Z } from './overlayLayers';
 
 // ---------------------------------------------------------------------------
 // Exported types (consumed by App.tsx)
@@ -277,7 +278,7 @@ function SaveConfirmDialog({ onConfirm, onCancel }: { onConfirm: () => void; onC
       role="dialog"
       aria-modal="true"
       aria-label="Confirm save"
-      className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 backdrop-blur-sm"
+      className={`fixed inset-0 ${Z.modal} flex items-center justify-center bg-black/80 backdrop-blur-sm`}
     >
       <div ref={trapRef} className="bg-[var(--kx-surface)] border border-[var(--kx-line-2)] rounded-2xl p-6 w-full max-w-xs shadow-2xl">
         <p className="text-[14px] text-[var(--kx-text)] mb-5">Are you sure you want to save the changes?</p>

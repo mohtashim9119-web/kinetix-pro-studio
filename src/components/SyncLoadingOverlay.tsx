@@ -1,5 +1,6 @@
 import type React from 'react';
 import { useEffect } from 'react';
+import { Z } from './overlayLayers';
 
 interface SyncLoadingOverlayProps {
   /** True for the whole handleApplySyncFromFiles run (App.tsx) — covers the
@@ -53,7 +54,7 @@ export function SyncLoadingOverlay({
     <div
       role="status"
       aria-live="polite"
-      className="fixed inset-0 z-[500] flex items-center justify-center bg-black/80 backdrop-blur-sm"
+      className={`fixed inset-0 ${Z.blocker} flex items-center justify-center bg-black/80 backdrop-blur-sm`}
     >
       <div className="flex flex-col items-center gap-4 bg-[var(--kx-panel)] border border-[var(--kx-line)] rounded-xl px-8 py-6">
         <div className="w-8 h-8 rounded-full border-2 border-t-[#F27D26] border-r-transparent border-b-transparent border-l-transparent animate-spin" />

@@ -53,6 +53,7 @@ import {
   type NewProjectDefaults,
 } from '../services/appDefaults';
 import type { AspectRatio, ResolutionTier } from '../types';
+import { Z } from './overlayLayers';
 
 const ASPECT_RATIO_OPTIONS: AspectRatio[] = ['16:9', '9:16', '1:1'];
 const RESOLUTION_TIER_OPTIONS: ResolutionTier[] = ['720p', '1080p'];
@@ -149,7 +150,7 @@ export function AppSettingsModal({ onClose, onOpenStorageRelocation, storageRefr
       aria-modal="true"
       aria-label="App Settings"
       data-testid="app-settings-modal"
-      className="fixed inset-0 z-[210] flex items-center justify-center bg-black/80 backdrop-blur-sm"
+      className={`fixed inset-0 ${Z.appSettings} flex items-center justify-center bg-black/80 backdrop-blur-sm`}
     >
       <div
         ref={trapRef}

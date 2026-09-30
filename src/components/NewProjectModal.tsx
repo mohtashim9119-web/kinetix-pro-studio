@@ -31,6 +31,7 @@ import { resolveDimensions } from '../services/resolutionConfig';
 import { AUTO_DETECT, readNewProjectDefaults } from '../services/appDefaults';
 import { isFaCapable } from '../services/faGate';
 import { SUPPORTED_LANGUAGES } from '../constants';
+import { Z } from './overlayLayers';
 
 /** Locked-forever choice, shown first (plan §2.4) — both tiers below are
  *  always offered for every ratio; only their derived dimensions change. */
@@ -91,7 +92,7 @@ export function NewProjectModal({ onConfirm, onCancel }: Props): React.ReactElem
       role="dialog"
       aria-modal="true"
       aria-label="New Project"
-      className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 backdrop-blur-sm"
+      className={`fixed inset-0 ${Z.modal} flex items-center justify-center bg-black/80 backdrop-blur-sm`}
     >
       <div className="bg-[#111] border border-[#282828] rounded-2xl p-8 w-full max-w-sm shadow-2xl max-h-[85vh] overflow-y-auto">
         <div className="flex items-center justify-between mb-6">

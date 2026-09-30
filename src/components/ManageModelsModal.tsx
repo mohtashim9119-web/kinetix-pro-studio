@@ -22,6 +22,7 @@ import React, { useEffect } from 'react';
 import { X } from 'lucide-react';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 import { ModelsSection } from './ModelsSection';
+import { Z } from './overlayLayers';
 
 const SURFACE = '#121214';
 const BORDER = '#26262A';
@@ -50,7 +51,7 @@ export function ManageModelsModal({ onClose, projectLanguage }: Props): React.Re
       role="dialog"
       aria-modal="true"
       aria-label="Manage Models & Add-ons"
-      className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 backdrop-blur-sm"
+      className={`fixed inset-0 ${Z.modal} flex items-center justify-center bg-black/80 backdrop-blur-sm`}
     >
       <div
         ref={trapRef}

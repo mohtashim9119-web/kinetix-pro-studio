@@ -26,9 +26,10 @@ import { collectDroppedFiles } from '../services/droppedFiles';
 import { missingSpineSlots } from '../services/buildTimelineGate';
 import { formatUsd, type QueueItem, type SyncQueue } from '../services/syncQueue';
 import { readSyncEngineHost } from '../services/syncEngineHost';
+import { Z } from './overlayLayers';
 
-const SHELL = 'fixed inset-0 z-[600] flex items-center justify-center bg-black/80 backdrop-blur-sm';
-const DRAWER = 'fixed top-0 right-0 z-[40] flex h-full w-[min(100vw,420px)] flex-col border-l border-[#282828] bg-[#111] shadow-2xl transition-transform duration-200';
+const SHELL = `fixed inset-0 ${Z.dialog} flex items-center justify-center bg-black/80 backdrop-blur-sm`;
+const DRAWER = `fixed top-0 right-0 ${Z.drawer} flex h-full w-[min(100vw,420px)] flex-col border-l border-[#282828] bg-[#111] shadow-2xl transition-transform duration-200`;
 const LABEL = 'text-[10px] uppercase tracking-widest text-gray-500 font-bold block mb-2';
 const BTN_CANCEL = 'flex-1 bg-transparent border border-[#282828] p-3 rounded-xl text-[10px] font-black uppercase tracking-widest text-gray-500 hover:text-white hover:border-gray-500 transition-all focus:outline-none focus:ring-2 focus:ring-gray-500';
 const BTN_PRIMARY = 'flex-1 bg-[#F27D26] text-white p-3 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-orange-400 transition-all focus:outline-none focus:ring-2 focus:ring-orange-400 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-[#F27D26]';

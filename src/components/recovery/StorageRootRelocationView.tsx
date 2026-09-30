@@ -12,6 +12,7 @@ import React, { useEffect } from 'react';
 import { FolderOpen, X } from 'lucide-react';
 import { formatBytes } from '../../services/webcodecsExport/diskFull';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
+import { Z } from '../overlayLayers';
 
 export type StorageRootValidationState = 'ok' | 'insufficient' | 'error';
 
@@ -102,7 +103,7 @@ export function StorageRootRelocationView({
       // this view) paints at z-[210] — this view was left at the pre-Batch-2
       // z-[200] despite the App.tsx mount comment above already saying it's
       // meant to render ABOVE Settings, so Settings painted over it instead.
-      className="fixed inset-0 z-[220] flex items-center justify-center bg-black/80 backdrop-blur-sm"
+      className={`fixed inset-0 ${Z.relocation} flex items-center justify-center bg-black/80 backdrop-blur-sm`}
     >
       <div
         ref={trapRef}

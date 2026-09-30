@@ -9,6 +9,7 @@ import { VideoSegment, Asset, HeadingOverlay } from '../types';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 import { SegmentControls } from './SegmentControls';
 import { interleaveHeadingRows } from '../services/headingLayer';
+import { Z } from './overlayLayers';
 
 // Shared field/button/icon styling used by SegmentControls now lives in
 // SegmentControls.tsx (single source of truth). This modal only keeps the
@@ -90,7 +91,7 @@ export function ReviewMappingModal({
       role="dialog"
       aria-modal="true"
       aria-label="Review Mapping"
-      className="fixed inset-0 z-[150] flex items-center justify-center bg-black/80 backdrop-blur-sm"
+      className={`fixed inset-0 ${Z.reviewMapping} flex items-center justify-center bg-black/80 backdrop-blur-sm`}
       onClick={onClose}
     >
       <div

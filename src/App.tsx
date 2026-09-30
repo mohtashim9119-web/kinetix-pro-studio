@@ -425,6 +425,7 @@ import { readUiState, patchUiState } from './services/uiStateStore';
 import { compactRanges } from './services/rangeCompact';
 import { formatTime } from './services/timeFormat';
 import { invoke } from '@tauri-apps/api/core';
+import { Z } from './components/overlayLayers';
 
 interface RawSegment {
   text: string;
@@ -901,7 +902,7 @@ function makeDefaultProject(): Project {
 
 function ModalLoadingFallback(): ReactElement {
   return (
-    <div className="fixed inset-0 z-[150] flex items-center justify-center bg-black/80 backdrop-blur-sm">
+    <div className={`fixed inset-0 ${Z.reviewMapping} flex items-center justify-center bg-black/80 backdrop-blur-sm`}>
       <div className="w-8 h-8 rounded-full border-2 border-t-[#F27D26] border-r-transparent border-b-transparent border-l-transparent animate-spin" />
     </div>
   );
@@ -9085,7 +9086,7 @@ export default function App() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[200] bg-black/95 backdrop-blur-3xl flex items-center justify-center p-8"
+            className={`fixed inset-0 ${Z.modal} bg-black/95 backdrop-blur-3xl flex items-center justify-center p-8`}
           >
             {exportState.error !== null ? (
               <ExportFailureMessage
@@ -9299,7 +9300,7 @@ export default function App() {
       {reexportEditedNotice && showExportSettingsModal && (
         <div
           data-testid="reexport-auto-cleared-notice"
-          className="fixed top-4 left-1/2 -translate-x-1/2 z-[600] bg-zinc-900 border border-amber-500/40 text-amber-100 text-xs rounded-lg px-4 py-2 shadow-lg"
+          className={`fixed top-4 left-1/2 -translate-x-1/2 ${Z.dialog} bg-zinc-900 border border-amber-500/40 text-amber-100 text-xs rounded-lg px-4 py-2 shadow-lg`}
         >
           Timeline modified; previous checkpoint auto-cleared
         </div>
@@ -9390,7 +9391,7 @@ export default function App() {
 
       {/* Stock download error banner — auto-dismisses after 5 s */}
       {stockError && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[200] flex items-center gap-3 bg-red-900/90 border border-red-500/50 text-red-200 text-sm font-medium px-5 py-3 rounded-2xl shadow-xl backdrop-blur-md max-w-lg">
+        <div className={`fixed bottom-6 left-1/2 -translate-x-1/2 ${Z.modal} flex items-center gap-3 bg-red-900/90 border border-red-500/50 text-red-200 text-sm font-medium px-5 py-3 rounded-2xl shadow-xl backdrop-blur-md max-w-lg`}>
           <AlertCircle size={16} className="shrink-0 text-red-400" />
           <span className="flex-1">{stockError}</span>
           <button
@@ -9416,7 +9417,7 @@ export default function App() {
         and collects the abandoned session rather than leaving gigabytes behind.
       */}
       {exportState.pendingResumeOffer && (
-        <div className="fixed inset-0 z-[500] bg-black/70 flex items-center justify-center p-6">
+        <div className={`fixed inset-0 ${Z.blocker} bg-black/70 flex items-center justify-center p-6`}>
           <div className="bg-zinc-900 border border-indigo-500/60 rounded-xl p-6 max-w-lg w-full shadow-2xl flex flex-col gap-4">
             <div className="flex items-center gap-2 text-indigo-300 font-semibold">
               <Info size={18} />
@@ -9478,7 +9479,7 @@ export default function App() {
         a silently shorter deliverable is its own failure mode.
       */}
       {exportState.pendingSealConsent && (
-        <div className="fixed inset-0 z-[500] bg-black/70 flex items-center justify-center p-6">
+        <div className={`fixed inset-0 ${Z.blocker} bg-black/70 flex items-center justify-center p-6`}>
           <div className="bg-zinc-900 border border-amber-600/60 rounded-xl p-6 max-w-lg w-full shadow-2xl flex flex-col gap-4">
             <div className="flex items-center gap-2 text-amber-400 font-semibold">
               <AlertTriangle size={18} />
@@ -9542,8 +9543,8 @@ export default function App() {
             initial={{ opacity: 0, y: 16 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 16 }}
-            className="fixed bottom-6 right-6 z-[300] bg-zinc-900 border border-zinc-700
-                       rounded-xl p-4 shadow-2xl flex flex-col gap-3 min-w-64"
+            className={`fixed bottom-6 right-6 ${Z.popup} bg-zinc-900 border border-zinc-700
+                       rounded-xl p-4 shadow-2xl flex flex-col gap-3 min-w-64`}
           >
             <div className="flex items-center gap-2 text-green-400 font-semibold text-sm">
               <CheckCircle size={18} />
@@ -9590,7 +9591,7 @@ export default function App() {
 
       {/* Lock-block toast — bottom-center, 5 s auto-dismiss */}
       {toast !== null && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[400] bg-indigo-600 text-white rounded-xl px-5 py-3 shadow-2xl flex items-center gap-3 max-w-sm w-max">
+        <div className={`fixed bottom-6 left-1/2 -translate-x-1/2 ${Z.banner} bg-indigo-600 text-white rounded-xl px-5 py-3 shadow-2xl flex items-center gap-3 max-w-sm w-max`}>
           <span className="flex-1 text-sm">{toast.message}</span>
           {toast.action && (
             <button

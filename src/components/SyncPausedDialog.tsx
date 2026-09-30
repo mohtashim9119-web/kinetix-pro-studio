@@ -30,6 +30,7 @@ import type React from 'react';
 import { useEffect } from 'react';
 import type { FaFailureKind } from '../services/forcedAlignmentRun';
 import type { FaVictimPauseReason } from '../services/faVictimGate';
+import { Z } from './overlayLayers';
 
 /** One line of plain-language cause per pause reason, for the dialog body.
  *  Exhaustive over `FaFailureKind | FaVictimPauseReason` by construction — a
@@ -121,7 +122,7 @@ export function SyncPausedDialog({
       role="dialog"
       aria-modal="true"
       aria-label={COPY.title}
-      className="fixed inset-0 z-[600] flex items-center justify-center bg-black/80 backdrop-blur-sm"
+      className={`fixed inset-0 ${Z.dialog} flex items-center justify-center bg-black/80 backdrop-blur-sm`}
     >
       <div className="bg-[#111] border border-[#282828] rounded-2xl p-8 w-full max-w-sm shadow-2xl">
         <h2 className="text-sm font-black uppercase tracking-[0.2em] mb-4">{COPY.title}</h2>
