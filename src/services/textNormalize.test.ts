@@ -300,8 +300,10 @@ describe('canonicalize — es/fr/de/pt invert the thousands/decimal separators',
     ]);
   });
 
-  it('a plain integer with no separators is unaffected (Portuguese)', () => {
-    expect(canonicalize('23', 'pt')).toEqual(canonicalize('23'));
+  it('a plain integer with no separators reads in the language\'s own words (Portuguese)', () => {
+    // Was pinned equal to the English reading — the matching hole Commit B closes.
+    expect(canonicalize('23', 'pt')).toEqual(['vinte', 'e', 'três']);
+    expect(canonicalize('23', 'pt')).not.toEqual(canonicalize('23'));
   });
 });
 

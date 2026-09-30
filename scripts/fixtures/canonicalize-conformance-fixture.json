@@ -78,9 +78,9 @@
       "note": "digit token inside an es phrase",
       "tokens": [
         "año",
-        "twenty",
-        "twenty",
-        "four"
+        "dos",
+        "mil",
+        "veinticuatro"
       ],
       "tokensUndefined": [
         "ano",
@@ -282,8 +282,7 @@
       "input": "23 ans",
       "note": "digit token inside a fr phrase",
       "tokens": [
-        "twenty",
-        "three",
+        "vingt-trois",
         "ans"
       ],
       "tokensUndefined": [
@@ -501,8 +500,7 @@
       "input": "23 Jahre",
       "note": "digit token inside a de phrase",
       "tokens": [
-        "twenty",
-        "three",
+        "dreiundzwanzig",
         "jahre"
       ],
       "tokensUndefined": [
@@ -692,7 +690,7 @@
       "input": "3 gatos",
       "note": "digit token inside a pt phrase",
       "tokens": [
-        "three",
+        "três",
         "gatos"
       ],
       "tokensUndefined": [
