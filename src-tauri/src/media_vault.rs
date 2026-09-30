@@ -80,9 +80,9 @@ pub struct MediaVaultEntry {
 }
 
 #[derive(Serialize, Deserialize, Default)]
-struct MediaVaultRegistry {
+pub(crate) struct MediaVaultRegistry {
     #[serde(default)]
-    entries: HashMap<String, MediaVaultEntry>,
+    pub(crate) entries: HashMap<String, MediaVaultEntry>,
 }
 
 fn registry_path(root: &Path) -> PathBuf {
@@ -98,15 +98,49 @@ fn blob_path(root: &Path, content_hash: &str) -> PathBuf {
     media_vault_dir(root).join(format!("{content_hash}.bin"))
 }
 
-/// Missing registry file reads as an empty registry (a fresh vault, or a
-/// fresh storage root) — not an error. Any other read/parse failure IS an
-/// error: a present-but-corrupt registry must never be silently treated as
-/// empty, which would look like every existing entry's project references
-/// simply vanished.
+#[cfg(test)]
+pub(crate) fn blob_path_for_test(root: &Path, content_hash: &str) -> PathBuf {
+    blob_path(root, content_hash)
+}
+
+/// Strict parse of the registry document: exactly one JSON value, nothing after.
+pub(crate) fn strict_parse_registry(bytes: &[u8]) -> Result<MediaVaultRegistry, serde_json::Error> {
+    serde_json::from_slice(bytes)
+}
+
+pub(crate) fn serialize_registry(registry: &MediaVaultRegistry) -> Result<Vec<u8>, String> {
+    serde_json::to_vec_pretty(registry).map_err(|e| format!("media-vault: serialize registry: {e}"))
+}
+
+/// Reads the registry. A missing file is an empty registry (a fresh vault, or
+/// a fresh storage root) — not an error. A present-but-unparseable file is
+/// NEVER treated as empty (that would look like every project reference
+/// vanished); it is handed to the recovery ladder
+/// (`media_vault_recovery::heal_registry`), which repairs it loudly — a typed
+/// finding, a quarantined copy of the bytes — or returns an error. The healthy
+/// path takes no lock: a registry write is temp-file + rename, so a reader
+/// always sees one whole document.
 fn load_registry(root: &Path) -> Result<MediaVaultRegistry, String> {
     let path = registry_path(root);
     match fs::read(&path) {
-        Ok(bytes) => serde_json::from_slice(&bytes)
+        Ok(bytes) => match strict_parse_registry(&bytes) {
+            Ok(registry) => Ok(registry),
+            Err(_) => {
+                let gate = acquire_registry_gate(root)?;
+                crate::media_vault_recovery::heal_registry(root, &gate).map(|(registry, _)| registry)
+            }
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(MediaVaultRegistry::default()),
+        Err(e) => Err(format!("media-vault: read {}: {e}", path.display())),
+    }
+}
+
+/// Strict, read-only, non-healing read — for the consistency scanner, which
+/// must report a damaged registry rather than repair it.
+pub(crate) fn load_registry_no_heal(root: &Path) -> Result<MediaVaultRegistry, String> {
+    let path = registry_path(root);
+    match fs::read(&path) {
+        Ok(bytes) => strict_parse_registry(&bytes)
             .map_err(|e| format!("media-vault: parse {}: {e}", path.display())),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(MediaVaultRegistry::default()),
         Err(e) => Err(format!("media-vault: read {}: {e}", path.display())),
@@ -114,9 +148,11 @@ fn load_registry(root: &Path) -> Result<MediaVaultRegistry, String> {
 }
 
 fn save_registry(root: &Path, registry: &MediaVaultRegistry) -> Result<(), String> {
-    let json = serde_json::to_vec_pretty(registry)
-        .map_err(|e| format!("media-vault: serialize registry: {e}"))?;
-    write_bytes_atomic(&registry_path(root), &json)
+    let json = serialize_registry(registry)?;
+    write_bytes_atomic(&registry_path(root), &json)?;
+    // Verified copy of what was just saved — rung (c) of the recovery ladder.
+    crate::media_vault_recovery::maintain_lastgood(root, &json);
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -209,8 +245,17 @@ fn with_registry_mut<T>(
     root: &Path,
     f: impl FnOnce(&mut MediaVaultRegistry) -> Result<(T, bool), String>,
 ) -> Result<T, String> {
-    let _gate = acquire_registry_gate(root)?;
-    let mut registry = load_registry(root)?;
+    let gate = acquire_registry_gate(root)?;
+    // Under the gate: a damaged registry is healed here (loudly), so a
+    // mutation never fails on a file the loader could have repaired.
+    let (mut registry, _recovered) = match fs::read(registry_path(root)) {
+        Ok(bytes) => match strict_parse_registry(&bytes) {
+            Ok(r) => (r, None),
+            Err(_) => crate::media_vault_recovery::heal_registry(root, &gate)?,
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => (MediaVaultRegistry::default(), None),
+        Err(e) => return Err(format!("media-vault: read {}: {e}", registry_path(root).display())),
+    };
     let (out, dirty) = f(&mut registry)?;
     if dirty {
         save_registry(root, &registry)?;
@@ -962,11 +1007,23 @@ mod tests {
     }
 
     #[test]
-    fn corrupt_registry_file_is_a_real_error_never_silently_treated_as_empty() {
+    fn corrupt_registry_file_is_never_silently_treated_as_empty() {
+        // Was: the loader returned an error. Now it heals — but never quietly:
+        // the unreadable bytes are preserved in quarantine and a typed finding
+        // is persisted, so "every project reference vanished" can always be
+        // traced to its cause.
         let root = tmpdir("corrupt-registry");
         fs::create_dir_all(media_vault_dir(&root)).unwrap();
         fs::write(registry_path(&root), b"{ not json").unwrap();
-        assert!(media_vault_list(&root).is_err());
+        assert!(media_vault_list(&root).unwrap().is_empty(), "nothing on disk to rebuild from");
+        let findings = crate::media_vault_recovery::read_findings(&root).unwrap();
+        assert_eq!(findings.len(), 1, "the recovery is on record");
+        assert_eq!(findings[0].kind, crate::media_vault_recovery::KIND_RECOVERED);
+        let kept = fs::read(
+            std::path::PathBuf::from(&findings[0].quarantine_path).join("data/media-vault/registry.json"),
+        )
+        .unwrap();
+        assert_eq!(kept, b"{ not json", "the replaced bytes are preserved verbatim");
     }
 
     #[test]
@@ -1408,21 +1465,27 @@ mod registry_race_tests {
     }
 
     /// The field shape from the report: a complete registry + trailing bytes.
-    /// On 75f4b01 the loader refuses it — the brick that turns every import
-    /// into "0 imported, N failed".
+    /// The STRICT parser still refuses it (that is the brick on 75f4b01, where
+    /// the loader had nothing else); since the self-healing loader the same
+    /// bytes are recovered in full instead — see `media_vault_recovery` tests.
     #[test]
-    fn field_shape_complete_registry_plus_trailing_bytes_bricks_the_loader() {
+    fn field_shape_is_refused_by_the_strict_parser_and_healed_by_the_loader() {
         let root = vault_root("fieldshape");
         let entry = media_vault_import_bytes(&root, "proj-1", b"field", "a.png", "image/png").unwrap();
         let mut bytes = fs::read(registry_path(&root)).unwrap();
         bytes.extend_from_slice(b"\n  },\n  \"leftover\": {}\n}\n");
         fs::write(registry_path(&root), &bytes).unwrap();
 
-        let err = load_registry(&root).err().expect("the loader refuses a torn registry").to_string();
+        let err = strict_parse_registry(&bytes).err().expect("strict parse refuses a torn registry").to_string();
         assert!(err.contains("trailing characters"), "{err}");
-        // ...and so does every mutation: the brick.
-        assert!(media_vault_import_bytes(&root, "proj-2", b"next", "b.png", "image/png").is_err());
-        assert!(!entry.content_hash.is_empty());
+
+        // The loader no longer bricks: the complete document is recovered.
+        let listed = media_vault_list(&root).expect("healed, not bricked");
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].content_hash, entry.content_hash);
+        // ...and so does the next import.
+        media_vault_import_bytes(&root, "proj-2", b"next", "b.png", "image/png").unwrap();
+        assert_eq!(media_vault_list(&root).unwrap().len(), 2);
         fs::remove_dir_all(&root).ok();
     }
 }
