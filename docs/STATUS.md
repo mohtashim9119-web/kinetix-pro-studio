@@ -1,8 +1,11 @@
 # Project Status
 
-Last updated: 2026-09-30 — housekeeping landing on `main` (merge `bd4a3b6`, `ws1-housekeeping` → `main`).
-Open count **41 → 38** (**38/40, back under the cap**): fold 41 → 40, harness closed 39, orphans closed 38,
-grammar closed 37, one new parked line (boundary-vs-FA-truth accuracy) 38. Trail is in the Wave 3 section below.
+Last updated: 2026-09-30 — Wave 3 CLOSED: U9 media unification + hardening landed on `main` (merge `d90c6fd`, `ws1-wave3-media-unify` → `main`), release v1.1.0.
+Open count **38 → 40** (**40/40, AT CAP, not over**): +1 manual binding markers not carried across a full re-sync, +1 spot re-sync
+(deferred to long-term backlog by operator ruling at Wave 3 close). Trail is in the Wave 3 close block below.
+Prior header (2026-09-30): housekeeping landing on `main` (merge `bd4a3b6`, `ws1-housekeeping` → `main`), open count 41 → 38
+(38/40, back under the cap): fold 41 → 40, harness closed 39, orphans closed 38, grammar closed 37, one new parked line
+(boundary-vs-FA-truth accuracy) 38.
 Prior header (2026-09-30): Wave 3 mini-landing (merge `88f2936`), open count 37 → 41 (41/40, over the cap by one).
 Prior header (2026-09-27): Wave 2 landing, open count 38 → 37 (37/40) — two closures (38 − 2 = 36:
 Settings model-status divergence, per-scene pre-flight gate), one addition (36 + 1 = 37: byte-deletion
@@ -95,6 +98,27 @@ has a STATUS.md citation:
 - CLOSED (housekeeping landing) — Orphaned-file projects: two live paths fixed (vault refs leaked on delete, `b6c8250`; shared store vs per-origin dashboard list, `17c9f2c`); a read-only scanner on the storage settings surface (`b10c99c`) and a two-phase crash-safe quarantine (`096a7dd`) are the standing net; the vault-ref drop is exported-first and reversible (`f9ab9ec`, `e68da55`). Dispositions executed with the operator's ruling: 43 refs dropped (manifests under `quarantine/vault-refs/`), 7 WS3 test-fixture records quarantined (sha256-verified), one blob left reclaimable (never auto-deleted); `7aae8238`, `9fcbdb83`, `2de45e28` were never on this machine. Scanner on the live origins: 0 findings. Note: two dead dev origins (last written 2026-09-08) still list five of the quarantined fixture ids on their own dashboards; those stores are not touched.
 - [OPEN · NON-BLOCKING] Boundary-vs-FA-truth accuracy — Spanish seg-1/2: new cut 7.435 vs true word gap 7.70-8.04 (silence midpoint ~7.87); suspected transcript-token vs FA-word time divergence; pre-existing (old cut 8.21 also off-truth), exposed by B's improved matching.
 - Open-count arithmetic: 37 (Wave 2 landing) + 4 (the four lines parked at the Wave 3 landing) = 41/40 (over the cap) → 40 (fold: the two grammar-gap lines merged per operator ruling, `f1393f5`) → 39 (harness closed) → 38 (orphans closed) → 37 (grammar closed) → +1 (boundary-vs-FA-truth accuracy, above) = **38/40 — back under the cap**. The Wave 3 cap breach is resolved.
+
+### Wave 3 close — 2026-09-30 (merge `d90c6fd`, `ws1-wave3-media-unify` → `main`, v1.1.0)
+**WAVE 3 CLOSED at `d90c6fd` / v1.1.0.** Cloud sync arc delivered (gateway + auth, Opus staging + two-stage cache, sync-intent pipeline, hour cap, engine picker, bulk queue + persistence, media unification + hardening), amount/currency normalization fix, U8 parity recorded (98.4–100% within 100 ms), housekeeping (scanner, quarantine, one-command U8 gate `cloud/u8_gate.sh`).
+
+What landed (grouped commits stand, operator ruling): **Phase A** — one always-visible Media block, spine-only Build Timeline gate reversing U4.6's four-slot rule and reconciled with the U4.5 sync intent (which never waited on media), the wand filling unbound scenes with a visible summary, delete leaving honest placeholders without bleed (`722d437`, `889109e`). **Phase B** — manual (drag-assigned) picks authoritative with "N manual picks kept" (`198bfef`), typed per-asset states and corrupt handling (`bb6fd55`), Bulk Projects spine-gating (`14dd21e`), regression net. **Operator-directed** — slot chevron/collapse, one import menu, folder drops (`75b8ef3`, `e3428e5`), scrollbar width (`1112105`, `e3428e5`), `dragDropEnabled: false` (`d531838`), video thumbnails (`339b110`), sync-log icons/clear/dot (`2d8ea24`, `cb0cfd9`, `8bdcc69`). Zero sync-math changes: M4 chunk plans byte-equal, golden replay green. Gates from `main` at the merge commit: `npm test` 4911 passed / 78 skipped; `cargo test` 514; `cargo test --features fa-inference` 601; release build with `fa-inference` 0 warnings; `tsc`, `vite build`, `pytest cloud` 51 clean.
+
+**FOUND AND FIXED — recorded here in prose, outside the open count** (the count is the open-work ledger, amount-defect precedent — not a bug total):
+- Delete-all-media never released its media-vault references, pinning every blob against reclaim (`f26d95f`; both delete paths now share `vaultHashesToUnreference`; blobs read as reclaimable only, never auto-deleted).
+- The Media block leaked one blob URL per video thumbnail, never revoked (`9e9dea8`, wiring-scan follow-up `eae8e15`).
+- Tauri's native drag-drop handler was on: wry's macOS handler claims every drag and never forwards it to WebKit, so no HTML5 dragenter/dragover/drop reached the page — Media tile → segment, Finder file drops on the slots and folder drops were all dead in the real window while jsdom tests stayed green (`d531838`, `dragDropEnabled: false`, guarded by `tauriDragDropConfig.test.ts`). v1.0.0 has this defect.
+- Video tiles stayed a film-strip icon: in-flight thumbnail results were dropped when `rows` changed and never re-requested (`339b110`; thumbnails now key off the stored `contentHash`; a failed generation is "corrupt" only when the vault registry knows the blob).
+- Also in this landing: a deleted asset's tagged scene was fuzzy-matched from its spoken text on the next import (the "bleed"); tagged scenes are now flagged `unmatchedExplicitTag` on delete (`889109e`).
+
+**Rulings embedded:** (1) the sync-log clear behaviour stays honest — the status card is driven by CURRENT state, so clearing the log empties entries only and must never repaint an offline file green (`2d8ea24`); (2) the defects above are prose, not open lines; (3) grouped commit granularity stands; (4) version 1.1.0.
+
+**Testing note:** real-window drag-and-drop changes need a manual check — jsdom fabricates its DragEvents and cannot catch the Tauri-drag class of defect above.
+
+- [OPEN · NON-BLOCKING] Manual binding markers are not carried across a full re-sync — drag-assign a tile onto a scene, then re-sync, and the binding is re-derived from tags (`assetAssignedBy: 'manual'` is set by drag-to-assign and honoured by the wand, but a full re-sync rebuilds segments from the scene doc).
+- [OPEN · LONG-TERM BACKLOG] Spot re-sync — deferred by operator ruling at Wave 3 close.
+- Parked at Wave 3 close: spot re-sync, the manual-marker re-sync gap, boundary-vs-FA-truth accuracy (open line above), signing credentials, stale WebKit origins sweep. Next arc: SaaS design session, per operator.
+- Open-count arithmetic: 38 (housekeeping landing) → +1 (manual binding markers not carried across a full re-sync) → +1 (spot re-sync, long-term backlog) = **40/40 — AT CAP, not over**.
 
 ### Deferred Tasks
 - [DEFERRED · ASR ENGINE LIMITATION] Row 52 ("Llívia") — Whisper never transcribed isolated token; owner ruling 2026-09-03
