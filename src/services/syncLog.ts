@@ -1379,20 +1379,23 @@ export function buildMediaNameCollisionEntry(
  */
 export function buildMediaMatchEntry(
   syncRunId: string,
-  outcome: { matched: number; unmatched: string[]; ambiguous: { name: string; count: number }[] },
+  outcome: { matched: number; unmatched: string[]; ambiguous: { name: string; count: number }[]; placeholders?: number },
   timestamp: number = Date.now(),
 ): SyncLogEntry {
-  const { matched, unmatched, ambiguous } = outcome;
+  const { matched, unmatched, ambiguous, placeholders = 0 } = outcome;
   let message = `Match media to scenes: ${matched} scene${matched === 1 ? '' : 's'} matched · ${unmatched.length} unmatched`;
   message += unmatched.length > 0 ? ` (kept their current media): ${unmatched.join(', ')}.` : '.';
   for (const { name, count } of ambiguous) {
     message += ` ${count} files named "${name}" — matching used the oldest; rename to disambiguate.`;
   }
+  if (placeholders > 0) {
+    message += ` ${placeholders} scene${placeholders === 1 ? '' : 's'} still show${placeholders === 1 ? 's' : ''} a [NO ASSET] placeholder — add media named for ${placeholders === 1 ? 'it' : 'them'}, then Match again.`;
+  }
   return makeSyncLogEntry(
     syncRunId,
     'media-match',
     message,
-    { severity: unmatched.length > 0 || ambiguous.length > 0 ? 'warning' : 'info' },
+    { severity: unmatched.length > 0 || ambiguous.length > 0 || placeholders > 0 ? 'warning' : 'info' },
     timestamp,
   );
 }

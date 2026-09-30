@@ -12,7 +12,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
-import { matchMediaToScenes } from './matchMediaToScenes';
+import { matchMediaToScenes, summarizeMediaMatch } from './matchMediaToScenes';
 import type { Asset, VideoSegment } from '../types';
 
 const img = (id: string, name: string, addedAt: number): Asset => ({ id, name, url: '', type: 'image', addedAt });
@@ -71,6 +71,43 @@ describe('matchMediaToScenes', () => {
     expect(r.segments[0]!.assetId).toBe('a1');
     expect(r.segments[0]!.unmatchedExplicitTag).toBeUndefined();
     expect(r.segments[1]!.assetId).toBeUndefined();
+  });
+});
+
+// Wave 3 U9 A3 — the wand fills the [NO ASSET] placeholders of a 0-media build.
+describe('matchMediaToScenes — filling unbound scenes (media added after the build)', () => {
+  it('OLD-BUG-FIRST shape: a 0-media build (every scene unbound, tags kept) fills by name once media exists; timings byte-identical', () => {
+    const segments = [
+      { ...seg('s1', '001_intro', undefined, 0, 2.5), unmatchedExplicitTag: true } as VideoSegment,
+      { ...seg('s2', '002_city', undefined, 2.5, 3.25), unmatchedExplicitTag: true } as VideoSegment,
+      { ...seg('s3', 'nothing_named_this', undefined, 5.75, 4), unmatchedExplicitTag: true } as VideoSegment,
+    ];
+    const before = JSON.stringify(segments.map(s => [s.id, s.startTime, s.duration, s.anchorStart]));
+    const assets = [img('a1', '001_intro.png', 1), img('a2', '002_city.mp4', 2)];
+
+    const r = matchMediaToScenes(assets, segments);
+
+    expect(r.segments.map(s => s.assetId)).toEqual(['a1', 'a2', undefined]);
+    expect(r.segments[0]!.unmatchedExplicitTag).toBeUndefined();
+    expect(r.segments[2]!.unmatchedExplicitTag).toBe(true); // honest placeholder stays flagged
+    expect(JSON.stringify(r.segments.map(s => [s.id, s.startTime, s.duration, s.anchorStart]))).toBe(before);
+    expect(r.filled).toBe(2);
+    expect(r.placeholders).toBe(1);
+    expect(summarizeMediaMatch(r)).toEqual({ matched: 2, unmatched: 1, filled: 2, placeholders: 1, conflicts: 0 });
+  });
+
+  it('a re-run on an already-filled project fills nothing new and is stable (idempotent)', () => {
+    const assets = [img('a1', '001_intro.png', 1)];
+    const first = matchMediaToScenes(assets, [seg('s1', '001_intro', undefined, 0, 2)]);
+    const second = matchMediaToScenes(assets, first.segments);
+    expect(second.filled).toBe(0);
+    expect(second.segments[0]).toBe(first.segments[0]);
+  });
+
+  it('conflicts are counted in the summary (oldest wins)', () => {
+    const assets = [img('new', '001_intro.jpg', 20), img('old', '001_intro.png', 10)];
+    const r = matchMediaToScenes(assets, [seg('s1', '001_intro', undefined, 0, 2)]);
+    expect(summarizeMediaMatch(r).conflicts).toBe(1);
   });
 });
 

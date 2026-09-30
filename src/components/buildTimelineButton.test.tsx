@@ -78,10 +78,10 @@ async function mountPanel(overrides: Partial<DropZonePanelProps>): Promise<HTMLD
   return el;
 }
 
-describe('U4.6 — Build Timeline needs all four slots', () => {
+describe('U9 — Build Timeline is spine-only (script + scene doc + voiceover); media is optional', () => {
   beforeEach(async () => { await deleteAllStagedForProject(PROJECT); });
 
-  it('three slots (no media) → disabled, and it says what is missing', async () => {
+  it('OLD BUG (U4.6 reversal): three spine slots and NO media → ENABLED, with the honest no-media hint', async () => {
     await stageScript();
     const el = await mountPanel({
       persistedSceneDetails: '[Scene 1] Intro', persistedSceneDetailsName: 'scenes.txt',
@@ -89,18 +89,26 @@ describe('U4.6 — Build Timeline needs all four slots', () => {
       persistedAssetCount: 0,
     });
     const btn = buildButton(el);
-    expect(btn.disabled, 'Build Timeline is enabled with media missing (the pre-U4.6 bug)').toBe(true);
-    expect(btn.title).toBe('Add media to build the timeline');
-    expect(el.textContent).toContain('Add media to build the timeline');
+    expect(btn.disabled, 'Build Timeline is still disabled without media (the U4.6 four-slot gate)').toBe(false);
+    expect(el.querySelector('[data-testid="build-timeline-no-media-hint"]')?.textContent).toBe(BUILD_TIMELINE_COPY.noMediaHint);
   });
 
-  it('names every missing slot, in slot order', async () => {
+  it('names every missing spine slot, in slot order — never media', async () => {
     await stageScript();
     const el = await mountPanel({ persistedAssetCount: 0 });
-    expect(buildButton(el).title).toBe('Add a scene doc, a voiceover and media to build the timeline');
+    expect(buildButton(el).title).toBe('Add scene doc and voiceover to build the timeline');
+    expect(buildButton(el).disabled).toBe(true);
   });
 
-  it('all four slots → enabled, labelled Build Timeline', async () => {
+  it('a missing script alone reads "Add script to build the timeline"', async () => {
+    const el = await mountPanel({
+      persistedSceneDetails: '[Scene 1] Intro', persistedSceneDetailsName: 'scenes.txt',
+      persistedVoiceoverName: 'vo.m4a', persistedAssetCount: 3,
+    });
+    expect(buildButton(el).title).toBe('Add script to build the timeline');
+  });
+
+  it('spine + media → enabled, labelled Build Timeline, no no-media hint', async () => {
     await stageScript();
     const el = await mountPanel({
       persistedSceneDetails: '[Scene 1] Intro', persistedSceneDetailsName: 'scenes.txt',
@@ -110,6 +118,13 @@ describe('U4.6 — Build Timeline needs all four slots', () => {
     const btn = buildButton(el);
     expect(btn.disabled).toBe(false);
     expect(btn.textContent).toContain(BUILD_TIMELINE_COPY.label);
+    expect(el.querySelector('[data-testid="build-timeline-no-media-hint"]')).toBeNull();
+  });
+
+  it('the Media block is always visible — empty project shows it in its empty state', async () => {
+    const el = await mountPanel({ persistedAssetCount: 0, assets: [] });
+    expect(el.querySelector('[data-testid="media-block"]')).not.toBeNull();
+    expect(el.querySelector('[data-testid="media-block-empty"]')).not.toBeNull();
   });
 });
 

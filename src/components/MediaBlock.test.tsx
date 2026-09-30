@@ -96,7 +96,7 @@ function setSelectValue(select: HTMLSelectElement, value: string): void {
 }
 
 describe('MediaBlock', () => {
-  it('renders nothing when the project has no assets', async () => {
+  it('U9: an empty project renders the block in its empty state (drop zone + add doors), never nothing', async () => {
     root = createRoot(container);
     await act(async () => {
       root.render(
@@ -107,7 +107,13 @@ describe('MediaBlock', () => {
         />,
       );
     });
-    expect(container.querySelector('[data-testid="media-block"]')).toBeNull();
+    expect(container.querySelector('[data-testid="media-block"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="media-block-empty"]')).not.toBeNull();
+    expect(container.querySelectorAll('[data-testid="media-block-tile"]').length).toBe(0);
+    expect(container.querySelector('[aria-label="Add loose files"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="Add a folder"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="Add a zip"]')).not.toBeNull();
+    expect(container.querySelector('h3')?.textContent).toBe('Media (0)');
   });
 
   it('renders one tile per asset', async () => {
@@ -568,7 +574,7 @@ describe('MediaBlock', () => {
     expect(container.querySelector('h3')?.textContent).toBe('Media (1)');
   });
 
-  it('FIXED (4a): a project whose ONLY asset is the voiceover renders nothing, same as an empty project', async () => {
+  it('FIXED (4a): a project whose ONLY asset is the voiceover shows the empty state, same as an empty project', async () => {
     const assets = [makeAsset({ id: 'voice-1', type: 'audio', name: 'narration.mp3' })];
     root = createRoot(container);
     await act(async () => {
@@ -580,7 +586,8 @@ describe('MediaBlock', () => {
         />,
       );
     });
-    expect(container.querySelector('[data-testid="media-block"]')).toBeNull();
+    expect(container.querySelector('[data-testid="media-block-empty"]')).not.toBeNull();
+    expect(container.querySelectorAll('[data-testid="media-block-tile"]').length).toBe(0);
   });
 
   // G6 polish item 3 — bulk "Delete unused".
@@ -736,5 +743,81 @@ describe('MediaBlock', () => {
     const deleteButton = container.querySelector('[title="Delete"]') as HTMLButtonElement;
     await act(async () => { deleteButton.click(); });
     expect(onDeleteAsset).toHaveBeenCalledWith('a1');
+  });
+});
+
+// Wave 3 U9 — one always-visible surface.
+describe('U9 — always-visible Media block', () => {
+  const ZERO_COUNTS = { imported: 1, deduped: 0, unsupportedSkipped: 0, failed: 0 };
+
+  it('delete-all confirms first, then leaves the block IN PLACE in its empty state (the vanishing-block bug)', async () => {
+    const onDeleteAllMedia = vi.fn();
+    const assets = [makeAsset({ id: 'a1' })];
+    root = createRoot(container);
+    const render = async (list: Asset[]) => act(async () => {
+      root.render(
+        <MediaBlock
+          projectId="p1" assets={list} segments={[makeSegment({ id: 's1', assetId: 'a1' })]} voiceoverId={undefined}
+          onDeleteAsset={noop} onOpenRelinkMedia={noop} onHighlightUsage={noop}
+          onIngestComplete={noop} onIngestError={noop} onDeleteAllMedia={onDeleteAllMedia}
+        />,
+      );
+    });
+    await render(assets);
+    await act(async () => { (container.querySelector('[data-testid="media-block-delete-all"]') as HTMLButtonElement).click(); });
+    expect(onDeleteAllMedia).not.toHaveBeenCalled();
+    expect(document.body.textContent).toContain('1 scene will show as [NO ASSET] placeholders');
+    const confirm = [...document.body.querySelectorAll('button')].find(b => b.textContent === 'Delete all')!;
+    await act(async () => { confirm.click(); });
+    expect(onDeleteAllMedia).toHaveBeenCalledTimes(1);
+
+    await render([]); // the parent removed every asset
+    expect(container.querySelector('[data-testid="media-block"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="media-block-empty"]')).not.toBeNull();
+    expect((container.querySelector('[data-testid="media-block-delete-all"]') as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('the parent can push dropped media through the same ingest doors (ref handle): files and zips', async () => {
+    mockIngestLooseFiles.mockResolvedValue({ assets: [], audioAssetId: undefined, counts: ZERO_COUNTS, duplicateNames: [] });
+    mockIngestZip.mockResolvedValue({ assets: [], audioAssetId: undefined, counts: ZERO_COUNTS, duplicateNames: [] });
+    const onIngestComplete = vi.fn();
+    const handle: { current: { ingestFiles: (f: File[]) => void; ingestZips: (f: File[]) => void } | null } = { current: null };
+    root = createRoot(container);
+    await act(async () => {
+      root.render(
+        <MediaBlock
+          ref={handle}
+          projectId="p1" assets={[]} segments={[]} voiceoverId={undefined}
+          onDeleteAsset={noop} onOpenRelinkMedia={noop} onHighlightUsage={noop}
+          onIngestComplete={onIngestComplete} onIngestError={noop}
+        />,
+      );
+    });
+    await act(async () => { handle.current!.ingestFiles([new File(['x'], 'a.png')]); });
+    expect(mockIngestLooseFiles).toHaveBeenCalledTimes(1);
+    await act(async () => { handle.current!.ingestZips([new File(['x'], 'one.zip'), new File(['y'], 'two.zip')]); });
+    expect(mockIngestZip).toHaveBeenCalledTimes(2);
+    expect(onIngestComplete).toHaveBeenCalledTimes(3);
+  });
+
+  it('every control lives in the one toolbar: add (files/folder/zip), relink, delete unused, delete all, wand, search, sort, filters', async () => {
+    root = createRoot(container);
+    await act(async () => {
+      root.render(
+        <MediaBlock
+          projectId="p1" assets={[makeAsset({ id: 'a1' })]} segments={[]} voiceoverId={undefined}
+          onDeleteAsset={noop} onOpenRelinkMedia={noop} onHighlightUsage={noop}
+          onIngestComplete={noop} onIngestError={noop} onMatchMedia={noop} onDeleteAllMedia={noop} onRenameAsset={noop}
+        />,
+      );
+    });
+    for (const label of ['Add loose files', 'Add a folder', 'Add a zip', 'Relink media', 'Delete all media', 'Match media to scenes']) {
+      expect(container.querySelector(`[aria-label="${label}"]`), label).not.toBeNull();
+    }
+    expect(container.querySelector('[data-testid="media-block-delete-unused"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="media-block-sort"]')).not.toBeNull();
+    expect(container.querySelector('input[placeholder="Search media…"]')).not.toBeNull();
+    expect(container.querySelector('[role="radiogroup"][aria-label="Filter by type"]')).not.toBeNull();
+    expect(container.querySelector('[role="radiogroup"][aria-label="Filter by usage"]')).not.toBeNull();
   });
 });

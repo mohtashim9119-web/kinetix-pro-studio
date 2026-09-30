@@ -7,6 +7,8 @@ import { describe, it, expect } from 'vitest';
 import {
   missingSlots,
   missingSlotsReason,
+  missingSpineSlots,
+  spineGateReason,
   waitForStagingTranscript,
   type StagingTranscriptState,
 } from './buildTimelineGate';
@@ -32,6 +34,25 @@ describe('U4.6 — the four-slot gate', () => {
       .toBe('Add a script, a voiceover and media to build the timeline');
     expect(missingSlotsReason({ script: false, scene: false, voiceover: false, media: false }))
       .toBe('Add a script, a scene doc, a voiceover and media to build the timeline');
+  });
+});
+
+describe('U9 — the spine-only gate (editor Build Timeline)', () => {
+  it('spine complete, no media → no reason: media never gates', () => {
+    expect(missingSpineSlots({ ...ALL, media: false })).toEqual([]);
+    expect(spineGateReason({ ...ALL, media: false })).toBeUndefined();
+  });
+
+  it('per-item copy, in slot order', () => {
+    expect(spineGateReason({ ...ALL, script: false })).toBe('Add script to build the timeline');
+    expect(spineGateReason({ ...ALL, scene: false })).toBe('Add scene doc to build the timeline');
+    expect(spineGateReason({ ...ALL, voiceover: false })).toBe('Add voiceover to build the timeline');
+    expect(spineGateReason({ script: false, scene: false, voiceover: false, media: true }))
+      .toBe('Add script, scene doc and voiceover to build the timeline');
+  });
+
+  it('the four-slot helpers are untouched for Bulk Projects (its slot chips stay four)', () => {
+    expect(missingSlotsReason({ ...ALL, media: false })).toBe('Add media to build the timeline');
   });
 });
 

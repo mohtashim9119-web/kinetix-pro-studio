@@ -29,8 +29,8 @@
 // makes it free.
 // ---------------------------------------------------------------------------
 
-import { useState, useRef, useCallback, useMemo, useEffect } from 'react';
-import { Search, Film, Image as ImageIcon, Music, Link2, Trash2, FolderPlus, FileUp, FileArchive, AlertCircle, Loader2, Copy, Wand2 } from 'lucide-react';
+import { useState, useRef, useCallback, useMemo, useEffect, forwardRef, useImperativeHandle } from 'react';
+import { Search, Film, Image as ImageIcon, Music, Link2, Trash2, FolderPlus, FileUp, FileArchive, AlertCircle, Loader2, Copy, Wand2, X } from 'lucide-react';
 import { ConfirmDialog } from './ConfirmDialog';
 import type { Asset, VideoSegment } from '../types';
 import { formatTime } from '../services/timeFormat';
@@ -39,6 +39,7 @@ import { sha256Hex, ingestLooseFiles, type MediaIngestCounts, type OfflineReconn
 import { ingestZip, ZipTooLargeError } from '../services/zipIngest';
 import { mediaVaultGenerateThumbnail, mediaVaultReadThumbnail } from '../services/mediaVaultClient';
 import { ASSET_DRAG_MIME } from '../services/assetDragChannel';
+import type { MediaMatchSummary } from '../services/matchMediaToScenes';
 
 export interface MediaIngestOutcome {
   assets: Asset[];
@@ -79,7 +80,21 @@ interface MediaBlockProps {
   /** Media workflow Unit 2 — the header's "Match media to scenes" button:
    *  re-assigns every scene whose tag names an asset (overwriting), keeps
    *  the rest. Absent -> no button. */
-  onMatchMedia?: () => void;
+  onMatchMedia?: () => MediaMatchSummary | void;
+  /** Wave 3 U9 — delete EVERY project media asset (the old slot-4 "×"). The
+   *  block confirms first; absent -> no button. */
+  onDeleteAllMedia?: () => void;
+  /** Wave 3 U9 — when present the zip door hands the chosen zip(s) to the
+   *  owner instead of ingesting directly, so a BUNDLE zip (script + scene doc
+   *  + voiceover + media) is recognised and routed, not swallowed as media. */
+  onZipsChosen?: (files: File[]) => void;
+}
+
+/** Wave 3 U9 — what the parent drives through a ref: media dropped anywhere
+ *  on the Files tab goes through the SAME ingest doors as the toolbar. */
+export interface MediaBlockHandle {
+  ingestFiles: (files: File[]) => void;
+  ingestZips: (files: File[]) => void;
 }
 
 type TypeFilter = 'all' | 'image' | 'video' | 'audio';
@@ -159,6 +174,25 @@ const DELETE_COPY = {
     `Used in ${uses} scene${uses === 1 ? '' : 's'}. Delete anyway? Those scenes will show as missing until you relink or replace.`,
   usedConfirmLabel: 'Delete anyway',
   cancelLabel: 'Cancel',
+} as const;
+
+// Wave 3 U9 — swappable copy for the one Media surface (operator sign-off
+// point, same pattern as DELETE_COPY above).
+export const MEDIA_COPY = {
+  emptyTitle: 'No media yet',
+  emptyBody: 'Drop images, videos or a zip here — or use the buttons. Media is optional: scenes without a file stay as placeholders until you add some and press Match.',
+  deleteAllTitle: 'Delete all media?',
+  deleteAllBody: (count: number, uses: number): string =>
+    `Delete ${count} file${count === 1 ? '' : 's'}?` +
+    (uses > 0 ? ` ${uses} scene${uses === 1 ? '' : 's'} will show as [NO ASSET] placeholders until you add media again.` : '') +
+    ' Their files stay in the vault until you free up cached data.',
+  deleteAllConfirmLabel: 'Delete all',
+  matchSummary: (s: MediaMatchSummary): string => {
+    let msg = `Matched ${s.matched} · ${s.unmatched} unmatched`;
+    if (s.filled > 0) msg += ` · ${s.filled} placeholder${s.filled === 1 ? '' : 's'} filled`;
+    if (s.conflicts > 0) msg += ` · ${s.conflicts} name conflict${s.conflicts === 1 ? '' : 's'} (oldest used)`;
+    return msg;
+  },
 } as const;
 
 /**
@@ -275,7 +309,7 @@ function TileName({ name, onRename, onEditingChange }: {
   );
 }
 
-export function MediaBlock({
+export const MediaBlock = forwardRef<MediaBlockHandle, MediaBlockProps>(function MediaBlock({
   projectId,
   assets,
   segments,
@@ -287,7 +321,9 @@ export function MediaBlock({
   onIngestError,
   onRenameAsset,
   onMatchMedia,
-}: MediaBlockProps) {
+  onDeleteAllMedia,
+  onZipsChosen,
+}, ref) {
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('all');
   const [usageFilter, setUsageFilter] = useState<UsageFilter>('all');
@@ -295,6 +331,8 @@ export function MediaBlock({
   const [busy, setBusy] = useState(false);
   // Unit 3 — the tile whose name is being edited is not a drag source.
   const [editingAssetId, setEditingAssetId] = useState<string | null>(null);
+  const [matchSummary, setMatchSummary] = useState<MediaMatchSummary | null>(null);
+  const [confirmDeleteAll, setConfirmDeleteAll] = useState(false);
   const [videoThumbUrls, setVideoThumbUrls] = useState<Record<string, string>>({});
   const thumbRequestedRef = useRef<Set<string>>(new Set());
 
@@ -426,10 +464,26 @@ export function MediaBlock({
 
   const handleZipChosen = useCallback((file: File | undefined) => {
     if (!file) return;
+    if (onZipsChosen) { onZipsChosen([file]); return; }
     // The zip's entry count isn't known without opening it (the expensive
     // part), so this stays generic rather than guessing a number.
     void runIngest('zip', 'Importing zip…', () => ingestZip(projectId, file, existingHashes, offlineHashes));
-  }, [projectId, runIngest, existingHashes, offlineHashes]);
+  }, [projectId, runIngest, existingHashes, offlineHashes, onZipsChosen]);
+
+  // Wave 3 U9 — drops on the Files tab (and bundle-less zips) enter through
+  // the same doors as the toolbar, so there is ONE ingest path and one place
+  // the result lands. Zips run one at a time (bounded memory).
+  useImperativeHandle(ref, () => ({
+    ingestFiles: (files: File[]) => {
+      if (files.length === 0) return;
+      void runIngest('files', `Importing ${files.length} file${files.length === 1 ? '' : 's'}…`, () => ingestLooseFiles(projectId, files, existingHashes, offlineHashes));
+    },
+    ingestZips: (files: File[]) => {
+      void (async () => {
+        for (const file of files) await runIngest('zip', 'Importing zip…', () => ingestZip(projectId, file, existingHashes, offlineHashes));
+      })();
+    },
+  }), [projectId, runIngest, existingHashes, offlineHashes]);
 
   // G6 polish item 3 — bulk "Delete unused". Routes every unused asset
   // through the SAME `onDeleteAsset` prop a single-tile delete uses, so the
@@ -453,27 +507,28 @@ export function MediaBlock({
     }
   }, [onDeleteAsset]);
 
-  if (mediaAssets.length === 0) {
-    return null;
-  }
+  const totalUses = useMemo(
+    () => segments.filter(sg => sg.assetId && mediaAssets.some(a => a.id === sg.assetId)).length,
+    [segments, mediaAssets],
+  );
 
   return (
-    <div className="border-t border-[var(--kx-border)] pt-3 mt-1" data-testid="media-block">
-      <div className="flex items-center justify-between px-1 mb-2">
-        <h3 className="text-[11px] font-semibold uppercase tracking-wide text-[var(--kx-faint)]">
+    <div className="px-3 pb-3" data-testid="media-block">
+      <div className="flex items-center justify-between gap-1.5 px-1 mb-2">
+        <h3 className="text-[11px] font-semibold uppercase tracking-wide text-[var(--kx-faint)] shrink-0" data-testid="media-block-count">
           Media ({mediaAssets.length})
         </h3>
         {busyLabel && (
           <span
-            className="flex items-center gap-1 text-[10px] text-[var(--kx-faint)]"
+            className="flex items-center gap-1 text-[10px] text-[var(--kx-faint)] min-w-0 truncate"
             role="status"
             aria-live="polite"
           >
-            <Loader2 size={11} className="animate-spin" />
+            <Loader2 size={11} className="animate-spin shrink-0" />
             {busyLabel}
           </span>
         )}
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5 shrink-0">
           {onMatchMedia && (
             <button
               type="button"
@@ -481,7 +536,7 @@ export function MediaBlock({
               title="Match media to scenes — assign each scene the file its tag names"
               aria-label="Match media to scenes"
               disabled={busy}
-              onClick={onMatchMedia}
+              onClick={() => { const summary = onMatchMedia(); setMatchSummary(summary ?? null); }}
               className="p-1 rounded hover:bg-[var(--kx-surface-2)] text-[var(--kx-faint)] disabled:opacity-40"
             >
               <Wand2 size={13} />
@@ -490,6 +545,7 @@ export function MediaBlock({
           <button
             type="button"
             title="Add loose files"
+            aria-label="Add loose files"
             disabled={busy}
             onClick={() => filesInputRef.current?.click()}
             className="p-1 rounded hover:bg-[var(--kx-surface-2)] text-[var(--kx-faint)] disabled:opacity-40"
@@ -499,6 +555,7 @@ export function MediaBlock({
           <button
             type="button"
             title="Add a folder"
+            aria-label="Add a folder"
             disabled={busy}
             onClick={() => folderInputRef.current?.click()}
             className="p-1 rounded hover:bg-[var(--kx-surface-2)] text-[var(--kx-faint)] disabled:opacity-40"
@@ -508,11 +565,22 @@ export function MediaBlock({
           <button
             type="button"
             title="Add a zip"
+            aria-label="Add a zip"
             disabled={busy}
             onClick={() => zipInputRef.current?.click()}
             className="p-1 rounded hover:bg-[var(--kx-surface-2)] text-[var(--kx-faint)] disabled:opacity-40"
           >
             <FileArchive size={13} />
+          </button>
+          <button
+            type="button"
+            data-testid="media-block-relink-door"
+            title="Relink media…"
+            aria-label="Relink media"
+            onClick={onOpenRelinkMedia}
+            className="p-1 rounded hover:bg-[var(--kx-surface-2)] text-[var(--kx-faint)]"
+          >
+            <Link2 size={13} />
           </button>
           <button
             type="button"
@@ -530,8 +598,39 @@ export function MediaBlock({
               </span>
             )}
           </button>
+          {onDeleteAllMedia && (
+            <button
+              type="button"
+              data-testid="media-block-delete-all"
+              title="Delete all media"
+              aria-label="Delete all media"
+              disabled={mediaAssets.length === 0}
+              onClick={() => setConfirmDeleteAll(true)}
+              className="p-1 rounded hover:bg-[var(--kx-surface-2)] text-[var(--kx-faint)] hover:text-[var(--kx-danger)] disabled:opacity-40"
+            >
+              <X size={13} />
+            </button>
+          )}
         </div>
       </div>
+
+      {matchSummary && (
+        <div
+          data-testid="media-block-match-summary"
+          role="status"
+          className="mx-1 mb-2 flex items-start gap-1.5 rounded-lg bg-[var(--kx-surface-2)] px-2 py-1 text-[11px] text-[var(--kx-muted)]"
+        >
+          <span className="flex-1 min-w-0">{MEDIA_COPY.matchSummary(matchSummary)}</span>
+          <button
+            type="button"
+            aria-label="Dismiss match result"
+            onClick={() => setMatchSummary(null)}
+            className="shrink-0 text-[var(--kx-faint)] hover:text-white"
+          >
+            <X size={11} />
+          </button>
+        </div>
+      )}
 
       <input
         ref={filesInputRef}
@@ -622,7 +721,15 @@ export function MediaBlock({
         </div>
       </div>
 
-      {rows.length === 0 ? (
+      {mediaAssets.length === 0 ? (
+        <div
+          data-testid="media-block-empty"
+          className="mx-1 mb-1 rounded-[10px] border border-dashed border-[var(--kx-line-2)] px-3 py-5 text-center"
+        >
+          <p className="text-[12px] font-semibold text-[var(--kx-muted)]">{MEDIA_COPY.emptyTitle}</p>
+          <p className="mt-1 text-[11px] text-[var(--kx-faint)]">{MEDIA_COPY.emptyBody}</p>
+        </div>
+      ) : rows.length === 0 ? (
         <p className="text-[11px] text-[var(--kx-faint)] px-1 pb-2">No media matches this filter.</p>
       ) : (
         <div className="grid grid-cols-3 gap-2 px-1 pb-2" data-testid="media-block-grid">
@@ -633,6 +740,8 @@ export function MediaBlock({
               <div
                 key={asset.id}
                 data-testid="media-block-tile"
+                data-asset-id={asset.id}
+                data-unresolved={asset.unresolved ? 'true' : 'false'}
                 // Media workflow Unit 3 — drag onto a timeline segment to
                 // assign it (dedicated asset channel; payload = asset id).
                 draggable={editingAssetId !== asset.id}
@@ -651,7 +760,7 @@ export function MediaBlock({
                     className="w-full h-full flex flex-col items-center justify-center gap-1 text-[var(--kx-danger)]"
                   >
                     <AlertCircle size={18} />
-                    <span className="text-[9px]">Offline</span>
+                    <span data-testid="asset-offline-badge" className="text-[9px]">Offline</span>
                     <Link2 size={11} />
                   </button>
                 ) : thumbUrl ? (
@@ -716,6 +825,17 @@ export function MediaBlock({
         />
       )}
 
+      {confirmDeleteAll && (
+        <ConfirmDialog
+          title={MEDIA_COPY.deleteAllTitle}
+          body={MEDIA_COPY.deleteAllBody(mediaAssets.length, totalUses)}
+          confirmLabel={MEDIA_COPY.deleteAllConfirmLabel}
+          cancelLabel={DELETE_COPY.cancelLabel}
+          onConfirm={() => { onDeleteAllMedia?.(); setConfirmDeleteAll(false); setMatchSummary(null); }}
+          onCancel={() => setConfirmDeleteAll(false)}
+        />
+      )}
+
       {confirmDeleteAsset && (
         <ConfirmDialog
           title={DELETE_COPY.usedTitle}
@@ -728,4 +848,4 @@ export function MediaBlock({
       )}
     </div>
   );
-}
+});
