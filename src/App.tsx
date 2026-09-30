@@ -329,6 +329,7 @@ import type { RecoveryAsset, RecoverySegment } from './components/recovery/degra
 import { writeAssetBlobNative, deleteAssetNative, deleteProjectAssetsNative } from './services/nativeAssetStore';
 import { mediaVaultUnreference, mediaVaultRename } from './services/mediaVaultClient';
 import { applyAssetRename } from './services/mediaRename';
+import { vaultHashesToUnreference } from './services/vaultUnreferencePlan';
 import { unbindDeletedAssets } from './services/unbindDeletedAssets';
 import { matchMediaToScenes, summarizeMediaMatch, type MediaMatchSummary } from './services/matchMediaToScenes';
 import { assignAssetToSegment } from './services/assetDragChannel';
@@ -6605,16 +6606,13 @@ export default function App() {
       // duplicates that Step 5's backfill mapped onto one shared hash —
       // deleting one twin must not unreference the blob while its sibling
       // still resolves through it.
-      const contentHash = asset.contentHash;
-      const hasSurvivingTwin = contentHash != null &&
-        prev.assets.some(a => a.id !== assetId && a.contentHash === contentHash);
+      const remainingAssets = prev.assets.filter(a => a.id !== assetId);
+      const hashesToRelease = vaultHashesToUnreference([asset], remainingAssets);
       void deleteAssetNative(projectIdRef.current, assetId).then(() => { // WS3 item B — native-store parity
-        if (contentHash && !hasSurvivingTwin) {
-          void mediaVaultUnreference(contentHash, projectIdRef.current);
-        }
+        for (const hash of hashesToRelease) void mediaVaultUnreference(hash, projectIdRef.current);
       });
       clearFrameRendererCache();
-      const remaining = prev.assets.filter(a => a.id !== assetId);
+      const remaining = remainingAssets;
       const unbound = unbindDeletedAssets(prev.segments, new Set([assetId]));
       return stampUnboundByDelete({
         ...prev,
@@ -6769,7 +6767,15 @@ export default function App() {
     Promise.all(nonAudio.map(a => deleteAsset(projectIdRef.current, a.id))).catch(err =>
       console.error('[handleDeleteAllAssets] IndexedDB delete failed:', err)
     );
-    void Promise.all(nonAudio.map(a => deleteAssetNative(projectIdRef.current, a.id))); // WS3 item B — native-store parity
+    // Release every removed blob's vault reference AFTER its native delete
+    // settles (same ordering as the single delete): blobs then read as
+    // reclaimable in storage settings — never auto-deleted here. Surviving
+    // assets (the voiceover) keep their own references.
+    const hashesToRelease = vaultHashesToUnreference(nonAudio, assetsRef.current.filter(a => a.type === 'audio'));
+    const projectIdForRelease = projectIdRef.current;
+    void Promise.all(nonAudio.map(a => deleteAssetNative(projectIdForRelease, a.id))).then(() => { // WS3 item B — native-store parity
+      for (const hash of hashesToRelease) void mediaVaultUnreference(hash, projectIdForRelease);
+    });
     clearFrameRendererCache();
     const removed = new Set(nonAudio.map(a => a.id));
     setProject(prev => {
