@@ -329,7 +329,8 @@ import type { RecoveryAsset, RecoverySegment } from './components/recovery/degra
 import { writeAssetBlobNative, deleteAssetNative, deleteProjectAssetsNative } from './services/nativeAssetStore';
 import { mediaVaultUnreference, mediaVaultRename } from './services/mediaVaultClient';
 import { applyAssetRename } from './services/mediaRename';
-import { matchMediaToScenes } from './services/matchMediaToScenes';
+import { unbindDeletedAssets } from './services/unbindDeletedAssets';
+import { matchMediaToScenes, summarizeMediaMatch, type MediaMatchSummary } from './services/matchMediaToScenes';
 import { assignAssetToSegment } from './services/assetDragChannel';
 import { reconnectOfflineAssets } from './services/reconnectOfflineAssets';
 import type { OfflineReconnect } from './services/mediaIngest';
@@ -6574,6 +6575,20 @@ export default function App() {
     handleDeleteSegmentById(id);
   }, [handleDeleteSegmentById]);
 
+  // Wave 3 U9 A4 — deleting media leaves honest placeholders AND says so: the
+  // same stamped no-asset finding a sync emits, for the scenes that just lost
+  // their file (nothing is stamped when no scene used it).
+  const stampUnboundByDelete = (next: Project, newlyUnbound: number[]): Project => {
+    if (newlyUnbound.length === 0) return next;
+    const entry = buildNoAssetSummaryEntry(
+      mintSyncLogId(),
+      next.segments.map((s, i) => (s.assetId ? null : i + 1)).filter((n): n is number => n !== null),
+      next.segments.length,
+      next.assets.filter(a => a.type !== 'audio').length,
+    );
+    return entry ? appendSyncLogEntries(next, [entry]) : next;
+  };
+
   // Shared delete handler — used by DropZonePanel post-sync assets list
   const handleDeleteAsset = useCallback((assetId: string) => {
     setProject(prev => {
@@ -6599,19 +6614,19 @@ export default function App() {
         }
       });
       clearFrameRendererCache();
-      return {
+      const remaining = prev.assets.filter(a => a.id !== assetId);
+      const unbound = unbindDeletedAssets(prev.segments, new Set([assetId]));
+      return stampUnboundByDelete({
         ...prev,
-        assets: prev.assets.filter(a => a.id !== assetId),
+        assets: remaining,
         voiceoverId: prev.voiceoverId === assetId ? undefined : prev.voiceoverId,
-        segments: prev.segments.map(s =>
-          s.assetId === assetId ? { ...s, assetId: undefined } : s
-        ),
+        segments: unbound.segments,
         ...(prev.voiceoverId === assetId ? {
           transcriptTokens: undefined,
           lastTranscribedAssetId: undefined,
           lastTranscribedFileIdentity: undefined,
         } : {}),
-      };
+      }, unbound.newlyUnbound);
     });
   }, []);
 
@@ -6709,7 +6724,12 @@ export default function App() {
   // kept otherwise) plus one summary finding, persisted by the ordinary
   // autosave. No sync runs; timings, provenance and lastSyncSpine are never
   // touched, so "Already synced" is unaffected.
-  const handleMatchMedia = useCallback(() => {
+  const handleMatchMedia = useCallback((): MediaMatchSummary => {
+    // The digest the Media block shows comes from the live ref; the commit
+    // below recomputes against `prev` so a racing edit is never overwritten
+    // with a stale segment list. Wave 3 U9: unbound scenes (a 0-media build's
+    // [NO ASSET] placeholders) are filled by the same name-tag tiers.
+    const digest = summarizeMediaMatch(matchMediaToScenes(projectRef.current.assets, projectRef.current.segments));
     setProject(prev => {
       const result = matchMediaToScenes(prev.assets, prev.segments);
       return appendSyncLogEntries(
@@ -6717,6 +6737,7 @@ export default function App() {
         [buildMediaMatchEntry(mintSyncLogId(), result)],
       );
     });
+    return digest;
   }, []);
 
   // Media workflow Unit 3 — a Media block tile dropped on a timeline
@@ -6750,11 +6771,15 @@ export default function App() {
     );
     void Promise.all(nonAudio.map(a => deleteAssetNative(projectIdRef.current, a.id))); // WS3 item B — native-store parity
     clearFrameRendererCache();
-    setProject(prev => ({
-      ...prev,
-      assets: prev.assets.filter(a => a.type === 'audio'),
-      segments: prev.segments.map(s => ({ ...s, assetId: undefined })),
-    }));
+    const removed = new Set(nonAudio.map(a => a.id));
+    setProject(prev => {
+      const unbound = unbindDeletedAssets(prev.segments, removed);
+      return stampUnboundByDelete({
+        ...prev,
+        assets: prev.assets.filter(a => a.type === 'audio'),
+        segments: unbound.segments,
+      }, unbound.newlyUnbound);
+    });
   }, []);
 
   const processMediaFile = useCallback(async (file: File, detectedType: Asset['type']): Promise<void> => {
