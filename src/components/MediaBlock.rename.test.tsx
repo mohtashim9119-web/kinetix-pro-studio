@@ -18,6 +18,7 @@ vi.mock('../services/zipIngest', () => ({ ingestZip: vi.fn(), ZipTooLargeError: 
 vi.mock('../services/mediaVaultClient', () => ({
   mediaVaultGenerateThumbnailDetailed: vi.fn(async () => 'unavailable'),
   mediaVaultReadThumbnail: vi.fn(async () => null),
+  mediaVaultListEntries: vi.fn(async () => []),
 }));
 vi.mock('../services/assetStore', () => ({ getAsset: vi.fn(async () => null) }));
 

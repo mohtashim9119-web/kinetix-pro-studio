@@ -37,7 +37,7 @@ import { formatTime } from '../services/timeFormat';
 import { getAsset } from '../services/assetStore';
 import { sha256Hex, ingestLooseFiles, type MediaIngestCounts, type OfflineReconnect } from '../services/mediaIngest';
 import { ingestZip, ZipTooLargeError } from '../services/zipIngest';
-import { mediaVaultGenerateThumbnailDetailed, mediaVaultReadThumbnail } from '../services/mediaVaultClient';
+import { mediaVaultGenerateThumbnailDetailed, mediaVaultListEntries, mediaVaultReadThumbnail } from '../services/mediaVaultClient';
 import { assetHealth, ASSET_HEALTH_COPY } from '../services/assetHealth';
 import { ASSET_DRAG_MIME } from '../services/assetDragChannel';
 import type { MediaMatchSummary } from '../services/matchMediaToScenes';
@@ -233,17 +233,28 @@ type ThumbResult = { url: string } | { corrupt: true } | null;
  *  tile falls back to the type icon. */
 async function loadVideoThumbnailUrl(projectId: string, asset: Asset): Promise<ThumbResult> {
   try {
-    let bytes: Uint8Array;
-    if (asset.file) {
-      bytes = new Uint8Array(await asset.file.arrayBuffer());
-    } else {
-      const stored = await getAsset(projectId, asset.id);
-      if (!stored?.blob) return null;
-      bytes = new Uint8Array(await stored.blob.arrayBuffer());
+    // The stored content hash names the vault blob directly — no need to have
+    // the bytes in hand (an asset resolved from the native store has no IndexedDB
+    // copy). Only an unhashed asset falls back to hashing its bytes.
+    let contentHash = asset.contentHash;
+    if (!contentHash) {
+      let bytes: Uint8Array;
+      if (asset.file) {
+        bytes = new Uint8Array(await asset.file.arrayBuffer());
+      } else {
+        const stored = await getAsset(projectId, asset.id);
+        if (!stored?.blob) return null;
+        bytes = new Uint8Array(await stored.blob.arrayBuffer());
+      }
+      contentHash = await sha256Hex(bytes);
     }
-    const contentHash = await sha256Hex(bytes);
     const outcome = await mediaVaultGenerateThumbnailDetailed(contentHash);
-    if (outcome === 'failed') return { corrupt: true };
+    if (outcome === 'failed') {
+      // `failed` also covers "this hash was never imported into the vault" (a
+      // legacy asset): only a blob the registry KNOWS can be called unreadable.
+      const known = (await mediaVaultListEntries()).some(e => e.contentHash === contentHash);
+      return known ? { corrupt: true } : null;
+    }
     if (outcome !== 'generated') return null;
     const thumbBytes = await mediaVaultReadThumbnail(contentHash);
     if (!thumbBytes) return null;
@@ -443,6 +454,8 @@ export const MediaBlock = forwardRef<MediaBlockHandle, MediaBlockProps>(function
 
   // Release the video-thumbnail blob URLs when the block goes away (each
   // `createObjectURL` pins its bytes until revoked; they were never released).
+  const mountedRef = useRef(true);
+  useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; }; }, []);
   const videoThumbUrlsRef = useRef(videoThumbUrls);
   videoThumbUrlsRef.current = videoThumbUrls;
   useEffect(() => () => {
@@ -454,7 +467,6 @@ export const MediaBlock = forwardRef<MediaBlockHandle, MediaBlockProps>(function
   // reactive to scroll position (no virtualization here), but bounded to
   // whatever the current filter/search actually shows.
   useEffect(() => {
-    let cancelled = false;
     for (const { asset } of rows) {
       if (asset.type !== 'video') continue;
       if (thumbRequestedRef.current.has(asset.id)) continue;
@@ -463,11 +475,14 @@ export const MediaBlock = forwardRef<MediaBlockHandle, MediaBlockProps>(function
       void loadVideoThumbnailUrl(projectId, asset).then(result => {
         if (result === null) return;
         if ('corrupt' in result) { onAssetCorruptRef.current?.(asset.id, 'no-frame'); return; }
-        if (cancelled) return;
+        // NOT gated on this effect's cleanup: the id is already in
+        // `thumbRequestedRef`, so a result dropped because `rows` changed
+        // mid-flight would never be requested again (the tile stayed a
+        // film-strip icon forever). Only an unmounted block drops it.
+        if (!mountedRef.current) { URL.revokeObjectURL(result.url); return; }
         setVideoThumbUrls(prev => ({ ...prev, [asset.id]: result.url }));
       });
     }
-    return () => { cancelled = true; };
   }, [rows, projectId]);
 
   // G6 polish item 1 — every ingest door needs the project's own already-

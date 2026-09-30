@@ -20,9 +20,11 @@ vi.mock('../services/zipIngest', () => ({
 
 const mockGenerateThumbnail = vi.fn();
 const mockReadThumbnail = vi.fn();
+const mockListEntries = vi.fn();
 vi.mock('../services/mediaVaultClient', () => ({
   mediaVaultGenerateThumbnailDetailed: (...args: unknown[]) => mockGenerateThumbnail(...args),
   mediaVaultReadThumbnail: (...args: unknown[]) => mockReadThumbnail(...args),
+  mediaVaultListEntries: (...args: unknown[]) => mockListEntries(...args),
 }));
 
 vi.mock('../services/assetStore', () => ({
@@ -41,6 +43,7 @@ beforeEach(() => {
   mockIngestZip.mockReset();
   mockGenerateThumbnail.mockReset().mockResolvedValue('unavailable');
   mockReadThumbnail.mockReset().mockResolvedValue(null);
+  mockListEntries.mockReset().mockResolvedValue([{ contentHash: 'deadbeef' }]);
   sessionStorage.clear();
 });
 
@@ -981,5 +984,69 @@ describe('B3 — video thumbnail blob URLs are released', () => {
     } finally {
       URL.createObjectURL = origCreate; URL.revokeObjectURL = origRevoke;
     }
+  });
+});
+
+describe('video thumbnails — the film-strip icon must not be permanent', () => {
+  const stubUrls = () => {
+    const o = { c: URL.createObjectURL, r: URL.revokeObjectURL };
+    URL.createObjectURL = () => 'blob:thumb';
+    URL.revokeObjectURL = () => {};
+    return () => { URL.createObjectURL = o.c; URL.revokeObjectURL = o.r; };
+  };
+  const mountVideo = async (asset: Asset, segments: VideoSegment[]) => {
+    root = createRoot(container);
+    const render = (segs: VideoSegment[]) => act(async () => {
+      root.render(
+        <MediaBlock projectId="p1" assets={[asset]} segments={segs} voiceoverId={undefined}
+          onDeleteAsset={noop} onOpenRelinkMedia={noop} onHighlightUsage={noop} onIngestComplete={noop} onIngestError={noop} />,
+      );
+    });
+    await render(segments);
+    return render;
+  };
+  const thumbImg = () => container.querySelector('[data-testid="media-block-tile"] img');
+
+  it('OLD BUG: a thumbnail finishing AFTER `rows` changed mid-flight was dropped and never re-requested', async () => {
+    const restore = stubUrls();
+    try {
+      let release!: (v: string) => void;
+      mockGenerateThumbnail.mockImplementation(() => new Promise(r => { release = r; }));
+      mockReadThumbnail.mockResolvedValue(new Uint8Array([1]));
+      const video = makeAsset({ id: 'v1', type: 'video', name: 'c.mp4', contentHash: 'deadbeef' });
+      const render = await mountVideo(video, []);
+      await render([makeSegment({ id: 's1', assetId: 'v1' })]); // the project changed while ffmpeg ran -> `rows` recomputed
+      await act(async () => { release('generated'); await new Promise(r => setTimeout(r, 10)); });
+      expect(thumbImg()?.getAttribute('src')).toBe('blob:thumb');
+      expect(mockGenerateThumbnail).toHaveBeenCalledTimes(1); // requested once, not re-requested
+    } finally { restore(); }
+  });
+
+  it('uses the stored contentHash: no bytes needed (an asset resolved from the native store has no IndexedDB copy)', async () => {
+    const restore = stubUrls();
+    try {
+      mockGenerateThumbnail.mockResolvedValue('generated');
+      mockReadThumbnail.mockResolvedValue(new Uint8Array([1]));
+      await mountVideo(makeAsset({ id: 'v1', type: 'video', name: 'c.mp4', contentHash: 'abc123' }), []);
+      await act(async () => { await new Promise(r => setTimeout(r, 10)); });
+      expect(mockGenerateThumbnail).toHaveBeenCalledWith('abc123');
+      expect(thumbImg()).not.toBeNull();
+    } finally { restore(); }
+  });
+
+  it('a hash the vault never imported reads `failed` too — that is NOT corruption (no false verdict on a legacy asset)', async () => {
+    mockGenerateThumbnail.mockResolvedValue('failed');
+    mockListEntries.mockResolvedValue([]); // registry does not know this blob
+    const onAssetCorrupt = vi.fn();
+    root = createRoot(container);
+    await act(async () => {
+      root.render(
+        <MediaBlock projectId="p1" segments={[]} voiceoverId={undefined} onAssetCorrupt={onAssetCorrupt}
+          assets={[makeAsset({ id: 'v1', type: 'video', name: 'c.mp4', contentHash: 'legacy' })]}
+          onDeleteAsset={noop} onOpenRelinkMedia={noop} onHighlightUsage={noop} onIngestComplete={noop} onIngestError={noop} />,
+      );
+    });
+    await act(async () => { await new Promise(r => setTimeout(r, 10)); });
+    expect(onAssetCorrupt).not.toHaveBeenCalled();
   });
 });
