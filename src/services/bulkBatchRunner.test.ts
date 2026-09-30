@@ -7,7 +7,7 @@
 // the window, a reload, a quit or a crash, and picks up from its last state.
 
 import { describe, it, expect, vi } from 'vitest';
-import { BulkBatchRunner } from './bulkBatch';
+import { BulkBatchRunner, stagesToRun } from './bulkBatch';
 import { SyncQueue, type QueueEngine, type QueueJob } from './syncQueue';
 
 const engine: QueueEngine = { workerSec: () => 0, usdPerSec: 0, onDrain: () => {}, cancelReceipt: () => 'r' };
@@ -20,7 +20,7 @@ const memory = () => {
 function boot(storage: ReturnType<typeof memory>, exists: (id: string) => boolean = () => true) {
   const queue = new SyncQueue(engine);
   const started: string[] = [];
-  const gates = new Map<string, () => void>();
+  const gates = new Map<string, (how: string) => void>();
   const runner = new BulkBatchRunner({
     queue,
     exists,
@@ -29,14 +29,34 @@ function boot(storage: ReturnType<typeof memory>, exists: (id: string) => boolea
       id: r.id, label: r.name,
       run: async ctx => {
         started.push(r.id);
-        await new Promise<void>((res, rej) => { gates.set(r.id, res); ctx.signal.addEventListener('abort', () => rej(new Error('aborted'))); });
+        ctx.setPhase('Aligning on the cloud…');
+        const how = await new Promise<string>((res, rej) => {
+          gates.set(r.id, res);
+          ctx.signal.addEventListener('abort', () => rej(new Error('aborted')));
+        });
+        if (how === 'failed') return { status: 'failed', detail: 'row failed' };
         return { status: 'done' };
       },
     }))),
   });
-  return { queue, runner, started, finishCloud: (id: string) => gates.get(id)?.() };
+  return {
+    queue, runner, started,
+    finishCloud: (id: string) => gates.get(id)?.('done'),
+    failCloud: (id: string) => gates.get(id)?.('failed'),
+  };
 }
 const phases = (r: BulkBatchRunner) => Object.fromEntries(r.snapshot().map(x => [x.id, x.phase]));
+
+describe('checkpoint stages', () => {
+  it('resumes after the last completed stage and starts over when the content key changes', () => {
+    expect(stagesToRun(undefined, false)).toEqual(['transcribe', 'align', 'build']);
+    expect(stagesToRun('staged', false)).toEqual(['transcribe', 'align', 'build']);
+    expect(stagesToRun('transcript-cached', false)).toEqual(['align', 'build']);
+    expect(stagesToRun('aligned', false)).toEqual(['build']);
+    expect(stagesToRun('built', false)).toEqual([]);
+    expect(stagesToRun('aligned', true)).toEqual(['transcribe', 'align', 'build']);
+  });
+});
 
 describe('a persistent batch', () => {
   it('records every phase to storage, so a reload finds the batch exactly where it was', async () => {
@@ -139,5 +159,51 @@ describe('a persistent batch', () => {
     await vi.waitFor(() => expect(started).toEqual(['a', 'b']));
     finishCloud('b');
     await vi.waitFor(() => expect(phases(runner).b).toBe('cloud-done'));
+  });
+
+  it('a failed row is recorded and the queue proceeds to the next row', async () => {
+    const { runner, started, failCloud, finishCloud } = boot(memory());
+    runner.start([{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }]);
+    await vi.waitFor(() => expect(started).toEqual(['a']));
+    failCloud('a');
+    await vi.waitFor(() => expect(phases(runner).a).toBe('failed'));
+    await vi.waitFor(() => expect(started).toEqual(['a', 'b']));
+    finishCloud('b');
+    await vi.waitFor(() => expect(phases(runner).b).toBe('cloud-done'));
+  });
+
+  it('a crash between every stage resumes from that checkpoint', () => {
+    const disk = memory();
+    const stages = ['staged', 'transcript-cached', 'aligned'] as const;
+    for (const checkpoint of stages) {
+      disk.setItem('kinetix:bulk-batch:v1', JSON.stringify({
+        rows: [{ id: 'a', name: 'A', phase: 'cloud', checkpoint, contentKey: 'h|s|e' }],
+      }));
+      const queue = new SyncQueue(engine);
+      const seen: string[] = [];
+      const runner = new BulkBatchRunner({
+        queue, exists: () => true, storage: disk,
+        enqueue: rows => { seen.push(rows[0]!.checkpoint ?? 'none'); },
+      });
+      runner.resume();
+      expect(seen).toEqual([checkpoint]);
+    }
+  });
+
+  it('retry of a failed row re-enters from its checkpoint, and a content change starts over', async () => {
+    const { runner, started, failCloud } = boot(memory());
+    runner.start([{ id: 'a', name: 'A' }]);
+    await vi.waitFor(() => expect(runner.snapshot()[0]!.checkpoint).toBe('transcript-cached'));
+    failCloud('a');
+    await vi.waitFor(() => expect(phases(runner).a).toBe('failed'));
+    const enqueued: string[] = [];
+    runner['deps'].enqueue = rows => { enqueued.push(`${rows[0]!.checkpoint}`); };
+    runner.retry('a', 'h|s|e');
+    expect(phases(runner).a).toBe('queued');
+    expect(enqueued[0]).toBe('transcript-cached');
+    runner.noteContent('a', 'h|s|e');
+    runner.noteContent('a', 'changed');
+    expect(runner.snapshot()[0]!.checkpoint).toBeUndefined();
+    expect(started[0]).toBe('a');
   });
 });

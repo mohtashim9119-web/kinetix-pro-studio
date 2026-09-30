@@ -53,6 +53,7 @@ import { faWordSpansToTranscriptTokens, type FaEvent, type FaInfeasibleChunk } f
 import type { FaLanguageCode } from './faTextNormalize';
 import type { Asset, TranscriptToken, VideoSegment } from '../types';
 import { alignViaCloud, cloudPauseReason } from './cloudSyncEngine';
+import { currentClientFaQuery, makeClientFaCache, noteClientFaStamp, planHashOf, readClientFaCache } from './clientFaCache';
 import { describeCloudError } from './cloudGateway';
 import type { SyncEngineHost } from './syncEngineHost';
 import type { GatewayProvenance } from './timingProvenance';
@@ -605,7 +606,34 @@ async function runCloudFaAttempt(
     };
   }
   if (signal?.aborted) return { status: 'cancelled' };
-  const outcome = await alignViaCloud({ voiceoverBlob, audioHash, chunks, language, signal });
+  const bound = currentClientFaQuery();
+  const planHash = planHashOf(chunks);
+  const cachedWords = bound
+    ? readClientFaCache(bound.cache, { audioHash, scriptHash: bound.scriptHash, engineKey: bound.engineKey, planHash })
+    : null;
+  const outcome = cachedWords
+    ? {
+        status: 'ok' as const,
+        words: cachedWords,
+        nFallbackChunks: 0,
+        provenance: {
+          engine: 'fa-cloud' as const,
+          model: 'client-cache',
+          modelVersion: bound!.cache!.alignmentKey,
+          language,
+        },
+        cached: true,
+        handedOff: false,
+      }
+    : await alignViaCloud({ voiceoverBlob, audioHash, chunks, language, signal });
+  if (!cachedWords && outcome.status === 'ok' && bound) {
+    noteClientFaStamp(makeClientFaCache(
+      { audioHash, scriptHash: bound.scriptHash, engineKey: bound.engineKey, planHash },
+      outcome.words,
+      outcome.provenance ? `${outcome.provenance.engine} ${outcome.provenance.model}@${outcome.provenance.modelVersion}` : 'fa-cloud',
+      undefined,
+    ));
+  }
   if (outcome.status === 'cancelled') return { status: 'cancelled' };
   if (outcome.status === 'failed') {
     // Wave 3 U4 — reached only after `runStageCacheFirst`'s one retry (for

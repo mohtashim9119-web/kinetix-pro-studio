@@ -53,6 +53,8 @@ import { stripRtfIfNeeded } from './textUtils';
 import { memoizedDuration } from './bulkRows';
 import { mintSyncLogId } from './syncLog';
 import { BUILD_TIMELINE_COPY, missingSpineSlots, type BuildTimelineSlots } from './buildTimelineGate';
+import { stagesToRun, type BulkCheckpoint } from './bulkBatch';
+import { lookupBatchTranscript } from './bulkFinish';
 import type { QueueEngine, QueueJob, QueueJobOutcome } from './syncQueue';
 
 /** Mirrors `cloud/sync_core.py`'s USD_PER_WORKER_SEC (T4 + 2 cores + 8 GiB);
@@ -156,7 +158,7 @@ const PHASE_TEXT = {
 } as const;
 
 export function createCloudProjectJob(
-  meta: { id: string; name: string },
+  meta: { id: string; name: string; checkpoint?: BulkCheckpoint; contentKey?: string },
   deps: CloudQueueDeps,
 ): QueueJob {
   let loading: Promise<Loaded | string> | undefined;
@@ -217,6 +219,12 @@ export function createCloudProjectJob(
       const resolution = await resolveSyncEngine(project, 'cloud');
       const scriptHash = await computeScriptHash(project.script, project.sceneDetails);
       const spine = { audioHash, scriptHash, engineKey: resolution.key };
+      const contentKey = `${audioHash}|${scriptHash}|${resolution.key}`;
+      const plan = stagesToRun(meta.checkpoint, meta.contentKey !== undefined && meta.contentKey !== contentKey);
+      if (!plan.includes('transcribe') && !plan.includes('align')) {
+        letGo();
+        return { status: 'done', detail: 'Ready — press Build Timeline to reveal it.' };
+      }
       if (project.lastSyncSpine && spineEquals(project.lastSyncSpine, spine)) {
         letGo();
         return { status: 'skipped', detail: 'Already built on the cloud engine.' };
@@ -235,6 +243,12 @@ export function createCloudProjectJob(
       try {
         let tokens;
         try {
+          if (!plan.includes('transcribe')) {
+            const cached = await lookupBatchTranscript(audioHash, project.language);
+            if (!cached) throw new Error('checkpoint said the transcript was cached, but the lookup missed');
+            tokens = cached.tokens;
+            if (token) letGo();
+          } else {
           const tr = await transcribeForHost({
             host: 'cloud', asset: voiceover, durationSecs: durationSec, language: project.language,
             onProgress: () => {}, signal: ctx.signal, audioHash,
@@ -246,6 +260,7 @@ export function createCloudProjectJob(
             // A cache hit hands it straight on to the alignment; otherwise let go.
             if (tr.cached && resolution.gateOpen) adoptHeldContainer(audioHash, token);
             else letGo();
+          }
           }
         } catch (err) {
           letGo();

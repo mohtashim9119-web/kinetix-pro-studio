@@ -161,6 +161,44 @@ export interface CloudStageRun<R> {
 /** Mirrors `cloud/sync_core.py`'s HOLD_FOR_PLAN_SEC, minus a margin. */
 export const HELD_TRANSCRIPTION_TTL_MS = 25_000;
 
+/**
+ * The language key a cloud transcribe is stored under. Peek, adopt and the
+ * batch job must share this — a second normalization is a cache miss.
+ */
+export function cloudTranscribeLanguage(language: string | undefined): string {
+  return language ?? 'auto';
+}
+
+/** Warn when the client sits this long between transcribe-done and align-submit. */
+export const STAGE_GAP_WARN_MS = 10_000;
+
+export interface StageGap {
+  audioHash: string;
+  gapMs: number;
+  warned: boolean;
+}
+
+const stageGaps: StageGap[] = [];
+
+export function noteStageGap(audioHash: string, transcribeDoneAt: number, alignSubmittedAt: number = Date.now()): StageGap {
+  const gapMs = Math.max(0, alignSubmittedAt - transcribeDoneAt);
+  const warned = gapMs > STAGE_GAP_WARN_MS;
+  const gap = { audioHash, gapMs, warned };
+  stageGaps.push(gap);
+  if (warned) {
+    console.warn(`[cloud] ${gapMs}ms between transcribe done and align submit for ${audioHash.slice(0, 8)} — the hold window is 30s`);
+  }
+  return gap;
+}
+
+export function recentStageGaps(): readonly StageGap[] {
+  return stageGaps;
+}
+
+export function __resetStageGapsForTests(): void {
+  stageGaps.length = 0;
+}
+
 const heldTranscriptions = new Map<string, { jobId: string; at: number }>();
 
 function rememberHeld(audioHash: string, jobId: string): void {
@@ -205,10 +243,13 @@ export function hasHeldTranscription(audioHash: string): boolean {
 }
 
 /** Let this audio's held container exit now. Never throws: a failed release
- *  only means the hold runs out on its own (bounded, and metered). */
+ *  only means the hold runs out on its own (bounded, and metered).
+ *  A stale local entry is still released: the server hold outlives the
+ *  client's 25s TTL and otherwise idles out the full 30s window. */
 export function releaseHeldTranscription(audioHash: string): void {
-  const jobId = takeHeldTranscription(audioHash);
-  if (jobId) void releaseCloudJob(jobId).catch(() => {});
+  const held = heldTranscriptions.get(audioHash);
+  heldTranscriptions.delete(audioHash);
+  if (held) void releaseCloudJob(held.jobId).catch(() => {});
 }
 
 /** Test-only. */
@@ -474,7 +515,7 @@ export async function transcribeViaCloud(args: {
     onProgress(1);
     const run = await runStageCacheFirst<CloudTranscribeResult>(
       {
-        stage: 'transcribe', audioHash, language: language ?? 'auto',
+        stage: 'transcribe', audioHash, language: cloudTranscribeLanguage(language),
         ...(hold ? { hold: true } : {}), ...(holdJobId ? { holdJobId } : {}),
       },
       () => assetBlob(asset),
@@ -597,6 +638,8 @@ export async function alignViaCloud(args: {
   signal?: AbortSignal;
 }): Promise<CloudAlignOutcome> {
   // Wave 3 U4.5 — hand this to the held transcription's container, if any.
+  const pendingHold = heldTranscriptions.get(args.audioHash);
+  if (pendingHold) noteStageGap(args.audioHash, pendingHold.at);
   const holdJobId = takeHeldTranscription(args.audioHash);
   // Wave 3 U7 — a queued project with another behind it keeps the container.
   const holdNext = holdAfterAlign.delete(args.audioHash);

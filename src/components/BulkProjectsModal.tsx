@@ -28,6 +28,7 @@ import { formatUsd, type QueueItem, type SyncQueue } from '../services/syncQueue
 import { readSyncEngineHost } from '../services/syncEngineHost';
 
 const SHELL = 'fixed inset-0 z-[600] flex items-center justify-center bg-black/80 backdrop-blur-sm';
+const DRAWER = 'fixed top-0 right-0 z-[40] flex h-full w-[min(100vw,420px)] flex-col border-l border-[#282828] bg-[#111] shadow-2xl transition-transform duration-200';
 const LABEL = 'text-[10px] uppercase tracking-widest text-gray-500 font-bold block mb-2';
 const BTN_CANCEL = 'flex-1 bg-transparent border border-[#282828] p-3 rounded-xl text-[10px] font-black uppercase tracking-widest text-gray-500 hover:text-white hover:border-gray-500 transition-all focus:outline-none focus:ring-2 focus:ring-gray-500';
 const BTN_PRIMARY = 'flex-1 bg-[#F27D26] text-white p-3 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-orange-400 transition-all focus:outline-none focus:ring-2 focus:ring-orange-400 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-[#F27D26]';
@@ -109,9 +110,10 @@ interface RowProps {
   onRemoveRow: () => void;
   onCancel: () => void;
   onOpen: () => void;
+  onRetry: () => void;
 }
 
-function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFile, onClearFiles, onRemoveRow, onCancel, onOpen }: RowProps): React.ReactElement {
+function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFile, onClearFiles, onRemoveRow, onCancel, onOpen, onRetry }: RowProps): React.ReactElement {
   const filesRef = useRef<HTMLInputElement>(null);
   const folderRef = useRef<HTMLInputElement>(null);
   const [over, setOver] = useState(false);
@@ -268,6 +270,20 @@ function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFi
       >
         {quiet}{cost ? ` · ${cost}` : ''}
       </p>
+      {record?.checkpoint && (
+        <p className="mt-1.5 flex flex-wrap gap-1" data-testid={`bulk-stages-${row.projectId}`}>
+          {(['staged', 'transcript-cached', 'aligned', 'built'] as const).map(stage => (
+            <span key={stage} className={`${CHIP} ${record.checkpoint === stage ? 'bg-[#F27D26]/20 text-[#F27D26]' : 'bg-[var(--kx-surface-2)] text-[var(--kx-faint)]'}`}>
+              {stage}
+            </span>
+          ))}
+        </p>
+      )}
+      {(phase === 'failed' || phase === 'finish-failed' || phase === 'paused') && (
+        <button type="button" data-testid={`bulk-retry-${row.projectId}`} className={`${BTN_CANCEL} mt-2`} onClick={onRetry}>
+          {BULK_COPY.retry}
+        </button>
+      )}
       <input ref={filesRef} type="file" multiple hidden onChange={e => { onFiles(Array.from(e.target.files ?? [])); e.target.value = ''; }} />
       <input ref={folderRef} type="file" multiple hidden onChange={e => { onFiles(Array.from(e.target.files ?? [])); e.target.value = ''; }} />
       {item?.receipt && <p data-testid={`bulk-receipt-${row.projectId}`} className="mt-1.5 text-[11px] text-amber-300/80">{item.receipt}</p>}
@@ -278,7 +294,7 @@ function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFi
 
 export function BulkProjectsModal({
   initialCount, createBlankProject, parseProjectData, onOpenProject, onClose, onProjectsCreated,
-  runner: injectedRunner, queue = cloudSyncQueue, store: injected,
+  runner: injectedRunner, queue = cloudSyncQueue, store: injected, hidden = false,
 }: {
   /** How many empty rows to start with (0 when reopening a running batch).
    *  Rows are drafts: no project exists yet. */
@@ -294,6 +310,8 @@ export function BulkProjectsModal({
   runner?: BulkBatchRunner;
   queue?: SyncQueue;
   store?: BulkRowStore;
+  /** Hide keeps the batch mounted and running. It does not close it. */
+  hidden?: boolean;
 }): React.ReactElement {
   const runner = useMemo(() => injectedRunner ?? bulkBatchRunner(parseProjectData), [injectedRunner, parseProjectData]);
   const [store, setStore] = useState<BulkRowStore | null>(injected ?? null);
@@ -345,12 +363,17 @@ export function BulkProjectsModal({
   const open = (id: string): void => { void (store?.discardUnbuilt() ?? Promise.resolve()).finally(() => onOpenProject(id)); };
 
   return (
-    <div className={SHELL} data-testid="bulk-modal">
+    <div
+      className={`${DRAWER} ${hidden ? 'translate-x-full pointer-events-none' : ''}`}
+      data-testid="bulk-modal"
+      data-hidden={hidden ? 'true' : 'false'}
+      aria-hidden={hidden}
+    >
       <div
         role="dialog"
-        aria-modal="true"
+        aria-modal="false"
         aria-label={BULK_COPY.modalTitle}
-        className="bg-[#111] border border-[#282828] rounded-2xl w-full max-w-2xl shadow-2xl max-h-[92vh] h-[92vh] flex flex-col"
+        className="flex flex-col h-full min-h-0"
       >
         <div className="px-8 pt-7 pb-5 flex-shrink-0">
           <div className="flex items-center justify-between mb-2">
@@ -382,6 +405,7 @@ export function BulkProjectsModal({
               onRemoveRow={() => void store?.discardRow(row.projectId)}
               onCancel={() => queue.cancel(row.projectId)}
               onOpen={() => open(row.projectId)}
+              onRetry={() => runner.retry(row.projectId)}
             />
           ))}
         </ol>

@@ -243,4 +243,14 @@ describe('BulkProjectsModal — draft rows', () => {
     expect(q(host, `bulk-status-${id}`)!.textContent).toContain('Sync cancelled.');
     finishAtOnce = false;
   });
+
+  it('hiding the drawer keeps it mounted and off the editor', async () => {
+    const h = store();
+    const { host } = await mount(modal(h, 1, { hidden: true }));
+    const drawer = q(host, 'bulk-modal')!;
+    expect(drawer.getAttribute('data-hidden')).toBe('true');
+    expect(drawer.className).toContain('pointer-events-none');
+    expect(drawer.getAttribute('aria-hidden')).toBe('true');
+    expect(rowIds(host)).toHaveLength(1);
+  });
 });

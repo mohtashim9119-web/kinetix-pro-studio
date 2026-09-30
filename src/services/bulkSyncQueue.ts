@@ -15,7 +15,7 @@ export const cloudSyncQueue = new SyncQueue(cloudQueueEngine);
 /** Queues these stored projects for a cloud sync. Returns how many were added
  *  (a project already live in the queue is not added twice). */
 export function queueProjectsForCloudSync(
-  projects: readonly { id: string; name: string }[],
+  projects: readonly { id: string; name: string; checkpoint?: import('./bulkBatch').BulkCheckpoint; contentKey?: string }[],
   parseProjectData: CloudQueueDeps['parseProjectData'],
 ): number {
   const deps = defaultCloudQueueDeps(parseProjectData);

@@ -167,6 +167,10 @@ import {
   subscribeSyncIntents,
 } from './services/cloudSyncIntent';
 import { decideStagingStart, isBulkAutoFireSuppressed, peekCloudTranscript } from './services/bulkContext';
+import { lookupBatchTranscript, runBulkProjectFinish } from './services/bulkFinish';
+import { getStagedFilesForProject } from './services/stagedFilesStore';
+import { restoreStagedFiles } from './services/stagedFilesPersist';
+import { takeClientFaStamp, withClientFaCache } from './services/clientFaCache';
 import type { TimingFinding, TimingProvenance } from './types';
 import {
   detectUnspokenScriptSegmentsFromWhisperFullAsync,
@@ -2271,6 +2275,7 @@ export default function App() {
   // dashboard: finishing a timeline opens that project in the editor, which
   // unmounts the dashboard, and the modal must survive that.
   const [bulkRowCount, setBulkRowCount] = useState<number | null>(null);
+  const [bulkHidden, setBulkHidden] = useState(false);
   const [dashboardVersion, setDashboardVersion] = useState(0);
   const [showProjectSettingsModal, setShowProjectSettingsModal] = useState(false);
   // WS2 T4.1 — the machine-global settings surface. Separate flag from
@@ -2362,6 +2367,8 @@ export default function App() {
   // same render (rapid re-stage, double-fire) must see each other's writes immediately;
   // a post-render-only mirror lets the second one read a one-render-stale value.
   const pendingVoiceoverRef = useRef<PendingVoiceoverSync | null>(null);
+  /** While finish owns this project, switch-time cancel must not abort its transcription. */
+  const bulkFinishGuardRef = useRef<string | null>(null);
   // Wave 3 U4.6 — the staged voiceover's transcript readiness, mirrored by
   // an effect below, and the early-click waiters it wakes.
   const stagingTranscriptStateRef = useRef<StagingTranscriptState>({ ready: true, paused: false });
@@ -3729,7 +3736,7 @@ export default function App() {
     }
 
     if (previous) {
-      cancelTranscription();
+      cancelTranscription(bulkFinishGuardRef.current);
       URL.revokeObjectURL(previous.asset.url);
     }
 
@@ -3904,7 +3911,7 @@ export default function App() {
   const handleVoiceoverUnstaged = useCallback(() => {
     const pending = pendingVoiceoverRef.current;
     if (!pending) return;
-    cancelTranscription();
+    cancelTranscription(bulkFinishGuardRef.current);
     URL.revokeObjectURL(pending.asset.url);
     setPendingVoiceoverSync(null);
   }, [cancelTranscription, setPendingVoiceoverSync]);
@@ -4669,8 +4676,11 @@ export default function App() {
           ruleLogEntries.push(buildFaGateClosedEntry(syncRunId, syncRunAt));
         }
       }
+      const faEngineKey = await computeSyncEngineKey(projectRef.current, engineHost);
       const faRun: FaRunResult = faGateOpen
-        ? await runForcedAlignmentForSync(
+        ? await withClientFaCache(
+          audioHash ? { cache: projectRef.current.clientFaCache, scriptHash, engineKey: faEngineKey } : undefined,
+          () => runForcedAlignmentForSync(
             voiceoverAsset!,
             anchorTimed,
             projectRef.current.transcriptTokens!,
@@ -4695,7 +4705,8 @@ export default function App() {
             skipLocalCoverageCheck,
             // Wave 3 U2 — cloud or local compute for the same chunk plan.
             engineResolution.host,
-          )
+          ),
+        )
         : {
             status: 'degraded',
             reason: forceWhisperReason !== null ? 'user-chose-whisper' : 'gate-closed',
@@ -5888,6 +5899,7 @@ export default function App() {
       // leaving stale word indices attached to a segment structure they no
       // longer describe.
       faWordTimings: faWordTimingsResult,
+      clientFaCache: takeClientFaStamp() ?? prev.clientFaCache,
       // plan-v3 item 8 — same object literal as `faWordTimings`. A follow-up
       // setProject would allow timings to exist unstamped.
       timingProvenance: nextTimingProvenance ?? prev.timingProvenance,
@@ -7392,6 +7404,13 @@ export default function App() {
     };
     for (const wake of [...stagingTranscriptWaitersRef.current]) wake();
   });
+  // An operator-blocking prompt must not leave a GPU container in its hold
+  // window. Release is idempotent and free when nothing is held.
+  useEffect(() => {
+    if (faPauseDialog === null && cloudTranscriptionPause === null) return;
+    const hash = pendingVoiceoverRef.current?.audioHash ?? projectRef.current.lastTranscribedAudioHash;
+    if (hash) releaseHeldTranscription(hash);
+  }, [faPauseDialog, cloudTranscriptionPause]);
 
   usePlayback({
     isPlaying,
@@ -8393,22 +8412,67 @@ export default function App() {
       && transcriptionReady && !applySyncDisabled,
   };
   const finalizeBulkProject = useCallback(async (id: string): Promise<{ ok: boolean; message?: string }> => {
-    await bulkLatest.current.switchProject(id);
-    const deadline = Date.now() + 90_000;
-    for (;;) {
-      const s = bulkBuildReadyRef.current;
-      if (s.projectId === id && s.built) return { ok: true };
-      if (s.projectId === id && s.ready) break;
-      if (Date.now() > deadline) {
-        return { ok: false, message: `Timed out waiting: ${s.projectId === id ? s.why : 'the project did not open'}.` };
-      }
-      await new Promise(r => setTimeout(r, 100));
+    bulkFinishGuardRef.current = id;
+    try {
+      return await runBulkProjectFinish(id, {
+        switchProject: projectId => bulkLatest.current.switchProject(projectId),
+        adoptCachedTranscript: async projectId => {
+          if (projectRef.current.id !== projectId) return false;
+          const pending = pendingVoiceoverRef.current;
+          let staged = pending?.file ?? null;
+          if (!staged) {
+            const restored = restoreStagedFiles(await getStagedFilesForProject(projectId));
+            staged = restored.voiceoverFile?.file ?? null;
+          }
+          let audioHash = pending?.audioHash ?? projectRef.current.lastTranscribedAudioHash;
+          if (!audioHash && staged) audioHash = await computeAudioHash(staged);
+          if (!audioHash) return false;
+          const found = await lookupBatchTranscript(audioHash, projectRef.current.language);
+          if (!found) return false;
+          const assetId = pendingVoiceoverRef.current?.asset.id
+            ?? projectRef.current.voiceoverId
+            ?? `bulk-${projectId}`;
+          setProject(p => ({
+            ...p,
+            transcriptTokens: found.tokens,
+            lastTranscribedAudioHash: audioHash,
+            lastTranscribedAssetId: assetId,
+            timingProvenance: {
+              ...p.timingProvenance,
+              transcription: {
+                engine: 'whisper-cloud',
+                model: 'whisper-cloud',
+                modelVersion: 'gateway-cache',
+                schemaVersion: 1,
+                language: found.language,
+                completedAt: Date.now(),
+              },
+            },
+          }));
+          if (staged) {
+            const asset: Asset = pendingVoiceoverRef.current?.asset ?? {
+              id: assetId, name: staged.name, url: URL.createObjectURL(staged), type: 'audio', file: staged, addedAt: Date.now(),
+            };
+            setPendingVoiceoverSync({ file: staged, asset: { ...asset, id: assetId }, audioHash });
+          }
+          return true;
+        },
+        forceStartTranscription: async projectId => {
+          let file = pendingVoiceoverRef.current?.file ?? null;
+          if (!file) {
+            const restored = restoreStagedFiles(await getStagedFilesForProject(projectId));
+            file = restored.voiceoverFile?.file ?? null;
+          }
+          if (file) handleVoiceoverStaged(file, { explicit: true });
+        },
+        readReady: () => bulkBuildReadyRef.current,
+        applySync: () => bulkLatest.current.applySync(),
+        saveNow: () => bulkLatest.current.saveNow(),
+      });
+    } finally {
+      bulkFinishGuardRef.current = null;
     }
-    const result = await bulkLatest.current.applySync();
-    if (!result.ok) return { ok: false, message: result.message };
-    await bulkLatest.current.saveNow();
-    return { ok: true };
-  }, []);
+  }, [handleVoiceoverStaged, setProject]);
   // Wave 3 U7.8 — the batch is a persistent background job (bulkBatch.ts):
   // App gives it the editor-side finish, and on boot it picks up where it stopped.
   useEffect(() => { bulkBatchRunner(parseProjectData).setFinalizer(finalizeBulkProject); }, [finalizeBulkProject]);
@@ -8445,7 +8509,7 @@ export default function App() {
       onOpenAppSettings={() => setShowAppSettingsModal(true)}
       onAssetCleanupFailed={showToast}
       parseProjectData={parseProjectData}
-      onBulkStart={setBulkRowCount}
+      onBulkStart={count => { setBulkHidden(false); setBulkRowCount(count); }}
       metasVersion={dashboardVersion}
       bulkOpen={bulkRowCount !== null}
       onProjectsDeleted={ids => {
@@ -9592,11 +9656,12 @@ export default function App() {
       {bulkRowCount !== null && (
         <BulkProjectsModal
           initialCount={bulkRowCount}
+          hidden={bulkHidden}
           createBlankProject={makeDefaultProject}
           parseProjectData={parseProjectData}
           onProjectsCreated={() => setDashboardVersion(v => v + 1)}
-          onOpenProject={id => { setBulkRowCount(null); void handleSwitchProject(id); }}
-          onClose={() => { setBulkRowCount(null); setDashboardVersion(v => v + 1); setShowDashboard(true); }}
+          onOpenProject={id => { setBulkHidden(true); void handleSwitchProject(id); }}
+          onClose={() => setBulkHidden(true)}
         />
       )}
       {showNewProjectModal && (
