@@ -125,7 +125,7 @@ export const SYNC_LOG_USER_COPY = {
     'sync-incomplete': (): string => "Sync didn't finish — the timeline was not updated",
   } satisfies Record<AttentionKind, (n: number) => string>,
   status: {
-    clear: 'All clear — nothing needs your attention.',
+    clear: 'Everything is running smoothly.',
     attention: (n: number): string => `${n} item${plural(n)} need${plural(n, 's', '')} your attention`,
   },
   details: (n: number): string => `Details (${n} event${plural(n)})`,
