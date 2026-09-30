@@ -656,6 +656,34 @@ mod tests {
     }
 
     #[test]
+    fn deleting_a_project_drops_every_reference_it_holds_even_ones_its_record_never_listed() {
+        let root = tmpdir("unref-everywhere");
+        // Real files: three imports by "proj-gone", one by "proj-keep" sharing a blob.
+        let a = media_vault_import_bytes(&root, "proj-gone", b"listed", "a.jpg", "image/jpeg").unwrap();
+        let b = media_vault_import_bytes(&root, "proj-gone", b"never listed in the record", "b.jpg", "image/jpeg").unwrap();
+        let shared = media_vault_import_bytes(&root, "proj-gone", b"shared", "c.jpg", "image/jpeg").unwrap();
+        media_vault_import_bytes(&root, "proj-keep", b"shared", "c.jpg", "image/jpeg").unwrap();
+
+        // The OLD delete path: unreference only the hashes the record lists (here: just `a`).
+        unreference_project(&root, &a.content_hash, "proj-gone").unwrap();
+        let totals = project_reference_totals(&root).unwrap();
+        assert_eq!(totals["proj-gone"].entries, 2, "old path leaves the refs the record did not list — the leak");
+
+        let dropped = unreference_project_everywhere(&root, "proj-gone").unwrap();
+        assert_eq!(dropped, 2);
+        let totals = project_reference_totals(&root).unwrap();
+        assert!(!totals.contains_key("proj-gone"));
+        assert_eq!(totals["proj-keep"].entries, 1, "other projects' references are untouched");
+        // b is now zero-ref and reclaimable; the shared blob is still held by proj-keep.
+        let reclaimed = reclaim_unreferenced_blobs(&root).unwrap();
+        assert!(reclaimed >= b.size_bytes);
+        assert!(!blob_path(&root, &b.content_hash).exists());
+        assert!(blob_path(&root, &shared.content_hash).exists());
+        // Idempotent.
+        assert_eq!(unreference_project_everywhere(&root, "proj-gone").unwrap(), 0);
+    }
+
+    #[test]
     fn import_writes_a_content_addressed_blob_and_a_registry_entry() {
         let root = tmpdir("import");
         let entry = media_vault_import_bytes(&root, "proj-1", b"hello world", "clip.mp4", "video/mp4").unwrap();

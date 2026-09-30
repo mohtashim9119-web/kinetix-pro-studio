@@ -6,7 +6,7 @@ import { deleteAllStagedForProject } from '../services/stagedFilesStore';
 import { deleteAllAssets } from '../services/assetStore';
 import { deleteProjectAssetsNativeStrict } from '../services/nativeAssetStore';
 import { deleteAllWaveforms } from '../services/waveformStore';
-import { mediaVaultUnreference } from '../services/mediaVaultClient';
+import { mediaVaultUnreference, mediaVaultUnreferenceProject } from '../services/mediaVaultClient';
 import { isTauri } from '../services/tauriFfmpeg';
 import { readSyncEngineHost, onSyncEngineHostChange, type SyncEngineHost } from '../services/syncEngineHost';
 import { bulkBatchRunner, queueProjectsForCloudSync } from '../services/bulkSyncQueue';
@@ -218,6 +218,8 @@ export function ProjectDashboard({
       await step('staged files cleanup', id, () => deleteAllStagedForProject(id));
       await step('native asset cleanup', id, () => deleteProjectAssetsNativeStrict(id));
       await step('media vault cleanup', id, () => Promise.all(Array.from(contentHashes, hash => mediaVaultUnreference(hash, id))));
+      // Then everything else the vault still credits to this id (refs the record never listed).
+      await step('media vault cleanup (all refs)', id, () => mediaVaultUnreferenceProject(id));
     }
     // A deleted project leaves the persistent bulk batch too.
     bulkBatchRunner(parseProjectData).forget(ids);
