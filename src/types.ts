@@ -257,6 +257,11 @@ export interface VideoSegment {
    *  (red missing tile) instead of being wrong-guessed from its spoken text.
    *  Recomputed fresh every Apply Sync; recovery is via re-sync. Internal. */
   unmatchedExplicitTag?: boolean;
+  /** Wave 3 U9 B0 — who bound `assetId`. 'manual' = the user dragged a media
+   *  tile onto this scene; that pick is AUTHORITATIVE and "Match media to
+   *  scenes" never overwrites it. Absent = automatic (sync/name match), which
+   *  the wand may re-bind. Additive; cleared when the asset is deleted. */
+  assetAssignedBy?: 'manual';
   /** Effects Tab Rebuild — slug-valued per-segment effect selections (effectsOptions.ts
    *  values, e.g. 'cross-dissolve', 'ken-burns'). Additive alongside the legacy
    *  enum fields above; carried across Apply Sync by unique-assetId match. */

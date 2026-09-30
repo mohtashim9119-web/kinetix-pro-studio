@@ -29,7 +29,7 @@ export function unbindDeletedAssets(segments: VideoSegment[], removedIds: Readon
   const next = segments.map((s, i) => {
     if (!s.assetId || !removedIds.has(s.assetId)) return s;
     newlyUnbound.push(i + 1);
-    const { assetId: _gone, ...rest } = s;
+    const { assetId: _gone, assetAssignedBy: _m, ...rest } = s;
     return s.tag?.trim() ? { ...rest, unmatchedExplicitTag: true } : rest;
   });
   return { segments: next, newlyUnbound };

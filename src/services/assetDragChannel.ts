@@ -22,7 +22,8 @@ export function carriesAssetDrag(dataTransfer: DataTransfer | null | undefined):
 /**
  * The assignment a tile drop makes: `assetId` on exactly `segmentId`, with
  * the stale `unmatchedExplicitTag` flag dropped (the scene is no longer
- * unmatched). The user's pick is authoritative — no name logic. Assignment
+ * unmatched) and the pick stamped `assetAssignedBy: 'manual'` (Wave 3 B0 — the
+ * wand never overwrites it). The user's pick is authoritative — no name logic. Assignment
  * only: every timing field is carried through untouched, every other segment
  * by reference. An unknown asset/segment id returns the same array.
  */
@@ -36,6 +37,6 @@ export function assignAssetToSegment(
   return segments.map(s => {
     if (s.id !== segmentId) return s;
     const { unmatchedExplicitTag: _stale, ...rest } = s;
-    return { ...rest, assetId };
+    return { ...rest, assetId, assetAssignedBy: 'manual' as const };
   });
 }

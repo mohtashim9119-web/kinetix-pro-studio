@@ -93,7 +93,7 @@ describe('matchMediaToScenes — filling unbound scenes (media added after the b
     expect(JSON.stringify(r.segments.map(s => [s.id, s.startTime, s.duration, s.anchorStart]))).toBe(before);
     expect(r.filled).toBe(2);
     expect(r.placeholders).toBe(1);
-    expect(summarizeMediaMatch(r)).toEqual({ matched: 2, unmatched: 1, filled: 2, placeholders: 1, conflicts: 0 });
+    expect(summarizeMediaMatch(r)).toEqual({ matched: 2, unmatched: 1, filled: 2, placeholders: 1, conflicts: 0, manualKept: 0 });
   });
 
   it('a re-run on an already-filled project fills nothing new and is stable (idempotent)', () => {
@@ -108,6 +108,44 @@ describe('matchMediaToScenes — filling unbound scenes (media added after the b
     const assets = [img('new', '001_intro.jpg', 20), img('old', '001_intro.png', 10)];
     const r = matchMediaToScenes(assets, [seg('s1', '001_intro', undefined, 0, 2)]);
     expect(summarizeMediaMatch(r).conflicts).toBe(1);
+  });
+});
+
+// Wave 3 B0 — manual (drag-assigned) picks are authoritative.
+import { assignAssetToSegment } from './assetDragChannel';
+
+describe('B0 — the wand never overwrites a manual pick', () => {
+  const assets = [img('a1', '001_intro.png', 1), img('a2', 'hero_pick.png', 2)];
+
+  it('OLD BUG (fails pre-B0): a drag-assigned scene whose tag names another file KEEPS the drag pick', () => {
+    const segments = [seg('s1', '001_intro', undefined, 0, 2)];
+    const dragged = assignAssetToSegment(segments, assets, 's1', 'a2'); // user picks hero_pick.png by hand
+    expect(dragged[0]!.assetAssignedBy).toBe('manual');
+    const r = matchMediaToScenes(assets, dragged);
+    expect(r.segments[0]!.assetId).toBe('a2'); // pre-B0 the tag overwrote this with a1
+    expect(r.segments[0]).toBe(dragged[0]);    // untouched by reference
+    expect(r.manualKept).toBe(1);
+    expect(r.matched).toBe(0);
+  });
+
+  it('AUTO picks are still overwritten, and unbound scenes still filled, in the same run', () => {
+    const segments = [
+      seg('s1', '001_intro', 'a2', 0, 2),   // auto pick, wrong -> re-bound
+      seg('s2', '001_intro', undefined, 2, 2), // unbound -> filled
+      assignAssetToSegment([seg('s3', '001_intro', undefined, 4, 2)], assets, 's3', 'a2')[0]!, // manual -> kept
+    ];
+    const r = matchMediaToScenes(assets, segments);
+    expect(r.segments.map(s => s.assetId)).toEqual(['a1', 'a1', 'a2']);
+    expect(r.filled).toBe(1);
+    expect(r.manualKept).toBe(1);
+    expect(summarizeMediaMatch(r).manualKept).toBe(1);
+  });
+
+  it('a name-matched re-bind clears any stale marker; a manual scene with no asset is treated as unbound', () => {
+    const orphan = { ...seg('s1', '001_intro', undefined, 0, 2), assetAssignedBy: 'manual' as const };
+    const r = matchMediaToScenes(assets, [orphan]);
+    expect(r.segments[0]!.assetId).toBe('a1');
+    expect(r.segments[0]!.assetAssignedBy).toBeUndefined();
   });
 });
 

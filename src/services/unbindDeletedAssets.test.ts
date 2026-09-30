@@ -12,6 +12,13 @@ const seg = (id: string, tag: string | undefined, assetId: string | undefined, t
   ({ id, tag, assetId, text, startTime: 0, duration: 2, anchorStart: 0 }) as unknown as VideoSegment;
 
 describe('unbindDeletedAssets', () => {
+  it('B0: deleting the asset clears the manual marker with it', () => {
+    const s1 = { ...seg('s1', undefined, 'x1', 'one'), assetAssignedBy: 'manual' as const };
+    const r = unbindDeletedAssets([s1], new Set(['x1']));
+    expect(r.segments[0]!.assetAssignedBy).toBeUndefined();
+    expect(r.segments[0]!.assetId).toBeUndefined();
+  });
+
   it('unbinds only the scenes that used a removed asset; timings and others by reference', () => {
     const keep = seg('s1', 'a', 'x1', 'one');
     const gone = seg('s2', undefined, 'x2', 'two');

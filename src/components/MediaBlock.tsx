@@ -191,6 +191,7 @@ export const MEDIA_COPY = {
     let msg = `Matched ${s.matched} · ${s.unmatched} unmatched`;
     if (s.filled > 0) msg += ` · ${s.filled} placeholder${s.filled === 1 ? '' : 's'} filled`;
     if (s.conflicts > 0) msg += ` · ${s.conflicts} name conflict${s.conflicts === 1 ? '' : 's'} (oldest used)`;
+    if (s.manualKept > 0) msg += ` · ${s.manualKept} manual pick${s.manualKept === 1 ? '' : 's'} kept`;
     return msg;
   },
 } as const;
