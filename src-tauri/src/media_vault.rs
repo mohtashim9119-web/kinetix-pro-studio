@@ -1131,3 +1131,196 @@ mod tests {
         assert_eq!(mtime_before, mtime_after);
     }
 }
+
+/// Step 0 of the registry-corruption fix — real files, real threads, no mocks.
+/// These pin the bug class: unsynchronized load-modify-save on
+/// `registry.json`, racing on one shared fixed temp path (`registry.json.part`).
+#[cfg(test)]
+mod registry_race_tests {
+    use super::*;
+    use std::collections::{BTreeMap, BTreeSet};
+    use std::sync::{Arc, Barrier};
+
+    fn vault_root(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!(
+            "kinetix-registry-race-{tag}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    const THREADS: usize = 8;
+    const ITERS: usize = 200;
+    const DISTINCT: usize = 20;
+
+    fn payload(k: usize) -> Vec<u8> {
+        format!("registry-race-blob-{k}").into_bytes()
+    }
+
+    /// One thread's deterministic op sequence. Every thread owns a DISJOINT
+    /// project id, so the expected final reference set is independent of how
+    /// the threads interleave: a (thread, blob) pair is referenced at the end
+    /// iff the LAST iteration touching that blob left it referenced.
+    fn run_thread(root: &Path, t: usize, errors: &std::sync::Mutex<Vec<String>>) {
+        let pid = format!("proj-{t}");
+        for i in 0..ITERS {
+            let k = (i * 7 + t) % DISTINCT;
+            let bytes = payload(k);
+            let entry = match media_vault_import_bytes(root, &pid, &bytes, &format!("n{k}.bin"), "application/octet-stream") {
+                Ok(e) => e,
+                Err(e) => {
+                    errors.lock().unwrap().push(format!("import t{t} i{i}: {e}"));
+                    continue;
+                }
+            };
+            if i % 5 == 0 {
+                if let Err(e) = rename_display_name(root, &entry.content_hash, &format!("renamed-{t}-{i}")) {
+                    errors.lock().unwrap().push(format!("rename t{t} i{i}: {e}"));
+                }
+            }
+            if i % 3 == 0 {
+                if let Err(e) = unreference_project(root, &entry.content_hash, &pid) {
+                    errors.lock().unwrap().push(format!("unref t{t} i{i}: {e}"));
+                }
+            }
+        }
+    }
+
+    /// `project id -> set of payload indices it must still reference`.
+    fn expected_refs() -> BTreeMap<String, BTreeSet<usize>> {
+        let mut out = BTreeMap::new();
+        for t in 0..THREADS {
+            let mut last: BTreeMap<usize, bool> = BTreeMap::new();
+            for i in 0..ITERS {
+                let k = (i * 7 + t) % DISTINCT;
+                last.insert(k, i % 3 != 0);
+            }
+            out.insert(
+                format!("proj-{t}"),
+                last.into_iter().filter(|(_, on)| *on).map(|(k, _)| k).collect(),
+            );
+        }
+        out
+    }
+
+    #[test]
+    fn concurrent_mutations_lose_no_update_and_corrupt_nothing() {
+        let root = vault_root("stress");
+        let errors = std::sync::Mutex::new(Vec::<String>::new());
+        let barrier = Barrier::new(THREADS);
+        std::thread::scope(|s| {
+            for t in 0..THREADS {
+                let (root, errors, barrier) = (&root, &errors, &barrier);
+                s.spawn(move || {
+                    barrier.wait();
+                    run_thread(root, t, errors);
+                });
+            }
+        });
+        let errs = errors.into_inner().unwrap();
+        assert!(errs.is_empty(), "{} mutation(s) failed, first: {:?}", errs.len(), errs.first());
+
+        let listed = media_vault_list(&root).expect("registry must still parse after the stress run");
+        let mut actual: BTreeMap<String, BTreeSet<usize>> =
+            (0..THREADS).map(|t| (format!("proj-{t}"), BTreeSet::new())).collect();
+        for e in &listed {
+            let k = (0..DISTINCT)
+                .find(|k| {
+                    let mut h = Sha256::new();
+                    h.update(&payload(*k));
+                    hex_digest(&h.finish()) == e.content_hash
+                })
+                .expect("every entry is one of the imported payloads");
+            for p in &e.referenced_by_project_ids {
+                actual.get_mut(p).expect("only known projects").insert(k);
+            }
+        }
+        assert_eq!(actual, expected_refs(), "exact final reference sets");
+        fs::remove_dir_all(&root).ok();
+    }
+
+    /// The two-writer mechanism behind "valid JSON + trailing bytes". Both
+    /// writers of the shared fixed `.part` open it (truncating) BEFORE either
+    /// writes; each then writes from ITS OWN offset 0. The shorter document
+    /// overwrites the head of the longer, whose tail survives verbatim. The
+    /// result is one complete document followed by the remainder of the other —
+    /// serde_json's exact "trailing characters at line N column M".
+    #[test]
+    fn two_writers_on_one_shared_temp_leave_a_complete_document_plus_a_foreign_tail() {
+        use std::io::{Seek, SeekFrom, Write};
+        let dir = vault_root("mechanism");
+        let shared = dir.join("registry.json.part");
+        let long_doc = serde_json::to_vec_pretty(&serde_json::json!({
+            "entries": (0..40).map(|i| (format!("h{i}"), serde_json::json!({"displayName": format!("clip-{i}")}))).collect::<serde_json::Map<_, _>>()
+        })).unwrap();
+        let short_doc = serde_json::to_vec_pretty(&serde_json::json!({"entries": {"h0": {"displayName": "clip-0"}}})).unwrap();
+        assert!(short_doc.len() < long_doc.len());
+
+        let mut a = fs::OpenOptions::new().write(true).create(true).truncate(true).open(&shared).unwrap();
+        let mut b = fs::OpenOptions::new().write(true).create(true).truncate(true).open(&shared).unwrap();
+        a.seek(SeekFrom::Start(0)).unwrap();
+        a.write_all(&long_doc).unwrap();
+        b.write_all(&short_doc).unwrap(); // lands over a's head
+        drop((a, b));
+
+        let torn = fs::read(&shared).unwrap();
+        assert_eq!(torn.len(), long_doc.len(), "the longer writer's tail survives");
+        let err = serde_json::from_slice::<serde_json::Value>(&torn).unwrap_err().to_string();
+        assert!(err.starts_with("trailing characters at line "), "{err}");
+        // The salvageable first value is the SHORT document, byte for byte.
+        let first: serde_json::Value =
+            serde_json::Deserializer::from_slice(&torn).into_iter::<serde_json::Value>().next().unwrap().unwrap();
+        assert_eq!(first, serde_json::from_slice::<serde_json::Value>(&short_doc).unwrap());
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn concurrent_atomic_writers_to_one_target_never_yield_a_torn_file() {
+        let dir = vault_root("atomic-writers");
+        let dest = dir.join("registry.json");
+        let big: Vec<u8> = (0..96 * 1024).map(|i| b'A' + (i % 26) as u8).collect();
+        let small: Vec<u8> = vec![b'z'; 4 * 1024];
+        let rounds = 600;
+        let barrier = Arc::new(Barrier::new(2));
+        let failures = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        std::thread::scope(|s| {
+            for (payload, who) in [(&big, "big"), (&small, "small")] {
+                let (barrier, failures, dest) = (barrier.clone(), failures.clone(), dest.clone());
+                s.spawn(move || {
+                    for r in 0..rounds {
+                        barrier.wait();
+                        if let Err(e) = crate::atomic_stage::write_bytes_atomic(&dest, payload) {
+                            failures.lock().unwrap().push(format!("{who} round {r}: {e}"));
+                        }
+                    }
+                });
+            }
+        });
+        let failures = failures.lock().unwrap();
+        assert!(failures.is_empty(), "{} writer error(s), first: {:?}", failures.len(), failures.first());
+        let last = fs::read(&dest).unwrap();
+        assert!(last == big || last == small, "final file must be exactly one writer's complete bytes (len {})", last.len());
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The field shape from the report: a complete registry + trailing bytes.
+    /// On 75f4b01 the loader refuses it — the brick that turns every import
+    /// into "0 imported, N failed".
+    #[test]
+    fn field_shape_complete_registry_plus_trailing_bytes_bricks_the_loader() {
+        let root = vault_root("fieldshape");
+        let entry = media_vault_import_bytes(&root, "proj-1", b"field", "a.png", "image/png").unwrap();
+        let mut bytes = fs::read(registry_path(&root)).unwrap();
+        bytes.extend_from_slice(b"\n  },\n  \"leftover\": {}\n}\n");
+        fs::write(registry_path(&root), &bytes).unwrap();
+
+        let err = load_registry(&root).err().expect("the loader refuses a torn registry").to_string();
+        assert!(err.contains("trailing characters"), "{err}");
+        // ...and so does every mutation: the brick.
+        assert!(media_vault_import_bytes(&root, "proj-2", b"next", "b.png", "image/png").is_err());
+        assert!(!entry.content_hash.is_empty());
+        fs::remove_dir_all(&root).ok();
+    }
+}
