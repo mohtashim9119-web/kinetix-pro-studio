@@ -607,11 +607,16 @@ export function SyncLogPanel({
                   never read green — the honesty pin, carried by the status. */}
               <div data-testid="sync-status-card">
                 <div className="flex items-center gap-2 min-w-0" data-testid="sync-status" data-state={visibleAttention.length === 0 ? 'clear' : 'attention'}>
-                  <span className="relative flex w-2 h-2 flex-shrink-0 self-start mt-[5px]">
-                    {visibleAttention.length === 0 && (
-                      <span className="absolute inline-flex w-full h-full rounded-full bg-emerald-400 opacity-60 animate-ping" />
-                    )}
-                    <span className={`relative inline-flex w-2 h-2 rounded-full ${visibleAttention.length === 0 ? 'bg-emerald-400' : 'bg-red-500'}`} />
+                  {/* The dot sits in a box exactly one text line tall (text-xs +
+                      leading-snug = 16.5px) and centres itself in it, so it is
+                      centred on the FIRST line whether the message wraps or not. */}
+                  <span className="flex-shrink-0 self-start flex items-center h-[16.5px]">
+                    <span className="relative flex w-1.5 h-1.5">
+                      {visibleAttention.length === 0 && (
+                        <span className="absolute inline-flex w-full h-full rounded-full bg-emerald-400 opacity-60 animate-ping" />
+                      )}
+                      <span className={`relative inline-flex w-1.5 h-1.5 rounded-full ${visibleAttention.length === 0 ? 'bg-emerald-400' : 'bg-red-500'}`} />
+                    </span>
                   </span>
                   <span className="text-xs text-gray-200 leading-snug break-words">
                     {visibleAttention.length === 0
