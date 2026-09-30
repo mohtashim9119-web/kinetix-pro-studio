@@ -32,6 +32,7 @@ import { PreviewCanvas } from './PreviewCanvas';
 import { isWebGL2Supported } from '../services/gl/glContext';
 import { useGlPreview } from '../hooks/useGlPreview';
 import { computeAutoGrade } from '../services/gl/autoGrade';
+import { Z } from './overlayLayers';
 
 // Live-preview side of the animation pipeline. The export side lives in
 // src/services/canvasAnimations.ts (applySegmentAnimation) — every case
@@ -1095,12 +1096,12 @@ export const PreviewStage = forwardRef<PreviewStageHandle, Props>(function Previ
       <div
         ref={stageRef}
         className={isFullscreen
-          ? 'fixed inset-0 z-[5000] flex items-center justify-center bg-black overflow-hidden'
+          ? `fixed inset-0 ${Z.previewFullscreen} flex items-center justify-center bg-black overflow-hidden`
           : 'relative bg-black overflow-hidden group w-full h-full'}
       >
         {/* Floating Controls */}
         <div
-          className={`absolute top-6 right-6 z-[1001] flex items-center gap-3 transition-opacity ${
+          className={`absolute top-6 right-6 ${Z.editorControls} flex items-center gap-3 transition-opacity ${
             isFullscreen ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
           }`}
         >
@@ -1116,7 +1117,7 @@ export const PreviewStage = forwardRef<PreviewStageHandle, Props>(function Previ
         {/* Fullscreen-only floating playback controls — always visible (no hover-gate),
             since there's no other UI surface available once the editor chrome is hidden. */}
         {isFullscreen && (
-          <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-[1001] flex items-center gap-3 bg-black/40 backdrop-blur-md rounded-full px-4 py-2 border border-white/10">
+          <div className={`absolute bottom-6 left-1/2 -translate-x-1/2 ${Z.editorControls} flex items-center gap-3 bg-black/40 backdrop-blur-md rounded-full px-4 py-2 border border-white/10`}>
             <button
               onClick={onTogglePlay}
               aria-label={isPlaying ? 'Pause' : 'Play'}
@@ -1128,7 +1129,7 @@ export const PreviewStage = forwardRef<PreviewStageHandle, Props>(function Previ
           </div>
         )}
         {isFullscreen && (
-          <div className="absolute top-6 left-6 z-[1001] text-[10px] text-white/50 bg-black/30 px-2 py-1 rounded">
+          <div className={`absolute top-6 left-6 ${Z.editorControls} text-[10px] text-white/50 bg-black/30 px-2 py-1 rounded`}>
             Press Esc to exit
           </div>
         )}
@@ -1136,7 +1137,7 @@ export const PreviewStage = forwardRef<PreviewStageHandle, Props>(function Previ
         {/* Dev-only, persistent (not hover-gated) indicator of which video path is
             painting the preview — useful for debugging, has no effect on behavior. */}
         {import.meta.env.DEV && useWebCodecsPath && (
-          <div className="absolute top-6 left-6 z-[1001] px-3 py-1.5 rounded-lg bg-[#F27D26] text-black text-[10px] font-black uppercase tracking-wider">
+          <div className={`absolute top-6 left-6 ${Z.editorControls} px-3 py-1.5 rounded-lg bg-[#F27D26] text-black text-[10px] font-black uppercase tracking-wider`}>
             WebCodecs Preview
           </div>
         )}
@@ -1147,14 +1148,14 @@ export const PreviewStage = forwardRef<PreviewStageHandle, Props>(function Previ
             error surface, NOT a router: nothing re-renders the scoped effects
             when it shows. */}
         {glUnavailable && (
-          <div className="absolute top-16 left-6 z-[1001] px-3 py-2 rounded-lg bg-red-600 text-white text-[10px] max-w-[320px] leading-relaxed">
+          <div className={`absolute top-16 left-6 ${Z.editorControls} px-3 py-2 rounded-lg bg-red-600 text-white text-[10px] max-w-[320px] leading-relaxed`}>
             <div className="font-black uppercase tracking-wider mb-0.5">Effects unavailable</div>
             WebGL2 is not available in this runtime, so transitions, zoom, and
             colour grading cannot render. Playback and export are unaffected.
           </div>
         )}
         {glPathActive && glPreview.error && (
-          <div className="absolute top-16 left-6 z-[1001] px-3 py-2 rounded-lg bg-red-600 text-white text-[10px] max-w-[320px] leading-relaxed">
+          <div className={`absolute top-16 left-6 ${Z.editorControls} px-3 py-2 rounded-lg bg-red-600 text-white text-[10px] max-w-[320px] leading-relaxed`}>
             <div className="font-black uppercase tracking-wider mb-0.5">Effects engine error</div>
             <span className="font-mono">{glPreview.error}</span>
           </div>

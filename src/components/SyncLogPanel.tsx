@@ -17,6 +17,7 @@ import {
   type AttentionLine,
   type SyncLogHeadline,
 } from '../services/syncLogUserView';
+import { Z } from './overlayLayers';
 
 // Operator ruling (sync-log user view) — the default view is headline +
 // attention list + one collapsed Details line (services/syncLogUserView.ts
@@ -808,7 +809,7 @@ export function SyncLogPanel({
       {/* Clear confirmation overlay — same pattern as ProjectDashboard's
           delete confirms (no new dialog dependency). */}
       {showClearConfirm && (
-        <div className="fixed inset-0 z-[300] bg-black/70 flex items-center justify-center">
+        <div className={`fixed inset-0 ${Z.popup} bg-black/70 flex items-center justify-center`}>
           <div className="bg-zinc-900 border border-zinc-700 rounded-xl p-6 max-w-sm w-full mx-4">
             <h3 className="text-white font-semibold mb-2">Clear Sync Log</h3>
             <p className="text-zinc-400 text-sm mb-6">

@@ -6,6 +6,7 @@
  * adoption, no session I/O itself.
  */
 import React from 'react';
+import { Z } from './overlayLayers';
 
 export interface ReexportCheckpointModalProps {
   /**
@@ -36,7 +37,7 @@ export function ReexportCheckpointModal({
   onStartFresh,
 }: ReexportCheckpointModalProps): React.ReactElement {
   return (
-    <div className="fixed inset-0 z-[500] bg-black/70 flex items-center justify-center p-6">
+    <div className={`fixed inset-0 ${Z.blocker} bg-black/70 flex items-center justify-center p-6`}>
       <div
         data-testid="reexport-checkpoint-modal"
         className="bg-zinc-900 border border-[#282828] rounded-xl p-6 max-w-lg w-full shadow-2xl flex flex-col gap-4"

@@ -13,6 +13,7 @@
 
 import type React from 'react';
 import { useEffect } from 'react';
+import { Z } from './overlayLayers';
 
 interface ConfirmDialogProps {
   title: string;
@@ -44,7 +45,7 @@ export function ConfirmDialog({
       role="dialog"
       aria-modal="true"
       aria-label={title}
-      className="fixed inset-0 z-[600] flex items-center justify-center bg-black/80 backdrop-blur-sm"
+      className={`fixed inset-0 ${Z.dialog} flex items-center justify-center bg-black/80 backdrop-blur-sm`}
     >
       <div className="bg-[#111] border border-[#282828] rounded-2xl p-6 w-full max-w-sm shadow-2xl">
         <h2 className="text-sm font-black uppercase tracking-[0.2em] mb-3">{title}</h2>

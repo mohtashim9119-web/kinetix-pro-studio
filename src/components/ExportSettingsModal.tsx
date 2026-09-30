@@ -18,6 +18,7 @@ import type { ExportFps, ExportResolution } from '../hooks/useExport';
 import { resolveDimensions } from '../services/resolutionConfig';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 import { estimateExportDestinationDiskBytes, formatBytes } from '../services/webcodecsExport/diskFull';
+import { Z } from './overlayLayers';
 
 const RESOLUTION_OPTIONS: ExportResolution[] = ['720p', '1080p'];
 
@@ -75,7 +76,7 @@ export function ExportSettingsModal({
       role="dialog"
       aria-modal="true"
       aria-label="Export Settings"
-      className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 backdrop-blur-sm"
+      className={`fixed inset-0 ${Z.modal} flex items-center justify-center bg-black/80 backdrop-blur-sm`}
     >
       <div
         ref={trapRef}

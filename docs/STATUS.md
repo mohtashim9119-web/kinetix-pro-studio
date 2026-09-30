@@ -1,6 +1,7 @@
 # Project Status
 
-Last updated: 2026-10-01 — v1.2.0 bulk-queue landing on `main` (merge `08f1bd7`, `ws1-bulk-queue` → `main`). Open count unchanged at **40/40** (at cap) — found-and-fixed is prose, outside the count. Landed unverified per operator instruction; operator verification on the built 1.2.0 precedes distribution; fix-forward is 1.2.1.
+Last updated: 2026-10-01 — v1.2.1 fix-forward on `main` (`ws1-drawer-layering` → `main`): the bulk drawer was painted over by the dashboard, so 1.2.0 was held from distribution by the operator and is superseded by 1.2.1. Open count unchanged at **40/40** (at cap) — found-and-fixed is prose, outside the count.
+Prior header (2026-10-01): v1.2.0 bulk-queue landing on `main` (merge `08f1bd7`, `ws1-bulk-queue` → `main`). Open count unchanged at **40/40** (at cap) — found-and-fixed is prose, outside the count. Landed unverified per operator instruction; operator verification on the built 1.2.0 precedes distribution; fix-forward is 1.2.1.
 Prior header (2026-10-01): registry follow-up pack landed on `main` (merge `f962d23`, `ws1-registry-relocation` → `main`; folds into 1.2.0, no installer rebuild). Open count **40 → 41 → 40**: +1 storage-root relocation races the registry gate (41/40, a one-line cap breach) and CLOSED in the same edit by `97df04e` — net **40/40**, breach resolved; trail in the registry follow-up block below.
 Prior header (2026-10-01): v1.1.1 hotfix: media-vault registry corruption class fixed and landed on `main` (merge `85f515e`, `ws1-registry-lock` → `main`). Open count unchanged at **40/40** (at cap) — found-and-fixed is prose, outside the count.
 Prior header (2026-09-30): Wave 3 CLOSED: U9 media unification + hardening landed on `main` (merge `d90c6fd`, `ws1-wave3-media-unify` → `main`), release v1.1.0.
@@ -157,6 +158,16 @@ What landed (`edf917b`, branch merge of `origin/main` at `fe91035` / `cf8157e`):
 - A submission that a live container could serve booted a second container that did no work (`boot-unused`).
 
 - Open-count arithmetic: 40 (registry follow-up) → **40/40, unchanged** — no new open line; the defects above are closed in this landing.
+
+### v1.2.1 — bulk drawer layering fix-forward (`ws1-drawer-layering` → `main`, release `2686eae`)
+**1.2.0 was held from distribution by the operator and is superseded by 1.2.1; its installers are not to be distributed.** Zero sync-math changes (chunk-plan M4 and golden replay unaffected).
+
+**FOUND AND FIXED — recorded here in prose, outside the open count** (amount-defect precedent):
+- **The bulk drawer was invisible over the dashboard.** `BulkProjectsModal` painted at `z-[40]`; `ProjectDashboard` is `fixed inset-0 z-[200]`, so in the real window the bulk entry point opened a drawer that sat entirely underneath the page (DOM said open, `elementFromPoint` at the drawer's position returned the dashboard). This is a jsdom-blind paint class — the same family as the Tauri drag-and-drop defect — caught by running the real page, not by any test. Fixed in `94541c6`: one named overlay scale (`overlayLayers.ts`) now owns every overlay-level z value — editor controls 60 < review 150 < dashboard 200 < **drawer 201** < modals 205 (the nine former z-200 overlays) < app settings 210 < relocation 220 < popups 300 < banners 400 < blockers 500 < dialogs 600 < fullscreen preview 5000 < dev panel — pinned by a source-scan test that also forbids a raw overlay `z-[N]`. The audit also found the preview stage's floating controls at `z-[1001]`, which would have painted over the drawer in the editor; they are now on the scale at 60. The dashboard lifts itself to the modal layer while its own delete dialog is open (that dialog lives inside the dashboard's stacking context). Real-browser reference: `elementFromPoint` over the drawer returns the drawer, and a modal opened over it covers it; final proof is the operator's real-window pass.
+- **No way back to the drawer from the editor** — opening a row's project hides the drawer, and the only reopen door was the dashboard button. `b54c445` adds a slim right-edge handle with the batch's project count, present in the editor while a batch exists and the drawer is closed, through the same open logic as the dashboard's "Bulk builds (n)" (one `openBulkDrawer`).
+
+**Known, not changed:** the dashboard's profile-menu dropdown is part of the dashboard page, so it sits under the drawer while the drawer is open (hide the drawer to use it).
+- Open-count arithmetic: 40 (v1.2.0) → **40/40, unchanged** — no new open line; both defects are closed in this landing.
 
 ### Deferred Tasks
 - [DEFERRED · ASR ENGINE LIMITATION] Row 52 ("Llívia") — Whisper never transcribed isolated token; owner ruling 2026-09-03

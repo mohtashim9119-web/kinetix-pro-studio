@@ -16,6 +16,7 @@ import { X, CheckCircle2, XCircle, Loader2, Clipboard, ClipboardCheck } from 'lu
 import type { Project } from '../types';
 import { runPhase6Spike, formatResultsAsText, type Phase6SpikeResults, type TestResult } from '../dev/phase6Spike/runPhase6Spike';
 import { generateScaleFixture } from '../dev/phase6Spike/generateScaleFixture';
+import { Z } from './overlayLayers';
 
 interface DevTestPanelProps {
   onClose: () => void;
@@ -99,7 +100,7 @@ export function DevTestPanel({ onClose, setProject }: DevTestPanelProps): React.
 
   return (
     <div
-      className="fixed inset-0 z-[9999] bg-black/70 flex items-center justify-center p-4"
+      className={`fixed inset-0 ${Z.devPanel} bg-black/70 flex items-center justify-center p-4`}
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
       <div className="bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col">

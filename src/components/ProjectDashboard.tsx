@@ -14,6 +14,7 @@ import type { CloudQueueDeps } from '../services/cloudQueueJob';
 import { SyncQueuePanel } from './SyncQueuePanel';
 import { BulkCountDialog } from './BulkProjectsModal';
 import { BULK_COPY } from '../services/bulkContext';
+import { Z } from './overlayLayers';
 import './ProjectDashboard.css';
 
 /**
@@ -237,7 +238,7 @@ export function ProjectDashboard({
   }
 
   return (
-    <div className="kxd-root fixed inset-0 z-[200]">
+    <div className={`kxd-root fixed inset-0 ${showBulkConfirm ? Z.modal : Z.dashboard}`}>
       <header className="kxd-topbar">
         <div className="kxd-brand">
           <div className="kxd-brand-mark">

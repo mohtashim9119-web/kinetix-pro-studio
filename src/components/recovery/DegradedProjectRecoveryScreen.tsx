@@ -31,6 +31,7 @@ export interface RelinkTarget {
 }
 import type { RelinkProposal } from '../../services/relinkResolution/types';
 import type { FolderSelection } from '../../services/relinkResolution/folderRelinkSession';
+import { Z } from '../overlayLayers';
 
 /** Display info for one folder-pick candidate, keyed by candidateId. */
 export interface FolderRelinkCandidateView {
@@ -129,7 +130,7 @@ export function DegradedProjectRecoveryScreen({
       role="dialog"
       aria-modal="true"
       aria-label="Project recovery"
-      className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 backdrop-blur-sm"
+      className={`fixed inset-0 ${Z.modal} flex items-center justify-center bg-black/80 backdrop-blur-sm`}
     >
       <div
         ref={trapRef}

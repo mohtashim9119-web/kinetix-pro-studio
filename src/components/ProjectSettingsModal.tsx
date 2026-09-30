@@ -36,6 +36,7 @@ import { resolveDimensions } from '../services/resolutionConfig';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 import { FaPackStatus } from './FaPackStatus';
 import { SUPPORTED_LANGUAGES } from '../constants';
+import { Z } from './overlayLayers';
 
 const RESOLUTION_TIER_OPTIONS: ResolutionTier[] = ['720p', '1080p'];
 
@@ -157,7 +158,7 @@ export function ProjectSettingsModal({
       role="dialog"
       aria-modal="true"
       aria-label="Project Settings"
-      className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 backdrop-blur-sm"
+      className={`fixed inset-0 ${Z.modal} flex items-center justify-center bg-black/80 backdrop-blur-sm`}
     >
       <div
         ref={trapRef}
