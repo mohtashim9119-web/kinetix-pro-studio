@@ -532,7 +532,7 @@ export function validateSceneDensity(
 export const TAIL_WORDS_FIX_HINT =
   "Check that these words were actually spoken here. If they were, re-run the sync; if the cut is still off, drag it to where the scene really ends.";
 export const NUMERIC_WORD_FIX_HINT =
-  'Check how this number or amount is spoken in the audio (and how it is written in the script) — they may not be the same amount.';
+  'Check how this number, amount or symbol is spoken in the audio (and how it is written in the script) — they may not be the same amount.';
 export const BOUNDARY_DELTA_FIX_HINT =
   'Listen to these cuts. If the earlier positions were right, drag them back or re-sync under the previous timing engine.';
 
@@ -562,7 +562,7 @@ export function validateTailWords(
   return violations;
 }
 
-/** A scene with a written number/amount ("$11,000.") that did not fully match. */
+/** A scene with a written number, amount or standalone symbol ("$11,000.", "%") that did not fully match. */
 export function validateNumericWords(
   segments: VideoSegment[],
   alignments: SegmentAlignment[],
@@ -577,7 +577,7 @@ export function validateNumericWords(
       contract: '3->4',
       rule: 'numeric-word-unmatched',
       severity: 'warning',
-      message: `Segment ${i + 1} ("${segmentName}") has a number or amount that did not match the audio: ${tokens.map(t => `"${t}"`).join(', ')}.`,
+      message: `Segment ${i + 1} ("${segmentName}") has a number, amount or symbol (%, &, @) that did not match the audio: ${tokens.map(t => `"${t}"`).join(', ')}.`,
       fixHint: NUMERIC_WORD_FIX_HINT,
       detail: { segmentIndex: i, segmentName, segmentId: seg.id, tokens },
     });

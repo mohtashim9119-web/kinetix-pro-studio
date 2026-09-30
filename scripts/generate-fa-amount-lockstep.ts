@@ -79,6 +79,21 @@ export const AMOUNT_LOCKSTEP_CASES: Case[] = [
   { lang: 'pt', input: '$11.000,50', note: 'pt: full amount' },
   { lang: 'pt', input: '12.345', note: 'pt: thousands, no symbol' },
   { lang: 'pt', input: '€1', note: 'pt: euro singular' },
+  // -- standalone symbol tokens: %, &, @ read as the language's spoken word ------
+  { lang: 'en', input: '%', note: 'standalone percent sign' },
+  { lang: 'en', input: '&', note: 'standalone ampersand' },
+  { lang: 'en', input: '@', note: 'standalone at-sign' },
+  { lang: 'en', input: 'up 50 % on rock & roll @ home', note: 'symbols inside a phrase, next to a bare integer' },
+  { lang: 'en', input: '(&),', note: 'symbol inside edge punctuation is still standalone' },
+  { lang: 'en', input: 'AT&T', note: 'symbol inside a longer token is NOT standalone (unchanged: dropped)' },
+  { lang: 'en', input: '@user', note: 'leading @ on a handle is NOT standalone (unchanged: dropped)' },
+  { lang: 'es', input: '%', note: 'es: two-word percent' },
+  { lang: 'es', input: '&', note: 'es: y' },
+  { lang: 'fr', input: '@', note: 'fr: arobase' },
+  { lang: 'de', input: '&', note: 'de: und' },
+  { lang: 'de', input: '%', note: 'de: prozent' },
+  { lang: 'pt', input: '@', note: 'pt: arroba' },
+  { lang: 'pt', input: '%', note: 'pt: por cento' },
 ];
 
 const out = AMOUNT_LOCKSTEP_CASES.map(c => {

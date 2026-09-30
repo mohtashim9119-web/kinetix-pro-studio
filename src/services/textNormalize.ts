@@ -253,6 +253,13 @@ function expandAmountsInText(t: string, language: FaLanguageCode): string {
   });
 }
 
+/** Spoken words for `%` / `&` / `@` in `language`; English when the language's
+ *  amount data is unavailable (the historical reading). */
+function symbolWords(language: FaLanguageCode): { percent: string; and: string; at: string } {
+  const w = loadFaLanguageData(language)?.cardinalData.amount;
+  return { percent: w?.percentWord ?? 'percent', and: w?.andWord ?? 'and', at: w?.atWord ?? 'at' };
+}
+
 // --- Public entry points ----------------------------------------------------
 
 /**
@@ -318,9 +325,13 @@ export function canonicalize(text: string, languageCode?: 'en' | 'es' | 'fr' | '
   // Step 7 — currency + spoken symbols.
   t = t.replace(/\$\s?(\d+)/g, ' $1 dollars '); // "$5" -> "5 dollars" (spoken order)
   t = t.replace(/\$/g, ' dollars ');            // bare "$" -> "dollars"
-  t = t.replace(/%/g, ' percent ');
-  t = t.replace(/&/g, ' and ');
-  t = t.replace(/@/g, ' at ');
+  // The symbols read as the language's own spoken words (fa-amount-words.json —
+  // the same source forced alignment's `expandSymbolToken` reads), so a script
+  // "%" and the aligned "por ciento" are one word sequence in every language.
+  const symbols = symbolWords(languageCode ?? 'en');
+  t = t.replace(/%/g, ` ${symbols.percent} `);
+  t = t.replace(/&/g, ` ${symbols.and} `);
+  t = t.replace(/@/g, ` ${symbols.at} `);
 
   // Step 10 — strip remaining non-alphanumeric to spaces, PRESERVING the hyphen
   // (co-operate must survive as one token; the R1 carve-out below decides split).

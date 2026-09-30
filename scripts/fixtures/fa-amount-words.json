@@ -7,13 +7,16 @@
       "An amount token is one whitespace token that, after edge punctuation is stripped, is: [currency symbol] number [%] or number [currency symbol|%], where number is digits with thousands separators and/or a decimal part. A bare integer with none of those (2001, 10) is NOT an amount and keeps its existing reading (including the year reading).",
       "en separators: ',' thousands, '.' decimal. es/fr/de/pt: '.' thousands, ',' decimal (the convention canonicalize() already applies).",
       "Reading: cardinal(integer part) [pointWord + each decimal digit as its own cardinal] [currency word: 'one' form iff the value is exactly 1 with no decimals, else 'other'] [percentWord]. Currency and percent are spoken AFTER the number.",
-      "The integer part is always the plain cardinal, never the year reading ('$1998' is money, not a year)."
+      "The integer part is always the plain cardinal, never the year reading ('$1998' is money, not a year).",
+      "Standalone symbol tokens (whitespace token that, after edge punctuation is stripped, is exactly '%', '&' or '@') read as their spoken word: percentWord / andWord / atWord. A symbol that is part of a longer token (AT&T, @user, R&D) is NOT standalone and is unchanged. '%' attached to a number stays part of the amount grammar above."
     ]
   },
   "languages": {
     "en": {
       "pointWord": "point",
       "percentWord": "percent",
+      "andWord": "and",
+      "atWord": "at",
       "currency": {
         "$": { "one": "dollar", "other": "dollars" },
         "€": { "one": "euro", "other": "euros" },
@@ -23,6 +26,8 @@
     "es": {
       "pointWord": "coma",
       "percentWord": "por ciento",
+      "andWord": "y",
+      "atWord": "arroba",
       "currency": {
         "$": { "one": "dólar", "other": "dólares" },
         "€": { "one": "euro", "other": "euros" },
@@ -32,6 +37,8 @@
     "fr": {
       "pointWord": "virgule",
       "percentWord": "pour cent",
+      "andWord": "et",
+      "atWord": "arobase",
       "currency": {
         "$": { "one": "dollar", "other": "dollars" },
         "€": { "one": "euro", "other": "euros" },
@@ -41,6 +48,8 @@
     "de": {
       "pointWord": "komma",
       "percentWord": "prozent",
+      "andWord": "und",
+      "atWord": "at",
       "currency": {
         "$": { "one": "dollar", "other": "dollar" },
         "€": { "one": "euro", "other": "euro" },
@@ -50,6 +59,8 @@
     "pt": {
       "pointWord": "vírgula",
       "percentWord": "por cento",
+      "andWord": "e",
+      "atWord": "arroba",
       "currency": {
         "$": { "one": "dólar", "other": "dólares" },
         "€": { "one": "euro", "other": "euros" },

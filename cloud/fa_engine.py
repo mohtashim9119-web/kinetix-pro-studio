@@ -436,6 +436,15 @@ def spoken_amount(parts: dict[str, Any], data: dict[str, Any]) -> str | None:
     return out
 
 
+def expand_symbol_token(stripped: str, data: dict[str, Any]) -> str | None:
+    """A STANDALONE %, & or @ (after edge punctuation is stripped) -> its spoken word. Mirrors expandSymbolToken."""
+    words = data.get("amount")
+    if not words:
+        return None
+    key = {"%": "percentWord", "&": "andWord", "@": "atWord"}.get(stripped)
+    return words[key] if key else None
+
+
 def expand_amount_token(stripped: str, language: str, data: dict[str, Any]) -> str | None:
     parts = parse_amount_token(stripped, language)
     return spoken_amount(parts, data) if parts else None
@@ -486,6 +495,8 @@ def normalize_word(raw: str, language: str, vocab_chars: set[str], cardinal: dic
     if not stripped:
         return {"input": raw, "representable": False, "reason": "reduced to nothing"}
     expansion = expand_amount_token(stripped, language, cardinal)
+    if expansion is None:
+        expansion = expand_symbol_token(stripped, cardinal)
     if expansion is None:
         expansion = expand_cardinal_token(stripped, cardinal)
     candidate = expansion if expansion is not None else stripped

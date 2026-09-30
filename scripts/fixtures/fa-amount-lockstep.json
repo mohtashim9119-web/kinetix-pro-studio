@@ -584,6 +584,228 @@
         }
       ],
       "text": "um euro"
+    },
+    {
+      "language": "en",
+      "input": "%",
+      "note": "standalone percent sign",
+      "words": [
+        {
+          "input": "%",
+          "representable": true,
+          "mapped": "percent"
+        }
+      ],
+      "text": "percent"
+    },
+    {
+      "language": "en",
+      "input": "&",
+      "note": "standalone ampersand",
+      "words": [
+        {
+          "input": "&",
+          "representable": true,
+          "mapped": "and"
+        }
+      ],
+      "text": "and"
+    },
+    {
+      "language": "en",
+      "input": "@",
+      "note": "standalone at-sign",
+      "words": [
+        {
+          "input": "@",
+          "representable": true,
+          "mapped": "at"
+        }
+      ],
+      "text": "at"
+    },
+    {
+      "language": "en",
+      "input": "up 50 % on rock & roll @ home",
+      "note": "symbols inside a phrase, next to a bare integer",
+      "words": [
+        {
+          "input": "up",
+          "representable": true,
+          "mapped": "up"
+        },
+        {
+          "input": "50",
+          "representable": true,
+          "mapped": "fifty"
+        },
+        {
+          "input": "%",
+          "representable": true,
+          "mapped": "percent"
+        },
+        {
+          "input": "on",
+          "representable": true,
+          "mapped": "on"
+        },
+        {
+          "input": "rock",
+          "representable": true,
+          "mapped": "rock"
+        },
+        {
+          "input": "&",
+          "representable": true,
+          "mapped": "and"
+        },
+        {
+          "input": "roll",
+          "representable": true,
+          "mapped": "roll"
+        },
+        {
+          "input": "@",
+          "representable": true,
+          "mapped": "at"
+        },
+        {
+          "input": "home",
+          "representable": true,
+          "mapped": "home"
+        }
+      ],
+      "text": "up fifty percent on rock and roll at home"
+    },
+    {
+      "language": "en",
+      "input": "(&),",
+      "note": "symbol inside edge punctuation is still standalone",
+      "words": [
+        {
+          "input": "(&),",
+          "representable": true,
+          "mapped": "and"
+        }
+      ],
+      "text": "and"
+    },
+    {
+      "language": "en",
+      "input": "AT&T",
+      "note": "symbol inside a longer token is NOT standalone (unchanged: dropped)",
+      "words": [
+        {
+          "input": "AT&T",
+          "representable": false,
+          "mapped": null
+        }
+      ],
+      "text": ""
+    },
+    {
+      "language": "en",
+      "input": "@user",
+      "note": "leading @ on a handle is NOT standalone (unchanged: dropped)",
+      "words": [
+        {
+          "input": "@user",
+          "representable": false,
+          "mapped": null
+        }
+      ],
+      "text": ""
+    },
+    {
+      "language": "es",
+      "input": "%",
+      "note": "es: two-word percent",
+      "words": [
+        {
+          "input": "%",
+          "representable": true,
+          "mapped": "por ciento"
+        }
+      ],
+      "text": "por ciento"
+    },
+    {
+      "language": "es",
+      "input": "&",
+      "note": "es: y",
+      "words": [
+        {
+          "input": "&",
+          "representable": true,
+          "mapped": "y"
+        }
+      ],
+      "text": "y"
+    },
+    {
+      "language": "fr",
+      "input": "@",
+      "note": "fr: arobase",
+      "words": [
+        {
+          "input": "@",
+          "representable": true,
+          "mapped": "arobase"
+        }
+      ],
+      "text": "arobase"
+    },
+    {
+      "language": "de",
+      "input": "&",
+      "note": "de: und",
+      "words": [
+        {
+          "input": "&",
+          "representable": true,
+          "mapped": "und"
+        }
+      ],
+      "text": "und"
+    },
+    {
+      "language": "de",
+      "input": "%",
+      "note": "de: prozent",
+      "words": [
+        {
+          "input": "%",
+          "representable": true,
+          "mapped": "prozent"
+        }
+      ],
+      "text": "prozent"
+    },
+    {
+      "language": "pt",
+      "input": "@",
+      "note": "pt: arroba",
+      "words": [
+        {
+          "input": "@",
+          "representable": true,
+          "mapped": "arroba"
+        }
+      ],
+      "text": "arroba"
+    },
+    {
+      "language": "pt",
+      "input": "%",
+      "note": "pt: por cento",
+      "words": [
+        {
+          "input": "%",
+          "representable": true,
+          "mapped": "por cento"
+        }
+      ],
+      "text": "por cento"
     }
   ]
 }
