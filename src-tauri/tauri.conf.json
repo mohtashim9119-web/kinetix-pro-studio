@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Kinetix Pro Studio",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "identifier": "com.kinetix.pro-studio",
   "build": {
     "frontendDist": "../dist",
@@ -13,7 +13,7 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "Kinetix Pro Studio v1.1.1",
+        "title": "Kinetix Pro Studio v1.2.0",
         "width": 1400,
         "height": 900,
         "minWidth": 1280,
