@@ -23,7 +23,7 @@ import { bulkBatchRunner, cloudSyncQueue } from '../services/bulkSyncQueue';
 import { isBatchRowFinal, type BatchRow, type BulkBatchRunner } from '../services/bulkBatch';
 import { CLOUD_USD_PER_WORKER_SEC, type CloudQueueDeps } from '../services/cloudQueueJob';
 import { collectDroppedFiles } from '../services/droppedFiles';
-import { missingSlots } from '../services/buildTimelineGate';
+import { missingSpineSlots } from '../services/buildTimelineGate';
 import { formatUsd, type QueueItem, type SyncQueue } from '../services/syncQueue';
 import { readSyncEngineHost } from '../services/syncEngineHost';
 
@@ -211,8 +211,10 @@ function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFi
               ? 'bg-[var(--kx-ready-soft)] text-[var(--kx-ready)]'
               : 'bg-[var(--kx-surface-2)] text-[var(--kx-muted)]'}`}
           >
-            {row.slots[slot] ? <Check size={11} /> : <AlertCircle size={11} />}
-            {BULK_COPY.slot[slot]}{slot === 'media' && row.mediaCount > 0 ? ` · ${row.mediaCount}` : ''}
+            {row.slots[slot] ? <Check size={11} /> : slot === 'media' ? null : <AlertCircle size={11} />}
+            {BULK_COPY.slot[slot]}
+            {slot === 'media' && row.mediaCount > 0 ? ` · ${row.mediaCount}` : ''}
+            {slot === 'media' && !row.slots.media ? ` · ${BULK_COPY.optional}` : ''}
           </span>
         ))}
         {row.files.length > 0 && !locked && (
@@ -321,7 +323,7 @@ export function BulkProjectsModal({
   const cloud = readSyncEngineHost() === 'cloud';
   const items = useMemo(() => new Map(snap.items.map(i => [i.id, i])), [snap.items]);
   const recordById = useMemo(() => new Map(records.map(r => [r.id, r])), [records]);
-  const complete = rows.filter(r => !r.built && r.typedName.trim().length > 0 && missingSlots(r.slots).length === 0);
+  const complete = rows.filter(r => !r.built && r.typedName.trim().length > 0 && missingSpineSlots(r.slots).length === 0);
   const canBuild = cloud && complete.length > 0;
   const anyRunning = records.some(r => r.phase === 'queued' || r.phase === 'cloud');
   const anyFinal = records.some(r => isBatchRowFinal(r.phase));

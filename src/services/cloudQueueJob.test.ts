@@ -41,7 +41,7 @@ vi.mock('./forcedAlignmentRun', async () => {
 
 import { invoke } from '@tauri-apps/api/core';
 import { SyncQueue } from './syncQueue';
-import { cloudQueueEngine, createCloudProjectJob, type CloudQueueDeps } from './cloudQueueJob';
+import { cloudQueueEngine, createCloudProjectJob, queueIneligibleReason, type CloudQueueDeps } from './cloudQueueJob';
 import { __resetCloudAudioInFlightForTests, __setCloudRetryDelayForTests } from './cloudSyncEngine';
 import { __resetCancelReceiptsForTests } from './cloudCancelReceipts';
 import { readFaPause } from './faSyncPauseStore';
@@ -208,15 +208,25 @@ describe('Wave 3 U7 — three projects, one container', () => {
     expect(q.batchLine()).toContain('2 built, 1 cancelled');
   });
 
-  it('an incomplete project (no media) is skipped with the reason — never a failure, never a job', async () => {
+  it('an incomplete project (no scene doc) is skipped with the reason — never a failure, never a job', async () => {
     const p = project('A');
-    p.assets = p.assets.filter(a => a.type === 'audio');
+    p.sceneDetails = '';
     const q = new SyncQueue(cloudQueueEngine);
     q.enqueue([createCloudProjectJob(p, deps([p]))]);
     await settle(q);
     expect(q.snapshot().items[0]).toMatchObject({ status: 'skipped' });
-    expect(q.snapshot().items[0]!.detail).toContain('Add media to build the timeline');
+    expect(q.snapshot().items[0]!.detail).toContain('Add a scene doc to build the timeline');
     expect(sent).toEqual([]);
+  });
+
+  it('B5: a project with NO media is eligible — media is optional, the spine alone builds', async () => {
+    const p = project('A');
+    p.assets = p.assets.filter(a => a.type === 'audio');
+    expect(queueIneligibleReason(p)).toBeUndefined();
+    const q = new SyncQueue(cloudQueueEngine);
+    q.enqueue([createCloudProjectJob(p, deps([p]))]);
+    await settle(q);
+    expect(q.snapshot().items[0]!.status).not.toBe('skipped');
   });
 
   it('FA off for a project: transcript only, no alignment, no container kept', async () => {

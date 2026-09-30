@@ -52,7 +52,7 @@ import { loadStagedFromStore } from './stagedFilesPersist';
 import { stripRtfIfNeeded } from './textUtils';
 import { memoizedDuration } from './bulkRows';
 import { mintSyncLogId } from './syncLog';
-import { missingSlots, missingSlotsReason, type BuildTimelineSlots } from './buildTimelineGate';
+import { BUILD_TIMELINE_COPY, missingSpineSlots, type BuildTimelineSlots } from './buildTimelineGate';
 import type { QueueEngine, QueueJob, QueueJobOutcome } from './syncQueue';
 
 /** Mirrors `cloud/sync_core.py`'s USD_PER_WORKER_SEC (T4 + 2 cores + 8 GiB);
@@ -73,7 +73,7 @@ export const cloudQueueEngine: QueueEngine = {
   },
 };
 
-/** The four-slot rule the Build Timeline button uses, for a stored project.
+/** The slot facts the Build Timeline gate reads, for a stored project (the gate itself is spine-only).
  *  A slot is filled when persisted OR staged (Bulk Projects stages files the
  *  way the editor's own drop zone does — the batch reads them from there). */
 export function projectSlots(project: Project, staged?: StagedFiles | null): BuildTimelineSlots {
@@ -88,8 +88,12 @@ export function projectSlots(project: Project, staged?: StagedFiles | null): Bui
 
 /** Why this project cannot enter the queue yet, or undefined if it can. */
 export function queueIneligibleReason(project: Project, staged?: StagedFiles | null): string | undefined {
+  // Spine-only (Wave 3 U9 B5): media is optional, exactly like the editor's button.
   const slots = projectSlots(project, staged);
-  return missingSlots(slots).length > 0 ? missingSlotsReason(slots) : undefined;
+  const missing = missingSpineSlots(slots).map(slot => BUILD_TIMELINE_COPY.slotNames[slot]);
+  if (missing.length === 0) return undefined;
+  const list = missing.length === 1 ? missing[0]! : `${missing.slice(0, -1).join(', ')} and ${missing[missing.length - 1]}`;
+  return `Add ${list} to build the timeline`;
 }
 
 export interface CloudQueueDeps {

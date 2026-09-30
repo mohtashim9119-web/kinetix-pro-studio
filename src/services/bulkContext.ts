@@ -40,6 +40,8 @@ export const BULK_COPY = {
   rowDrop: 'Drop files, a folder or a zip here',
   rowBrowseFiles: 'Add files',
   rowBrowseFolder: 'Add folder',
+  /** Media is optional (Wave 3 U9 B5): an empty media chip says so instead of asking for it. */
+  optional: 'Optional',
   slot: { script: 'Script', scene: 'Scene doc', voiceover: 'Voiceover', media: 'Media' },
   audio: {
     none: '',
@@ -71,7 +73,7 @@ export const BULK_COPY = {
   notCloud: 'Bulk build runs on the Cloud engine (App Settings → Sync Engine).',
 } as const;
 
-/** Why a row cannot be built yet (name + the four slots), or undefined. */
+/** Why a row cannot be built yet (name + the three spine slots), or undefined. */
 export function rowIncompleteReason(
   name: string,
   slotNames: readonly string[],

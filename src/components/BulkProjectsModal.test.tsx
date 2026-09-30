@@ -140,6 +140,17 @@ describe('BulkProjectsModal — draft rows', () => {
     expect((q(host, 'bulk-build') as HTMLButtonElement).disabled).toBe(false);
   });
 
+  it('B5: an empty media chip reads "Optional" (no warning icon), and fills to a count once media lands', async () => {
+    const h = store();
+    const { host } = await mount(modal(h, 1));
+    const [id] = rowIds(host);
+    const chip = () => q(host, `bulk-slots-${id}`)!.querySelector('[data-slot="media"]')!;
+    expect(chip().textContent).toContain('Optional');
+    expect(chip().getAttribute('data-filled')).toBe('false');
+    await act(async () => { await h.store.addFiles(id!, fourFiles()); });
+    expect(chip().textContent).not.toContain('Optional');
+  });
+
   it('Add project appends a row', async () => {
     const h = store();
     const { host } = await mount(modal(h, 2));
@@ -180,7 +191,7 @@ describe('BulkProjectsModal — draft rows', () => {
     await vi.waitFor(() => expect(h.created).toEqual(['Alpine', 'Valley']));
     expect(onCreated).toHaveBeenCalled();
     await vi.waitFor(() => expect(rowIds(host)).toEqual([ids[0], ids[1], ids[2]]));
-    expect(q(host, `bulk-status-${ids[2]}`)!.textContent).toBe('Skipped — Add a scene doc, a voiceover and media to build the timeline');
+    expect(q(host, `bulk-status-${ids[2]}`)!.textContent).toBe('Skipped — Add a scene doc and a voiceover to build the timeline');
     expect(q(host, `bulk-status-${ids[0]}`)!.textContent).toBe('Transcribing on the cloud…');
     // The built rows are read-outs now.
     expect((q(host, `bulk-name-${ids[0]}`) as HTMLInputElement).disabled).toBe(true);

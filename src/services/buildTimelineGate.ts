@@ -14,8 +14,10 @@
 // it is staged OR already persisted; a bundle zip fills all of them in one
 // drop.
 //
-// The four-slot helpers below (`missingSlots` / `missingSlotsReason`) remain
-// for the Bulk Projects surfaces, whose slot chips are unchanged this pass.
+// Bulk Projects is spine-only too (B5): rows are complete with script + scene
+// doc + voiceover, and the media chip reads "Optional". The four-slot helpers
+// (`missingSlots` / `missingSlotsReason`) remain exported for anything that
+// still needs the strict rule.
 //
 // The `no-asset` attention kind (media removed after a sync) is a separate
 // surface and stays.
