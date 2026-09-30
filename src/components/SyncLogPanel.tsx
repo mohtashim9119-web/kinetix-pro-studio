@@ -515,7 +515,9 @@ export function SyncLogPanel({
   // useState(syncLog.length === 0) would latch at mount and stay collapsed
   // through the very sync that produced the entries).
   const [manualCollapsed, setManualCollapsed] = useState<boolean | null>(null);
-  const collapsed = manualCollapsed ?? syncLog.length === 0;
+  // Expanded by default even when the log is empty: the status card below is
+  // always present and reads green when there is nothing to flag.
+  const collapsed = manualCollapsed ?? false;
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [copied, setCopied] = useState(false);
 
@@ -535,7 +537,6 @@ export function SyncLogPanel({
   // reverse a COPY so the prop array is never mutated.
   const entries = [...syncLog].reverse();
   const view = buildSyncLogUserView(syncLog, syncRunSummaries, offlineAssetNames);
-  const isEmpty = syncLog.length === 0 && view.attention.length === 0;
 
   const [dismissed, setDismissed] = useState<Set<string>>(readStoredDismissed);
   const dismissKey = (kind: string): string => `${kind}@${view.windowKey}`;
@@ -592,40 +593,11 @@ export function SyncLogPanel({
         <span className="text-[9px] font-black uppercase tracking-widest text-gray-500 flex-1">
           Sync Log
         </span>
-        {syncLog.length > 0 && (
-          <button
-            onClick={handleCopy}
-            className="p-1 rounded-lg hover:bg-zinc-800 text-gray-600 hover:text-gray-300 transition-colors flex items-center gap-1"
-            title="Copy sync log"
-            aria-label="Copy sync log"
-          >
-            {copied ? (
-              <span className="text-[8px] font-black uppercase tracking-wider">Copied!</span>
-            ) : (
-              <Copy size={12} />
-            )}
-          </button>
-        )}
-        {syncLog.length > 0 && (
-          <button
-            onClick={(e) => { e.stopPropagation(); setShowClearConfirm(true); }}
-            className="p-1 rounded-lg hover:bg-red-900/40 text-gray-600 hover:text-red-400 transition-colors"
-            title="Clear sync log"
-            aria-label="Clear sync log"
-          >
-            <Trash2 size={12} />
-          </button>
-        )}
       </div>
 
       {!collapsed && (
         <div className="px-4 pb-3">
-          {isEmpty ? (
-            <p className="text-xs text-gray-600 italic py-1">
-              No sync activity yet. Build the timeline to populate this log.
-            </p>
-          ) : (
-            <>
+          <>
               {/* 1. Status card — the one block the user reads. Green pulsing
                   dot + "all clear" when nothing is flagged; red dot + count
                   and the list of items to clear otherwise. Fixed width: it
@@ -727,10 +699,11 @@ export function SyncLogPanel({
                   the scrollbar in the panel gutter, so everything inside
                   keeps the card's exact width. */}
               <div data-testid="sync-details-line" className="mt-3 pt-3 border-t border-white/[0.06]">
+                <div className="flex items-start gap-1">
                 <button
                   type="button"
                   onClick={() => toggleSection('details')}
-                  className="w-full min-w-0 flex items-start gap-1.5 py-0.5 text-left text-gray-700 hover:text-gray-500 transition-colors"
+                  className="flex-1 min-w-0 flex items-start gap-1.5 py-0.5 text-left text-gray-700 hover:text-gray-500 transition-colors"
                   aria-expanded={detailsOpen}
                 >
                   {detailsOpen
@@ -742,6 +715,39 @@ export function SyncLogPanel({
                     {detailsCounts && ` · ${detailsCounts}`}
                   </span>
                 </button>
+                {/* Copy / clear act on the LOG ENTRIES (Details) only. The status
+                    card above is never removed by clearing — it just reads green. */}
+                <div className="flex items-center gap-1 flex-shrink-0">
+                  {syncLog.length > 0 && (
+                    <button
+            type="button"
+            data-testid="sync-log-copy"
+            onClick={handleCopy}
+            className="p-1 rounded-lg hover:bg-zinc-800 text-gray-600 hover:text-gray-300 transition-colors flex items-center gap-1"
+            title="Copy sync log"
+            aria-label="Copy sync log"
+          >
+            {copied ? (
+              <span className="text-[8px] font-black uppercase tracking-wider">Copied!</span>
+            ) : (
+              <Copy size={12} />
+            )}
+          </button>
+        )}
+                  {syncLog.length > 0 && (
+                    <button
+            type="button"
+            data-testid="sync-log-clear"
+            onClick={(e) => { e.stopPropagation(); setShowClearConfirm(true); }}
+            className="p-1 rounded-lg hover:bg-red-900/40 text-gray-600 hover:text-red-400 transition-colors"
+            title="Clear sync log"
+            aria-label="Clear sync log"
+          >
+            <Trash2 size={12} />
+          </button>
+        )}
+                </div>
+                </div>
                 {detailsOpen && (
                   <div
                     // Always-on track (overflow-y: scroll, transparent until
@@ -790,8 +796,7 @@ export function SyncLogPanel({
                   </div>
                 )}
               </div>
-            </>
-          )}
+          </>
         </div>
       )}
 
