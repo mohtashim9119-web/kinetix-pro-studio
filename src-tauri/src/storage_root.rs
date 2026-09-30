@@ -466,7 +466,11 @@ fn write_atomic(dest: &Path, contents: &str) -> Result<(), String> {
         .parent()
         .ok_or_else(|| format!("no parent: {}", dest.display()))?;
     fs::create_dir_all(parent).map_err(|e| format!("create_dir_all {}: {e}", parent.display()))?;
-    let tmp = parent.join(format!(".storage-root.json.tmp-{}", std::process::id()));
+    let tmp = parent.join(format!(
+        ".storage-root.json.tmp-{}-{}",
+        std::process::id(),
+        crate::atomic_stage::next_temp_seq()
+    ));
     {
         let mut f = fs::File::create(&tmp).map_err(|e| format!("create {}: {e}", tmp.display()))?;
         f.write_all(contents.as_bytes())
@@ -2221,5 +2225,17 @@ mod tests {
             })
             .collect();
         assert!(raw_calls.is_empty(), "fa.rs introduced raw recursive deletion outside safe_delete: {raw_calls:?}");
+    }
+
+    #[test]
+    fn concurrent_writers_to_the_storage_root_pointer_never_fail_or_tear() {
+        let dir = tmpdir("pointer-race");
+        crate::atomic_stage::race_harness::hammer_one_destination(
+            "storage_root::write_atomic",
+            &dir.join("storage-root.json"),
+            40,
+            |dest, bytes| write_atomic(dest, std::str::from_utf8(bytes).unwrap()),
+        );
+        fs::remove_dir_all(&dir).ok();
     }
 }

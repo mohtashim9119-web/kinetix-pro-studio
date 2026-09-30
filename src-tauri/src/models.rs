@@ -625,11 +625,9 @@ fn import_to_target(id: ModelId, source: &Path, target: &Path) -> Result<(), Str
     let dir = target.parent().ok_or_else(|| "invalid model target path".to_string())?;
     fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
 
-    let part_path = {
-        let mut p = target.as_os_str().to_owned();
-        p.push(".part");
-        PathBuf::from(p)
-    };
+    // Uniquely named — NEVER `<target>.part`, which is the resumable
+    // download's own file (see `an_import_never_touches_a_downloads_in_flight_part_file`).
+    let part_path = crate::atomic_stage::unique_part_path(target)?;
 
     // Cross-device-safe copy: `fs::copy` handles both same-volume (fast
     // path, may use reflink/CoW on supporting filesystems) and cross-volume
@@ -1020,6 +1018,31 @@ mod tests {
 
     // -- import atomicity ------------------------------------------------
 
+    /// A model download in flight writes `<target>.part` (and resumes from it).
+    /// An import into the same slot used to stage into that SAME file — so a
+    /// failed import deleted the download's partial, and a successful one
+    /// renamed the download's half-written bytes into place. The import now
+    /// stages in its own uniquely named part; the download's is never touched.
+    #[test]
+    fn an_import_never_touches_a_downloads_in_flight_part_file() {
+        let dir = std::env::temp_dir().join(format!("kinetix-import-vs-download-{}-{}", std::process::id(), uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("ggml-large-v3-turbo.bin");
+        let source = dir.join("bad-source.bin");
+        fs::write(&source, b"NOPE not a real ggml model at all").unwrap();
+        let download_part = part_path_for(&target);
+        fs::write(&download_part, b"DOWNLOAD-IN-PROGRESS-BYTES").unwrap();
+
+        assert!(import_to_target(ModelId::Whisper, &source, &target).is_err());
+
+        assert_eq!(
+            fs::read(&download_part).unwrap(),
+            b"DOWNLOAD-IN-PROGRESS-BYTES",
+            "the import must not delete or overwrite the download's .part"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
     /// A source file that fails validation (wrong ggml magic, right size)
     /// must leave the `.part` file deleted AND the pre-existing target file
     /// untouched — a failed import is never allowed to clobber a working
@@ -1041,12 +1064,12 @@ mod tests {
         let result = import_to_target(ModelId::Whisper, &source, &target);
         assert!(result.is_err(), "expected validation failure, got {result:?}");
 
-        let part_path = {
-            let mut p = target.as_os_str().to_owned();
-            p.push(".part");
-            PathBuf::from(p)
-        };
-        assert!(!part_path.exists(), ".part file must be deleted after a failed import");
+        let leftovers: Vec<_> = fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().ends_with(".part"))
+            .collect();
+        assert!(leftovers.is_empty(), "no .part may remain after a failed import: {leftovers:?}");
         assert_eq!(
             fs::read(&target).unwrap(),
             b"pre-existing installed model bytes",

@@ -507,7 +507,14 @@ pub async fn media_vault_generate_thumbnail(app: tauri::AppHandle, content_hash:
         ThumbnailPrecheck::AlreadyGenerated => return Ok(true),
         ThumbnailPrecheck::NeedsGeneration { blob_path, thumb_path } => (blob_path, thumb_path),
     };
-    let tmp = media_vault_dir(&root).join(format!("{content_hash}.thumb.jpg.part"));
+    // Unique per call: two concurrent generations for the same blob (the
+    // grid asks for a thumbnail from several components) must not have ffmpeg
+    // write one shared file.
+    let tmp = media_vault_dir(&root).join(format!(
+        "{content_hash}.thumb.jpg.{}.{}.part",
+        std::process::id(),
+        crate::atomic_stage::next_temp_seq()
+    ));
     match ffmpeg_extract_thumbnail(&app, &blob, &tmp).await {
         Ok(()) => match fs::rename(&tmp, &thumb) {
             Ok(()) => Ok(true),
@@ -1235,6 +1242,8 @@ mod registry_race_tests {
     use std::sync::{Arc, Barrier};
 
     fn vault_root(tag: &str) -> PathBuf {
+        // Interleaving, not durability, is under test — see TEST_SKIP_FSYNC.
+        crate::atomic_stage::TEST_SKIP_FSYNC.store(true, std::sync::atomic::Ordering::Relaxed);
         let d = std::env::temp_dir().join(format!(
             "kinetix-registry-race-{tag}-{}-{}",
             std::process::id(),
