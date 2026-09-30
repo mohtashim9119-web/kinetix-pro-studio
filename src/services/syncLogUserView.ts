@@ -45,8 +45,7 @@ export type AttentionKind =
   | 'offline-media'
   | 'model-missing'
   | 'language-pack-missing'
-  | 'sync-incomplete'
-  | 'vault-registry-recovered';
+  | 'sync-incomplete';
 
 /** The ruling's own numbering, 1 → 10. Also the render order. */
 export const ATTENTION_ORDER: readonly AttentionKind[] = [
@@ -60,8 +59,6 @@ export const ATTENTION_ORDER: readonly AttentionKind[] = [
   'model-missing',
   'language-pack-missing',
   'sync-incomplete',
-  // Live, app-level (not per-run): the media library index was repaired.
-  'vault-registry-recovered',
 ];
 
 export const ATTENTION_TONE: Record<AttentionKind, 'red' | 'amber'> = {
@@ -75,7 +72,6 @@ export const ATTENTION_TONE: Record<AttentionKind, 'red' | 'amber'> = {
   'model-missing': 'red',
   'language-pack-missing': 'red',
   'sync-incomplete': 'red',
-  'vault-registry-recovered': 'amber',
 };
 
 export type DetailsCategory =
@@ -127,8 +123,6 @@ export const SYNC_LOG_USER_COPY = {
     'model-missing': (): string => 'A required model is missing or damaged',
     'language-pack-missing': (): string => "No language pack for this project's language",
     'sync-incomplete': (): string => "Sync didn't finish — the timeline was not updated",
-    'vault-registry-recovered': (n: number): string =>
-      n === 1 ? 'The media library index was repaired' : `The media library index was repaired ${n} times`,
   } satisfies Record<AttentionKind, (n: number) => string>,
   status: {
     clear: 'Everything is running smoothly.',
@@ -457,7 +451,6 @@ export function buildSyncLogUserView(
   syncLog: readonly SyncLogEntry[],
   syncRunSummaries: readonly SyncRunSummary[] = [],
   offlineAssetNames: readonly string[] = [],
-  vaultRecoveryNotices: readonly string[] = [],
 ): SyncLogUserView {
   const log = knownSyncLogEntries(syncLog);
 
@@ -488,12 +481,6 @@ export function buildSyncLogUserView(
   }
   if (offlineAssetNames.length > 0) {
     add('offline-media', offlineAssetNames.length, offlineAssetNames.map(name => ({ text: name })));
-  }
-  // Kind 11 — a media-vault registry recovery is app-level state (a persisted,
-  // unacknowledged finding), not a log entry, so like offline media it is a
-  // live input and is outside the latest-run window.
-  if (vaultRecoveryNotices.length > 0) {
-    add('vault-registry-recovered', vaultRecoveryNotices.length, vaultRecoveryNotices.map(text => ({ text })));
   }
   const attention: AttentionLine[] = ATTENTION_ORDER.flatMap(kind => {
     const acc = byKind.get(kind);
