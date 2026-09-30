@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useRef, useEffect, useLayoutEffect, useMemo, useCallback, ChangeEvent, lazy, Suspense, type ReactElement } from 'react';
+import { useState, useRef, useEffect, useLayoutEffect, useMemo, useCallback, useSyncExternalStore, ChangeEvent, lazy, Suspense, type ReactElement } from 'react';
 import { 
   Play, 
   Pause, 
@@ -399,6 +399,7 @@ import { ProjectSettingsModal } from './components/ProjectSettingsModal';
 import { AppSettingsModal } from './components/AppSettingsModal';
 import { SyncLogPanel } from './components/SyncLogPanel';
 import { VaultRecoveryNotice } from './components/VaultRecoveryNotice';
+import { BulkDrawerHandle } from './components/BulkDrawerHandle';
 import {
   acknowledgeVaultRecovery,
   fetchVaultRecoveryFindings,
@@ -2277,6 +2278,12 @@ export default function App() {
   // unmounts the dashboard, and the modal must survive that.
   const [bulkRowCount, setBulkRowCount] = useState<number | null>(null);
   const [bulkHidden, setBulkHidden] = useState(false);
+  // The batch's rows, live — the editor's right-edge handle shows their count.
+  const bulkBatch = bulkBatchRunner(parseProjectData);
+  const bulkBatchRows = useSyncExternalStore(l => bulkBatch.subscribe(l), () => bulkBatch.snapshot());
+  // ONE open logic for every door into the drawer (the dashboard's "Bulk builds
+  // (n)" button and the editor handle): un-hide, and mount it if it is not.
+  const openBulkDrawer = useCallback((count: number) => { setBulkHidden(false); setBulkRowCount(count); }, []);
   const [dashboardVersion, setDashboardVersion] = useState(0);
   const [showProjectSettingsModal, setShowProjectSettingsModal] = useState(false);
   // WS2 T4.1 — the machine-global settings surface. Separate flag from
@@ -8510,7 +8517,7 @@ export default function App() {
       onOpenAppSettings={() => setShowAppSettingsModal(true)}
       onAssetCleanupFailed={showToast}
       parseProjectData={parseProjectData}
-      onBulkStart={count => { setBulkHidden(false); setBulkRowCount(count); }}
+      onBulkStart={openBulkDrawer}
       metasVersion={dashboardVersion}
       bulkOpen={bulkRowCount !== null}
       onProjectsDeleted={ids => {
@@ -9663,6 +9670,13 @@ export default function App() {
           onProjectsCreated={() => setDashboardVersion(v => v + 1)}
           onOpenProject={id => { setBulkHidden(true); void handleSwitchProject(id); }}
           onClose={() => setBulkHidden(true)}
+        />
+      )}
+      {!showDashboard && (
+        <BulkDrawerHandle
+          count={bulkBatchRows.length}
+          drawerOpen={bulkRowCount !== null && !bulkHidden}
+          onOpen={() => openBulkDrawer(0)}
         />
       )}
       {showNewProjectModal && (
