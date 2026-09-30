@@ -133,12 +133,13 @@ fn write_atomic(dest: &Path, contents: &str) -> Result<(), String> {
     fs::create_dir_all(parent).map_err(|e| format!("create_dir_all {}: {e}", parent.display()))?;
 
     let tmp = parent.join(format!(
-        ".{}.tmp-{}-{}",
+        ".{}.tmp-{}-{}-{}",
         dest.file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| "mirror".into()),
         std::process::id(),
-        now_millis()
+        now_millis(),
+        crate::atomic_stage::next_temp_seq()
     ));
 
     {
@@ -1217,5 +1218,18 @@ mod tests {
         assert_eq!(freed, 0);
         assert!(root.join("dead-fresh").exists());
         fs::remove_dir_all(&d).ok();
+    }
+
+    #[test]
+    fn concurrent_writers_to_one_mirror_destination_never_fail_or_tear() {
+        let dir = std::env::temp_dir().join(format!("kinetix-mirror-race-{}-{}", std::process::id(), uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        crate::atomic_stage::race_harness::hammer_one_destination(
+            "project_mirror::write_atomic",
+            &dir.join("p.json"),
+            40,
+            |dest, bytes| write_atomic(dest, std::str::from_utf8(bytes).unwrap()),
+        );
+        fs::remove_dir_all(&dir).ok();
     }
 }

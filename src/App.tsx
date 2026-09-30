@@ -394,6 +394,13 @@ import { NewProjectModal, type NewProjectChoices } from './components/NewProject
 import { ProjectSettingsModal } from './components/ProjectSettingsModal';
 import { AppSettingsModal } from './components/AppSettingsModal';
 import { SyncLogPanel } from './components/SyncLogPanel';
+import {
+  acknowledgeVaultRecovery,
+  describeVaultRecovery,
+  fetchVaultRecoveryFindings,
+  unacknowledgedFindings,
+  type VaultRecoveryFinding,
+} from './services/vaultRecovery';
 import { ExportSettingsModal } from './components/ExportSettingsModal';
 import { ManageModelsModal } from './components/ManageModelsModal';
 import { ErrorBoundary, PanelFallback } from './components/ErrorBoundary';
@@ -6907,6 +6914,27 @@ export default function App() {
     [project.assets],
   );
 
+  // Sync-log user view, attention kind 11 — a repaired media-library index.
+  // The native loader heals `registry.json` at launch and persists a typed
+  // finding; it is read once here (launch) and stays on the log until the
+  // user dismisses it, which acknowledges it durably.
+  const [vaultRecoveryFindings, setVaultRecoveryFindings] = useState<VaultRecoveryFinding[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    fetchVaultRecoveryFindings()
+      .then(all => { if (!cancelled) setVaultRecoveryFindings(unacknowledgedFindings(all)); })
+      .catch(err => console.error('[vault] recovery findings could not be read:', err));
+    return () => { cancelled = true; };
+  }, []);
+  const vaultRecoveryNotices = useMemo(
+    () => vaultRecoveryFindings.map(describeVaultRecovery),
+    [vaultRecoveryFindings],
+  );
+  const handleAcknowledgeVaultRecovery = useCallback(() => {
+    setVaultRecoveryFindings([]);
+    acknowledgeVaultRecovery().catch(err => console.error('[vault] could not acknowledge the recovery notice:', err));
+  }, []);
+
   const currentSegment = useMemo(() => {
     if (isResizingRef.current) {
       // Frozen for the whole gesture — see isResizingRef/lastStableSegmentRef
@@ -8929,6 +8957,8 @@ export default function App() {
               syncLog={project.syncLog ?? []}
               syncRunSummaries={project.syncRunSummaries}
               offlineAssetNames={offlineAssetNames}
+              vaultRecoveryNotices={vaultRecoveryNotices}
+              onAcknowledgeVaultRecovery={handleAcknowledgeVaultRecovery}
               segments={project.segments}
               onClearLog={handleClearSyncLog}
               onOpenModelsModal={() => setShowManageModelsModal(true)}

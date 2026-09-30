@@ -26,6 +26,7 @@ pub mod model_download;
 pub mod models;
 mod asset_store;
 mod media_vault;
+mod media_vault_recovery;
 mod relink;
 mod project_mirror;
 mod safe_delete;
@@ -593,6 +594,22 @@ pub fn run() {
             // projects' stale backup directories under app_local_data_dir(),
             // never blocks launch.
             project_mirror::sweep_stale_project_backups(app.handle());
+            // Media-vault registry self-heal at launch: a damaged registry is
+            // repaired (and its typed finding persisted) before anything
+            // touches the vault, so the frontend's first findings read sees
+            // it. Never blocks launch — but a failure is logged at error
+            // level, never swallowed.
+            match storage_root::resolve_storage_root(app.handle())
+                .and_then(|root| media_vault_recovery::heal_on_boot(&root))
+            {
+                Ok(Some(finding)) => log::warn!(
+                    "media-vault registry recovered at launch ({:?}): {}",
+                    finding.mode,
+                    finding.detail
+                ),
+                Ok(None) => {}
+                Err(err) => log::error!("media-vault registry boot check failed: {err}"),
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -697,6 +714,8 @@ pub fn run() {
             storage_quarantine::storage_drop_project_refs,
             storage_quarantine::storage_restore_project_refs,
             media_vault::media_vault_rename,
+            media_vault_recovery::media_vault_recovery_findings,
+            media_vault_recovery::media_vault_recovery_acknowledge,
             relink::relink_pick_folder,
             relink::relink_list_folder,
             fetch_url_bytes,

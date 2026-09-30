@@ -80,9 +80,9 @@ pub struct MediaVaultEntry {
 }
 
 #[derive(Serialize, Deserialize, Default)]
-struct MediaVaultRegistry {
+pub(crate) struct MediaVaultRegistry {
     #[serde(default)]
-    entries: HashMap<String, MediaVaultEntry>,
+    pub(crate) entries: HashMap<String, MediaVaultEntry>,
 }
 
 fn registry_path(root: &Path) -> PathBuf {
@@ -98,15 +98,49 @@ fn blob_path(root: &Path, content_hash: &str) -> PathBuf {
     media_vault_dir(root).join(format!("{content_hash}.bin"))
 }
 
-/// Missing registry file reads as an empty registry (a fresh vault, or a
-/// fresh storage root) — not an error. Any other read/parse failure IS an
-/// error: a present-but-corrupt registry must never be silently treated as
-/// empty, which would look like every existing entry's project references
-/// simply vanished.
+#[cfg(test)]
+pub(crate) fn blob_path_for_test(root: &Path, content_hash: &str) -> PathBuf {
+    blob_path(root, content_hash)
+}
+
+/// Strict parse of the registry document: exactly one JSON value, nothing after.
+pub(crate) fn strict_parse_registry(bytes: &[u8]) -> Result<MediaVaultRegistry, serde_json::Error> {
+    serde_json::from_slice(bytes)
+}
+
+pub(crate) fn serialize_registry(registry: &MediaVaultRegistry) -> Result<Vec<u8>, String> {
+    serde_json::to_vec_pretty(registry).map_err(|e| format!("media-vault: serialize registry: {e}"))
+}
+
+/// Reads the registry. A missing file is an empty registry (a fresh vault, or
+/// a fresh storage root) — not an error. A present-but-unparseable file is
+/// NEVER treated as empty (that would look like every project reference
+/// vanished); it is handed to the recovery ladder
+/// (`media_vault_recovery::heal_registry`), which repairs it loudly — a typed
+/// finding, a quarantined copy of the bytes — or returns an error. The healthy
+/// path takes no lock: a registry write is temp-file + rename, so a reader
+/// always sees one whole document.
 fn load_registry(root: &Path) -> Result<MediaVaultRegistry, String> {
     let path = registry_path(root);
     match fs::read(&path) {
-        Ok(bytes) => serde_json::from_slice(&bytes)
+        Ok(bytes) => match strict_parse_registry(&bytes) {
+            Ok(registry) => Ok(registry),
+            Err(_) => {
+                let gate = acquire_registry_gate(root)?;
+                crate::media_vault_recovery::heal_registry(root, &gate).map(|(registry, _)| registry)
+            }
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(MediaVaultRegistry::default()),
+        Err(e) => Err(format!("media-vault: read {}: {e}", path.display())),
+    }
+}
+
+/// Strict, read-only, non-healing read — for the consistency scanner, which
+/// must report a damaged registry rather than repair it.
+pub(crate) fn load_registry_no_heal(root: &Path) -> Result<MediaVaultRegistry, String> {
+    let path = registry_path(root);
+    match fs::read(&path) {
+        Ok(bytes) => strict_parse_registry(&bytes)
             .map_err(|e| format!("media-vault: parse {}: {e}", path.display())),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(MediaVaultRegistry::default()),
         Err(e) => Err(format!("media-vault: read {}: {e}", path.display())),
@@ -114,9 +148,119 @@ fn load_registry(root: &Path) -> Result<MediaVaultRegistry, String> {
 }
 
 fn save_registry(root: &Path, registry: &MediaVaultRegistry) -> Result<(), String> {
-    let json = serde_json::to_vec_pretty(registry)
-        .map_err(|e| format!("media-vault: serialize registry: {e}"))?;
-    write_bytes_atomic(&registry_path(root), &json)
+    let json = serialize_registry(registry)?;
+    write_bytes_atomic(&registry_path(root), &json)?;
+    // Verified copy of what was just saved — rung (c) of the recovery ladder.
+    crate::media_vault_recovery::maintain_lastgood(root, &json);
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// The single-writer gate.
+//
+// `registry.json` is one shared index; every mutation is load -> modify ->
+// save. Two interleaved mutations lose one of the updates, and (before
+// `atomic_stage` gave each write its own temp file) tore the file. The gate
+// makes the whole load-modify-save sequence exclusive:
+//   1. an in-process `Mutex` — Tauri runs commands on a thread pool, so this
+//      is the contention that actually happens; then
+//   2. an OS advisory lock on `<vault>/.registry.lock` — a second app
+//      instance pointed at the same storage root (a shared KINETIX-ROOT).
+//      The OS releases it when the holder's handle closes or the process
+//      dies, so there is no stale-lock state to recover from.
+// Held only for the duration of one mutation. The blob write of an import
+// (the multi-megabyte part) happens OUTSIDE the gate.
+//
+// Reads are served lock-free: a registry write is temp-file + rename, so a
+// reader sees a whole previous or a whole new document, never a torn one.
+// ---------------------------------------------------------------------------
+
+use fs4::fs_std::FileExt as LockExt;
+use std::sync::{Mutex, MutexGuard};
+use std::time::{Duration, Instant};
+
+static REGISTRY_GATE: Mutex<()> = Mutex::new(());
+
+/// Bounded wait for the cross-process lock. A healthy holder keeps it for one
+/// JSON write; 30 s means another instance is wedged, which is surfaced as an
+/// error rather than waited on forever.
+const REGISTRY_LOCK_WAIT: Duration = Duration::from_secs(30);
+
+pub(crate) const REGISTRY_LOCK_FILE: &str = ".registry.lock";
+
+/// RAII proof that the caller holds the registry gate. Dropping releases the
+/// file lock first, then the in-process mutex.
+pub(crate) struct RegistryGuard {
+    file: fs::File,
+    _in_process: MutexGuard<'static, ()>,
+}
+
+impl Drop for RegistryGuard {
+    fn drop(&mut self) {
+        let _ = LockExt::unlock(&self.file);
+    }
+}
+
+pub(crate) fn acquire_registry_gate(root: &Path) -> Result<RegistryGuard, String> {
+    // A poisoned mutex means a mutation panicked mid-flight. The protected
+    // state is on disk (atomic writes), not in the mutex, so continuing is
+    // safe — the registry is whatever whole document was last renamed in.
+    let in_process = REGISTRY_GATE.lock().unwrap_or_else(|p| p.into_inner());
+    let dir = media_vault_dir(root);
+    fs::create_dir_all(&dir).map_err(|e| format!("media-vault: create {}: {e}", dir.display()))?;
+    let lock_path = dir.join(REGISTRY_LOCK_FILE);
+    let file = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(&lock_path)
+        .map_err(|e| format!("media-vault: open {}: {e}", lock_path.display()))?;
+    let started = Instant::now();
+    let mut pause = Duration::from_millis(2);
+    loop {
+        match LockExt::try_lock_exclusive(&file) {
+            Ok(()) => return Ok(RegistryGuard { file, _in_process: in_process }),
+            Err(e) if e.raw_os_error() == fs4::lock_contended_error().raw_os_error() => {
+                if started.elapsed() >= REGISTRY_LOCK_WAIT {
+                    return Err(format!(
+                        "media-vault: registry lock {} still held by another process after {} s",
+                        lock_path.display(),
+                        REGISTRY_LOCK_WAIT.as_secs()
+                    ));
+                }
+                std::thread::sleep(pause);
+                pause = (pause * 2).min(Duration::from_millis(100));
+            }
+            Err(e) => return Err(format!("media-vault: lock {}: {e}", lock_path.display())),
+        }
+    }
+}
+
+/// THE registry mutation entry point. Takes the gate, loads the registry, runs
+/// `f`, and saves only when `f` reports a change (a no-op must never rewrite
+/// the file — a crash cannot catch a write that never happens). No registry
+/// load-modify-save exists outside this function.
+fn with_registry_mut<T>(
+    root: &Path,
+    f: impl FnOnce(&mut MediaVaultRegistry) -> Result<(T, bool), String>,
+) -> Result<T, String> {
+    let gate = acquire_registry_gate(root)?;
+    // Under the gate: a damaged registry is healed here (loudly), so a
+    // mutation never fails on a file the loader could have repaired.
+    let (mut registry, _recovered) = match fs::read(registry_path(root)) {
+        Ok(bytes) => match strict_parse_registry(&bytes) {
+            Ok(r) => (r, None),
+            Err(_) => crate::media_vault_recovery::heal_registry(root, &gate)?,
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => (MediaVaultRegistry::default(), None),
+        Err(e) => return Err(format!("media-vault: read {}: {e}", registry_path(root).display())),
+    };
+    let (out, dirty) = f(&mut registry)?;
+    if dirty {
+        save_registry(root, &registry)?;
+    }
+    Ok(out)
 }
 
 /// PHASE 1 of the write-through import. Hashes `bytes` and, only if no blob
@@ -142,37 +286,45 @@ fn write_blob_if_absent(root: &Path, bytes: &[u8]) -> Result<String, String> {
 
 /// PHASE 2 of the write-through import. Adds a fresh registry entry for
 /// `content_hash`, or extends an existing one with `project_id` (never
-/// duplicated in `referenced_by_project_ids`). Assumes phase 1 already ran
-/// for this hash — nothing here re-verifies the blob is on disk, which is
-/// exactly what keeps the invariant "a registry entry implies its blob
-/// exists" true BY CONSTRUCTION: this function is the only writer of the
-/// registry in this module, and every call site calls phase 1 first.
+/// duplicated in `referenced_by_project_ids`). Runs under the registry gate.
+///
+/// Phase 1 ran OUTSIDE the gate, so a concurrent reclaim can have deleted a
+/// zero-ref blob in the window between the two phases. Re-checking the blob
+/// here, under the gate, and re-writing it from the bytes the caller still
+/// holds keeps the invariant "a registry entry implies its blob exists" true
+/// by construction even then — reclaim also takes the gate, so the blob cannot
+/// vanish again before this entry is committed.
 fn commit_registry_entry(
     root: &Path,
     content_hash: &str,
+    bytes: &[u8],
     project_id: &str,
     display_name: &str,
     mime_type: &str,
-    size_bytes: u64,
 ) -> Result<MediaVaultEntry, String> {
-    let mut registry = load_registry(root)?;
-    let entry = registry
-        .entries
-        .entry(content_hash.to_string())
-        .or_insert_with(|| MediaVaultEntry {
-            content_hash: content_hash.to_string(),
-            display_name: display_name.to_string(),
-            mime_type: mime_type.to_string(),
-            size_bytes,
-            added_at_ms: now_millis(),
-            referenced_by_project_ids: Vec::new(),
-        });
-    if !entry.referenced_by_project_ids.iter().any(|p| p == project_id) {
-        entry.referenced_by_project_ids.push(project_id.to_string());
-    }
-    let result = entry.clone();
-    save_registry(root, &registry)?;
-    Ok(result)
+    with_registry_mut(root, |registry| {
+        let bp = blob_path(root, content_hash);
+        if !bp.exists() {
+            write_bytes_atomic(&bp, bytes)?;
+        }
+        let entry = registry
+            .entries
+            .entry(content_hash.to_string())
+            .or_insert_with(|| MediaVaultEntry {
+                content_hash: content_hash.to_string(),
+                display_name: display_name.to_string(),
+                mime_type: mime_type.to_string(),
+                size_bytes: bytes.len() as u64,
+                added_at_ms: now_millis(),
+                referenced_by_project_ids: Vec::new(),
+            });
+        if !entry.referenced_by_project_ids.iter().any(|p| p == project_id) {
+            entry.referenced_by_project_ids.push(project_id.to_string());
+        }
+        // Always written: an import is never a no-op, and re-saving is what
+        // commits a re-referenced entry.
+        Ok((entry.clone(), true))
+    })
 }
 
 /// THE write-through import (G6 Step 2). See the module doc comment for the
@@ -187,14 +339,7 @@ pub fn media_vault_import_bytes(
     mime_type: &str,
 ) -> Result<MediaVaultEntry, String> {
     let content_hash = write_blob_if_absent(root, bytes)?;
-    commit_registry_entry(
-        root,
-        &content_hash,
-        project_id,
-        display_name,
-        mime_type,
-        bytes.len() as u64,
-    )
+    commit_registry_entry(root, &content_hash, bytes, project_id, display_name, mime_type)
 }
 
 /// Read-only listing for the Media block UI (Step 4) and the storage-hygiene
@@ -407,7 +552,14 @@ pub async fn media_vault_generate_thumbnail(app: tauri::AppHandle, content_hash:
         ThumbnailPrecheck::AlreadyGenerated => return Ok(true),
         ThumbnailPrecheck::NeedsGeneration { blob_path, thumb_path } => (blob_path, thumb_path),
     };
-    let tmp = media_vault_dir(&root).join(format!("{content_hash}.thumb.jpg.part"));
+    // Unique per call: two concurrent generations for the same blob (the
+    // grid asks for a thumbnail from several components) must not have ffmpeg
+    // write one shared file.
+    let tmp = media_vault_dir(&root).join(format!(
+        "{content_hash}.thumb.jpg.{}.{}.part",
+        std::process::id(),
+        crate::atomic_stage::next_temp_seq()
+    ));
     match ffmpeg_extract_thumbnail(&app, &blob, &tmp).await {
         Ok(()) => match fs::rename(&tmp, &thumb) {
             Ok(()) => Ok(true),
@@ -461,16 +613,14 @@ pub fn media_vault_read_thumbnail(app: tauri::AppHandle, content_hash: String) -
 /// second phase to interleave with (removing a reference never touches the
 /// blob file, only the registry).
 pub fn unreference_project(root: &Path, content_hash: &str, project_id: &str) -> Result<(), String> {
-    let mut registry = load_registry(root)?;
-    let Some(entry) = registry.entries.get_mut(content_hash) else {
-        return Ok(());
-    };
-    let before = entry.referenced_by_project_ids.len();
-    entry.referenced_by_project_ids.retain(|p| p != project_id);
-    if entry.referenced_by_project_ids.len() == before {
-        return Ok(());
-    }
-    save_registry(root, &registry)
+    with_registry_mut(root, |registry| {
+        let Some(entry) = registry.entries.get_mut(content_hash) else {
+            return Ok(((), false));
+        };
+        let before = entry.referenced_by_project_ids.len();
+        entry.referenced_by_project_ids.retain(|p| p != project_id);
+        Ok(((), entry.referenced_by_project_ids.len() != before))
+    })
 }
 
 /// Media workflow Unit 1 — renames `content_hash`'s registry display name
@@ -486,15 +636,16 @@ pub fn rename_display_name(root: &Path, content_hash: &str, display_name: &str) 
     if name.is_empty() {
         return Err("media-vault: refusing to rename to an empty name".into());
     }
-    let mut registry = load_registry(root)?;
-    let Some(entry) = registry.entries.get_mut(content_hash) else {
-        return Ok(());
-    };
-    if entry.display_name == name {
-        return Ok(());
-    }
-    entry.display_name = name.to_string();
-    save_registry(root, &registry)
+    with_registry_mut(root, |registry| {
+        let Some(entry) = registry.entries.get_mut(content_hash) else {
+            return Ok(((), false));
+        };
+        if entry.display_name == name {
+            return Ok(((), false));
+        }
+        entry.display_name = name.to_string();
+        Ok(((), true))
+    })
 }
 
 /// Media workflow Unit 1 — the rename IPC surface; thin wrapper over the
@@ -531,19 +682,38 @@ pub struct ProjectRefTotals {
     pub bytes: u64,
 }
 
-/// Read-only: project id -> the vault references it holds. Feeds the storage
-/// consistency scan (`storage_consistency.rs`). A missing registry is an
-/// empty map, not an error (`load_registry`'s own contract).
+/// Read-only: project id -> the vault references it holds. The storage
+/// consistency scan composes `entries_no_heal` + `reference_totals` itself (it
+/// needs the entries too); this is the one-call form the tests use. A missing
+/// registry is an empty map, not an error (`load_registry`'s own contract).
+#[cfg(test)]
 pub fn project_reference_totals(root: &Path) -> Result<HashMap<String, ProjectRefTotals>, String> {
+    Ok(reference_totals(&entries_no_heal(root)?))
+}
+
+/// Project id -> references held, from already-loaded entries.
+pub(crate) fn reference_totals(entries: &[MediaVaultEntry]) -> HashMap<String, ProjectRefTotals> {
     let mut out: HashMap<String, ProjectRefTotals> = HashMap::new();
-    for entry in load_registry(root)?.entries.values() {
+    for entry in entries {
         for id in &entry.referenced_by_project_ids {
             let t = out.entry(id.clone()).or_default();
             t.entries += 1;
             t.bytes += entry.size_bytes;
         }
     }
-    Ok(out)
+    out
+}
+
+/// Every registry entry, read strictly and WITHOUT healing — the consistency
+/// scanner is read-only by contract, so a damaged registry must be reported
+/// to it as an error, not repaired under it.
+pub(crate) fn entries_no_heal(root: &Path) -> Result<Vec<MediaVaultEntry>, String> {
+    Ok(load_registry_no_heal(root)?.entries.into_values().collect())
+}
+
+/// On-disk size of `content_hash`'s blob, `None` when the file is absent.
+pub(crate) fn blob_len(root: &Path, content_hash: &str) -> Option<u64> {
+    fs::metadata(blob_path(root, content_hash)).ok().map(|m| m.len())
 }
 
 /// Drops EVERY reference `project_id` holds, whatever the project record
@@ -552,17 +722,15 @@ pub fn project_reference_totals(root: &Path) -> Result<HashMap<String, ProjectRe
 /// asset the record no longer (or never) listed stayed behind forever —
 /// pinning the blob against reclaim. Returns how many references were dropped.
 pub fn unreference_project_everywhere(root: &Path, project_id: &str) -> Result<u64, String> {
-    let mut registry = load_registry(root)?;
-    let mut dropped = 0u64;
-    for entry in registry.entries.values_mut() {
-        let before = entry.referenced_by_project_ids.len();
-        entry.referenced_by_project_ids.retain(|p| p != project_id);
-        dropped += (before - entry.referenced_by_project_ids.len()) as u64;
-    }
-    if dropped > 0 {
-        save_registry(root, &registry)?;
-    }
-    Ok(dropped)
+    with_registry_mut(root, |registry| {
+        let mut dropped = 0u64;
+        for entry in registry.entries.values_mut() {
+            let before = entry.referenced_by_project_ids.len();
+            entry.referenced_by_project_ids.retain(|p| p != project_id);
+            dropped += (before - entry.referenced_by_project_ids.len()) as u64;
+        }
+        Ok((dropped, dropped > 0))
+    })
 }
 
 /// One reference a project holds, with everything needed to put it back.
@@ -606,20 +774,18 @@ pub fn project_refs(root: &Path, project_id: &str) -> Result<Vec<ProjectRefRecor
 /// Puts back references recorded by `project_refs` (the reversal of a drop).
 /// Only re-adds to entries that still exist; returns how many were restored.
 pub fn restore_project_refs(root: &Path, project_id: &str, hashes: &[String]) -> Result<u64, String> {
-    let mut registry = load_registry(root)?;
-    let mut restored = 0u64;
-    for h in hashes {
-        if let Some(e) = registry.entries.get_mut(h) {
-            if !e.referenced_by_project_ids.iter().any(|p| p == project_id) {
-                e.referenced_by_project_ids.push(project_id.to_string());
-                restored += 1;
+    with_registry_mut(root, |registry| {
+        let mut restored = 0u64;
+        for h in hashes {
+            if let Some(e) = registry.entries.get_mut(h) {
+                if !e.referenced_by_project_ids.iter().any(|p| p == project_id) {
+                    e.referenced_by_project_ids.push(project_id.to_string());
+                    restored += 1;
+                }
             }
         }
-    }
-    if restored > 0 {
-        save_registry(root, &registry)?;
-    }
-    Ok(restored)
+        Ok((restored, restored > 0))
+    })
 }
 
 #[tauri::command]
@@ -651,41 +817,39 @@ pub fn zero_ref_bytes(root: &Path) -> Result<u64, String> {
 /// the rest. Only `load_registry`/`save_registry` failing (a corrupt
 /// registry) propagates as `Err`; per-blob failures never do.
 pub fn reclaim_unreferenced_blobs(root: &Path) -> Result<u64, String> {
-    let mut registry = load_registry(root)?;
-    let zero_ref: Vec<String> = registry
-        .entries
-        .iter()
-        .filter(|(_, e)| e.referenced_by_project_ids.is_empty())
-        .map(|(hash, _)| hash.clone())
-        .collect();
-    if zero_ref.is_empty() {
-        return Ok(0);
-    }
+    with_registry_mut(root, |registry| {
+        let zero_ref: Vec<String> = registry
+            .entries
+            .iter()
+            .filter(|(_, e)| e.referenced_by_project_ids.is_empty())
+            .map(|(hash, _)| hash.clone())
+            .collect();
+        if zero_ref.is_empty() {
+            return Ok((0, false));
+        }
 
-    let mut reclaimed = 0u64;
-    let mut removed_any = false;
-    for hash in zero_ref {
-        let Some(entry) = registry.entries.get(&hash) else { continue };
-        // Defense in depth: re-check the invariant right before deleting,
-        // even though `zero_ref` was already filtered on it above — this is
-        // the ONE call site `refuse_delete_if_referenced` exists for.
-        if refuse_delete_if_referenced(entry).is_err() {
-            continue;
-        }
-        let size = entry.size_bytes;
-        match crate::safe_delete::delete_media_vault_blob(&media_vault_dir(root), &hash) {
-            Ok(()) => {
-                reclaimed += size;
-                registry.entries.remove(&hash);
-                removed_any = true;
+        let mut reclaimed = 0u64;
+        let mut removed_any = false;
+        for hash in zero_ref {
+            let Some(entry) = registry.entries.get(&hash) else { continue };
+            // Defense in depth: re-check the invariant right before deleting,
+            // even though `zero_ref` was already filtered on it above — this is
+            // the ONE call site `refuse_delete_if_referenced` exists for.
+            if refuse_delete_if_referenced(entry).is_err() {
+                continue;
             }
-            Err(e) => eprintln!("[media_vault] reclaim: failed to delete blob {hash}, will retry next reclaim: {e}"),
+            let size = entry.size_bytes;
+            match crate::safe_delete::delete_media_vault_blob(&media_vault_dir(root), &hash) {
+                Ok(()) => {
+                    reclaimed += size;
+                    registry.entries.remove(&hash);
+                    removed_any = true;
+                }
+                Err(e) => eprintln!("[media_vault] reclaim: failed to delete blob {hash}, will retry next reclaim: {e}"),
+            }
         }
-    }
-    if removed_any {
-        save_registry(root, &registry)?;
-    }
-    Ok(reclaimed)
+        Ok((reclaimed, removed_any))
+    })
 }
 
 #[cfg(test)]
@@ -862,11 +1026,23 @@ mod tests {
     }
 
     #[test]
-    fn corrupt_registry_file_is_a_real_error_never_silently_treated_as_empty() {
+    fn corrupt_registry_file_is_never_silently_treated_as_empty() {
+        // Was: the loader returned an error. Now it heals — but never quietly:
+        // the unreadable bytes are preserved in quarantine and a typed finding
+        // is persisted, so "every project reference vanished" can always be
+        // traced to its cause.
         let root = tmpdir("corrupt-registry");
         fs::create_dir_all(media_vault_dir(&root)).unwrap();
         fs::write(registry_path(&root), b"{ not json").unwrap();
-        assert!(media_vault_list(&root).is_err());
+        assert!(media_vault_list(&root).unwrap().is_empty(), "nothing on disk to rebuild from");
+        let findings = crate::media_vault_recovery::read_findings(&root).unwrap();
+        assert_eq!(findings.len(), 1, "the recovery is on record");
+        assert_eq!(findings[0].kind, crate::media_vault_recovery::KIND_RECOVERED);
+        let kept = fs::read(
+            std::path::PathBuf::from(&findings[0].quarantine_path).join("data/media-vault/registry.json"),
+        )
+        .unwrap();
+        assert_eq!(kept, b"{ not json", "the replaced bytes are preserved verbatim");
     }
 
     #[test]
@@ -1129,5 +1305,332 @@ mod tests {
         rename_display_name(&root, "unknown-hash", "b.png").unwrap();
         let mtime_after = fs::metadata(registry_path(&root)).unwrap().modified().unwrap();
         assert_eq!(mtime_before, mtime_after);
+    }
+}
+
+/// Step 0 of the registry-corruption fix — real files, real threads, no mocks.
+/// These pin the bug class: unsynchronized load-modify-save on
+/// `registry.json`, racing on one shared fixed temp path (`registry.json.part`).
+#[cfg(test)]
+mod registry_race_tests {
+    use super::*;
+    use std::collections::{BTreeMap, BTreeSet};
+    use std::sync::{Arc, Barrier};
+
+    fn vault_root(tag: &str) -> PathBuf {
+        // Interleaving, not durability, is under test — see TEST_SKIP_FSYNC.
+        crate::atomic_stage::TEST_SKIP_FSYNC.store(true, std::sync::atomic::Ordering::Relaxed);
+        let d = std::env::temp_dir().join(format!(
+            "kinetix-registry-race-{tag}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    const THREADS: usize = 8;
+    const ITERS: usize = 200;
+    const DISTINCT: usize = 20;
+
+    fn payload(k: usize) -> Vec<u8> {
+        format!("registry-race-blob-{k}").into_bytes()
+    }
+
+    /// One thread's deterministic op sequence. Every thread owns a DISJOINT
+    /// project id, so the expected final reference set is independent of how
+    /// the threads interleave: a (thread, blob) pair is referenced at the end
+    /// iff the LAST iteration touching that blob left it referenced.
+    fn run_thread(root: &Path, t: usize, errors: &std::sync::Mutex<Vec<String>>) {
+        run_actor(root, &format!("proj-{t}"), t, ITERS, errors);
+    }
+
+    /// One actor's deterministic op sequence (see `run_thread`'s contract).
+    fn run_actor(root: &Path, pid: &str, t: usize, iters: usize, errors: &std::sync::Mutex<Vec<String>>) {
+        let pid = pid.to_string();
+        for i in 0..iters {
+            let k = (i * 7 + t) % DISTINCT;
+            let bytes = payload(k);
+            let entry = match media_vault_import_bytes(root, &pid, &bytes, &format!("n{k}.bin"), "application/octet-stream") {
+                Ok(e) => e,
+                Err(e) => {
+                    errors.lock().unwrap().push(format!("import t{t} i{i}: {e}"));
+                    continue;
+                }
+            };
+            if i % 5 == 0 {
+                if let Err(e) = rename_display_name(root, &entry.content_hash, &format!("renamed-{t}-{i}")) {
+                    errors.lock().unwrap().push(format!("rename t{t} i{i}: {e}"));
+                }
+            }
+            if i % 3 == 0 {
+                if let Err(e) = unreference_project(root, &entry.content_hash, &pid) {
+                    errors.lock().unwrap().push(format!("unref t{t} i{i}: {e}"));
+                }
+            }
+        }
+    }
+
+    /// The payload indices one actor must still reference after `iters` ops.
+    fn expected_for(t: usize, iters: usize) -> BTreeSet<usize> {
+        let mut last: BTreeMap<usize, bool> = BTreeMap::new();
+        for i in 0..iters {
+            let k = (i * 7 + t) % DISTINCT;
+            last.insert(k, i % 3 != 0);
+        }
+        last.into_iter().filter(|(_, on)| *on).map(|(k, _)| k).collect()
+    }
+
+    /// `project id -> set of payload indices it must still reference`.
+    fn expected_refs() -> BTreeMap<String, BTreeSet<usize>> {
+        (0..THREADS).map(|t| (format!("proj-{t}"), expected_for(t, ITERS))).collect()
+    }
+
+    /// Final `project id -> payload indices`, read back from the registry.
+    fn actual_refs(root: &Path, projects: &[String]) -> BTreeMap<String, BTreeSet<usize>> {
+        let mut actual: BTreeMap<String, BTreeSet<usize>> =
+            projects.iter().map(|p| (p.clone(), BTreeSet::new())).collect();
+        for e in media_vault_list(root).expect("registry must still parse") {
+            let k = (0..DISTINCT)
+                .find(|k| {
+                    let mut h = Sha256::new();
+                    h.update(&payload(*k));
+                    hex_digest(&h.finish()) == e.content_hash
+                })
+                .expect("every entry is one of the imported payloads");
+            for p in &e.referenced_by_project_ids {
+                actual.get_mut(p).expect("only known projects").insert(k);
+            }
+        }
+        actual
+    }
+
+    #[test]
+    fn concurrent_mutations_lose_no_update_and_corrupt_nothing() {
+        let root = vault_root("stress");
+        let errors = std::sync::Mutex::new(Vec::<String>::new());
+        let barrier = Barrier::new(THREADS);
+        std::thread::scope(|s| {
+            for t in 0..THREADS {
+                let (root, errors, barrier) = (&root, &errors, &barrier);
+                s.spawn(move || {
+                    barrier.wait();
+                    run_thread(root, t, errors);
+                });
+            }
+        });
+        let errs = errors.into_inner().unwrap();
+        assert!(errs.is_empty(), "{} mutation(s) failed, first: {:?}", errs.len(), errs.first());
+
+        let listed = media_vault_list(&root).expect("registry must still parse after the stress run");
+        let mut actual: BTreeMap<String, BTreeSet<usize>> =
+            (0..THREADS).map(|t| (format!("proj-{t}"), BTreeSet::new())).collect();
+        for e in &listed {
+            let k = (0..DISTINCT)
+                .find(|k| {
+                    let mut h = Sha256::new();
+                    h.update(&payload(*k));
+                    hex_digest(&h.finish()) == e.content_hash
+                })
+                .expect("every entry is one of the imported payloads");
+            for p in &e.referenced_by_project_ids {
+                actual.get_mut(p).expect("only known projects").insert(k);
+            }
+        }
+        assert_eq!(actual, expected_refs(), "exact final reference sets");
+        fs::remove_dir_all(&root).ok();
+    }
+
+    /// Step 5 soak: 10,000 mutations across 8 threads, exact final state.
+    #[test]
+    fn soak_ten_thousand_mutations_across_eight_threads_keeps_the_exact_final_state() {
+        const SOAK_ITERS: usize = 1_250; // x 8 threads = 10,000 imports (plus renames/unrefs)
+        let root = vault_root("soak");
+        let errors = std::sync::Mutex::new(Vec::<String>::new());
+        let barrier = Barrier::new(THREADS);
+        std::thread::scope(|s| {
+            for t in 0..THREADS {
+                let (root, errors, barrier) = (&root, &errors, &barrier);
+                s.spawn(move || {
+                    barrier.wait();
+                    run_actor(root, &format!("proj-{t}"), t, SOAK_ITERS, errors);
+                });
+            }
+        });
+        let errs = errors.into_inner().unwrap();
+        assert!(errs.is_empty(), "{} failed, first: {:?}", errs.len(), errs.first());
+        let projects: Vec<String> = (0..THREADS).map(|t| format!("proj-{t}")).collect();
+        let expected: BTreeMap<String, BTreeSet<usize>> =
+            (0..THREADS).map(|t| (format!("proj-{t}"), expected_for(t, SOAK_ITERS))).collect();
+        assert_eq!(actual_refs(&root, &projects), expected);
+        // The last-good copy tracked every one of those saves and still parses.
+        assert!(strict_parse_registry(&fs::read(crate::media_vault_recovery::lastgood_file(&root)).unwrap()).is_ok());
+        assert!(crate::media_vault_recovery::read_findings(&root).unwrap().is_empty(), "no recovery was ever needed");
+        fs::remove_dir_all(&root).ok();
+    }
+
+    /// Child half of the two-process test: a no-op unless the parent spawned
+    /// this very test binary with `KINETIX_VAULT_CHILD_ROOT` set.
+    #[test]
+    fn two_process_child() {
+        let Ok(root) = std::env::var("KINETIX_VAULT_CHILD_ROOT") else { return };
+        crate::atomic_stage::TEST_SKIP_FSYNC.store(true, std::sync::atomic::Ordering::Relaxed);
+        let actor: usize = std::env::var("KINETIX_VAULT_CHILD_ACTOR").unwrap().parse().unwrap();
+        let errors = std::sync::Mutex::new(Vec::<String>::new());
+        std::thread::scope(|s| {
+            for lane in 0..2 {
+                let (root, errors) = (&root, &errors);
+                s.spawn(move || run_actor(Path::new(root), &format!("child-{actor}-{lane}"), actor * 2 + lane, ITERS, errors));
+            }
+        });
+        let errs = errors.into_inner().unwrap();
+        assert!(errs.is_empty(), "child {actor}: {} failed, first: {:?}", errs.len(), errs.first());
+    }
+
+    /// Two separate PROCESSES (plus this one) mutating one vault: the OS file
+    /// lock, not the in-process mutex, is what keeps them exact.
+    #[test]
+    fn two_processes_and_this_one_contend_for_one_vault_without_losing_an_update() {
+        let root = vault_root("two-process");
+        let exe = std::env::current_exe().unwrap();
+        let spawn_child = |actor: usize| {
+            std::process::Command::new(&exe)
+                .args(["--exact", "media_vault::registry_race_tests::two_process_child", "--test-threads=1", "--nocapture"])
+                .env("KINETIX_VAULT_CHILD_ROOT", &root)
+                .env("KINETIX_VAULT_CHILD_ACTOR", actor.to_string())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .unwrap()
+        };
+        let (a, b) = (spawn_child(0), spawn_child(1));
+
+        let errors = std::sync::Mutex::new(Vec::<String>::new());
+        std::thread::scope(|s| {
+            for t in 0..2 {
+                let (root, errors) = (&root, &errors);
+                s.spawn(move || run_actor(root, &format!("parent-{t}"), 10 + t, ITERS, errors));
+            }
+        });
+        for (name, child) in [("A", a), ("B", b)] {
+            let out = child.wait_with_output().unwrap();
+            assert!(
+                out.status.success(),
+                "child {name} failed:\n{}\n{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            );
+            assert!(
+                String::from_utf8_lossy(&out.stdout).contains("1 passed"),
+                "child {name} did not actually run the workload:\n{}",
+                String::from_utf8_lossy(&out.stdout)
+            );
+        }
+        let errs = errors.into_inner().unwrap();
+        assert!(errs.is_empty(), "parent: {} failed, first: {:?}", errs.len(), errs.first());
+
+        let mut projects = vec!["parent-0".to_string(), "parent-1".to_string()];
+        let mut expected: BTreeMap<String, BTreeSet<usize>> = BTreeMap::new();
+        expected.insert("parent-0".into(), expected_for(10, ITERS));
+        expected.insert("parent-1".into(), expected_for(11, ITERS));
+        for actor in 0..2usize {
+            for lane in 0..2usize {
+                let id = format!("child-{actor}-{lane}");
+                expected.insert(id.clone(), expected_for(actor * 2 + lane, ITERS));
+                projects.push(id);
+            }
+        }
+        assert_eq!(actual_refs(&root, &projects), expected, "no update lost across three processes");
+        assert!(strict_parse_registry(&fs::read(registry_path(&root)).unwrap()).is_ok());
+        fs::remove_dir_all(&root).ok();
+    }
+
+    /// The two-writer mechanism behind "valid JSON + trailing bytes". Both
+    /// writers of the shared fixed `.part` open it (truncating) BEFORE either
+    /// writes; each then writes from ITS OWN offset 0. The shorter document
+    /// overwrites the head of the longer, whose tail survives verbatim. The
+    /// result is one complete document followed by the remainder of the other —
+    /// serde_json's exact "trailing characters at line N column M".
+    #[test]
+    fn two_writers_on_one_shared_temp_leave_a_complete_document_plus_a_foreign_tail() {
+        use std::io::{Seek, SeekFrom, Write};
+        let dir = vault_root("mechanism");
+        let shared = dir.join("registry.json.part");
+        let long_doc = serde_json::to_vec_pretty(&serde_json::json!({
+            "entries": (0..40).map(|i| (format!("h{i}"), serde_json::json!({"displayName": format!("clip-{i}")}))).collect::<serde_json::Map<_, _>>()
+        })).unwrap();
+        let short_doc = serde_json::to_vec_pretty(&serde_json::json!({"entries": {"h0": {"displayName": "clip-0"}}})).unwrap();
+        assert!(short_doc.len() < long_doc.len());
+
+        let mut a = fs::OpenOptions::new().write(true).create(true).truncate(true).open(&shared).unwrap();
+        let mut b = fs::OpenOptions::new().write(true).create(true).truncate(true).open(&shared).unwrap();
+        a.seek(SeekFrom::Start(0)).unwrap();
+        a.write_all(&long_doc).unwrap();
+        b.write_all(&short_doc).unwrap(); // lands over a's head
+        drop((a, b));
+
+        let torn = fs::read(&shared).unwrap();
+        assert_eq!(torn.len(), long_doc.len(), "the longer writer's tail survives");
+        let err = serde_json::from_slice::<serde_json::Value>(&torn).unwrap_err().to_string();
+        assert!(err.starts_with("trailing characters at line "), "{err}");
+        // The salvageable first value is the SHORT document, byte for byte.
+        let first: serde_json::Value =
+            serde_json::Deserializer::from_slice(&torn).into_iter::<serde_json::Value>().next().unwrap().unwrap();
+        assert_eq!(first, serde_json::from_slice::<serde_json::Value>(&short_doc).unwrap());
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn concurrent_atomic_writers_to_one_target_never_yield_a_torn_file() {
+        let dir = vault_root("atomic-writers");
+        let dest = dir.join("registry.json");
+        let big: Vec<u8> = (0..96 * 1024).map(|i| b'A' + (i % 26) as u8).collect();
+        let small: Vec<u8> = vec![b'z'; 4 * 1024];
+        let rounds = 600;
+        let barrier = Arc::new(Barrier::new(2));
+        let failures = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        std::thread::scope(|s| {
+            for (payload, who) in [(&big, "big"), (&small, "small")] {
+                let (barrier, failures, dest) = (barrier.clone(), failures.clone(), dest.clone());
+                s.spawn(move || {
+                    for r in 0..rounds {
+                        barrier.wait();
+                        if let Err(e) = crate::atomic_stage::write_bytes_atomic(&dest, payload) {
+                            failures.lock().unwrap().push(format!("{who} round {r}: {e}"));
+                        }
+                    }
+                });
+            }
+        });
+        let failures = failures.lock().unwrap();
+        assert!(failures.is_empty(), "{} writer error(s), first: {:?}", failures.len(), failures.first());
+        let last = fs::read(&dest).unwrap();
+        assert!(last == big || last == small, "final file must be exactly one writer's complete bytes (len {})", last.len());
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The field shape from the report: a complete registry + trailing bytes.
+    /// The STRICT parser still refuses it (that is the brick on 75f4b01, where
+    /// the loader had nothing else); since the self-healing loader the same
+    /// bytes are recovered in full instead — see `media_vault_recovery` tests.
+    #[test]
+    fn field_shape_is_refused_by_the_strict_parser_and_healed_by_the_loader() {
+        let root = vault_root("fieldshape");
+        let entry = media_vault_import_bytes(&root, "proj-1", b"field", "a.png", "image/png").unwrap();
+        let mut bytes = fs::read(registry_path(&root)).unwrap();
+        bytes.extend_from_slice(b"\n  },\n  \"leftover\": {}\n}\n");
+        fs::write(registry_path(&root), &bytes).unwrap();
+
+        let err = strict_parse_registry(&bytes).err().expect("strict parse refuses a torn registry").to_string();
+        assert!(err.contains("trailing characters"), "{err}");
+
+        // The loader no longer bricks: the complete document is recovered.
+        let listed = media_vault_list(&root).expect("healed, not bricked");
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].content_hash, entry.content_hash);
+        // ...and so does the next import.
+        media_vault_import_bytes(&root, "proj-2", b"next", "b.png", "image/png").unwrap();
+        assert_eq!(media_vault_list(&root).unwrap().len(), 2);
+        fs::remove_dir_all(&root).ok();
     }
 }
