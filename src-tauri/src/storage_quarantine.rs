@@ -352,6 +352,110 @@ fn prune_empty_dirs(dir: &Path) {
     let _ = fs::remove_dir(dir); // fails (harmlessly) unless empty
 }
 
+// ---------------------------------------------------------------------------
+// Media-vault reference drop — hardened, two-phase, reversible.
+//
+// A deleted project can leave references in the vault registry that pin blobs
+// against reclaim. Dropping them is a registry edit, so it is treated like a
+// move: the references are EXPORTED first (project id -> blob hashes -> paths ->
+// sizes, plus a verbatim copy of the registry as it was), verified by reading
+// the export back, and only then removed. Nothing is deleted: a blob that ends
+// up with no referencer is merely reclaimable, and only the storage settings'
+// "Free up cached data" can ever remove it.
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RefDropManifest {
+    pub id: String,
+    pub created_ms: u64,
+    /// `exported` (refs recorded, not yet removed) -> `dropped`.
+    pub state: String,
+    pub refs: Vec<crate::media_vault::ProjectRefRecord>,
+    /// Hashes that no project references any more after the drop.
+    pub became_reclaimable: Vec<String>,
+}
+
+pub fn ref_drop_dir(root: &Path, id: &str) -> PathBuf {
+    quarantine_dir(root).join("vault-refs").join(id)
+}
+
+fn write_json_durably<T: Serialize>(dest: &Path, v: &T) -> Result<(), String> {
+    if let Some(p) = dest.parent() {
+        fs::create_dir_all(p).map_err(|e| format!("create {}: {e}", p.display()))?;
+    }
+    let tmp = dest.with_extension("json.part");
+    let text = serde_json::to_string_pretty(v).map_err(|e| e.to_string())?;
+    let mut f = fs::File::create(&tmp).map_err(|e| format!("create {}: {e}", tmp.display()))?;
+    f.write_all(text.as_bytes()).map_err(|e| e.to_string())?;
+    f.sync_all().map_err(|e| e.to_string())?;
+    fs::rename(&tmp, dest).map_err(|e| format!("commit {}: {e}", dest.display()))
+}
+
+pub fn drop_project_refs(root: &Path, id: &str) -> Result<RefDropManifest, String> {
+    let id = safe_id(id)?;
+    let dir = ref_drop_dir(root, id);
+    let manifest_path = dir.join("REFS.json");
+    let refs = crate::media_vault::project_refs(root, id)?;
+
+    let mut manifest = match fs::read_to_string(&manifest_path) {
+        Ok(t) => serde_json::from_str::<RefDropManifest>(&t).map_err(|e| format!("refs manifest unreadable: {e}"))?,
+        Err(_) => {
+            if refs.is_empty() {
+                return Err(format!("project {id} holds no vault references"));
+            }
+            // Phase 1 — export, verbatim registry copy, read back.
+            let reg = crate::media_vault::registry_file(root);
+            if reg.is_file() {
+                fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+                fs::copy(&reg, dir.join("registry.before.json")).map_err(|e| format!("copy registry: {e}"))?;
+            }
+            let m = RefDropManifest {
+                id: id.to_string(),
+                created_ms: now_ms(),
+                state: "exported".to_string(),
+                refs: refs.clone(),
+                became_reclaimable: Vec::new(),
+            };
+            write_json_durably(&manifest_path, &m)?;
+            let back: RefDropManifest = serde_json::from_str(
+                &fs::read_to_string(&manifest_path).map_err(|e| e.to_string())?,
+            )
+            .map_err(|e| e.to_string())?;
+            if back != m {
+                return Err("refs manifest read-back mismatch — nothing removed".into());
+            }
+            m
+        }
+    };
+    if manifest.state == "dropped" && refs.is_empty() {
+        return Ok(manifest);
+    }
+    // Phase 2 — remove, then verify none remain.
+    crate::media_vault::unreference_project_everywhere(root, id)?;
+    if !crate::media_vault::project_refs(root, id)?.is_empty() {
+        return Err(format!("references for {id} remain after the drop"));
+    }
+    manifest.became_reclaimable = manifest
+        .refs
+        .iter()
+        .filter(|r| r.other_referencers.is_empty())
+        .map(|r| r.content_hash.clone())
+        .collect();
+    manifest.state = "dropped".to_string();
+    write_json_durably(&manifest_path, &manifest)?;
+    Ok(manifest)
+}
+
+/// Reverses a drop from its manifest. Returns how many references came back.
+pub fn restore_dropped_refs(root: &Path, id: &str) -> Result<u64, String> {
+    let id = safe_id(id)?;
+    let text = fs::read_to_string(ref_drop_dir(root, id).join("REFS.json")).map_err(|e| format!("no refs manifest: {e}"))?;
+    let m: RefDropManifest = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+    let hashes: Vec<String> = m.refs.iter().map(|r| r.content_hash.clone()).collect();
+    crate::media_vault::restore_project_refs(root, id, &hashes)
+}
+
 /// Read-only listing of what is in quarantine, for a future UI.
 #[allow(dead_code)]
 pub fn list_quarantine(root: &Path) -> Vec<QuarantineManifest> {
@@ -550,5 +654,74 @@ mod tests {
         let b = quarantine_project(&root, ID, &[], &[], false).unwrap();
         assert_eq!(a, b);
         fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn a_ref_drop_exports_first_removes_only_that_projects_refs_and_is_reversible() {
+        use crate::media_vault::{project_reference_totals, media_vault_import_bytes, zero_ref_bytes};
+        let root = tmp("refdrop");
+        let a = media_vault_import_bytes(&root, "gone", b"only gone holds this", "a.jpg", "image/jpeg").unwrap();
+        let b = media_vault_import_bytes(&root, "gone", b"shared blob", "b.jpg", "image/jpeg").unwrap();
+        media_vault_import_bytes(&root, "keep", b"shared blob", "b.jpg", "image/jpeg").unwrap();
+        let registry_before = fs::read(root.join("media-vault").join("registry.json")).unwrap();
+
+        let m = drop_project_refs(&root, "gone").unwrap();
+        assert_eq!(m.state, "dropped");
+        assert_eq!(m.refs.len(), 2);
+        assert_eq!(m.became_reclaimable, vec![a.content_hash.clone()], "only the unshared blob becomes reclaimable");
+        // Export is on disk, with the verbatim pre-drop registry beside it.
+        assert_eq!(fs::read(ref_drop_dir(&root, "gone").join("registry.before.json")).unwrap(), registry_before);
+        assert!(!project_reference_totals(&root).unwrap().contains_key("gone"));
+        assert_eq!(project_reference_totals(&root).unwrap()["keep"].entries, 1);
+        // Nothing deleted: both blobs are still on disk; the unshared one is merely reclaimable.
+        assert!(root.join("media-vault").join(format!("{}.bin", a.content_hash)).is_file());
+        assert!(root.join("media-vault").join(format!("{}.bin", b.content_hash)).is_file());
+        assert_eq!(zero_ref_bytes(&root).unwrap(), a.size_bytes);
+        // Idempotent; then reversible.
+        assert_eq!(drop_project_refs(&root, "gone").unwrap(), m);
+        assert_eq!(restore_dropped_refs(&root, "gone").unwrap(), 2);
+        assert_eq!(project_reference_totals(&root).unwrap()["gone"].entries, 2);
+        assert_eq!(zero_ref_bytes(&root).unwrap(), 0);
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn a_ref_drop_for_a_project_with_no_refs_changes_nothing() {
+        let root = tmp("refdrop-none");
+        assert!(drop_project_refs(&root, "nobody").is_err());
+        assert!(!ref_drop_dir(&root, "nobody").exists());
+        fs::remove_dir_all(&root).ok();
+    }
+
+    /// OPERATOR TOOL, not a gate (ignored): executes an operator-ruled disposition on a real
+    /// storage root. `KINETIX_OP_ROOT`, `KINETIX_OP_DASHBOARD` (ids listed on any dashboard),
+    /// `KINETIX_OP_REFDROP` and `KINETIX_OP_QUARANTINE` (comma-separated full project ids).
+    #[test]
+    #[ignore]
+    fn operator_execute_dispositions() {
+        let list = |k: &str| -> Vec<String> {
+            std::env::var(k).unwrap_or_default().split(',').filter(|s| !s.is_empty()).map(String::from).collect()
+        };
+        let root = PathBuf::from(std::env::var("KINETIX_OP_ROOT").expect("KINETIX_OP_ROOT"));
+        let dash = list("KINETIX_OP_DASHBOARD");
+        let zero = |r: &Path| -> Vec<String> {
+            let mut v: Vec<String> = crate::media_vault::media_vault_list(r).unwrap().into_iter()
+                .filter(|e| e.referenced_by_project_ids.is_empty()).map(|e| e.content_hash).collect();
+            v.sort();
+            v
+        };
+        let before = zero(&root);
+        for id in list("KINETIX_OP_REFDROP") {
+            let m = drop_project_refs(&root, &id).unwrap();
+            println!("REFDROP {id}: {} refs exported+dropped, {} became reclaimable, manifest {}",
+                m.refs.len(), m.became_reclaimable.len(), ref_drop_dir(&root, &id).join("REFS.json").display());
+        }
+        for id in list("KINETIX_OP_QUARANTINE") {
+            let r = quarantine_project(&root, &id, &dash, &[], true).unwrap();
+            println!("QUARANTINE {id}: {:?} files={} bytes={} -> {}", r.state, r.files, r.bytes, r.quarantine_path);
+        }
+        let after = zero(&root);
+        println!("ZEROREF before={} after={} newly={:?}", before.len(), after.len(),
+            after.iter().filter(|h| !before.contains(h)).collect::<Vec<_>>());
     }
 }

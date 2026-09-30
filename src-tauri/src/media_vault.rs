@@ -89,6 +89,11 @@ fn registry_path(root: &Path) -> PathBuf {
     media_vault_dir(root).join("registry.json")
 }
 
+/// The registry file's path (for a verbatim pre-change copy).
+pub fn registry_file(root: &Path) -> PathBuf {
+    registry_path(root)
+}
+
 fn blob_path(root: &Path, content_hash: &str) -> PathBuf {
     media_vault_dir(root).join(format!("{content_hash}.bin"))
 }
@@ -558,6 +563,63 @@ pub fn unreference_project_everywhere(root: &Path, project_id: &str) -> Result<u
         save_registry(root, &registry)?;
     }
     Ok(dropped)
+}
+
+/// One reference a project holds, with everything needed to put it back.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectRefRecord {
+    pub content_hash: String,
+    pub display_name: String,
+    pub size_bytes: u64,
+    pub blob_path: String,
+    pub blob_present: bool,
+    /// Other projects holding this blob. Empty => dropping this ref leaves it
+    /// unreferenced (reclaimable, never auto-deleted).
+    pub other_referencers: Vec<String>,
+}
+
+/// Read-only: every vault reference `project_id` holds.
+pub fn project_refs(root: &Path, project_id: &str) -> Result<Vec<ProjectRefRecord>, String> {
+    let mut out: Vec<ProjectRefRecord> = load_registry(root)?
+        .entries
+        .values()
+        .filter(|e| e.referenced_by_project_ids.iter().any(|p| p == project_id))
+        .map(|e| ProjectRefRecord {
+            content_hash: e.content_hash.clone(),
+            display_name: e.display_name.clone(),
+            size_bytes: e.size_bytes,
+            blob_path: blob_path(root, &e.content_hash).display().to_string(),
+            blob_present: blob_path(root, &e.content_hash).is_file(),
+            other_referencers: e
+                .referenced_by_project_ids
+                .iter()
+                .filter(|p| p.as_str() != project_id)
+                .cloned()
+                .collect(),
+        })
+        .collect();
+    out.sort_by(|a, b| a.content_hash.cmp(&b.content_hash));
+    Ok(out)
+}
+
+/// Puts back references recorded by `project_refs` (the reversal of a drop).
+/// Only re-adds to entries that still exist; returns how many were restored.
+pub fn restore_project_refs(root: &Path, project_id: &str, hashes: &[String]) -> Result<u64, String> {
+    let mut registry = load_registry(root)?;
+    let mut restored = 0u64;
+    for h in hashes {
+        if let Some(e) = registry.entries.get_mut(h) {
+            if !e.referenced_by_project_ids.iter().any(|p| p == project_id) {
+                e.referenced_by_project_ids.push(project_id.to_string());
+                restored += 1;
+            }
+        }
+    }
+    if restored > 0 {
+        save_registry(root, &registry)?;
+    }
+    Ok(restored)
 }
 
 #[tauri::command]
