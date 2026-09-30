@@ -26,7 +26,6 @@
 //! a byte is a partially written file.
 
 use std::fs;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -129,14 +128,10 @@ fn source_files(root: &Path, id: &str) -> Result<Vec<PathBuf>, String> {
         .collect()
 }
 
-fn write_manifest(dir: &Path, m: &QuarantineManifest) -> Result<(), String> {
-    let dest = dir.join("MANIFEST.json");
-    let tmp = dir.join("MANIFEST.json.part");
+pub(crate) fn write_manifest(dir: &Path, m: &QuarantineManifest) -> Result<(), String> {
     let text = serde_json::to_string_pretty(m).map_err(|e| e.to_string())?;
-    let mut f = fs::File::create(&tmp).map_err(|e| format!("create manifest part: {e}"))?;
-    f.write_all(text.as_bytes()).map_err(|e| format!("write manifest: {e}"))?;
-    f.sync_all().map_err(|e| format!("sync manifest: {e}"))?;
-    fs::rename(&tmp, &dest).map_err(|e| format!("commit manifest: {e}"))
+    crate::atomic_stage::write_bytes_atomic(&dir.join("MANIFEST.json"), text.as_bytes())
+        .map_err(|e| format!("commit manifest: {e}"))
 }
 
 pub fn read_manifest(dir: &Path) -> Result<Option<QuarantineManifest>, String> {
@@ -151,10 +146,7 @@ fn copy_file_durably(src: &Path, dest: &Path) -> Result<(), String> {
     if let Some(parent) = dest.parent() {
         fs::create_dir_all(parent).map_err(|e| format!("create {}: {e}", parent.display()))?;
     }
-    let part = dest.with_file_name(format!(
-        "{}.part",
-        dest.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default()
-    ));
+    let part = crate::atomic_stage::unique_part_path(dest)?;
     fs::copy(src, &part).map_err(|e| format!("copy {} -> {}: {e}", src.display(), part.display()))?;
     fs::File::open(&part)
         .and_then(|f| f.sync_all())
@@ -381,15 +373,8 @@ pub fn ref_drop_dir(root: &Path, id: &str) -> PathBuf {
 }
 
 fn write_json_durably<T: Serialize>(dest: &Path, v: &T) -> Result<(), String> {
-    if let Some(p) = dest.parent() {
-        fs::create_dir_all(p).map_err(|e| format!("create {}: {e}", p.display()))?;
-    }
-    let tmp = dest.with_extension("json.part");
     let text = serde_json::to_string_pretty(v).map_err(|e| e.to_string())?;
-    let mut f = fs::File::create(&tmp).map_err(|e| format!("create {}: {e}", tmp.display()))?;
-    f.write_all(text.as_bytes()).map_err(|e| e.to_string())?;
-    f.sync_all().map_err(|e| e.to_string())?;
-    fs::rename(&tmp, dest).map_err(|e| format!("commit {}: {e}", dest.display()))
+    crate::atomic_stage::write_bytes_atomic(dest, text.as_bytes()).map_err(|e| format!("commit {}: {e}", dest.display()))
 }
 
 pub fn drop_project_refs(root: &Path, id: &str) -> Result<RefDropManifest, String> {

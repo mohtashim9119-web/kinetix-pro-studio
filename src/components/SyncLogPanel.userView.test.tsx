@@ -369,6 +369,19 @@ const TRIGGERS: Record<AttentionKind, () => SyncLogEntry[]> = {
   'sync-incomplete': () => [buildSyncAbortEntry(RUN, 'Sync aborted: voiceover required.', AT)],
 };
 
+describe('SyncLogPanel user view — the ten-category invariant', () => {
+  // Operator ruling: the user view is exactly these ten run-scoped categories.
+  // A new kind is a ruling change, not a drive-by — app-level events (e.g. a
+  // repaired media library) are launch notices, never a sync-log category.
+  it('ATTENTION_ORDER is exactly the ten ruled kinds, in order', () => {
+    expect([...ATTENTION_ORDER]).toEqual([
+      'unmatched-scene', 'estimated-timings', 'weak-match', 'too-dense', 'script-audio-mismatch',
+      'no-media', 'offline-media', 'model-missing', 'language-pack-missing', 'sync-incomplete',
+    ]);
+    expect(ATTENTION_ORDER).toHaveLength(10);
+  });
+});
+
 describe('SyncLogPanel user view — kind mapping', () => {
   it.each(ATTENTION_ORDER.map(k => [k]))('%s lands as exactly its own line', (kind) => {
     const offline = kind === 'offline-media' ? ['broll.mp4'] : [];

@@ -466,7 +466,11 @@ fn write_atomic(dest: &Path, contents: &str) -> Result<(), String> {
         .parent()
         .ok_or_else(|| format!("no parent: {}", dest.display()))?;
     fs::create_dir_all(parent).map_err(|e| format!("create_dir_all {}: {e}", parent.display()))?;
-    let tmp = parent.join(format!(".storage-root.json.tmp-{}", std::process::id()));
+    let tmp = parent.join(format!(
+        ".storage-root.json.tmp-{}-{}",
+        std::process::id(),
+        crate::atomic_stage::next_temp_seq()
+    ));
     {
         let mut f = fs::File::create(&tmp).map_err(|e| format!("create {}: {e}", tmp.display()))?;
         f.write_all(contents.as_bytes())
@@ -632,6 +636,9 @@ fn is_ignored_entry(name: &std::ffi::OsStr) -> bool {
         || name.eq_ignore_ascii_case("kinetix-diagnostic.log")
         || name.eq_ignore_ascii_case("Thumbs.db")
         || name.eq_ignore_ascii_case("desktop.ini")
+        // The media-vault registry's cross-process lock file: an OS lock
+        // anchor, never data. It is recreated on demand at the new root.
+        || name.eq_ignore_ascii_case(crate::media_vault::REGISTRY_LOCK_FILE)
 }
 
 fn copy_dir_recursive(
@@ -907,8 +914,24 @@ where
     // The right signal for "is this worth showing" is duration, which only
     // the frontend can observe live — see `useStorageRootRelocation.ts`'s
     // debounced handling of this same event for that half of the fix.
+    //
+    // Registry gate (Unit 1 of the registry follow-up). The media vault's
+    // registry is live, mutable state — imports, renames and reference drops
+    // keep landing in it while a multi-gigabyte relocation runs. The gate is
+    // taken BEFORE the vault subtree is copied and held across the verify, the
+    // pointer switch (Phase 2) and the retirement of the old root, so no
+    // mutation can land in the old root after its registry was copied: one that
+    // arrives meanwhile waits, then is refused against the retired root (loud —
+    // never silently written to a root nobody reads any more). Other subtrees
+    // copy without it. RAII: a cancel or any failure drops the gate and the old
+    // root stays authoritative and writable.
+    let mut vault_gate: Option<crate::media_vault::RegistryGuard> = None;
     for (name, get_dir) in MANAGED_RELOCATION_SUBTREES {
         check_cancelled()?;
+        if name == "media-vault" {
+            vault_gate = Some(crate::media_vault::acquire_relocation_gate(current)?);
+            crate::media_vault::unretire_root(new_root);
+        }
         let from = get_dir(current);
         if !from.is_dir() {
             continue;
@@ -925,6 +948,10 @@ where
     // Phase 2: atomically switch authority to the fully verified copy.
     // Failure leaves every source untouched.
     commit_pointer()?;
+    if let Some(gate) = vault_gate.take() {
+        crate::media_vault::retire_root(current);
+        drop(gate);
+    }
 
     // Phase 3: cleanup only. A crash here is recoverable because the pointer
     // already names the complete new copy; failures are returned as warnings.
@@ -2218,5 +2245,132 @@ mod tests {
             })
             .collect();
         assert!(raw_calls.is_empty(), "fa.rs introduced raw recursive deletion outside safe_delete: {raw_calls:?}");
+    }
+
+    #[test]
+    fn concurrent_writers_to_the_storage_root_pointer_never_fail_or_tear() {
+        let dir = tmpdir("pointer-race");
+        crate::atomic_stage::race_harness::hammer_one_destination(
+            "storage_root::write_atomic",
+            &dir.join("storage-root.json"),
+            40,
+            |dest, bytes| write_atomic(dest, std::str::from_utf8(bytes).unwrap()),
+        );
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Unit 1 of the registry follow-up. Relocation copies `media-vault/` and
+    /// only later switches the pointer; a registry mutation landing in the OLD
+    /// root between those two moments is copied by nobody and read by nobody
+    /// after the switch — a silently lost update. The mutation below is fired
+    /// from inside the pointer-commit step (i.e. after every copy has verified,
+    /// before the switch). It must either be refused or be present at the new
+    /// root; "reported success, absent at the new root" is the defect.
+    #[test]
+    fn a_registry_mutation_between_the_vault_copy_and_the_pointer_switch_is_never_lost() {
+        crate::atomic_stage::TEST_SKIP_FSYNC.store(true, std::sync::atomic::Ordering::Relaxed);
+        let current = tmpdir("reloc-gate-old");
+        let new_root = tmpdir("reloc-gate-new");
+        let before = crate::media_vault::media_vault_import_bytes(&current, "proj-1", b"imported before", "a.png", "image/png").unwrap();
+
+        type Verdict = Result<crate::media_vault::MediaVaultEntry, String>;
+        let slot: std::sync::Arc<std::sync::Mutex<Option<Verdict>>> = Default::default();
+        let mut late: Option<std::thread::JoinHandle<()>> = None;
+        let result = relocate_managed_subtrees_with(
+            &current,
+            &new_root,
+            || {
+                let (thread_slot, root) = (slot.clone(), current.clone());
+                late = Some(std::thread::spawn(move || {
+                    let r = crate::media_vault::media_vault_import_bytes(&root, "proj-1", b"lands in the gap", "b.png", "image/png");
+                    *thread_slot.lock().unwrap() = Some(r);
+                }));
+                // Give the mutation every chance to land before the switch. A
+                // correct implementation holds it off (it cannot finish until
+                // the relocation releases its gate), so this simply times out.
+                let deadline = std::time::Instant::now() + std::time::Duration::from_millis(1500);
+                while slot.lock().unwrap().is_none() && std::time::Instant::now() < deadline {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                Ok(())
+            },
+            |_, _, _| Ok(()),
+        );
+        result.unwrap();
+        late.take().unwrap().join().unwrap();
+        let verdict = slot.lock().unwrap().take().expect("the late mutation finished");
+
+        let at_new: Vec<String> = crate::media_vault::media_vault_list(&new_root)
+            .unwrap()
+            .into_iter()
+            .map(|e| e.content_hash)
+            .collect();
+        assert!(at_new.contains(&before.content_hash), "the pre-relocation entry moved");
+        match verdict {
+            Ok(entry) => assert!(
+                at_new.contains(&entry.content_hash),
+                "a mutation reported SUCCESS but is absent at the new root — a lost update"
+            ),
+            Err(e) => assert!(e.contains("relocated"), "refused loudly, not failed some other way: {e}"),
+        }
+        fs::remove_dir_all(&current).ok();
+        fs::remove_dir_all(&new_root).ok();
+    }
+
+    #[test]
+    fn a_mutation_against_the_old_root_after_the_switch_is_refused_and_writes_nothing() {
+        crate::atomic_stage::TEST_SKIP_FSYNC.store(true, std::sync::atomic::Ordering::Relaxed);
+        let current = tmpdir("reloc-refuse-old");
+        let new_root = tmpdir("reloc-refuse-new");
+        crate::media_vault::media_vault_import_bytes(&current, "p", b"kept", "a.png", "image/png").unwrap();
+        relocate_managed_subtrees_with(&current, &new_root, || Ok(()), |_, _, _| Ok(())).unwrap();
+
+        let registry = crate::media_vault::registry_file(&current);
+        let before = fs::read(&registry).unwrap();
+        // A command that resolved the OLD root before the switch and ran after it.
+        let err = crate::media_vault::media_vault_import_bytes(&current, "p", b"stale caller", "b.png", "image/png")
+            .expect_err("refused, not written");
+        assert!(err.contains("relocated"), "{err}");
+        assert_eq!(fs::read(&registry).unwrap(), before, "the old root's registry is untouched");
+        // The same operation against the NEW root succeeds.
+        crate::media_vault::media_vault_import_bytes(&new_root, "p", b"stale caller", "b.png", "image/png").unwrap();
+        assert_eq!(crate::media_vault::media_vault_list(&new_root).unwrap().len(), 2);
+        fs::remove_dir_all(&current).ok();
+        fs::remove_dir_all(&new_root).ok();
+    }
+
+    #[test]
+    fn a_failed_relocation_releases_the_gate_and_leaves_the_old_root_writable() {
+        crate::atomic_stage::TEST_SKIP_FSYNC.store(true, std::sync::atomic::Ordering::Relaxed);
+        let current = tmpdir("reloc-fail-old");
+        let new_root = tmpdir("reloc-fail-new");
+        crate::media_vault::media_vault_import_bytes(&current, "p", b"kept", "a.png", "image/png").unwrap();
+        let failed = relocate_managed_subtrees_with(
+            &current,
+            &new_root,
+            || Err("pointer write failed".to_string()),
+            |_, _, _| panic!("no cleanup after a pointer failure"),
+        );
+        assert!(failed.is_err());
+        // Not retired, gate free: the old root is still authoritative.
+        crate::media_vault::media_vault_import_bytes(&current, "p", b"after the failure", "b.png", "image/png").unwrap();
+        assert_eq!(crate::media_vault::media_vault_list(&current).unwrap().len(), 2);
+        fs::remove_dir_all(&current).ok();
+        fs::remove_dir_all(&new_root).ok();
+    }
+
+    #[test]
+    fn relocating_back_into_a_retired_root_makes_it_live_again() {
+        crate::atomic_stage::TEST_SKIP_FSYNC.store(true, std::sync::atomic::Ordering::Relaxed);
+        let a = tmpdir("reloc-back-a");
+        let b = tmpdir("reloc-back-b");
+        crate::media_vault::media_vault_import_bytes(&a, "p", b"one", "a.png", "image/png").unwrap();
+        relocate_managed_subtrees_with(&a, &b, || Ok(()), |_, _, _| Ok(())).unwrap();
+        assert!(crate::media_vault::media_vault_import_bytes(&a, "p", b"x", "x.png", "image/png").is_err());
+        relocate_managed_subtrees_with(&b, &a, || Ok(()), |_, _, _| Ok(())).unwrap();
+        crate::media_vault::media_vault_import_bytes(&a, "p", b"two", "b.png", "image/png").unwrap();
+        assert_eq!(crate::media_vault::media_vault_list(&a).unwrap().len(), 2);
+        fs::remove_dir_all(&a).ok();
+        fs::remove_dir_all(&b).ok();
     }
 }

@@ -176,12 +176,13 @@ fn write_atomic_bytes(dest: &Path, contents: &[u8]) -> Result<(), String> {
         .ok_or_else(|| format!("no parent: {}", dest.display()))?;
     fs::create_dir_all(parent).map_err(|e| format!("create_dir_all {}: {e}", parent.display()))?;
     let tmp = parent.join(format!(
-        ".{}.tmp-{}-{}",
+        ".{}.tmp-{}-{}-{}",
         dest.file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| "asset".into()),
         std::process::id(),
-        now_millis()
+        now_millis(),
+        crate::atomic_stage::next_temp_seq()
     ));
     {
         let mut f = fs::File::create(&tmp).map_err(|e| format!("create {}: {e}", tmp.display()))?;
@@ -202,12 +203,13 @@ fn copy_atomic_with_hash(src: &Path, dest: &Path) -> Result<(u64, String), Strin
         .ok_or_else(|| format!("no parent: {}", dest.display()))?;
     fs::create_dir_all(parent).map_err(|e| format!("create_dir_all {}: {e}", parent.display()))?;
     let tmp = parent.join(format!(
-        ".{}.tmp-{}-{}",
+        ".{}.tmp-{}-{}-{}",
         dest.file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| "asset".into()),
         std::process::id(),
-        now_millis()
+        now_millis(),
+        crate::atomic_stage::next_temp_seq()
     ));
 
     let result = (|| -> Result<(u64, String), String> {
@@ -1008,5 +1010,18 @@ mod tests {
             name.ends_with(".bin") || name.ends_with(".meta.json")
         }));
         fs::remove_dir_all(&d).ok();
+    }
+
+    #[test]
+    fn concurrent_writers_to_one_asset_destination_never_fail_or_tear() {
+        let dir = std::env::temp_dir().join(format!("kinetix-asset-race-{}-{}", std::process::id(), uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        crate::atomic_stage::race_harness::hammer_one_destination(
+            "asset_store::write_atomic_bytes",
+            &dir.join("asset.bin"),
+            40,
+            |dest, bytes| write_atomic_bytes(dest, bytes),
+        );
+        fs::remove_dir_all(&dir).ok();
     }
 }

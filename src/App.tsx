@@ -398,6 +398,13 @@ import { NewProjectModal, type NewProjectChoices } from './components/NewProject
 import { ProjectSettingsModal } from './components/ProjectSettingsModal';
 import { AppSettingsModal } from './components/AppSettingsModal';
 import { SyncLogPanel } from './components/SyncLogPanel';
+import { VaultRecoveryNotice } from './components/VaultRecoveryNotice';
+import {
+  acknowledgeVaultRecovery,
+  fetchVaultRecoveryFindings,
+  unacknowledgedFindings,
+  type VaultRecoveryFinding,
+} from './services/vaultRecovery';
 import { ExportSettingsModal } from './components/ExportSettingsModal';
 import { ManageModelsModal } from './components/ManageModelsModal';
 import { ErrorBoundary, PanelFallback } from './components/ErrorBoundary';
@@ -6919,6 +6926,24 @@ export default function App() {
     [project.assets],
   );
 
+  // Media-library recovery notice — an event, not a sync-log category (the
+  // sync-log user view stays its ten run-scoped kinds). The native loader heals
+  // `registry.json` at launch and persists a typed finding; it is read once here
+  // and the notice shows while the finding is unacknowledged. Dismissing
+  // acknowledges it durably; Storage settings keeps the record.
+  const [vaultRecoveryFindings, setVaultRecoveryFindings] = useState<VaultRecoveryFinding[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    fetchVaultRecoveryFindings()
+      .then(all => { if (!cancelled) setVaultRecoveryFindings(unacknowledgedFindings(all)); })
+      .catch(err => console.error('[vault] recovery findings could not be read:', err));
+    return () => { cancelled = true; };
+  }, []);
+  const handleAcknowledgeVaultRecovery = useCallback(() => {
+    setVaultRecoveryFindings([]);
+    acknowledgeVaultRecovery().catch(err => console.error('[vault] could not acknowledge the recovery notice:', err));
+  }, []);
+
   const currentSegment = useMemo(() => {
     if (isResizingRef.current) {
       // Frozen for the whole gesture — see isResizingRef/lastStableSegmentRef
@@ -8655,7 +8680,7 @@ export default function App() {
           {/* Top banner stack — in-flow below the editor chrome, above the
               preview pane. Keeps recovery and language banners out of the
               PreviewStage overlay layer (WebCodecs badge, GL diagnostics). */}
-          {(showRecoveryBanner || (isLanguageUnsupported && !languageBannerDismissed)) && (
+          {(showRecoveryBanner || vaultRecoveryFindings.length > 0 || (isLanguageUnsupported && !languageBannerDismissed)) && (
             <div
               className="flex-shrink-0 flex flex-col gap-2 px-3 pt-2 z-20"
               data-testid="editor-top-banner-stack"
@@ -8676,6 +8701,7 @@ export default function App() {
                   </button>
                 </div>
               )}
+              <VaultRecoveryNotice findings={vaultRecoveryFindings} onDismiss={handleAcknowledgeVaultRecovery} />
               {showRecoveryBanner && project.unappliedTranscript && (
                 <UnappliedTranscriptBanner
                   record={project.unappliedTranscript}
