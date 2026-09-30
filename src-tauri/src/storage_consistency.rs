@@ -24,7 +24,7 @@ use std::path::Path;
 
 use serde::Serialize;
 
-use crate::storage_root::{assets_dir, project_mirror_dir, projects_dir};
+use crate::storage_root::{assets_dir, media_vault_dir, project_mirror_dir, projects_dir};
 
 /// What is wrong with one project id.
 #[derive(Serialize, Debug, Clone, Copy, PartialEq, Eq)]
@@ -40,13 +40,23 @@ pub enum FindingKind {
     DataWithoutRecord,
     /// `projects/<id>/` exists with no `project.json` in it.
     EmptyStoreDir,
+    /// `media-vault/registry.json` exists but does not parse. The loader heals
+    /// this at launch and on the next import; a scan that still sees it means
+    /// nothing has touched the vault since it broke.
+    VaultRegistryUnparseable,
+    /// A registry entry whose blob file is missing — the invariant "an entry
+    /// implies its blob" is broken; the asset would 404 on read.
+    VaultEntryWithoutBlob,
+    /// A registry entry whose recorded size differs from its blob's size.
+    VaultBlobSizeMismatch,
 }
 
 /// One path (or logical location) that belongs to a finding.
 #[derive(Serialize, Debug, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct FindingPath {
-    /// `storeRecord` | `assets` | `mirrorRecord` | `storeDir` | `vaultRefs`
+    /// `storeRecord` | `assets` | `mirrorRecord` | `storeDir` | `vaultRefs` |
+    /// `vaultRegistry` | `vaultBlob`
     pub role: &'static str,
     /// Empty for `vaultRefs` (a registry entry set, not a path).
     pub path: String,
@@ -167,7 +177,49 @@ pub fn scan_consistency(
     let store_dir = projects_dir(root);
     let assets = assets_dir(root);
     let mirror = project_mirror_dir(root);
-    let vault = crate::media_vault::project_reference_totals(root)?;
+    // The scan never repairs: a damaged registry becomes a finding, not an error.
+    let mut vault_findings: Vec<ConsistencyFinding> = Vec::new();
+    let vault_entries = match crate::media_vault::entries_no_heal(root) {
+        Ok(entries) => entries,
+        Err(cause) => {
+            let registry = crate::media_vault::registry_file(root);
+            vault_findings.push(ConsistencyFinding {
+                id: "media-vault/registry.json".to_string(),
+                kind: FindingKind::VaultRegistryUnparseable,
+                name: Some(cause),
+                segment_count: None,
+                tombstoned: false,
+                paths: measure("vaultRegistry", &registry).into_iter().collect(),
+            });
+            Vec::new()
+        }
+    };
+    let vault = crate::media_vault::reference_totals(&vault_entries);
+    for entry in &vault_entries {
+        let blob = crate::media_vault::blob_len(root, &entry.content_hash);
+        let kind = match blob {
+            None => Some(FindingKind::VaultEntryWithoutBlob),
+            Some(len) if len != entry.size_bytes => Some(FindingKind::VaultBlobSizeMismatch),
+            Some(_) => None,
+        };
+        if let Some(kind) = kind {
+            vault_findings.push(ConsistencyFinding {
+                id: entry.content_hash.clone(),
+                kind,
+                name: Some(entry.display_name.clone()),
+                segment_count: None,
+                tombstoned: false,
+                paths: vec![FindingPath {
+                    role: "vaultBlob",
+                    path: media_vault_dir(root).join(format!("{}.bin", entry.content_hash)).display().to_string(),
+                    bytes: blob.unwrap_or(0),
+                    files: u64::from(blob.is_some()),
+                    modified_ms: 0,
+                }],
+            });
+        }
+    }
+    vault_findings.sort_by(|a, b| a.id.cmp(&b.id));
 
     let store_ids: BTreeSet<String> = subdirs(&store_dir).into_iter().collect();
     let asset_ids: BTreeSet<String> = subdirs(&assets).into_iter().collect();
@@ -256,6 +308,7 @@ pub fn scan_consistency(
         });
     }
 
+    findings.extend(vault_findings);
     let total_bytes = findings.iter().map(|f| f.total_bytes()).sum();
     Ok(ConsistencyReport { findings, total_bytes, ids_examined: all.len() as u64 })
 }
@@ -399,6 +452,76 @@ mod tests {
         put(&assets_dir(&d).join("bad name").join("a.bin"), b"x");
         let r = scan_consistency(&d, &[], &[]).unwrap();
         assert!(r.findings.is_empty());
+        fs::remove_dir_all(&d).ok();
+    }
+
+    // ---- media-vault checks ------------------------------------------------
+
+    fn vault_entry(root: &Path, content: &[u8], project: &str) -> crate::media_vault::MediaVaultEntry {
+        crate::media_vault::media_vault_import_bytes(root, project, content, "clip.mp4", "video/mp4").unwrap()
+    }
+
+    #[test]
+    fn a_healthy_vault_has_no_findings() {
+        let d = tmp("vault-ok");
+        record(&d, "aaaa1111", "One", 1);
+        vault_entry(&d, b"healthy bytes", "aaaa1111");
+        let r = scan_consistency(&d, &ids(&["aaaa1111"]), &[]).unwrap();
+        assert!(r.findings.is_empty(), "{:?}", r.findings);
+        fs::remove_dir_all(&d).ok();
+    }
+
+    #[test]
+    fn an_unparseable_registry_is_a_finding_not_a_scan_failure_and_is_not_repaired() {
+        let d = tmp("vault-torn");
+        record(&d, "aaaa1111", "One", 1);
+        vault_entry(&d, b"bytes", "aaaa1111");
+        let reg = crate::media_vault::registry_file(&d);
+        let mut torn = fs::read(&reg).unwrap();
+        torn.extend_from_slice(b"\n  trailing\n");
+        fs::write(&reg, &torn).unwrap();
+        let before = walk(&d);
+
+        let r = scan_consistency(&d, &ids(&["aaaa1111"]), &[]).unwrap();
+        let f = r.findings.iter().find(|f| f.kind == FindingKind::VaultRegistryUnparseable).expect("finding");
+        assert!(f.name.as_deref().unwrap().contains("trailing characters"));
+        assert_eq!(f.paths[0].role, "vaultRegistry");
+        assert_eq!(walk(&d), before, "the scanner is read-only — nothing healed, nothing quarantined");
+        assert_eq!(fs::read(&reg).unwrap(), torn);
+        fs::remove_dir_all(&d).ok();
+    }
+
+    #[test]
+    fn a_registry_entry_whose_blob_is_gone_is_reported() {
+        let d = tmp("vault-dangling");
+        record(&d, "aaaa1111", "One", 1);
+        let e = vault_entry(&d, b"will vanish", "aaaa1111");
+        fs::remove_file(media_vault_dir(&d).join(format!("{}.bin", e.content_hash))).unwrap();
+        let r = scan_consistency(&d, &ids(&["aaaa1111"]), &[]).unwrap();
+        let f = finding_for(&r, &e.content_hash).expect("finding");
+        assert_eq!(f.kind, FindingKind::VaultEntryWithoutBlob);
+        assert_eq!(f.name.as_deref(), Some("clip.mp4"));
+        fs::remove_dir_all(&d).ok();
+    }
+
+    #[test]
+    fn a_blob_whose_size_disagrees_with_its_entry_is_reported() {
+        let d = tmp("vault-size");
+        record(&d, "aaaa1111", "One", 1);
+        let e = vault_entry(&d, b"twelve bytes", "aaaa1111");
+        fs::write(media_vault_dir(&d).join(format!("{}.bin", e.content_hash)), b"short").unwrap();
+        let r = scan_consistency(&d, &ids(&["aaaa1111"]), &[]).unwrap();
+        assert_eq!(finding_for(&r, &e.content_hash).unwrap().kind, FindingKind::VaultBlobSizeMismatch);
+        fs::remove_dir_all(&d).ok();
+    }
+
+    #[test]
+    fn an_orphan_blob_from_a_phase_one_crash_is_by_design_not_a_finding() {
+        let d = tmp("vault-orphan-blob");
+        fs::create_dir_all(media_vault_dir(&d)).unwrap();
+        fs::write(media_vault_dir(&d).join(format!("{}.bin", "a".repeat(64))), b"unreferenced").unwrap();
+        let r = scan_consistency(&d, &[], &[]).unwrap();
+        assert!(r.findings.is_empty(), "{:?}", r.findings);
         fs::remove_dir_all(&d).ok();
     }
 

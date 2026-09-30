@@ -686,15 +686,32 @@ pub struct ProjectRefTotals {
 /// consistency scan (`storage_consistency.rs`). A missing registry is an
 /// empty map, not an error (`load_registry`'s own contract).
 pub fn project_reference_totals(root: &Path) -> Result<HashMap<String, ProjectRefTotals>, String> {
+    Ok(reference_totals(&entries_no_heal(root)?))
+}
+
+/// Project id -> references held, from already-loaded entries.
+pub(crate) fn reference_totals(entries: &[MediaVaultEntry]) -> HashMap<String, ProjectRefTotals> {
     let mut out: HashMap<String, ProjectRefTotals> = HashMap::new();
-    for entry in load_registry(root)?.entries.values() {
+    for entry in entries {
         for id in &entry.referenced_by_project_ids {
             let t = out.entry(id.clone()).or_default();
             t.entries += 1;
             t.bytes += entry.size_bytes;
         }
     }
-    Ok(out)
+    out
+}
+
+/// Every registry entry, read strictly and WITHOUT healing — the consistency
+/// scanner is read-only by contract, so a damaged registry must be reported
+/// to it as an error, not repaired under it.
+pub(crate) fn entries_no_heal(root: &Path) -> Result<Vec<MediaVaultEntry>, String> {
+    Ok(load_registry_no_heal(root)?.entries.into_values().collect())
+}
+
+/// On-disk size of `content_hash`'s blob, `None` when the file is absent.
+pub(crate) fn blob_len(root: &Path, content_hash: &str) -> Option<u64> {
+    fs::metadata(blob_path(root, content_hash)).ok().map(|m| m.len())
 }
 
 /// Drops EVERY reference `project_id` holds, whatever the project record
