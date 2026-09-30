@@ -119,6 +119,105 @@ fn save_registry(root: &Path, registry: &MediaVaultRegistry) -> Result<(), Strin
     write_bytes_atomic(&registry_path(root), &json)
 }
 
+// ---------------------------------------------------------------------------
+// The single-writer gate.
+//
+// `registry.json` is one shared index; every mutation is load -> modify ->
+// save. Two interleaved mutations lose one of the updates, and (before
+// `atomic_stage` gave each write its own temp file) tore the file. The gate
+// makes the whole load-modify-save sequence exclusive:
+//   1. an in-process `Mutex` — Tauri runs commands on a thread pool, so this
+//      is the contention that actually happens; then
+//   2. an OS advisory lock on `<vault>/.registry.lock` — a second app
+//      instance pointed at the same storage root (a shared KINETIX-ROOT).
+//      The OS releases it when the holder's handle closes or the process
+//      dies, so there is no stale-lock state to recover from.
+// Held only for the duration of one mutation. The blob write of an import
+// (the multi-megabyte part) happens OUTSIDE the gate.
+//
+// Reads are served lock-free: a registry write is temp-file + rename, so a
+// reader sees a whole previous or a whole new document, never a torn one.
+// ---------------------------------------------------------------------------
+
+use fs4::fs_std::FileExt as LockExt;
+use std::sync::{Mutex, MutexGuard};
+use std::time::{Duration, Instant};
+
+static REGISTRY_GATE: Mutex<()> = Mutex::new(());
+
+/// Bounded wait for the cross-process lock. A healthy holder keeps it for one
+/// JSON write; 30 s means another instance is wedged, which is surfaced as an
+/// error rather than waited on forever.
+const REGISTRY_LOCK_WAIT: Duration = Duration::from_secs(30);
+
+pub(crate) const REGISTRY_LOCK_FILE: &str = ".registry.lock";
+
+/// RAII proof that the caller holds the registry gate. Dropping releases the
+/// file lock first, then the in-process mutex.
+pub(crate) struct RegistryGuard {
+    file: fs::File,
+    _in_process: MutexGuard<'static, ()>,
+}
+
+impl Drop for RegistryGuard {
+    fn drop(&mut self) {
+        let _ = LockExt::unlock(&self.file);
+    }
+}
+
+pub(crate) fn acquire_registry_gate(root: &Path) -> Result<RegistryGuard, String> {
+    // A poisoned mutex means a mutation panicked mid-flight. The protected
+    // state is on disk (atomic writes), not in the mutex, so continuing is
+    // safe — the registry is whatever whole document was last renamed in.
+    let in_process = REGISTRY_GATE.lock().unwrap_or_else(|p| p.into_inner());
+    let dir = media_vault_dir(root);
+    fs::create_dir_all(&dir).map_err(|e| format!("media-vault: create {}: {e}", dir.display()))?;
+    let lock_path = dir.join(REGISTRY_LOCK_FILE);
+    let file = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(&lock_path)
+        .map_err(|e| format!("media-vault: open {}: {e}", lock_path.display()))?;
+    let started = Instant::now();
+    let mut pause = Duration::from_millis(2);
+    loop {
+        match LockExt::try_lock_exclusive(&file) {
+            Ok(()) => return Ok(RegistryGuard { file, _in_process: in_process }),
+            Err(e) if e.raw_os_error() == fs4::lock_contended_error().raw_os_error() => {
+                if started.elapsed() >= REGISTRY_LOCK_WAIT {
+                    return Err(format!(
+                        "media-vault: registry lock {} still held by another process after {} s",
+                        lock_path.display(),
+                        REGISTRY_LOCK_WAIT.as_secs()
+                    ));
+                }
+                std::thread::sleep(pause);
+                pause = (pause * 2).min(Duration::from_millis(100));
+            }
+            Err(e) => return Err(format!("media-vault: lock {}: {e}", lock_path.display())),
+        }
+    }
+}
+
+/// THE registry mutation entry point. Takes the gate, loads the registry, runs
+/// `f`, and saves only when `f` reports a change (a no-op must never rewrite
+/// the file — a crash cannot catch a write that never happens). No registry
+/// load-modify-save exists outside this function.
+fn with_registry_mut<T>(
+    root: &Path,
+    f: impl FnOnce(&mut MediaVaultRegistry) -> Result<(T, bool), String>,
+) -> Result<T, String> {
+    let _gate = acquire_registry_gate(root)?;
+    let mut registry = load_registry(root)?;
+    let (out, dirty) = f(&mut registry)?;
+    if dirty {
+        save_registry(root, &registry)?;
+    }
+    Ok(out)
+}
+
 /// PHASE 1 of the write-through import. Hashes `bytes` and, only if no blob
 /// for that hash already exists, writes it atomically (temp-file + rename,
 /// same directory, via `atomic_stage::write_bytes_atomic`). Never touches the
@@ -142,37 +241,45 @@ fn write_blob_if_absent(root: &Path, bytes: &[u8]) -> Result<String, String> {
 
 /// PHASE 2 of the write-through import. Adds a fresh registry entry for
 /// `content_hash`, or extends an existing one with `project_id` (never
-/// duplicated in `referenced_by_project_ids`). Assumes phase 1 already ran
-/// for this hash — nothing here re-verifies the blob is on disk, which is
-/// exactly what keeps the invariant "a registry entry implies its blob
-/// exists" true BY CONSTRUCTION: this function is the only writer of the
-/// registry in this module, and every call site calls phase 1 first.
+/// duplicated in `referenced_by_project_ids`). Runs under the registry gate.
+///
+/// Phase 1 ran OUTSIDE the gate, so a concurrent reclaim can have deleted a
+/// zero-ref blob in the window between the two phases. Re-checking the blob
+/// here, under the gate, and re-writing it from the bytes the caller still
+/// holds keeps the invariant "a registry entry implies its blob exists" true
+/// by construction even then — reclaim also takes the gate, so the blob cannot
+/// vanish again before this entry is committed.
 fn commit_registry_entry(
     root: &Path,
     content_hash: &str,
+    bytes: &[u8],
     project_id: &str,
     display_name: &str,
     mime_type: &str,
-    size_bytes: u64,
 ) -> Result<MediaVaultEntry, String> {
-    let mut registry = load_registry(root)?;
-    let entry = registry
-        .entries
-        .entry(content_hash.to_string())
-        .or_insert_with(|| MediaVaultEntry {
-            content_hash: content_hash.to_string(),
-            display_name: display_name.to_string(),
-            mime_type: mime_type.to_string(),
-            size_bytes,
-            added_at_ms: now_millis(),
-            referenced_by_project_ids: Vec::new(),
-        });
-    if !entry.referenced_by_project_ids.iter().any(|p| p == project_id) {
-        entry.referenced_by_project_ids.push(project_id.to_string());
-    }
-    let result = entry.clone();
-    save_registry(root, &registry)?;
-    Ok(result)
+    with_registry_mut(root, |registry| {
+        let bp = blob_path(root, content_hash);
+        if !bp.exists() {
+            write_bytes_atomic(&bp, bytes)?;
+        }
+        let entry = registry
+            .entries
+            .entry(content_hash.to_string())
+            .or_insert_with(|| MediaVaultEntry {
+                content_hash: content_hash.to_string(),
+                display_name: display_name.to_string(),
+                mime_type: mime_type.to_string(),
+                size_bytes: bytes.len() as u64,
+                added_at_ms: now_millis(),
+                referenced_by_project_ids: Vec::new(),
+            });
+        if !entry.referenced_by_project_ids.iter().any(|p| p == project_id) {
+            entry.referenced_by_project_ids.push(project_id.to_string());
+        }
+        // Always written: an import is never a no-op, and re-saving is what
+        // commits a re-referenced entry.
+        Ok((entry.clone(), true))
+    })
 }
 
 /// THE write-through import (G6 Step 2). See the module doc comment for the
@@ -187,14 +294,7 @@ pub fn media_vault_import_bytes(
     mime_type: &str,
 ) -> Result<MediaVaultEntry, String> {
     let content_hash = write_blob_if_absent(root, bytes)?;
-    commit_registry_entry(
-        root,
-        &content_hash,
-        project_id,
-        display_name,
-        mime_type,
-        bytes.len() as u64,
-    )
+    commit_registry_entry(root, &content_hash, bytes, project_id, display_name, mime_type)
 }
 
 /// Read-only listing for the Media block UI (Step 4) and the storage-hygiene
@@ -461,16 +561,14 @@ pub fn media_vault_read_thumbnail(app: tauri::AppHandle, content_hash: String) -
 /// second phase to interleave with (removing a reference never touches the
 /// blob file, only the registry).
 pub fn unreference_project(root: &Path, content_hash: &str, project_id: &str) -> Result<(), String> {
-    let mut registry = load_registry(root)?;
-    let Some(entry) = registry.entries.get_mut(content_hash) else {
-        return Ok(());
-    };
-    let before = entry.referenced_by_project_ids.len();
-    entry.referenced_by_project_ids.retain(|p| p != project_id);
-    if entry.referenced_by_project_ids.len() == before {
-        return Ok(());
-    }
-    save_registry(root, &registry)
+    with_registry_mut(root, |registry| {
+        let Some(entry) = registry.entries.get_mut(content_hash) else {
+            return Ok(((), false));
+        };
+        let before = entry.referenced_by_project_ids.len();
+        entry.referenced_by_project_ids.retain(|p| p != project_id);
+        Ok(((), entry.referenced_by_project_ids.len() != before))
+    })
 }
 
 /// Media workflow Unit 1 — renames `content_hash`'s registry display name
@@ -486,15 +584,16 @@ pub fn rename_display_name(root: &Path, content_hash: &str, display_name: &str) 
     if name.is_empty() {
         return Err("media-vault: refusing to rename to an empty name".into());
     }
-    let mut registry = load_registry(root)?;
-    let Some(entry) = registry.entries.get_mut(content_hash) else {
-        return Ok(());
-    };
-    if entry.display_name == name {
-        return Ok(());
-    }
-    entry.display_name = name.to_string();
-    save_registry(root, &registry)
+    with_registry_mut(root, |registry| {
+        let Some(entry) = registry.entries.get_mut(content_hash) else {
+            return Ok(((), false));
+        };
+        if entry.display_name == name {
+            return Ok(((), false));
+        }
+        entry.display_name = name.to_string();
+        Ok(((), true))
+    })
 }
 
 /// Media workflow Unit 1 — the rename IPC surface; thin wrapper over the
@@ -552,17 +651,15 @@ pub fn project_reference_totals(root: &Path) -> Result<HashMap<String, ProjectRe
 /// asset the record no longer (or never) listed stayed behind forever —
 /// pinning the blob against reclaim. Returns how many references were dropped.
 pub fn unreference_project_everywhere(root: &Path, project_id: &str) -> Result<u64, String> {
-    let mut registry = load_registry(root)?;
-    let mut dropped = 0u64;
-    for entry in registry.entries.values_mut() {
-        let before = entry.referenced_by_project_ids.len();
-        entry.referenced_by_project_ids.retain(|p| p != project_id);
-        dropped += (before - entry.referenced_by_project_ids.len()) as u64;
-    }
-    if dropped > 0 {
-        save_registry(root, &registry)?;
-    }
-    Ok(dropped)
+    with_registry_mut(root, |registry| {
+        let mut dropped = 0u64;
+        for entry in registry.entries.values_mut() {
+            let before = entry.referenced_by_project_ids.len();
+            entry.referenced_by_project_ids.retain(|p| p != project_id);
+            dropped += (before - entry.referenced_by_project_ids.len()) as u64;
+        }
+        Ok((dropped, dropped > 0))
+    })
 }
 
 /// One reference a project holds, with everything needed to put it back.
@@ -606,20 +703,18 @@ pub fn project_refs(root: &Path, project_id: &str) -> Result<Vec<ProjectRefRecor
 /// Puts back references recorded by `project_refs` (the reversal of a drop).
 /// Only re-adds to entries that still exist; returns how many were restored.
 pub fn restore_project_refs(root: &Path, project_id: &str, hashes: &[String]) -> Result<u64, String> {
-    let mut registry = load_registry(root)?;
-    let mut restored = 0u64;
-    for h in hashes {
-        if let Some(e) = registry.entries.get_mut(h) {
-            if !e.referenced_by_project_ids.iter().any(|p| p == project_id) {
-                e.referenced_by_project_ids.push(project_id.to_string());
-                restored += 1;
+    with_registry_mut(root, |registry| {
+        let mut restored = 0u64;
+        for h in hashes {
+            if let Some(e) = registry.entries.get_mut(h) {
+                if !e.referenced_by_project_ids.iter().any(|p| p == project_id) {
+                    e.referenced_by_project_ids.push(project_id.to_string());
+                    restored += 1;
+                }
             }
         }
-    }
-    if restored > 0 {
-        save_registry(root, &registry)?;
-    }
-    Ok(restored)
+        Ok((restored, restored > 0))
+    })
 }
 
 #[tauri::command]
@@ -651,41 +746,39 @@ pub fn zero_ref_bytes(root: &Path) -> Result<u64, String> {
 /// the rest. Only `load_registry`/`save_registry` failing (a corrupt
 /// registry) propagates as `Err`; per-blob failures never do.
 pub fn reclaim_unreferenced_blobs(root: &Path) -> Result<u64, String> {
-    let mut registry = load_registry(root)?;
-    let zero_ref: Vec<String> = registry
-        .entries
-        .iter()
-        .filter(|(_, e)| e.referenced_by_project_ids.is_empty())
-        .map(|(hash, _)| hash.clone())
-        .collect();
-    if zero_ref.is_empty() {
-        return Ok(0);
-    }
+    with_registry_mut(root, |registry| {
+        let zero_ref: Vec<String> = registry
+            .entries
+            .iter()
+            .filter(|(_, e)| e.referenced_by_project_ids.is_empty())
+            .map(|(hash, _)| hash.clone())
+            .collect();
+        if zero_ref.is_empty() {
+            return Ok((0, false));
+        }
 
-    let mut reclaimed = 0u64;
-    let mut removed_any = false;
-    for hash in zero_ref {
-        let Some(entry) = registry.entries.get(&hash) else { continue };
-        // Defense in depth: re-check the invariant right before deleting,
-        // even though `zero_ref` was already filtered on it above — this is
-        // the ONE call site `refuse_delete_if_referenced` exists for.
-        if refuse_delete_if_referenced(entry).is_err() {
-            continue;
-        }
-        let size = entry.size_bytes;
-        match crate::safe_delete::delete_media_vault_blob(&media_vault_dir(root), &hash) {
-            Ok(()) => {
-                reclaimed += size;
-                registry.entries.remove(&hash);
-                removed_any = true;
+        let mut reclaimed = 0u64;
+        let mut removed_any = false;
+        for hash in zero_ref {
+            let Some(entry) = registry.entries.get(&hash) else { continue };
+            // Defense in depth: re-check the invariant right before deleting,
+            // even though `zero_ref` was already filtered on it above — this is
+            // the ONE call site `refuse_delete_if_referenced` exists for.
+            if refuse_delete_if_referenced(entry).is_err() {
+                continue;
             }
-            Err(e) => eprintln!("[media_vault] reclaim: failed to delete blob {hash}, will retry next reclaim: {e}"),
+            let size = entry.size_bytes;
+            match crate::safe_delete::delete_media_vault_blob(&media_vault_dir(root), &hash) {
+                Ok(()) => {
+                    reclaimed += size;
+                    registry.entries.remove(&hash);
+                    removed_any = true;
+                }
+                Err(e) => eprintln!("[media_vault] reclaim: failed to delete blob {hash}, will retry next reclaim: {e}"),
+            }
         }
-    }
-    if removed_any {
-        save_registry(root, &registry)?;
-    }
-    Ok(reclaimed)
+        Ok((reclaimed, removed_any))
+    })
 }
 
 #[cfg(test)]

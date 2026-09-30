@@ -632,6 +632,9 @@ fn is_ignored_entry(name: &std::ffi::OsStr) -> bool {
         || name.eq_ignore_ascii_case("kinetix-diagnostic.log")
         || name.eq_ignore_ascii_case("Thumbs.db")
         || name.eq_ignore_ascii_case("desktop.ini")
+        // The media-vault registry's cross-process lock file: an OS lock
+        // anchor, never data. It is recreated on demand at the new root.
+        || name.eq_ignore_ascii_case(crate::media_vault::REGISTRY_LOCK_FILE)
 }
 
 fn copy_dir_recursive(
