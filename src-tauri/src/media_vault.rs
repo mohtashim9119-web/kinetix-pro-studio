@@ -682,9 +682,11 @@ pub struct ProjectRefTotals {
     pub bytes: u64,
 }
 
-/// Read-only: project id -> the vault references it holds. Feeds the storage
-/// consistency scan (`storage_consistency.rs`). A missing registry is an
-/// empty map, not an error (`load_registry`'s own contract).
+/// Read-only: project id -> the vault references it holds. The storage
+/// consistency scan composes `entries_no_heal` + `reference_totals` itself (it
+/// needs the entries too); this is the one-call form the tests use. A missing
+/// registry is an empty map, not an error (`load_registry`'s own contract).
+#[cfg(test)]
 pub fn project_reference_totals(root: &Path) -> Result<HashMap<String, ProjectRefTotals>, String> {
     Ok(reference_totals(&entries_no_heal(root)?))
 }
