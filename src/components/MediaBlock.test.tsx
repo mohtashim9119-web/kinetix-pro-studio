@@ -953,3 +953,33 @@ describe('B1/B2 — per-asset state chips and corrupt handling', () => {
     expect(mockGenerateThumbnail).not.toHaveBeenCalled();
   });
 });
+
+describe('B3 — video thumbnail blob URLs are released', () => {
+  it('OLD LEAK: createObjectURL per video thumbnail was never revoked; unmounting now revokes each', async () => {
+    mockGenerateThumbnail.mockResolvedValue('generated');
+    mockReadThumbnail.mockResolvedValue(new Uint8Array([1, 2, 3]));
+    const created: string[] = [];
+    const revoked: string[] = [];
+    const origCreate = URL.createObjectURL, origRevoke = URL.revokeObjectURL;
+    URL.createObjectURL = () => { const u = `blob:thumb-${created.length}`; created.push(u); return u; };
+    URL.revokeObjectURL = (u: string) => { revoked.push(u); };
+    try {
+      root = createRoot(container);
+      await act(async () => {
+        root.render(
+          <MediaBlock projectId="p1" segments={[]} voiceoverId={undefined}
+            assets={[makeAsset({ id: 'v1', type: 'video', name: 'c.mp4', file: new File([new Uint8Array([9])], 'c.mp4') })]}
+            onDeleteAsset={noop} onOpenRelinkMedia={noop} onHighlightUsage={noop} onIngestComplete={noop} onIngestError={noop} />,
+        );
+      });
+      await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+      expect(created.length).toBe(1);
+      expect(revoked).toEqual([]);
+      await act(async () => { root.unmount(); });
+      expect(revoked).toEqual(created);
+      root = createRoot(container); // afterEach unmounts a live root
+    } finally {
+      URL.createObjectURL = origCreate; URL.revokeObjectURL = origRevoke;
+    }
+  });
+});

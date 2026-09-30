@@ -411,6 +411,14 @@ export const MediaBlock = forwardRef<MediaBlockHandle, MediaBlockProps>(function
   );
   const unusedCount = unusedAssetIds.length;
 
+  // Release the video-thumbnail blob URLs when the block goes away (each
+  // `createObjectURL` pins its bytes until revoked; they were never released).
+  const videoThumbUrlsRef = useRef(videoThumbUrls);
+  videoThumbUrlsRef.current = videoThumbUrls;
+  useEffect(() => () => {
+    for (const url of Object.values(videoThumbUrlsRef.current)) URL.revokeObjectURL(url);
+  }, []);
+
   // Lazily generate/fetch a thumbnail for each VISIBLE video row, once,
   // caching the resulting blob URL for the component's lifetime — not
   // reactive to scroll position (no virtualization here), but bounded to
