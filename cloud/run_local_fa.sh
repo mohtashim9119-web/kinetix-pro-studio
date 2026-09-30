@@ -1,40 +1,60 @@
 #!/usr/bin/env bash
-# Live local FA through the existing Rust path (fa-inference, production load_session).
-# Dumps words to $OUT_DIR/arm_prod.json via intra_thread_sweep_arm_v6.
+# Local forced-alignment arm, through the SAME Rust path production uses
+# (fa-inference, align_chunked over the whole chunk slice — `session_p_regen`).
+#
+#   cloud/run_local_fa.sh <corpus: v6|173|spanish> <lang> <plan.json> <out-words.json>
+#
+# Isolation: the test process runs with HOME pointed at a scratch directory whose
+# Library/Application Support/com.kinetix.pro-studio/fa-models links the model
+# folder, so the operator's real app data is never read or written. (cargo/rustup
+# keep their real homes via CARGO_HOME / RUSTUP_HOME.) Set FA_ISOLATE_HOME=0 to opt
+# out. All paths default relative to this checkout — no machine-specific paths.
+#
+# Env overrides: ORT_DYLIB_PATH, FA_MODELS_SRC (folder holding <lang>/model.onnx),
+# FA_ISOLATED_HOME (scratch HOME to use/keep).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-OUT_DIR="${FA_SWEEP_OUT_DIR:-$ROOT/cloud/results/local_fa_v6}"
-ORT_DYLIB="${ORT_DYLIB_PATH:-/Users/mohtashim/Drive/Vibe Coding Projects/4.kinetix-pro-studio/.work-phase4/spike-runtime/onnxruntime-osx-x86_64-1.23.2/lib/libonnxruntime.dylib}"
-REPLAY_SRC="${FA_REPLAY_SRC:-/Users/mohtashim/Drive/Vibe Coding Projects/4.kinetix-pro-studio/.work-phase4/replay}"
-MODELS_SRC="${FA_MODELS_SRC:-/Users/mohtashim/Drive/All Data/TEST/models/fa-models}"
-MODELS_DST="$HOME/Library/Application Support/com.kinetix.pro-studio/fa-models"
+CORPUS="${1:?corpus (v6|173|spanish)}"; LANG_CODE="${2:?language code}"
+PLAN="${3:?plan.json}"; OUT="${4:?out words json}"
+case "$PLAN" in /*) ;; *) PLAN="$PWD/$PLAN";; esac
+case "$OUT" in /*) ;; *) OUT="$PWD/$OUT";; esac
 
-mkdir -p "$OUT_DIR"
-mkdir -p "$ROOT/.work-phase4"
-if [[ ! -e "$ROOT/.work-phase4/replay" ]]; then
-  ln -s "$REPLAY_SRC" "$ROOT/.work-phase4/replay"
-fi
-mkdir -p "$MODELS_DST"
-if [[ ! -e "$MODELS_DST/en/model.onnx" ]]; then
-  ln -sfn "$MODELS_SRC/en" "$MODELS_DST/en"
-fi
-if [[ ! -e "$MODELS_DST/es/model.onnx" ]]; then
-  ln -sfn "$MODELS_SRC/es" "$MODELS_DST/es"
-fi
+ORT_DYLIB="${ORT_DYLIB_PATH:-$ROOT/src-tauri/onnxruntime/libonnxruntime.1.23.2.dylib}"
+[[ -f "$ORT_DYLIB" ]] || { echo "ORT dylib not found: $ORT_DYLIB (set ORT_DYLIB_PATH)" >&2; exit 2; }
 
-export ORT_DYLIB_PATH="$ORT_DYLIB"
-export FA_SWEEP_OUT_DIR="$OUT_DIR"
-export FA_SWEEP_INTRA="${FA_SWEEP_INTRA:-prod}"
+# Models: explicit override, else the operator's storage root, else the default app-data location.
+find_models() {
+  local c
+  for c in "${FA_MODELS_SRC:-}" "${KINETIX_ROOT:-}/models/fa-models" \
+           "$HOME/Drive/KINETIX-ROOT/models/fa-models" \
+           "$HOME/Library/Application Support/com.kinetix.pro-studio/fa-models"; do
+    [[ -n "$c" && -f "$c/$LANG_CODE/model.onnx" ]] && { echo "$c"; return; }
+  done
+}
+MODELS_SRC="$(find_models)"
+[[ -n "$MODELS_SRC" ]] || { echo "no $LANG_CODE/model.onnx found; set FA_MODELS_SRC" >&2; exit 2; }
 
-echo "ORT_DYLIB_PATH=$ORT_DYLIB_PATH"
-echo "FA_SWEEP_OUT_DIR=$FA_SWEEP_OUT_DIR"
-echo "running intra_thread_sweep_arm_v6 (production load_session)"
+mkdir -p "$(dirname "$OUT")"
+rm -f "$OUT"
+export ORT_DYLIB_PATH="$ORT_DYLIB" FA_REQUIRE_ORT=1
+export FA_REGEN_CORPUS="$CORPUS" FA_REGEN_LANG="$LANG_CODE" FA_REGEN_PLAN="$PLAN" FA_REGEN_OUT="$OUT"
 
+echo "local FA: corpus=$CORPUS lang=$LANG_CODE models=$MODELS_SRC"
 cd "$ROOT/src-tauri"
+if [[ "${FA_ISOLATE_HOME:-1}" == "1" ]]; then
+  export CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}" RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}"
+  if [[ -n "${FA_ISOLATED_HOME:-}" ]]; then SCRATCH="$FA_ISOLATED_HOME"; else
+    SCRATCH="$(mktemp -d "${TMPDIR:-/tmp}/kinetix-fa-home.XXXXXX")"
+    # Only our own scratch tree, and only its symlink + empty dirs — never the linked models.
+    trap 'rm -f "$SCRATCH/Library/Application Support/com.kinetix.pro-studio/fa-models"; rmdir "$SCRATCH/Library/Application Support/com.kinetix.pro-studio" "$SCRATCH/Library/Application Support" "$SCRATCH/Library" "$SCRATCH" 2>/dev/null || true' EXIT
+  fi
+  mkdir -p "$SCRATCH/Library/Application Support/com.kinetix.pro-studio"
+  ln -sfn "$MODELS_SRC" "$SCRATCH/Library/Application Support/com.kinetix.pro-studio/fa-models"
+  export HOME="$SCRATCH"
+  echo "isolated HOME=$HOME"
+fi
 cargo test --release --features fa-inference --lib \
-  -- --ignored --nocapture --exact \
-  fa_onnx::intra_thread_sweep::intra_thread_sweep_arm_v6
-
-echo "wrote $OUT_DIR"
-ls -l "$OUT_DIR"
+  -- --ignored --nocapture --exact fa_onnx::session_p_regen::regenerate_fa_against_live_plan
+[[ -s "$OUT" ]] || { echo "local arm produced no words file ($OUT) — the test skipped or failed" >&2; exit 3; }
+echo "wrote $OUT"

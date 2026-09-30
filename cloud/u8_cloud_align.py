@@ -4,20 +4,21 @@ first, then a job) and writes the words next to the local arm's, for cloud/compa
     python cloud/u8_cloud_align.py <corpus> <lang> <path-to-original-voiceover>
 
 Procedure (per corpus; v6 / 173 / spanish):
-  1. plan   -> .work-phase4/replay/<corpus>/u8_plan.json  ({audioDuration, chunks}) from scripts/chunkPlanCorpora.ts
-               buildCorpusPlan(<corpus>, 'prod') — the same computeFaChunkPlan call production makes.
-  2. local  -> cargo test --release --features fa-inference --lib -- --ignored --nocapture --exact
-               fa_onnx::session_p_regen::regenerate_fa_against_live_plan
-               with FA_REGEN_CORPUS / FA_REGEN_LANG / FA_REGEN_PLAN=u8_plan.json / FA_REGEN_OUT=u8_local_words.json
-               (HOME pointed at a scratch dir whose Library/Application Support/com.kinetix.pro-studio/fa-models
-               links the model folder, so the app's own data directory is never touched).
-  3. cloud  -> this script -> u8_cloud_words.json
-  4. compare-> python cloud/compare_fa.py --local u8_local_words.json --cloud u8_cloud_words.json --out cloud/results/u8_parity_<corpus>.json
+  1. plan   -> cloud/build_chunk_plan.ts   -> $U8_WORK/<corpus>/u8_plan.json
+  2. local  -> cloud/run_local_fa.sh         -> $U8_WORK/<corpus>/u8_local_words.json (isolated HOME)
+  3. cloud  -> this script                   -> $U8_WORK/<corpus>/u8_cloud_words.json
+  4. compare-> cloud/compare_fa.py           -> $U8_WORK/<corpus>/u8_parity.json
+Run all four for all three corpora, and check against the recorded numbers, with ONE command:
+    cloud/u8_gate.sh
 Gate: withinHundredMsPct >= 95 (start and end), identicalText == nCompared.
+
+BILLING GUARD: by default this script REFUSES to submit a job on a cache miss (a miss is a T4 run and a
+meter line). Set U8_ALLOW_CLOUD_SPEND=1 to allow it. A hit costs nothing.
 """
 import json, sys, time, subprocess, urllib.request, urllib.error, hashlib, os
 GATEWAY="https://thekingsmanco99--kinetix-sync.modal.run"
 ROOT=os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+WORK=os.environ.get("U8_WORK", ROOT+"/.work-phase4/u8-gate")
 KEY=open(ROOT+"/cloud/.keys/operator.key").read().strip()
 def call(method, path, body=None, raw=None):
     data = raw if raw is not None else (json.dumps(body).encode() if body is not None else None)
@@ -31,23 +32,27 @@ def call(method, path, body=None, raw=None):
         except Exception: return e.code, None
 corp=sys.argv[1]; lang=sys.argv[2]; src=sys.argv[3]
 h=hashlib.sha256(open(src,"rb").read()).hexdigest()
-opus=os.environ.get("U8_TMP","/tmp")+f"/u8_{corp}.opus"
-cache=os.path.expanduser(f"~/Library/Application Support/com.kinetix.pro-studio/cloud-opus-cache/{h}.opus")
-if os.path.exists(cache): opus=cache
-else:
-    subprocess.run(["ffmpeg","-y","-loglevel","error","-i",src,"-vn","-map","0:a:0","-map_metadata","-1","-ar","16000","-ac","1","-c:a","libopus","-b:a","16k","-vbr","off","-compression_level","4",opus],check=True)
-req=urllib.request.Request(GATEWAY+f"/v1/audio/{h}", method="HEAD", headers={"Authorization":f"Bearer {KEY}"})
-try:
-    urllib.request.urlopen(req, timeout=60); have=True
-except urllib.error.HTTPError as e: have=(e.code==200)
-print(corp,"hash",h[:12],"audio present" if have else "uploading", os.path.getsize(opus))
-if not have:
-    st,r=call("PUT",f"/v1/audio/{h}",raw=open(opus,"rb").read()); print("upload",st,r)
-plan=json.load(open(f"{ROOT}/.work-phase4/replay/{corp}/u8_plan.json"))
+plan=json.load(open(f"{WORK}/{corp}/u8_plan.json"))
+def ensure_audio():
+    opus=os.environ.get("U8_TMP","/tmp")+f"/u8_{corp}.opus"
+    cache=os.path.expanduser(f"~/Library/Application Support/com.kinetix.pro-studio/cloud-opus-cache/{h}.opus")
+    if os.path.exists(cache): opus=cache
+    else:
+        subprocess.run(["ffmpeg","-y","-loglevel","error","-i",src,"-vn","-map","0:a:0","-map_metadata","-1","-ar","16000","-ac","1","-c:a","libopus","-b:a","16k","-vbr","off","-compression_level","4",opus],check=True)
+    req=urllib.request.Request(GATEWAY+f"/v1/audio/{h}", method="HEAD", headers={"Authorization":f"Bearer {KEY}"})
+    try:
+        urllib.request.urlopen(req, timeout=60); have=True
+    except urllib.error.HTTPError as e: have=(e.code==200)
+    print(corp,"hash",h[:12],"audio present" if have else "uploading", os.path.getsize(opus))
+    if not have:
+        st,r=call("PUT",f"/v1/audio/{h}",raw=open(opus,"rb").read()); print("upload",st,r)
 req={"stage":"align","audioHash":h,"language":lang,"chunks":plan["chunks"]}
 st,look=call("POST","/v1/cache/lookup",req); print("lookup",st,look.get("cached") if look else look)
 if look and look.get("cached"): res=look["result"]; meta={"cached":True}
+elif os.environ.get("U8_ALLOW_CLOUD_SPEND")!="1":
+    sys.exit(f"{corp}: cache MISS — a job would run on a T4 and bill. Refusing (set U8_ALLOW_CLOUD_SPEND=1 to allow).")
 else:
+    ensure_audio()
     st,job=call("POST","/v1/jobs",req); print("submit",st,job and {k:job.get(k) for k in ("jobId","status","cached","error")})
     jid=job["jobId"]; t0=time.time()
     while True:
@@ -56,5 +61,5 @@ else:
         time.sleep(3)
     print("final",j["status"],"cached",j.get("cached"),"workerSec",j.get("workerSec"),"clientSec",round(time.time()-t0,1),"error",j.get("error"))
     res=j["result"]; meta={"cached":j.get("cached"),"workerSec":j.get("workerSec"),"jobId":jid}
-json.dump({"meta":meta,"audioHash":h,**res},open(f"{ROOT}/.work-phase4/replay/{corp}/u8_cloud_words.json","w"))
+json.dump({"meta":meta,"audioHash":h,**res},open(f"{WORK}/{corp}/u8_cloud_words.json","w"))
 print("words",len(res["words"]),"nFallback",res.get("nFallbackChunks"))
