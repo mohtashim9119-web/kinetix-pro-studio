@@ -542,7 +542,7 @@ function selectYearCandidate(n: number, policy: FaYearReading['selectionPolicy']
  *  gate, `textNormalize.ts:91` — same structural condition, independently
  *  re-expressed here since this module shares no code with that one);
  *  everything else gets the plain arithmetic cardinal reading. */
-function expandCardinalToken(stripped: string, data: FaCardinalData): string | undefined {
+export function expandCardinalToken(stripped: string, data: FaCardinalData): string | undefined {
   if (!/^[0-9]+$/.test(stripped)) return undefined;
   if (stripped.length > 1 && stripped[0] === '0') return undefined;
   const n = Number(stripped);
