@@ -175,7 +175,7 @@ describe('BulkRowStore — draft rows, files, and creation only at Build Timelin
     expect(stageAudio.mock.calls[0]![2]).toBe(42);
   });
 
-  it('Build Timeline creates ONLY the real rows; empty drafts are discarded (and purged); a half-filled row stays a draft with its reason', async () => {
+  it('Build Timeline creates ONLY the real rows; empty drafts stay (U5: nothing clears by itself); a half-filled row stays a draft with its reason', async () => {
     const { deps, created, purged } = fakeDeps({ cloudActive: () => false });
     const store = new BulkRowStore(deps);
     store.init(5);
@@ -188,8 +188,8 @@ describe('BulkRowStore — draft rows, files, and creation only at Build Timelin
     expect(created.map(c => c.name)).toEqual(['Alpine', 'Valley']);
     expect(created.map(c => c.id)).toEqual([ids[0], ids[1]]);
     expect(out.created.map(c => c.name)).toEqual(['Alpine', 'Valley']);
-    expect(purged.sort()).toEqual([ids[3], ids[4]].sort());
-    expect(store.snapshot().map(r => r.projectId)).toEqual([ids[0], ids[1], ids[2]]);
+    expect(purged).toEqual([]);
+    expect(store.snapshot().map(r => r.projectId)).toEqual(ids);
     expect(out.skips[ids[2]!]).toBe('Add a scene doc and a voiceover to build the timeline');
     expect(store.snapshot()[0]!.built).toBe(true);
     expect(store.snapshot()[2]!.built).toBe(false);
@@ -264,17 +264,21 @@ describe('BulkRowStore — draft rows, files, and creation only at Build Timelin
     expect(row.typedName).toBe('Keep me');
   });
 
-  it('closing the modal discards every unbuilt draft and keeps built ones', async () => {
-    const { deps, purged } = fakeDeps({ cloudActive: () => false });
-    const store = new BulkRowStore(deps);
-    store.init(3);
-    const ids = store.snapshot().map(r => r.projectId);
-    await store.addFiles(ids[0]!, four()); store.setTypedName(ids[0]!, 'Real');
-    await store.buildReady(); // creates ids[0]; discards the two empty ones
-    store.addRow();
-    await store.discardUnbuilt();
-    expect(store.snapshot().map(r => r.projectId)).toEqual([ids[0]]);
-    expect(purged.length).toBe(3);
+  it('U5: drafts survive a restart — name, staged files and bundle media come back; built rows are not drafts', async () => {
+    const disk = new Map<string, string>();
+    const draftStorage = { getItem: (k: string) => disk.get(k) ?? null, setItem: (k: string, v: string) => { disk.set(k, v); }, removeItem: (k: string) => { disk.delete(k); } };
+    const { deps } = fakeDeps({ cloudActive: () => false, draftStorage });
+    const first = new BulkRowStore(deps);
+    const [a, b, c] = first.createDrafts(3);
+    await first.addFiles(a!, four()); first.setTypedName(a!, 'Built');
+    await first.addFiles(b!, [new File(['s'], 'script.txt')]); first.setTypedName(b!, 'Half');
+    await first.buildReady();
+    // "Restart": a new store over the same disk + staged rows.
+    const second = new BulkRowStore(deps);
+    await second.hydrate();
+    expect(second.snapshot().map(r => [r.projectId, r.typedName])).toEqual([[b, 'Half'], [c, '']]);
+    expect(second.snapshot()[0]!.files.map(f => f.name)).toEqual(['script.txt']);
+    expect(second.snapshot()[0]!.slots.script).toBe(true);
   });
 
   it('local engine: the voiceover is staged in the row but nothing is encoded or uploaded', async () => {

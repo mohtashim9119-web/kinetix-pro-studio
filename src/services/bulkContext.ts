@@ -25,22 +25,25 @@ import { FA_PROJECT_DEFAULT_ON, shouldPersistFaChoice } from './faGate';
 import { lookupCloudCache } from './cloudGateway';
 import { cloudTranscribeLanguage } from './cloudSyncEngine';
 
-/** Sane ceiling on one bulk creation. Operator-swappable. */
-export const BULK_MAX_PROJECTS = 25;
+/** One "Create Projects" makes one group of 2–30 rows (bulkBatch.ts). */
+export const BULK_MAX_PROJECTS = 30;
+export const BULK_MIN_PROJECTS = 2;
 
 export const BULK_COPY = {
   button: 'Bulk Projects',
   dialogTitle: 'Bulk Projects',
   quantityLabel: 'How many projects?',
-  quantityHint: (max: number): string => `1 to ${max}. Each gets its own row to fill.`,
-  quantityInvalid: (max: number): string => `Enter a whole number from 1 to ${max}.`,
+  quantityHint: (max: number, min = BULK_MIN_PROJECTS): string => `${min} to ${max}. They become one group, each project its own row to fill.`,
+  quantityInvalid: (max: number, min = BULK_MIN_PROJECTS): string => `Enter a whole number from ${min} to ${max}.`,
   create: 'Create projects',
   cancel: 'Cancel',
   modalTitle: 'Bulk Projects',
   modalIntro: 'Drop files onto a row: loose files, a folder, a zip, or one bundle zip that carries the script, scene doc, voiceover and media. Nothing uses the cloud GPU until you press Build Timeline.',
   rowDrop: 'Drop files, a folder or a zip here',
-  rowBrowseFiles: 'Add files',
-  rowBrowseFolder: 'Add folder',
+  /** Bulk UI rebuild U4 — one Upload button with a small menu. */
+  upload: 'Upload',
+  uploadFiles: 'Files & zips…',
+  uploadFolder: 'Folder…',
   /** Media is optional (Wave 3 U9 B5): an empty media chip says so instead of asking for it. */
   optional: 'Optional',
   slot: { script: 'Script', scene: 'Scene doc', voiceover: 'Voiceover', media: 'Media' },
@@ -62,21 +65,35 @@ export const BULK_COPY = {
   cancelAll: 'Cancel all',
   open: 'Open project',
   close: 'Hide',
-  closeNote: 'Hiding this drawer does not stop a batch that is already building, and the editor stays usable. Rows left empty are discarded.',
+  closeNote: 'Hiding this drawer does not stop a batch that is already building, and the editor stays usable. Nothing here is cleared unless you clear it.',
   retry: 'Retry',
   addProject: 'Add project',
   clearFinished: 'Clear finished',
   batchButton: (n: number): string => `Bulk builds (${n})`,
-  /** v1.2.2 — the dashboard's one bulk door while a batch exists. */
-  viewBatch: (n: number): string => `View batch (${n})`,
-  /** v1.2.2 — create-new, inside the drawer. */
-  newBatch: 'New batch',
-  removeProject: 'Remove project',
-  clearFiles: 'Clear files',
-  removeFile: (name: string): string => `Remove ${name}`,
+  /** Bulk UI rebuild U3 — creating lives inside the drawer, one group per create. */
+  createProjects: 'Create Projects',
+  groupsFull: (max: number): string => `Up to ${max} groups — clear one to make room`,
+  emptyDrawer: 'No bulk projects yet. Create Projects makes a group of 2 to 30 rows to fill.',
+  removeProject: 'Delete project',
+  deleteRowTitle: 'Delete this project?',
+  deleteRowBody: (name: string, created: boolean): string =>
+    `${name ? `“${name}”` : 'This row'} and all of its files will be deleted${created ? ', and the project with them' : ''}. This cannot be undone.`,
+  deleteRowConfirm: 'Delete',
+  clearFiles: 'Delete all',
+  replaceAll: 'Replace all',
+  removeFile: (name: string): string => `Delete ${name}`,
+  replaceFile: (name: string): string => `Replace ${name}`,
   filesToggle: (n: number): string => `${n} file${n === 1 ? '' : 's'}`,
   skipped: (why: string): string => `Skipped — ${why}`,
   notCloud: 'Bulk build runs on the Cloud engine (App Settings → Sync Engine).',
+  /** Bulk UI rebuild — group headers and the dashboard signal. */
+  doneCount: (done: number, total: number): string => `${done}/${total} done`,
+  ringLabel: (done: number, total: number): string => `${done} of ${total} done`,
+  failedCount: (n: number): string => `${n} failed`,
+  /** U6 — the one toast a finished row raises. It never opens anything. */
+  ready: (name: string): string => `${name} ready`,
+  collapseGroup: (name: string): string => `Collapse ${name}`,
+  expandGroup: (name: string): string => `Expand ${name}`,
 } as const;
 
 /** Why a row cannot be built yet (name + the three spine slots), or undefined. */
@@ -90,12 +107,12 @@ export function rowIncompleteReason(
   return `Add ${list} to build the timeline`;
 }
 
-/** A whole number in 1..max, else null. */
-export function parseBulkCount(raw: string, max: number = BULK_MAX_PROJECTS): number | null {
+/** A whole number in min..max, else null. */
+export function parseBulkCount(raw: string, max: number = BULK_MAX_PROJECTS, min: number = BULK_MIN_PROJECTS): number | null {
   const text = raw.trim();
   if (!/^\d+$/.test(text)) return null;
   const n = Number(text);
-  return n >= 1 && n <= max ? n : null;
+  return n >= min && n <= max ? n : null;
 }
 
 /** Nothing may start cloud work for this project unprompted. */

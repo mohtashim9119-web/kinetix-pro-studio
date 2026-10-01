@@ -7,6 +7,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { isTauri } from './tauriFfmpeg';
 import { deletedProjectIds, loadAllMetas } from './projectStore';
+import { unbuiltBulkRowIds } from './bulkBatch';
 
 export type ConsistencyFindingKind =
   | 'recordNotOnDashboard'
@@ -46,6 +47,8 @@ export async function scanStorageConsistency(): Promise<ConsistencyReport> {
   return invoke<ConsistencyReport>('storage_consistency_scan', {
     dashboardIds: loadAllMetas().map(m => m.id),
     deletedIds: [...deletedProjectIds()],
+    // 1.3.0 — unbuilt bulk rows (no record until Build Timeline) are normal.
+    pendingIds: unbuiltBulkRowIds(),
   });
 }
 

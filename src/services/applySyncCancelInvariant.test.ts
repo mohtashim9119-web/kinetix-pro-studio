@@ -134,7 +134,9 @@ describe('Group B closeout — handleApplySyncFromFiles cancel-boundary structur
     for (let i = start; i < end; i++) {
       if (/\bsetProject\(/.test(LINES[i]!)) setProjectLines.push(i + 1);
     }
-    // Exactly five: logSyncAbort's own (shared by every abort/cancel path),
+    // Exactly eight: the extracted bulk finish commit (returns before any
+    // cancel check — that path never enters the in-function abort chain),
+    // logSyncAbort's own (shared by every abort/cancel path),
     // Wave 3 U2's engine-switch transcript patch (a fresh transcript for the
     // selected host — tokens + provenance only, verified below; a cancel
     // after it leaves a transcript that is valid for this audio and host,
@@ -154,19 +156,21 @@ describe('Group B closeout — handleApplySyncFromFiles cancel-boundary structur
       setProjectLines,
       'the number of setProject calls in handleApplySyncFromFiles changed — a ' +
         'new one needs its own cancel-safety argument, not silent coverage by this file',
-    ).toHaveLength(7);
+    ).toHaveLength(8);
+
+    expect(LINES[setProjectLines[0]! - 1]).toContain('setProject(() => result.project)');
 
     // Wave 3 U2 — the engine-switch transcript patch writes the transcript and
     // its provenance, and no timeline field.
     // Wave 3 U5 — the cancel restore: only the undo of the transcript patch.
-    const restoreLine = setProjectLines[1]!;
+    const restoreLine = setProjectLines[2]!;
     expect(LINES[restoreLine - 1]).toContain('setProject(p => ({ ...p, ...undo }))');
     const restoreBody = LINES.slice(restoreLine - 6, restoreLine).join('\n');
     expect(restoreBody).toContain('if (transcriptPatchUndo) {');
     const undoBuild = LINES.findIndex(l => l.includes('for (const key of Object.keys(patch) as (keyof Project)[]) {'));
     expect(undoBuild, 'the undo must be built from the patch\'s own keys').toBeGreaterThan(0);
 
-    const transcriptPatchLine = setProjectLines[2]!;
+    const transcriptPatchLine = setProjectLines[3]!;
     const patchStart = LINES.findIndex(l => l.includes('const patch: Partial<Project> = {'));
     expect(patchStart + 1, 'engine-switch transcript patch not found').toBeGreaterThan(0);
     expect(patchStart + 1).toBeLessThan(transcriptPatchLine);
@@ -178,7 +182,7 @@ describe('Group B closeout — handleApplySyncFromFiles cancel-boundary structur
     expect(patchBody).not.toMatch(/voiceoverId\s*:/);
 
     // Wave 3 U4 — the re-transcription pause: log append only.
-    const retranscribePauseLine = setProjectLines[3]!;
+    const retranscribePauseLine = setProjectLines[4]!;
     const retranscribePauseBody = LINES.slice(retranscribePauseLine - 1, retranscribePauseLine + 12).join('\n');
     expect(retranscribePauseBody).toContain('appendSyncLogEntries(');
     expect(retranscribePauseBody).toContain("abortReason: 'fa-paused'");
@@ -189,14 +193,14 @@ describe('Group B closeout — handleApplySyncFromFiles cancel-boundary structur
     // The victim-pause branch's setProject call: same appendSyncLogEntries-only
     // shape as the pre-existing 'paused' branch — no segments/assets/voiceoverId
     // field, just the shared log-append helper.
-    const victimPauseLine = setProjectLines[5]!;
+    const victimPauseLine = setProjectLines[6]!;
     const victimPauseBody = LINES.slice(victimPauseLine - 1, victimPauseLine + 12).join('\n');
     expect(victimPauseBody).toContain('appendSyncLogEntries(');
     expect(victimPauseBody).not.toMatch(/segments\s*:/);
     expect(victimPauseBody).not.toMatch(/\bassets\s*:/);
     expect(victimPauseBody).not.toMatch(/voiceoverId\s*:/);
 
-    const realCommit = setProjectLines[6]!;
+    const realCommit = setProjectLines[7]!;
     const commitCheck = lineNumbersOf('if (syncAbortController.signal.aborted) return cancelledResult(lockRestoredSegments.length);')[0]!;
     expect(
       realCommit,

@@ -138,28 +138,17 @@ describe('row 2 finish — active', () => {
   async function finishRow(language: string | undefined): Promise<{ ok: boolean; message?: string; forced: boolean }> {
     cacheHit('en');
     let forced = false;
-    let tokens: TranscriptToken[] = [];
-    let hash: string | undefined;
     const result = await runBulkProjectFinish('row-2', {
-      switchProject: async () => {},
-      adoptCachedTranscript: async () => {
+      finish: async () => {
         const found = await lookupBatchTranscript('hash', language);
-        if (!found) return false;
-        tokens = found.tokens;
-        hash = 'hash';
-        return true;
+        if (!found) { forced = true; }
+        return { ok: true };
       },
-      forceStartTranscription: async () => { forced = true; tokens = TOKENS; hash = 'hash'; },
-      readReady: () => ({
-        projectId: 'row-2', ready: tokens.length > 0 && hash === 'hash', built: false, why: tokens.length ? '' : 'its transcript is not ready',
-      }),
-      applySync: async () => ({ ok: true }),
-      saveNow: async () => {},
-    }, 1_000);
+    });
     return { ...result, forced };
   }
 
-  it('adopts the cached transcript and builds inside the window', async () => {
+  it('adopts the cached transcript and builds without opening the editor', async () => {
     const result = await finishRow('en');
     expect(result.ok).toBe(true);
     expect(result.forced).toBe(false);
@@ -170,13 +159,12 @@ describe('row 2 finish — active', () => {
     vi.mocked(invoke).mockResolvedValue({ cached: false, audioPresent: true, audioDurationSec: 1 });
     let forced = false;
     const result = await runBulkProjectFinish('row-2', {
-      switchProject: async () => {},
-      adoptCachedTranscript: async () => false,
-      forceStartTranscription: async () => { forced = true; },
-      readReady: () => ({ projectId: 'row-2', ready: forced, built: false, why: forced ? '' : 'its transcript is not ready' }),
-      applySync: async () => ({ ok: true }),
-      saveNow: async () => {},
-    }, 1_000);
+      finish: async () => {
+        const found = await lookupBatchTranscript('hash', 'en');
+        if (!found) forced = true;
+        return { ok: true };
+      },
+    });
     expect(forced).toBe(true);
     expect(result.ok).toBe(true);
   });
@@ -207,23 +195,12 @@ describe('v1.2.2 — finishing never fights the operator', () => {
     expect(isOperatorActivelyEditing({ editorOpen: false, syncRunning: true, msSinceInput: 0 })).toBe(false);
   });
 
-  it('yields (deferred) as soon as the operator navigates — before the switch, while waiting, or before Build Timeline', async () => {
-    for (const at of [0, 1, 2]) {
-      let checks = 0;
-      const applySync = vi.fn(async () => ({ ok: true }));
-      const switchProject = vi.fn(async () => undefined);
-      const result = await runBulkProjectFinish('p', {
-        switchProject,
-        adoptCachedTranscript: async () => true,
-        forceStartTranscription: async () => undefined,
-        readReady: () => ({ projectId: 'p', ready: true, built: false, why: '' }),
-        applySync,
-        saveNow: async () => undefined,
-        shouldYield: () => checks++ >= at,
-      });
-      expect(result, `yield point ${at}`).toEqual({ ok: false, deferred: true });
-      expect(applySync).not.toHaveBeenCalled();
-      expect(switchProject).toHaveBeenCalledTimes(at === 0 ? 0 : 1);
-    }
+  it('background finish never switches the live project', async () => {
+    const switchProject = vi.fn();
+    const result = await runBulkProjectFinish('p', {
+      finish: async () => ({ ok: true }),
+    });
+    expect(result).toEqual({ ok: true });
+    expect(switchProject).not.toHaveBeenCalled();
   });
 });

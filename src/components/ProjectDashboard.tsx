@@ -1,19 +1,16 @@
 import React, { useEffect, useState, useRef, useCallback, useSyncExternalStore } from 'react';
 import { Plus, Trash2, Search, Check, Loader2, Settings, ChevronDown, Play, Image as ImageIcon } from 'lucide-react';
 import type { ProjectMeta } from '../types';
-import { loadAllMetas, loadProject, deleteProjectData } from '../services/projectStore';
-import { deleteAllStagedForProject } from '../services/stagedFilesStore';
-import { deleteAllAssets } from '../services/assetStore';
-import { deleteProjectAssetsNativeStrict } from '../services/nativeAssetStore';
-import { deleteAllWaveforms } from '../services/waveformStore';
-import { mediaVaultUnreference, mediaVaultUnreferenceProject } from '../services/mediaVaultClient';
+import { loadAllMetas } from '../services/projectStore';
+import { deleteProjectEverywhere } from '../services/projectDelete';
 import { isTauri } from '../services/tauriFfmpeg';
 import { readSyncEngineHost, onSyncEngineHostChange, type SyncEngineHost } from '../services/syncEngineHost';
 import { bulkBatchRunner, queueProjectsForCloudSync } from '../services/bulkSyncQueue';
 import type { CloudQueueDeps } from '../services/cloudQueueJob';
 import { SyncQueuePanel } from './SyncQueuePanel';
-import { BulkCountDialog } from './BulkProjectsModal';
 import { BULK_COPY } from '../services/bulkContext';
+import { batchProgress } from '../services/bulkBatch';
+import { FailedDot, ProgressRing } from './BulkProgress';
 import { Z } from './overlayLayers';
 import './ProjectDashboard.css';
 
@@ -62,11 +59,12 @@ interface Props {
    */
   parseProjectData?: CloudQueueDeps['parseProjectData'];
   /**
-   * Wave 3 U7.5 — "Bulk Projects" asked for N rows. Nothing is created yet:
-   * App hosts the rows modal (it must outlive the dashboard while timelines are
-   * finished in the editor) and projects appear here when Build Timeline runs.
+   * Bulk UI rebuild U3 — opens the bulk drawer. That is ALL the dashboard's
+   * bulk button does: it never asks a number (creating lives in the drawer).
+   * App hosts the drawer (it must outlive the dashboard while timelines are
+   * finished in the editor). A bulk project shows here only once it is built.
    */
-  onBulkStart?: (count: number) => void;
+  onBulkOpen?: () => void;
   /** Bumped by App when projects were created/removed behind the dashboard. */
   metasVersion?: number;
   /** The rows modal is open: the queue is shown there, not here too. */
@@ -95,7 +93,7 @@ export function ProjectDashboard({
   onOpenAppSettings,
   onAssetCleanupFailed,
   parseProjectData,
-  onBulkStart,
+  onBulkOpen,
   metasVersion = 0,
   bulkOpen = false,
   onProjectsDeleted,
@@ -107,11 +105,11 @@ export function ProjectDashboard({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [showBulkConfirm, setShowBulkConfirm] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
-  // Wave 3 U7.5 — Bulk Projects: the "how many?" step, then the rows modal.
-  const [bulkAsking, setBulkAsking] = useState(false);
   // The persistent batch: reachable from here until it is cleared, even after a reload.
   const batch = bulkBatchRunner(parseProjectData);
   const batchRows = useSyncExternalStore(l => batch.subscribe(l), () => batch.snapshot());
+  const batchGroups = useSyncExternalStore(l => batch.subscribe(l), () => batch.groups());
+  const bulkSignal = batchProgress(batchGroups, batchRows);
   const [storage, setStorage] = useState<{ usage: number; quota: number } | null>(null);
 
   const searchRef = useRef<HTMLInputElement>(null);
@@ -119,13 +117,16 @@ export function ProjectDashboard({
   /** Ids that were absent last time this process rendered the grid. */
   const enteringIds = useRef<Set<string>>(new Set());
 
+  // Re-read the grid when the background pipeline makes a row ready: its
+  // record was just saved with the built timeline (scene count, date).
+  const readyKey = batchRows.filter(r => r.phase === 'done').map(r => r.id).join('|');
   useEffect(() => {
     const data = loadAllMetas();
     data.sort((a, b) => (b.savedAt ?? 0) - (a.savedAt ?? 0));
     enteringIds.current = new Set(data.filter(m => !seenProjectIds.has(m.id)).map(m => m.id));
     data.forEach(m => seenProjectIds.add(m.id));
     setMetas(data);
-  }, [metasVersion]);
+  }, [metasVersion, readyKey]);
 
   useEffect(() => {
     void navigator.storage?.estimate?.().then(({ usage, quota }) => {
@@ -155,6 +156,9 @@ export function ProjectDashboard({
     return () => window.removeEventListener('keydown', handler);
   }, []);
 
+  // 1.3.0 — an unbuilt bulk row is a drawer draft with no project record, so
+  // it never reaches this grid; Build Timeline creates the record and that is
+  // what flips the row onto it.
   const filtered = metas.filter(m => m.name.toLowerCase().includes(search.trim().toLowerCase()));
   const visibleIds = filtered.map(m => m.id);
   const allVisibleSelected = visibleIds.length > 0 && visibleIds.every(id => selectedIds.has(id));
@@ -188,40 +192,7 @@ export function ProjectDashboard({
     // bytes may remain on disk, which the user is now told rather than
     // never finding out.
     const cleanupFailures: string[] = [];
-    // Each cleanup step is independent and bounded: one that throws or hangs
-    // (a stuck IndexedDB, a native call) must never keep the project record
-    // alive — that was how deleted projects came back after a reload.
-    const step = async (label: string, id: string, work: () => Promise<unknown>): Promise<void> => {
-      try {
-        await Promise.race([
-          work(),
-          new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timed out')), 10_000)),
-        ]);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        cleanupFailures.push(`${id}: ${label}: ${message}`);
-        console.error(`[ProjectDashboard] ${label} FAILED for deleted project ${id}:`, message);
-      }
-    };
-    for (const id of ids) {
-      // G6 Step 6 — read the project's assets BEFORE any deletion, so the
-      // media-vault reference it holds on each contentHash can be dropped.
-      const loaded = await loadProject(id).catch(() => null);
-      const contentHashes = new Set(
-        (loaded?.project.assets ?? []).map(a => a.contentHash).filter((h): h is string => !!h),
-      );
-
-      // The record and registry entry FIRST: this is what "deleted" means to the user.
-      await step('project record removal', id, () => deleteProjectData(id));
-      await step('asset cleanup', id, () => deleteAllAssets(id));
-      await step('waveform cleanup', id, () => deleteAllWaveforms(id));
-      // WS2-50 — a deleted project's staged slots go with it.
-      await step('staged files cleanup', id, () => deleteAllStagedForProject(id));
-      await step('native asset cleanup', id, () => deleteProjectAssetsNativeStrict(id));
-      await step('media vault cleanup', id, () => Promise.all(Array.from(contentHashes, hash => mediaVaultUnreference(hash, id))));
-      // Then everything else the vault still credits to this id (refs the record never listed).
-      await step('media vault cleanup (all refs)', id, () => mediaVaultUnreferenceProject(id));
-    }
+    for (const id of ids) cleanupFailures.push(...await deleteProjectEverywhere(id));
     // A deleted project leaves the persistent bulk batch too.
     bulkBatchRunner(parseProjectData).forget(ids);
     onProjectsDeleted?.(ids);
@@ -266,16 +237,19 @@ export function ProjectDashboard({
         </div>
 
         <div className="kxd-actions">
-          {/* v1.2.2 — ONE bulk door. With a batch it opens THAT batch (a
-              mid-run reopen must never ask for a new quantity); creating a
-              new batch lives inside the drawer. With none, it creates. */}
-          {onBulkStart && batchRows.length > 0 ? (
-            <button className="kxd-btn kxd-btn-quiet" data-testid="dashboard-bulk-batch" onClick={() => onBulkStart(0)}>
-              {BULK_COPY.viewBatch(batchRows.length)}
-            </button>
-          ) : onBulkStart && parseProjectData && (
-            <button className="kxd-btn kxd-btn-quiet" data-testid="dashboard-bulk-projects" onClick={() => setBulkAsking(true)}>
+          {/* Bulk UI rebuild U3 — ONE bulk door, and it only ever opens the
+              drawer. It never asks a number: creating lives in the drawer. */}
+          {onBulkOpen && parseProjectData && (
+            <button className="kxd-btn kxd-btn-quiet" data-testid="dashboard-bulk" onClick={onBulkOpen}>
               {BULK_COPY.button}
+              {/* U6 — the batch at a glance: a ring + n/m while running, a red dot when any row failed. */}
+              {bulkSignal.running && (
+                <span className="ml-2 inline-flex items-center gap-1 align-middle">
+                  <ProgressRing done={bulkSignal.done} total={bulkSignal.total} size={14} />
+                  <span data-testid="dashboard-bulk-count" className="text-[11px] tabular-nums">{`${bulkSignal.done}/${bulkSignal.total}`}</span>
+                </span>
+              )}
+              {bulkSignal.failed > 0 && <span className="ml-1.5 inline-flex align-middle"><FailedDot count={bulkSignal.failed} /></span>}
             </button>
           )}
           <button className="kxd-btn kxd-btn-accent" onClick={onNewProject}>
@@ -505,12 +479,6 @@ export function ProjectDashboard({
         </div>
       </main>
 
-      {bulkAsking && (
-        <BulkCountDialog
-          onCancel={() => setBulkAsking(false)}
-          onConfirm={count => { setBulkAsking(false); onBulkStart?.(count); }}
-        />
-      )}
 
       {showBulkConfirm && (
         <div className="kxd-dialog-scrim">

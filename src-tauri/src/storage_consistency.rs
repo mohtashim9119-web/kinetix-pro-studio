@@ -171,8 +171,22 @@ pub fn scan_consistency(
     dashboard_ids: &[String],
     deleted_ids: &[String],
 ) -> Result<ConsistencyReport, String> {
+    scan_consistency_with_pending(root, dashboard_ids, deleted_ids, &[])
+}
+
+/// As `scan_consistency`, plus `pending_ids`: bulk rows that are not built yet
+/// (no project record until Build Timeline). Their staged media and vault refs
+/// under that id are a normal unbuilt row, not leftover data. A tombstoned id
+/// is never excused.
+pub fn scan_consistency_with_pending(
+    root: &Path,
+    dashboard_ids: &[String],
+    deleted_ids: &[String],
+    pending_ids: &[String],
+) -> Result<ConsistencyReport, String> {
     let dashboard: HashSet<&str> = dashboard_ids.iter().map(String::as_str).collect();
     let deleted: HashSet<&str> = deleted_ids.iter().map(String::as_str).collect();
+    let pending: HashSet<&str> = pending_ids.iter().map(String::as_str).collect();
 
     let store_dir = projects_dir(root);
     let assets = assets_dir(root);
@@ -248,6 +262,9 @@ pub fn scan_consistency(
         let has_record = record_path.is_file();
         let on_dashboard = dashboard.contains(id.as_str());
         let tombstoned = deleted.contains(id.as_str());
+        if !has_record && !on_dashboard && !tombstoned && pending.contains(id.as_str()) {
+            continue;
+        }
 
         let mut paths: Vec<FindingPath> = Vec::new();
         let kind = if has_record && !on_dashboard {
@@ -318,10 +335,14 @@ pub async fn storage_consistency_scan(
     app: tauri::AppHandle,
     dashboard_ids: Vec<String>,
     deleted_ids: Vec<String>,
+    pending_ids: Option<Vec<String>>,
 ) -> Result<ConsistencyReport, String> {
     let root = crate::storage_root::resolve_storage_root(&app)?;
+    let pending_ids = pending_ids.unwrap_or_default();
     // Walks asset trees (thousands of files): off the async executor thread.
-    tauri::async_runtime::spawn_blocking(move || scan_consistency(&root, &dashboard_ids, &deleted_ids))
+    tauri::async_runtime::spawn_blocking(move || {
+        scan_consistency_with_pending(&root, &dashboard_ids, &deleted_ids, &pending_ids)
+    })
         .await
         .map_err(|e| format!("consistency scan task failed: {e}"))?
 }
@@ -421,6 +442,36 @@ mod tests {
         let roles: Vec<_> = f.paths.iter().map(|p| p.role).collect();
         assert!(roles.contains(&"assets") && roles.contains(&"mirrorRecord") && roles.contains(&"vaultRefs"));
         assert_eq!(f.paths.iter().find(|p| p.role == "vaultRefs").unwrap().bytes, 700);
+        fs::remove_dir_all(&d).ok();
+    }
+
+    #[test]
+    fn an_unbuilt_bulk_row_is_normal_not_an_orphan() {
+        // A bulk draft row: its bundle media and vault refs are on disk under
+        // its id, but no project record exists until Build Timeline.
+        let d = tmp("bulk-draft");
+        put(&assets_dir(&d).join("eeee5555").join("m.bin"), &[1u8; 40]);
+        put(
+            &d.join("media-vault").join("registry.json"),
+            b"{\"entries\":{\"h1\":{\"contentHash\":\"h1\",\"displayName\":\"a\",\"mimeType\":\"x\",\"sizeBytes\":40,\"addedAtMs\":1,\"referencedByProjectIds\":[\"eeee5555\"]}}}",
+        );
+        put(&d.join("media-vault").join("h1.bin"), &[1u8; 40]);
+        // Without the bulk ids it reads as leftover data...
+        let before = scan_consistency(&d, &[], &[]).unwrap();
+        assert_eq!(finding_for(&before, "eeee5555").unwrap().kind, FindingKind::DataWithoutRecord);
+        // ...with them it is a normal, unbuilt row.
+        let r = scan_consistency_with_pending(&d, &[], &[], &ids(&["eeee5555"])).unwrap();
+        assert!(finding_for(&r, "eeee5555").is_none(), "{:?}", r.findings);
+        assert!(r.findings.is_empty(), "{:?}", r.findings);
+        fs::remove_dir_all(&d).ok();
+    }
+
+    #[test]
+    fn a_pending_id_never_hides_a_deleted_projects_residue() {
+        let d = tmp("bulk-deleted");
+        put(&assets_dir(&d).join("ffff6666").join("m.bin"), &[1u8; 10]);
+        let r = scan_consistency_with_pending(&d, &[], &ids(&["ffff6666"]), &ids(&["ffff6666"])).unwrap();
+        assert_eq!(finding_for(&r, "ffff6666").unwrap().kind, FindingKind::DataWithoutRecord);
         fs::remove_dir_all(&d).ok();
     }
 

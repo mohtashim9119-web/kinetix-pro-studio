@@ -39,6 +39,7 @@ import { deleteStagedFile, putStagedFile } from './stagedFilesStore';
 import { computeAudioHash } from './spine';
 import { BUILD_TIMELINE_COPY, missingSpineSlots, type BuildTimelineSlots } from './buildTimelineGate';
 import { rowIncompleteReason } from './bulkContext';
+import { BULK_DRAFTS_KEY as DRAFTS_KEY } from './bulkBatch';
 
 export type BulkAudioState = 'none' | 'preparing' | 'ready' | 'failed' | 'local';
 
@@ -79,7 +80,12 @@ export interface BulkRowDeps {
   cloudActive: () => boolean;
   stageAudio: (file: File, audioHash: string, durationSec: number) => Promise<unknown>;
   ingestBundle: typeof classifyAndIngestBundleZip;
+  /** Bulk UI rebuild U5 — where drafts (name + bundle media; their files are
+   *  the staged rows) survive a restart. Absent: this session only. */
+  draftStorage?: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
 }
+
+interface StoredDraft { id: string; typedName: string; bundle: Asset[] }
 
 /** Duration is probed once per audio content (it crosses IPC as the whole
  *  file); the eager prep and the job share this memo. */
@@ -126,6 +132,7 @@ export const defaultBulkRowDeps = async (makeBlankProject: () => Project): Promi
     cloudActive: () => tauri.isTauri() && host.readSyncEngineHost() === 'cloud',
     stageAudio: (file, hash, durationSec) => engine.stageCloudAudioOnly(file, hash, { durationSec }),
     ingestBundle: classifyAndIngestBundleZip,
+    draftStorage: typeof localStorage !== 'undefined' ? localStorage : undefined,
   };
 };
 
@@ -251,7 +258,43 @@ export class BulkRowStore {
   snapshot(): readonly BulkRowState[] { return this.view; }
   private emit(): void {
     this.view = this.order.map(id => ({ ...this.rows.get(id)! }));
+    this.persistDrafts();
     for (const l of this.listeners) l();
+  }
+
+  private persistDrafts(): void {
+    const storage = this.deps.draftStorage;
+    if (!storage) return;
+    const drafts: StoredDraft[] = this.order
+      .map(id => this.rows.get(id)!)
+      .filter(r => !r.built)
+      .map(r => ({ id: r.projectId, typedName: r.typedName, bundle: this.bundle.get(r.projectId) ?? [] }));
+    try {
+      if (drafts.length === 0) storage.removeItem(DRAFTS_KEY);
+      else storage.setItem(DRAFTS_KEY, JSON.stringify({ drafts }));
+    } catch { /* storage unavailable: still works this session */ }
+  }
+
+  /** App start: every draft comes back with its name and its staged files.
+   *  Nothing ever clears by itself. */
+  async hydrate(): Promise<void> {
+    let drafts: StoredDraft[] = [];
+    try {
+      const raw = this.deps.draftStorage?.getItem(DRAFTS_KEY);
+      const parsed = raw ? JSON.parse(raw) as { drafts?: StoredDraft[] } : null;
+      if (Array.isArray(parsed?.drafts)) drafts = parsed!.drafts.filter(d => d && typeof d.id === 'string');
+    } catch { drafts = []; }
+    for (const d of drafts) {
+      if (this.rows.has(d.id)) continue;
+      this.rows.set(d.id, { ...this.blankRow(d.id), typedName: String(d.typedName ?? '') });
+      this.order.push(d.id);
+      if (Array.isArray(d.bundle) && d.bundle.length > 0) this.bundle.set(d.id, d.bundle);
+    }
+    this.emit();
+    for (const d of drafts) {
+      const st = (await this.deps.loadStaged(d.id).catch(() => null)) ?? EMPTY_STAGED;
+      this.refresh(d.id, st, { audio: st.voiceoverFile ? { state: this.deps.cloudActive() ? 'ready' : 'local' } : { state: 'none' } });
+    }
   }
   private patch(id: string, change: Partial<BulkRowState>): void {
     const row = this.rows.get(id);
@@ -306,6 +349,14 @@ export class BulkRowStore {
       }
     }
     if (changed) this.emit();
+  }
+
+  /** "Create Projects": n empty draft rows (one new group). */
+  createDrafts(n: number): string[] {
+    const ids: string[] = [];
+    for (let i = 0; i < n && this.canAddRow(); i += 1) ids.push(this.pushRow());
+    if (ids.length > 0) this.emit();
+    return ids;
   }
 
   /** "Add project": one more empty draft row. */
@@ -393,6 +444,37 @@ export class BulkRowStore {
     this.refresh(id, next, extra);
   }
 
+  /** Replaces one file. A slot file (script / scene doc / voiceover) stays in
+   *  ITS slot whatever the new file looks like; a media file is swapped. */
+  async replaceFile(id: string, fileId: string, file: File): Promise<void> {
+    const row = this.rows.get(id);
+    if (!row || row.built) return;
+    const slot = fileId === 'script' ? 'scriptFile' : fileId === 'scene' ? 'sceneFile' : fileId === 'voiceover' ? 'voiceoverFile' : null;
+    if (!slot) {
+      await this.removeFile(id, fileId);
+      await this.addFiles(id, [file]);
+      return;
+    }
+    const prev = (await this.deps.loadStaged(id)) ?? EMPTY_STAGED;
+    const next: StagedFiles = { ...prev, [slot]: staged(file) };
+    await this.deps.writeStaged(id, prev, next);
+    const extra: Partial<BulkRowState> = { notes: [] };
+    if (slot === 'voiceoverFile') {
+      this.audioToken.set(id, (this.audioToken.get(id) ?? 0) + 1);
+      extra.audio = { state: this.deps.cloudActive() ? 'preparing' : 'local' };
+    }
+    this.refresh(id, next, extra);
+    if (slot === 'voiceoverFile' && this.deps.cloudActive()) void this.prepareAudio(id, file);
+  }
+
+  /** Replace all: the row's files become exactly this new set. */
+  async replaceAll(id: string, files: readonly File[]): Promise<void> {
+    const row = this.rows.get(id);
+    if (!row || row.built || files.length === 0) return;
+    await this.clearFiles(id);
+    await this.addFiles(id, files);
+  }
+
   /** Clears every file of a row, keeping the row and its name. */
   async clearFiles(id: string): Promise<void> {
     const row = this.rows.get(id);
@@ -413,15 +495,19 @@ export class BulkRowStore {
     this.emit();
   }
 
-  /** Closing the modal: drafts that never became projects leave nothing behind. */
-  async discardUnbuilt(): Promise<void> {
-    for (const id of [...this.order]) if (!this.rows.get(id)!.built) await this.discardRow(id);
+  /** A built row whose project was deleted elsewhere: drop it from view. */
+  forgetRow(id: string): void {
+    if (!this.rows.has(id)) return;
+    this.rows.delete(id);
+    this.bundle.delete(id);
+    this.order = this.order.filter(x => x !== id);
+    this.emit();
   }
 
   /**
-   * Build Timeline: create the projects that are real (named, spine slots) and
-   * discard the empty drafts. A half-filled row is neither: it stays a draft,
-   * with the reason it was left out.
+   * Build Timeline: create the projects that are real (named, spine slots).
+   * Every other row stays a draft — an empty one quietly, a half-filled one
+   * with the reason it was left out. Nothing is discarded by itself.
    */
   async buildReady(): Promise<{ created: { id: string; name: string }[]; skips: Record<string, string> }> {
     const created: { id: string; name: string }[] = [];
@@ -430,7 +516,7 @@ export class BulkRowStore {
       const r = this.rows.get(id)!;
       if (r.built) continue;
       const empty = r.files.length === 0 && r.typedName.trim() === '';
-      if (empty) { await this.discardRow(id); continue; }
+      if (empty) continue;
       const missing = missingSpineSlots(r.slots).map(slot => BUILD_TIMELINE_COPY.slotNames[slot]);
       const why = rowIncompleteReason(r.typedName, missing);
       if (why) { skips[id] = why; continue; }
