@@ -79,7 +79,13 @@ export interface BulkRowDeps {
   cloudActive: () => boolean;
   stageAudio: (file: File, audioHash: string, durationSec: number) => Promise<unknown>;
   ingestBundle: typeof classifyAndIngestBundleZip;
+  /** Bulk UI rebuild U5 — where drafts (name + bundle media; their files are
+   *  the staged rows) survive a restart. Absent: this session only. */
+  draftStorage?: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
 }
+
+const DRAFTS_KEY = 'kinetix:bulk-drafts:v1';
+interface StoredDraft { id: string; typedName: string; bundle: Asset[] }
 
 /** Duration is probed once per audio content (it crosses IPC as the whole
  *  file); the eager prep and the job share this memo. */
@@ -126,6 +132,7 @@ export const defaultBulkRowDeps = async (makeBlankProject: () => Project): Promi
     cloudActive: () => tauri.isTauri() && host.readSyncEngineHost() === 'cloud',
     stageAudio: (file, hash, durationSec) => engine.stageCloudAudioOnly(file, hash, { durationSec }),
     ingestBundle: classifyAndIngestBundleZip,
+    draftStorage: typeof localStorage !== 'undefined' ? localStorage : undefined,
   };
 };
 
@@ -251,7 +258,43 @@ export class BulkRowStore {
   snapshot(): readonly BulkRowState[] { return this.view; }
   private emit(): void {
     this.view = this.order.map(id => ({ ...this.rows.get(id)! }));
+    this.persistDrafts();
     for (const l of this.listeners) l();
+  }
+
+  private persistDrafts(): void {
+    const storage = this.deps.draftStorage;
+    if (!storage) return;
+    const drafts: StoredDraft[] = this.order
+      .map(id => this.rows.get(id)!)
+      .filter(r => !r.built)
+      .map(r => ({ id: r.projectId, typedName: r.typedName, bundle: this.bundle.get(r.projectId) ?? [] }));
+    try {
+      if (drafts.length === 0) storage.removeItem(DRAFTS_KEY);
+      else storage.setItem(DRAFTS_KEY, JSON.stringify({ drafts }));
+    } catch { /* storage unavailable: still works this session */ }
+  }
+
+  /** App start: every draft comes back with its name and its staged files.
+   *  Nothing ever clears by itself. */
+  async hydrate(): Promise<void> {
+    let drafts: StoredDraft[] = [];
+    try {
+      const raw = this.deps.draftStorage?.getItem(DRAFTS_KEY);
+      const parsed = raw ? JSON.parse(raw) as { drafts?: StoredDraft[] } : null;
+      if (Array.isArray(parsed?.drafts)) drafts = parsed!.drafts.filter(d => d && typeof d.id === 'string');
+    } catch { drafts = []; }
+    for (const d of drafts) {
+      if (this.rows.has(d.id)) continue;
+      this.rows.set(d.id, { ...this.blankRow(d.id), typedName: String(d.typedName ?? '') });
+      this.order.push(d.id);
+      if (Array.isArray(d.bundle) && d.bundle.length > 0) this.bundle.set(d.id, d.bundle);
+    }
+    this.emit();
+    for (const d of drafts) {
+      const st = (await this.deps.loadStaged(d.id).catch(() => null)) ?? EMPTY_STAGED;
+      this.refresh(d.id, st, { audio: st.voiceoverFile ? { state: this.deps.cloudActive() ? 'ready' : 'local' } : { state: 'none' } });
+    }
   }
   private patch(id: string, change: Partial<BulkRowState>): void {
     const row = this.rows.get(id);
@@ -452,15 +495,19 @@ export class BulkRowStore {
     this.emit();
   }
 
-  /** Closing the modal: drafts that never became projects leave nothing behind. */
-  async discardUnbuilt(): Promise<void> {
-    for (const id of [...this.order]) if (!this.rows.get(id)!.built) await this.discardRow(id);
+  /** A built row whose project was deleted elsewhere: drop it from view. */
+  forgetRow(id: string): void {
+    if (!this.rows.has(id)) return;
+    this.rows.delete(id);
+    this.bundle.delete(id);
+    this.order = this.order.filter(x => x !== id);
+    this.emit();
   }
 
   /**
-   * Build Timeline: create the projects that are real (named, spine slots) and
-   * discard the empty drafts. A half-filled row is neither: it stays a draft,
-   * with the reason it was left out.
+   * Build Timeline: create the projects that are real (named, spine slots).
+   * Every other row stays a draft — an empty one quietly, a half-filled one
+   * with the reason it was left out. Nothing is discarded by itself.
    */
   async buildReady(): Promise<{ created: { id: string; name: string }[]; skips: Record<string, string> }> {
     const created: { id: string; name: string }[] = [];
@@ -469,7 +516,7 @@ export class BulkRowStore {
       const r = this.rows.get(id)!;
       if (r.built) continue;
       const empty = r.files.length === 0 && r.typedName.trim() === '';
-      if (empty) { await this.discardRow(id); continue; }
+      if (empty) continue;
       const missing = missingSpineSlots(r.slots).map(slot => BUILD_TIMELINE_COPY.slotNames[slot]);
       const why = rowIncompleteReason(r.typedName, missing);
       if (why) { skips[id] = why; continue; }

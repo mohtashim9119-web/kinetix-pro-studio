@@ -1,12 +1,8 @@
 import React, { useEffect, useState, useRef, useCallback, useSyncExternalStore } from 'react';
 import { Plus, Trash2, Search, Check, Loader2, Settings, ChevronDown, Play, Image as ImageIcon } from 'lucide-react';
 import type { ProjectMeta } from '../types';
-import { loadAllMetas, loadProject, deleteProjectData } from '../services/projectStore';
-import { deleteAllStagedForProject } from '../services/stagedFilesStore';
-import { deleteAllAssets } from '../services/assetStore';
-import { deleteProjectAssetsNativeStrict } from '../services/nativeAssetStore';
-import { deleteAllWaveforms } from '../services/waveformStore';
-import { mediaVaultUnreference, mediaVaultUnreferenceProject } from '../services/mediaVaultClient';
+import { loadAllMetas } from '../services/projectStore';
+import { deleteProjectEverywhere } from '../services/projectDelete';
 import { isTauri } from '../services/tauriFfmpeg';
 import { readSyncEngineHost, onSyncEngineHostChange, type SyncEngineHost } from '../services/syncEngineHost';
 import { bulkBatchRunner, queueProjectsForCloudSync } from '../services/bulkSyncQueue';
@@ -189,40 +185,7 @@ export function ProjectDashboard({
     // bytes may remain on disk, which the user is now told rather than
     // never finding out.
     const cleanupFailures: string[] = [];
-    // Each cleanup step is independent and bounded: one that throws or hangs
-    // (a stuck IndexedDB, a native call) must never keep the project record
-    // alive — that was how deleted projects came back after a reload.
-    const step = async (label: string, id: string, work: () => Promise<unknown>): Promise<void> => {
-      try {
-        await Promise.race([
-          work(),
-          new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timed out')), 10_000)),
-        ]);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        cleanupFailures.push(`${id}: ${label}: ${message}`);
-        console.error(`[ProjectDashboard] ${label} FAILED for deleted project ${id}:`, message);
-      }
-    };
-    for (const id of ids) {
-      // G6 Step 6 — read the project's assets BEFORE any deletion, so the
-      // media-vault reference it holds on each contentHash can be dropped.
-      const loaded = await loadProject(id).catch(() => null);
-      const contentHashes = new Set(
-        (loaded?.project.assets ?? []).map(a => a.contentHash).filter((h): h is string => !!h),
-      );
-
-      // The record and registry entry FIRST: this is what "deleted" means to the user.
-      await step('project record removal', id, () => deleteProjectData(id));
-      await step('asset cleanup', id, () => deleteAllAssets(id));
-      await step('waveform cleanup', id, () => deleteAllWaveforms(id));
-      // WS2-50 — a deleted project's staged slots go with it.
-      await step('staged files cleanup', id, () => deleteAllStagedForProject(id));
-      await step('native asset cleanup', id, () => deleteProjectAssetsNativeStrict(id));
-      await step('media vault cleanup', id, () => Promise.all(Array.from(contentHashes, hash => mediaVaultUnreference(hash, id))));
-      // Then everything else the vault still credits to this id (refs the record never listed).
-      await step('media vault cleanup (all refs)', id, () => mediaVaultUnreferenceProject(id));
-    }
+    for (const id of ids) cleanupFailures.push(...await deleteProjectEverywhere(id));
     // A deleted project leaves the persistent bulk batch too.
     bulkBatchRunner(parseProjectData).forget(ids);
     onProjectsDeleted?.(ids);

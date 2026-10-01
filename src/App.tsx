@@ -8573,6 +8573,14 @@ export default function App() {
   // Wave 3 U7.8 — the batch is a persistent background job (bulkBatch.ts):
   // App gives it the editor-side finish, and on boot it picks up where it stopped.
   useEffect(() => { bulkBatchRunner(parseProjectData).setFinalizer(finalizeBulkProject); }, [finalizeBulkProject]);
+  // The editor may still hold a project just deleted (the dashboard's delete,
+  // or a bulk row's): drop it, so it cannot be written back or resumed.
+  const dropDeletedFromEditor = (ids: string[]): void => {
+    if (!ids.includes(project.id)) return;
+    setProjectSilent(makeDefaultProject());
+    setHistory(emptyHistory<Project>());
+    clearLastOpenedProjectId();
+  };
   const bulkResumed = useRef(false);
   useEffect(() => {
     if (isHydrating || bulkResumed.current) return;
@@ -8639,14 +8647,7 @@ export default function App() {
       onBulkOpen={openBulkDrawer}
       metasVersion={dashboardVersion}
       bulkOpen={bulkMounted}
-      onProjectsDeleted={ids => {
-        // The editor may still hold a project the dashboard just deleted (the
-        // last one opened): drop it, so it cannot be written back or resumed.
-        if (!ids.includes(project.id)) return;
-        setProjectSilent(makeDefaultProject());
-        setHistory(emptyHistory<Project>());
-        clearLastOpenedProjectId();
-      }}
+      onProjectsDeleted={dropDeletedFromEditor}
     />
   ) : (
     /* `data-project-id` is the editor's rendered project IDENTITY. It exists so
@@ -9786,6 +9787,11 @@ export default function App() {
             if (!bulkBatchRunner(parseProjectData).finishNow(id)) void handleSwitchProject(id);
           }}
           onClose={() => setBulkHidden(true)}
+          onProjectsDeleted={(ids, failures) => {
+            dropDeletedFromEditor(ids);
+            setDashboardVersion(v => v + 1);
+            if (failures.length > 0) showToast(`The project is gone, but some of its files could not be cleaned up on disk. (${failures.join('; ')})`);
+          }}
         />
       )}
       {!showDashboard && (

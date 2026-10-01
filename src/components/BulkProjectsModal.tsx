@@ -30,6 +30,8 @@ import { missingSpineSlots } from '../services/buildTimelineGate';
 import { formatUsd, type QueueItem, type SyncQueue } from '../services/syncQueue';
 import { readSyncEngineHost } from '../services/syncEngineHost';
 import { Z } from './overlayLayers';
+import { ConfirmDialog } from './ConfirmDialog';
+import { deleteProjectEverywhere } from '../services/projectDelete';
 
 const SHELL = `fixed inset-0 ${Z.dialog} flex items-center justify-center bg-black/80 backdrop-blur-sm`;
 const DRAWER = `fixed top-0 left-0 ${Z.drawer} flex h-full w-[min(100vw,420px)] flex-col border-r border-[#282828] bg-[#111] shadow-2xl transition-transform duration-200`;
@@ -229,11 +231,11 @@ function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFi
                 </div>
               )}
             </div>
-            <button type="button" aria-label={BULK_COPY.removeProject} title={BULK_COPY.removeProject} data-testid={`bulk-remove-${row.projectId}`} onClick={onRemoveRow} className={ICON_BTN}>
-              <X size={15} />
-            </button>
           </>
         )}
+        <button type="button" aria-label={BULK_COPY.removeProject} title={BULK_COPY.removeProject} data-testid={`bulk-remove-${row.projectId}`} onClick={onRemoveRow} className={ICON_BTN}>
+          <Trash2 size={15} />
+        </button>
       </div>
       <div className="mt-3 flex flex-wrap items-center gap-1.5" data-testid={`bulk-slots-${row.projectId}`}>
         {(['script', 'scene', 'voiceover', 'media'] as const).map(slot => (
@@ -368,6 +370,7 @@ function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFi
 export function BulkProjectsModal({
   createBlankProject, parseProjectData, onOpenProject, onFinishRow, onClose, onProjectsCreated,
   runner: injectedRunner, queue = cloudSyncQueue, store: injected, hidden = false,
+  deleteProject = deleteProjectEverywhere, onProjectsDeleted,
 }: {
   createBlankProject: () => Project;
   parseProjectData: CloudQueueDeps['parseProjectData'];
@@ -384,6 +387,10 @@ export function BulkProjectsModal({
   store?: BulkRowStore;
   /** Hide keeps the batch mounted and running. It does not close it. */
   hidden?: boolean;
+  /** Deletes a created project everywhere (default: the dashboard's own delete). */
+  deleteProject?: (id: string) => Promise<string[]>;
+  /** A row's project was deleted: the dashboard and editor let go of it. */
+  onProjectsDeleted?: (ids: string[], failures: string[]) => void;
 }): React.ReactElement {
   const runner = useMemo(() => injectedRunner ?? bulkBatchRunner(parseProjectData), [injectedRunner, parseProjectData]);
   const [store, setStore] = useState<BulkRowStore | null>(injected ?? null);
@@ -392,7 +399,9 @@ export function BulkProjectsModal({
     let live = true;
     void defaultBulkRowDeps(createBlankProject).then(deps => {
       if (!live) return;
-      setStore(new BulkRowStore(deps, BULK_MAX_GROUPS * BULK_GROUP_MAX_ROWS));
+      const created = new BulkRowStore(deps, BULK_MAX_GROUPS * BULK_GROUP_MAX_ROWS);
+      void created.hydrate();
+      setStore(created);
     });
     return () => { live = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -427,7 +436,6 @@ export function BulkProjectsModal({
   const complete = rows.filter(r => !r.built && r.typedName.trim().length > 0 && missingSpineSlots(r.slots).length === 0);
   const canBuild = cloud && complete.length > 0;
   const anyRunning = records.some(r => r.phase === 'queued' || r.phase === 'cloud');
-  const anyFinal = records.some(r => isBatchRowFinal(r.phase));
   const line = queue.batchLine();
 
   const rowById = new Map(rows.map(r => [r.projectId, r]));
@@ -446,7 +454,7 @@ export function BulkProjectsModal({
       onReplaceFile={(fileId, file) => void store?.replaceFile(row.projectId, fileId, file)}
       onReplaceAll={files => void store?.replaceAll(row.projectId, files)}
       onClearFiles={() => void store?.clearFiles(row.projectId)}
-      onRemoveRow={() => void store?.discardRow(row.projectId)}
+      onRemoveRow={() => setConfirmDelete(row)}
       onCancel={() => queue.cancel(row.projectId)}
       onOpen={() => open(row.projectId)}
       onFinish={() => finishRow(row.projectId)}
@@ -457,7 +465,7 @@ export function BulkProjectsModal({
   const build = (): void => {
     void (async () => {
       if (!store) return;
-      // Only now do projects exist: the real rows are created, empty drafts discarded.
+      // Only now do projects exist. Every other row stays a draft.
       const { created, skips: left } = await store.buildReady();
       setSkips(left);
       if (created.length === 0) return;
@@ -466,13 +474,27 @@ export function BulkProjectsModal({
     })();
   };
 
-  const close = (): void => { void (store?.discardUnbuilt() ?? Promise.resolve()).finally(onClose); };
-  const open = (id: string): void => { void (store?.discardUnbuilt() ?? Promise.resolve()).finally(() => onOpenProject(id)); };
+  // U5 — nothing clears by itself: hiding, opening or finishing keeps every draft.
+  const close = (): void => onClose();
+  const open = (id: string): void => onOpenProject(id);
   const finishRow = (id: string): void => {
-    void (store?.discardUnbuilt() ?? Promise.resolve()).finally(() => {
-      if (onFinishRow) onFinishRow(id);
-      else if (!runner.finishNow(id)) onOpenProject(id);
-    });
+    if (onFinishRow) onFinishRow(id);
+    else if (!runner.finishNow(id)) onOpenProject(id);
+  };
+
+  // U5 — per-row delete, behind a confirm: the row's record, its files, and
+  // (once created) the project they belong to.
+  const [confirmDelete, setConfirmDelete] = useState<BulkRowState | null>(null);
+  const deleteRow = async (row: BulkRowState): Promise<void> => {
+    if (row.built) {
+      const failures = await deleteProject(row.projectId);
+      runner.removeRow(row.projectId);
+      store?.forgetRow(row.projectId);
+      onProjectsDeleted?.([row.projectId], failures);
+    } else {
+      await store?.discardRow(row.projectId);
+      runner.removeRow(row.projectId);
+    }
   };
 
   return (
@@ -526,7 +548,18 @@ export function BulkProjectsModal({
                   group={group}
                   progress={groupProgress(group, records)}
                   onToggle={() => runner.setCollapsed(group.id, !group.collapsed)}
-                />
+                >
+                  {group.rowIds.some(id => { const p = recordById.get(id)?.phase; return p !== undefined && isBatchRowFinal(p); }) && (
+                    <button
+                      type="button"
+                      data-testid={`bulk-clear-finished-${group.id}`}
+                      onClick={() => runner.clearFinished(group.id)}
+                      className="flex-shrink-0 text-[11px] text-gray-400 hover:text-white transition-colors"
+                    >
+                      {BULK_COPY.clearFinished}
+                    </button>
+                  )}
+                </BulkGroupHeader>
                 {!group.collapsed && (
                   <>
                     <ol className="space-y-3">{members.map(renderRow)}</ol>
@@ -555,11 +588,6 @@ export function BulkProjectsModal({
               <p className="text-[11px] leading-snug text-gray-400 mb-3">{!cloud ? BULK_COPY.notCloud : BULK_COPY.buildNeeds}</p>
             )}
             <div className="flex gap-3">
-              {anyFinal && (
-                <button type="button" data-testid="bulk-clear-finished" className={BTN_CANCEL} onClick={() => runner.clearFinished()}>
-                  {BULK_COPY.clearFinished}
-                </button>
-              )}
               {anyRunning && (
                 <button type="button" data-testid="bulk-cancel-all" className={BTN_CANCEL} onClick={() => queue.cancelAll()}>
                   {BULK_COPY.cancelAll}
@@ -580,6 +608,15 @@ export function BulkProjectsModal({
           </div>
         </div>
       </div>
+      {confirmDelete && (
+        <ConfirmDialog
+          title={BULK_COPY.deleteRowTitle}
+          body={BULK_COPY.deleteRowBody(confirmDelete.typedName.trim(), confirmDelete.built)}
+          confirmLabel={BULK_COPY.deleteRowConfirm}
+          onCancel={() => setConfirmDelete(null)}
+          onConfirm={() => { const row = confirmDelete; setConfirmDelete(null); void deleteRow(row); }}
+        />
+      )}
       {askingCreate && (
         <BulkCountDialog
           onCancel={() => setAskingCreate(false)}
