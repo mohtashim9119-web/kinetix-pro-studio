@@ -143,12 +143,19 @@ describe('U6 — the dashboard bulk button carries the batch signal', () => {
     expect(bulkButtons()[0]!.querySelector('[data-testid="bulk-failed-dot"]')!.textContent).toBe('2');
   });
 
-  it('nothing running and nothing failed: the plain button', async () => {
+  it('1.3.1: after the batch finishes the signal stays — a full ring and "n/m" — until the batch is cleared', async () => {
     batchRows = [{ id: 'p1', name: 'One', phase: 'done' }, { id: 'p2', name: 'Two', phase: 'done' }];
     await mount(() => {});
     const button = bulkButtons()[0]!;
-    expect(button.querySelector('[data-testid="bulk-ring"]')).toBeNull();
+    expect(button.querySelector('[data-testid="bulk-ring"]')!.getAttribute('data-progress')).toBe('1');
+    expect(button.querySelector('[data-testid="dashboard-bulk-count"]')!.textContent).toBe('2/2');
     expect(button.querySelector('[data-testid="bulk-failed-dot"]')).toBeNull();
+  });
+
+  it('no batch at all (or only drafts, nothing built yet): the plain button', async () => {
+    await mount(() => {});
+    const button = bulkButtons()[0]!;
+    expect(button.querySelector('[data-testid="bulk-ring"]')).toBeNull();
     expect(button.textContent).toBe('Bulk Projects');
   });
 });

@@ -242,8 +242,9 @@ export function ProjectDashboard({
           {onBulkOpen && parseProjectData && (
             <button className="kxd-btn kxd-btn-quiet" data-testid="dashboard-bulk" onClick={onBulkOpen}>
               {BULK_COPY.button}
-              {/* U6 — the batch at a glance: a ring + n/m while running, a red dot when any row failed. */}
-              {bulkSignal.running && (
+              {/* The batch at a glance: a ring + n/m from the first Build Timeline until the
+                  batch is cleared (full ring when finished), a red dot when any row failed. */}
+              {batchRows.length > 0 && (
                 <span className="ml-2 inline-flex items-center gap-1 align-middle">
                   <ProgressRing done={bulkSignal.done} total={bulkSignal.total} size={14} />
                   <span data-testid="dashboard-bulk-count" className="text-[11px] tabular-nums">{`${bulkSignal.done}/${bulkSignal.total}`}</span>
