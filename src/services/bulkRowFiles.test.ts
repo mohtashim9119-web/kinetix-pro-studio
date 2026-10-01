@@ -80,4 +80,36 @@ describe('bulk row files', () => {
     expect(names(store, 1)).toEqual(['script-b.txt', 'scene-b.txt', 'vo-b.wav', 'img-b.png']);
     expect(await staged.get(b!)!.scriptFile!.file.text()).toBe('script b');
   });
+
+  it('F2: replace/delete stay allowed after Build Timeline until the first successful finish', async () => {
+    const { deps, staged } = fakeDeps();
+    const store = new BulkRowStore(deps);
+    const [id] = store.createDrafts(1);
+    await store.addFiles(id!, four('a'));
+    store.setTypedName(id!, 'Harbour');
+    await store.buildReady();
+    expect(store.snapshot()[0]!.built).toBe(true);
+    expect(store.snapshot()[0]!.sealed).toBe(false);
+    await store.replaceFile(id!, 'script', new File(['new script'], 'script-new.txt'));
+    expect(names(store, 0)[0]).toBe('script-new.txt');
+    expect(await staged.get(id!)!.scriptFile!.file.text()).toBe('new script');
+    await store.removeFile(id!, 'voiceover');
+    expect(store.snapshot()[0]!.slots.voiceover).toBe(false);
+  });
+
+  it('F2: a successfully finished row is sealed — replace/delete become no-ops', async () => {
+    const { deps, staged } = fakeDeps();
+    const store = new BulkRowStore(deps);
+    const [id] = store.createDrafts(1);
+    await store.addFiles(id!, four('a'));
+    store.setTypedName(id!, 'Harbour');
+    await store.buildReady();
+    store.syncBuilt([{ id: id!, name: 'Harbour', phase: 'done' }]);
+    expect(store.snapshot()[0]!.sealed).toBe(true);
+    const before = names(store, 0);
+    await store.replaceFile(id!, 'script', new File(['nope'], 'x.txt'));
+    await store.removeFile(id!, 'voiceover');
+    expect(names(store, 0)).toEqual(before);
+    expect(await staged.get(id!)!.scriptFile!.file.text()).toBe('script a');
+  });
 });

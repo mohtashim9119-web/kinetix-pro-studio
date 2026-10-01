@@ -30,7 +30,7 @@ import type { Asset, Project, VideoSegment } from '../types';
 import type { StagedFiles } from '../components/DropZonePanel';
 import { getAsset } from './assetStore';
 import { readAssetNative } from './nativeAssetStore';
-import { loadProject } from './projectStore';
+import { loadProject, saveProject } from './projectStore';
 import { computeAudioHash, computeScriptHash, spineEquals } from './spine';
 import { resolveSyncEngine } from './faPreflight';
 import { resolveFaLanguage } from './faGate';
@@ -38,7 +38,7 @@ import { runCloudSyncIntent } from './cloudSyncIntent';
 import {
   CloudStageError,
   adoptHeldContainer,
-  cloudPauseReason,
+  cloudFailureReport,
   cloudWorkerSecTotal,
   onCloudPhase,
   requestHoldAfterAlign,
@@ -51,7 +51,7 @@ import { saveFaPause, type FaPauseRecord } from './faSyncPauseStore';
 import { loadStagedFromStore } from './stagedFilesPersist';
 import { stripRtfIfNeeded } from './textUtils';
 import { memoizedDuration } from './bulkRows';
-import { mintSyncLogId } from './syncLog';
+import { mintSyncLogId, appendSyncLogEntries, buildFaPausedEntry } from './syncLog';
 import { BUILD_TIMELINE_COPY, missingSpineSlots, type BuildTimelineSlots } from './buildTimelineGate';
 import { stagesToRun, type BulkCheckpoint } from './bulkBatch';
 import { lookupBatchTranscript } from './bulkFinish';
@@ -66,6 +66,16 @@ export const CLOUD_USD_PER_WORKER_SEC = (0.59 + 0.0473 * 2 + 0.008 * 8) / 3600;
  *  project's billing log entry say the same thing. */
 export function cloudCostLine(workerSec: number): string {
   return `${workerSec.toFixed(0)} s worked · about ${formatUsd(workerSec * CLOUD_USD_PER_WORKER_SEC)}`;
+}
+
+/** Drawer footer: never claims "$0 GPU" while any row recorded billed seconds. */
+export function bulkFooterLine(rows: readonly { workerSec?: number }[], queueLine: string | null): string | null {
+  const workerSec = rows.reduce((s, r) => s + (r.workerSec ?? 0), 0);
+  if (workerSec > 0 && (!queueLine || queueLine.includes('no cloud GPU time used'))) {
+    const n = rows.length;
+    return `${n} ${n === 1 ? 'project' : 'projects'} · ${cloudCostLine(workerSec)}`;
+  }
+  return queueLine;
 }
 
 export const cloudQueueEngine: QueueEngine = {
@@ -112,6 +122,10 @@ export interface CloudQueueDeps {
   loadStaged?: (projectId: string) => Promise<StagedFiles | null>;
   /** Audio length for a STAGED voiceover (a committed one carries its own). */
   probeDuration?: (file: File, audioHash: string) => Promise<number>;
+  /** Persist a pause onto the project's sync log (bulk path). */
+  saveProject?: (project: Project) => Promise<{ ok: boolean }>;
+  /** Stamp the content key this run was planned against. */
+  noteContent?: (id: string, contentKey: string) => void;
   /** App.tsx's `parseProjectData` — injected so this module never imports
    *  the app (same discipline as `SyncIntentInputs.prepareSegments`). */
   parseProjectData: (
@@ -138,6 +152,7 @@ export function defaultCloudQueueDeps(
   return {
     loadProject, loadVoiceover: loadStoredVoiceover, parseProjectData,
     loadStaged: loadStagedFromStore,
+    saveProject,
     probeDuration: async (file, hash) => {
       const { probeAudioDuration } = await import('./tauriFfmpeg');
       return memoizedDuration(file, hash, probeAudioDuration);
@@ -226,7 +241,9 @@ export function createCloudProjectJob(
       const scriptHash = await computeScriptHash(project.script, project.sceneDetails);
       const spine = { audioHash, scriptHash, engineKey: resolution.key };
       const contentKey = `${audioHash}|${scriptHash}|${resolution.key}`;
-      const plan = stagesToRun(meta.checkpoint, meta.contentKey !== undefined && meta.contentKey !== contentKey);
+      const contentChanged = meta.contentKey !== undefined && meta.contentKey !== contentKey;
+      const plan = stagesToRun(meta.checkpoint, contentChanged);
+      deps.noteContent?.(meta.id, contentKey);
       if (!plan.includes('transcribe') && !plan.includes('align')) {
         letGo();
         return { status: 'done', detail: 'Ready — press Build Timeline to reveal it.' };
@@ -237,9 +254,20 @@ export function createCloudProjectJob(
       }
 
       const pause = (record: Omit<FaPauseRecord, 'projectId' | 'syncRunId' | 'timestamp' | 'host' | 'audioHash'>): QueueJobOutcome => {
+        const syncRunId = mintSyncLogId();
+        const timestamp = Date.now();
         saveFaPause({
-          ...record, projectId: project.id, syncRunId: mintSyncLogId(), timestamp: Date.now(), host: 'cloud', audioHash,
+          ...record, projectId: project.id, syncRunId, timestamp, host: 'cloud', audioHash,
         });
+        const next = appendSyncLogEntries(
+          project,
+          [buildFaPausedEntry(syncRunId, record.reason, record.detail, timestamp)],
+          {
+            syncRunId, timestamp, totalSegments: 0, coveredSegments: 0, skippedSegments: 0,
+            aborted: true, abortReason: 'fa-paused',
+          },
+        );
+        void (deps.saveProject ?? saveProject)(next).catch(() => undefined);
         return { status: 'paused', reason: record.reason, detail: record.detail };
       };
 
@@ -272,7 +300,8 @@ export function createCloudProjectJob(
           letGo();
           if (err instanceof DOMException && err.name === 'AbortError') throw err;
           if (err instanceof CloudStageError) {
-            return pause({ reason: cloudPauseReason(err.cloud), detail: err.message, stage: 'transcribe' });
+            const report = cloudFailureReport(err.cloud);
+            return pause({ reason: report.pauseReason, detail: report.display, stage: 'transcribe' });
           }
           return { status: 'failed', detail: err instanceof Error ? err.message : String(err) };
         }

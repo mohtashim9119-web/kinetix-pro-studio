@@ -75,8 +75,14 @@ export function describeCloudError(error: CloudError): string {
         ? error.detail
         : 'This audio is longer than the one-hour cloud limit. Split it or use Local.';
     case 'rejected': return `The cloud sync server refused the request (${error.code}): ${error.detail}`;
-    case 'server': return `The cloud sync server had an error (HTTP ${error.status}).`;
-    case 'jobFailed': return `The cloud job failed (${error.code}).`;
+    case 'server': {
+      const base = `The cloud sync server had an error (HTTP ${error.status}).`;
+      return error.detail.trim() ? `${base} ${error.detail}` : base;
+    }
+    case 'jobFailed': {
+      const base = `The cloud job failed (${error.code}).`;
+      return error.detail.trim() ? `${base} ${error.detail}` : base;
+    }
     case 'cancelled': return 'Cancelled.';
     case 'encode': return 'Could not prepare the audio for upload.';
     case 'io': return `A local file error stopped the cloud request: ${error.detail}`;

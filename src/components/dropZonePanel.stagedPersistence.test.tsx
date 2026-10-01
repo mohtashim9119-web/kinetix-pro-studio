@@ -95,23 +95,26 @@ function mountPanel(props: Partial<DropZonePanelProps>): {
   container: HTMLDivElement;
   published: () => StagedFiles | null;
   unmount: () => void;
+  rerender: (next: Partial<DropZonePanelProps>) => void;
 } {
   let last: StagedFiles | null = null;
   const container = document.createElement('div');
   document.body.appendChild(container);
   const root = createRoot(container);
-  act(() => {
+  const render = (next: Partial<DropZonePanelProps>): void => {
     root.render(
       <DropZonePanel
-        {...makeProps({ ...props, onStagedFilesChange: (s: StagedFiles) => { last = s; } })}
+        {...makeProps({ ...next, onStagedFilesChange: (s: StagedFiles) => { last = s; } })}
       />,
     );
-  });
+  };
+  act(() => { render(props); });
   return {
     root,
     container,
     published: () => last,
     unmount: () => { act(() => { root.unmount(); }); container.remove(); },
+    rerender: (next) => { act(() => { render(next); }); },
   };
 }
 
@@ -332,6 +335,31 @@ describe('WS2-50 — a restored voiceover is offered, and a refusal leaves nothi
     expect(btn).toBeTruthy();
     await act(async () => { btn!.click(); });
     expect(transcribeCalls).toEqual(['vo.m4a']);
+    panel.unmount();
+  });
+
+  it('F3: restoring files is not dropped if voiceover adoption is cancelled mid-hash', async () => {
+    await seedStaged(VO_PROJECT, {
+      script: new File(['SCRIPT BODY'], 'script.txt', { type: 'text/plain' }),
+      scene: new File(['[a] x'], 'scene.txt', { type: 'text/plain' }),
+      voiceover: new File(['AUDIO'], 'vo.m4a', { type: 'audio/mp4', lastModified: 42 }),
+    });
+    let finishAdopt: (ok: boolean) => void = () => {};
+    const hanging = new Promise<boolean>(resolve => { finishAdopt = resolve; });
+    const panel = mountPanel({
+      projectId: VO_PROJECT,
+      onVoiceoverRestored: () => hanging,
+    });
+    await settle();
+    panel.rerender({
+      projectId: VO_PROJECT,
+      onVoiceoverRestored: () => Promise.resolve(false),
+    });
+    finishAdopt(false);
+    await settle();
+    expect(panel.published()?.scriptFile?.file.name).toBe('script.txt');
+    expect(panel.published()?.sceneFile?.file.name).toBe('scene.txt');
+    expect(panel.published()?.voiceoverFile?.file.name).toBe('vo.m4a');
     panel.unmount();
   });
 

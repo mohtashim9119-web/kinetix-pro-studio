@@ -137,7 +137,7 @@ describe('runForcedAlignmentForSync — cloud arm (Wave 3 U2)', () => {
   it('any other cloud failure pauses as inference-failed with the typed reason in detail', async () => {
     gateway(() => { throw { kind: 'jobFailed', jobId: 'j', code: 'worker-error', detail: 'x' }; });
     const result = await run();
-    expect(result).toMatchObject({ status: 'paused', reason: 'inference-failed', detail: 'The cloud job failed (worker-error).' });
+    expect(result).toMatchObject({ status: 'paused', reason: 'inference-failed', detail: 'The cloud job failed (worker-error). x' });
   });
 
   it('a cancelled cloud job is a cancelled run', async () => {

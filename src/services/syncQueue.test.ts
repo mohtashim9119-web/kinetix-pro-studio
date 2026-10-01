@@ -56,6 +56,17 @@ describe('SyncQueue', () => {
     expect(q.batchLine()).toBe('3 projects: 3 built · about $0.03 of cloud GPU (30 s worked)');
   });
 
+  it('F6: one item is "1 project", and a failed row\'s GPU seconds still count', async () => {
+    const e = engine();
+    const q = new SyncQueue(e);
+    q.enqueue([job('a', async () => {
+      e.worked += 20;
+      return { status: 'failed', detail: 'boom' };
+    })]);
+    await settle(q);
+    expect(q.batchLine()).toBe('1 project: 1 failed · about $0.02 of cloud GPU (20 s worked)');
+  });
+
   it('a paused or failed project stops only itself — the queue continues', async () => {
     const q = new SyncQueue(engine());
     const outcomes: Record<string, QueueJobOutcome> = {

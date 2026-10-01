@@ -440,7 +440,7 @@ export class BulkBatchRunner {
       case 'skipped':
         // "Already built" is a finished cloud state; anything else is a reason.
         return /already built/i.test(item.detail ?? '') ? { phase: 'cloud-done' } : { phase: 'skipped', message: item.detail };
-      case 'paused': return { phase: 'paused', message: item.reason };
+      case 'paused': return { phase: 'paused', message: item.detail ?? item.reason };
       case 'failed': return { phase: 'failed', message: item.detail };
       case 'cancelled': return { phase: 'cancelled' };
     }

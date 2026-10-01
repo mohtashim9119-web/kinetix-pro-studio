@@ -62,8 +62,10 @@ export interface BulkRowState {
   /** What the last drop did, in plain words (skipped files, bundle problems). */
   notes: string[];
   busy: boolean;
-  /** The project has been created and handed to the batch: the row is locked. */
+  /** The project has been created and handed to the batch. */
   built: boolean;
+  /** The timeline finished successfully: files are then read-only. */
+  sealed: boolean;
 }
 
 export interface BulkRowDeps {
@@ -304,7 +306,7 @@ export class BulkRowStore {
 
   private blankRow(id: string): BulkRowState {
     return {
-      projectId: id, typedName: '', mediaCount: 0, files: [], notes: [], busy: false, built: false,
+      projectId: id, typedName: '', mediaCount: 0, files: [], notes: [], busy: false, built: false, sealed: false,
       slots: { script: false, scene: false, voiceover: false, media: false },
       audio: { state: 'none' },
     };
@@ -329,19 +331,27 @@ export class BulkRowStore {
   canAddRow(): boolean { return this.order.length < this.max; }
 
   /** Rows for projects the persistent batch already created (a reopened
-   *  window): shown locked, in step with the batch record. Also drops built
+   *  window). Sealed only after the first successful finish. Also drops built
    *  rows the operator cleared. */
-  syncBuilt(records: readonly { id: string; name: string; summary?: BatchRowSummary }[]): void {
+  syncBuilt(records: readonly { id: string; name: string; phase?: string; summary?: BatchRowSummary }[]): void {
     let changed = false;
     const ids = new Set(records.map(r => r.id));
     for (const rec of records) {
-      if (this.rows.has(rec.id)) continue;
+      const sealed = rec.phase === 'done';
+      const existing = this.rows.get(rec.id);
+      if (existing) {
+        if (!existing.built || existing.sealed !== sealed) {
+          this.patch(rec.id, { built: true, sealed, typedName: existing.typedName || rec.name });
+          changed = true;
+        }
+        continue;
+      }
       // A built row keeps what it was built from: the summary saved at Build
       // Timeline, else (a row built before summaries) its own staged files.
       const shown = rec.summary
         ? { files: rec.summary.files.map(f => ({ ...f })), slots: { ...rec.summary.slots }, mediaCount: rec.summary.mediaCount }
         : {};
-      this.rows.set(rec.id, { ...this.blankRow(rec.id), ...shown, typedName: rec.name, built: true });
+      this.rows.set(rec.id, { ...this.blankRow(rec.id), ...shown, typedName: rec.name, built: true, sealed });
       this.order.push(rec.id);
       changed = true;
       if (!rec.summary) void this.restoreBuiltFiles(rec.id);
@@ -410,7 +420,7 @@ export class BulkRowStore {
 
   async addFiles(id: string, files: readonly File[]): Promise<void> {
     const row = this.rows.get(id);
-    if (!row || row.built || files.length === 0) return;
+    if (!row || row.sealed || files.length === 0) return;
     this.patch(id, { busy: true, notes: [] });
     try {
       const prev = (await this.deps.loadStaged(id)) ?? EMPTY_STAGED;
@@ -434,7 +444,7 @@ export class BulkRowStore {
   /** Removes one file from a row (a wrong drop). */
   async removeFile(id: string, fileId: string): Promise<void> {
     const row = this.rows.get(id);
-    if (!row || row.built) return;
+    if (!row || row.sealed) return;
     const prev = (await this.deps.loadStaged(id)) ?? EMPTY_STAGED;
     let next = prev;
     if (fileId.startsWith('bundle:')) {
@@ -465,7 +475,7 @@ export class BulkRowStore {
    *  ITS slot whatever the new file looks like; a media file is swapped. */
   async replaceFile(id: string, fileId: string, file: File): Promise<void> {
     const row = this.rows.get(id);
-    if (!row || row.built) return;
+    if (!row || row.sealed) return;
     const slot = fileId === 'script' ? 'scriptFile' : fileId === 'scene' ? 'sceneFile' : fileId === 'voiceover' ? 'voiceoverFile' : null;
     if (!slot) {
       await this.removeFile(id, fileId);
@@ -487,7 +497,7 @@ export class BulkRowStore {
   /** Replace all: the row's files become exactly this new set. */
   async replaceAll(id: string, files: readonly File[]): Promise<void> {
     const row = this.rows.get(id);
-    if (!row || row.built || files.length === 0) return;
+    if (!row || row.sealed || files.length === 0) return;
     await this.clearFiles(id);
     await this.addFiles(id, files);
   }
@@ -496,7 +506,7 @@ export class BulkRowStore {
    *  script, scene doc and voiceover stay. */
   async removeMedia(id: string): Promise<void> {
     const row = this.rows.get(id);
-    if (!row || row.built) return;
+    if (!row || row.sealed) return;
     const prev = (await this.deps.loadStaged(id)) ?? EMPTY_STAGED;
     const next: StagedFiles = { ...prev, assetFiles: [], zipFiles: [] };
     await this.deps.writeStaged(id, prev, next);
@@ -510,7 +520,7 @@ export class BulkRowStore {
    *  every slot and replaces them too (the button's copy says so). */
   async replaceMedia(id: string, files: readonly File[]): Promise<void> {
     const row = this.rows.get(id);
-    if (!row || row.built) return;
+    if (!row || row.sealed) return;
     const media = files.filter(f => /\.zip$/i.test(f.name) || detectMediaType(f.name) !== undefined);
     if (media.length === 0) return;
     await this.removeMedia(id);
@@ -520,7 +530,7 @@ export class BulkRowStore {
   /** Clears every file of a row, keeping the row and its name. */
   async clearFiles(id: string): Promise<void> {
     const row = this.rows.get(id);
-    if (!row || row.built) return;
+    if (!row || row.sealed) return;
     await this.deps.purge(id, this.bundle.get(id) ?? []);
     this.bundle.delete(id);
     this.audioToken.set(id, (this.audioToken.get(id) ?? 0) + 1);

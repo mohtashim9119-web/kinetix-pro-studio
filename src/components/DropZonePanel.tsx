@@ -803,10 +803,15 @@ export function DropZonePanel({
         if (!stagedIsEmpty(stagedRef.current)) return;
         const restored = restoreStagedFiles(rows);
 
+        stagedRef.current = restored;
+        onStagedFilesChange(restored, projectId);
+        setStaged(restored);
+
         // A restored voiceover is OFFERED, not assumed. Adoption runs
         // App.tsx's handleVoiceoverStaged only when `canAdoptRestoredVoiceover`
         // is true; otherwise the slot and row stay so the user can tap
-        // Transcribe explicitly — nothing auto-runs on load.
+        // Transcribe explicitly — nothing auto-runs on load. Files are
+        // published first so a cancelled adopt cannot blank the panel.
         if (restored.voiceoverFile) {
           // plan-v3 Wave 2 item 4 — onVoiceoverRestored now hashes the file
           // (async, can take real time for a large voiceover), widening this
@@ -818,10 +823,6 @@ export function DropZonePanel({
             setExpanded('voiceover');
           }
         }
-
-        stagedRef.current = restored;
-        onStagedFilesChange(restored, projectId);
-        setStaged(restored);
       } catch (err) {
         console.error('[kinetix] staged-slot restore failed:', err);
       }

@@ -130,12 +130,19 @@ describe('BulkProjectsModal — draft rows', () => {
     const h = store();
     const { host } = await mount(modal(h, 1));
     const [id] = rowIds(host);
-    const chip = () => q(host, `bulk-slots-${id}`)!.querySelector('[data-slot="media"]')!;
-    expect(chip().textContent).toBe('Media');
-    expect(chip().getAttribute('data-filled')).toBe('false');
-    await act(async () => { await h.store.addFiles(id!, fourFiles()); });
-    expect(chip().textContent).toBe('Media · 1');
-    expect(chip().getAttribute('data-filled')).toBe('true');
+    const chip = async () => {
+      const toggle = q(host, `bulk-files-toggle-${id}`) as HTMLButtonElement;
+      if (toggle.getAttribute('aria-expanded') !== 'true') await act(async () => { toggle.click(); });
+      return q(host, `bulk-slots-${id}`)!.querySelector('[data-slot="media"]')!;
+    };
+    await act(async () => {
+      await h.store.addFiles(id!, [new File(['line'], 'script.txt'), new File(['[a] x\n[b] y\n[c] z'], 'scene.txt'), new File(['a'], 'vo.wav')]);
+    });
+    expect((await chip()).textContent).toBe('Media');
+    expect((await chip()).getAttribute('data-filled')).toBe('false');
+    await act(async () => { await h.store.addFiles(id!, [new File(['i'], 'a.png')]); });
+    expect((await chip()).textContent).toBe('Media · 1');
+    expect((await chip()).getAttribute('data-filled')).toBe('true');
   });
 
   it('a group\'s Add project appends a row to it, and stops at 30', async () => {
@@ -161,7 +168,7 @@ describe('BulkProjectsModal — draft rows', () => {
     await vi.waitFor(() => expect(q(host, `bulk-files-${a}`)!.textContent).not.toContain('wrong.png'));
     expect(q(host, `bulk-files-${a}`)!.textContent).toContain('a.png');
     await act(async () => { (q(host, `bulk-clear-${a}`) as HTMLButtonElement).click(); });
-    await vi.waitFor(() => expect(q(host, `bulk-slots-${a}`)!.querySelectorAll('[data-filled="true"]')).toHaveLength(0));
+    await vi.waitFor(() => expect(q(host, `bulk-files-toggle-${a}`)!.textContent).toBe('0 files'));
     await act(async () => { (q(host, `bulk-remove-${b}`) as HTMLButtonElement).click(); });
     await act(async () => { (document.querySelector('[data-testid="confirm-dialog-confirm"]') as HTMLButtonElement).click(); });
     await vi.waitFor(() => expect(rowIds(host)).toEqual([a]));
@@ -186,8 +193,8 @@ describe('BulkProjectsModal — draft rows', () => {
     await vi.waitFor(() => expect(rowIds(host)).toEqual(ids));
     expect(q(host, `bulk-status-${ids[2]}`)!.textContent).toBe('Skipped — Add a scene doc and a voiceover to build the timeline');
     expect(q(host, `bulk-status-${ids[0]}`)!.textContent).toBe('Transcribing on the cloud…');
-    // The built rows are read-outs now.
-    expect((q(host, `bulk-name-${ids[0]}`) as HTMLInputElement).disabled).toBe(true);
+    // Files stay editable until the first successful finish.
+    expect((q(host, `bulk-name-${ids[0]}`) as HTMLInputElement).disabled).toBe(false);
     // Hiding: every row stays (U5 — nothing clears by itself); running jobs are not touched.
     await act(async () => { (q(host, 'bulk-close') as HTMLButtonElement).click(); });
     await vi.waitFor(() => expect(onClose).toHaveBeenCalled());
@@ -214,10 +221,9 @@ describe('BulkProjectsModal — draft rows', () => {
     await act(async () => { buildFor(host, id!).click(); });
     await vi.waitFor(() => expect(finalize).toHaveBeenCalledWith(id, { userInitiated: false }));
     expect(q(host, `bulk-status-${id}`)!.textContent).toBe('Building the timeline…');
-    expect(q(host, `bulk-open-${id}`)).toBeNull();
+    expect((q(host, `bulk-open-${id}`) as HTMLButtonElement).disabled).toBe(false);
     await act(async () => { finish({ ok: true }); });
-    await vi.waitFor(() => expect(q(host, `bulk-open-${id}`)).not.toBeNull());
-    expect(q(host, `bulk-status-${id}`)!.textContent).toBe('Ready');
+    await vi.waitFor(() => expect(q(host, `bulk-status-${id}`)!.textContent).toBe('Ready'));
     await act(async () => { (q(host, `bulk-open-${id}`) as HTMLButtonElement).click(); });
     await vi.waitFor(() => expect(onOpen).toHaveBeenCalledWith(id));
     finishAtOnce = false;
@@ -443,14 +449,17 @@ describe('Bulk UI rebuild U4 — row files', () => {
     expect(h.store.snapshot().find(r => r.projectId === b)!.files.map(f => f.name)).toEqual(['script.txt', 'scene.txt', 'vo.wav', 'a.png']);
   });
 
-  it('the four chips read Script · Scenes · Audio · Media, each with its type icon, on one line', async () => {
+  it('the four chips read Script · Scenes · Audio · Media, each with its type icon, on one line — inside the expanded detail', async () => {
     const h = store();
     const { host } = await mount(modal(h, 2));
     const [a] = rowIds(host);
+    expect(q(host, `bulk-slots-${a}`)).toBeNull();
+    await act(async () => { await h.store.addFiles(a!, fourFiles()); });
+    await act(async () => { (q(host, `bulk-files-toggle-${a}`) as HTMLButtonElement).click(); });
     const slots = q(host, `bulk-slots-${a}`)!;
     expect(slots.className).toContain('flex-nowrap');
     const chips = [...slots.querySelectorAll('[data-slot]')];
-    expect(chips.map(c => c.textContent)).toEqual(['Script', 'Scenes', 'Audio', 'Media']);
+    expect(chips.map(c => c.textContent)).toEqual(['Script', 'Scenes', 'Audio', 'Media · 1']);
     for (const c of chips) expect(c.querySelector('svg')).not.toBeNull();
   });
 });
@@ -533,6 +542,63 @@ describe('1.3.0 landing — the background pipeline drives drawer rows to ready'
     expect(onFinishRow).not.toHaveBeenCalled();
     expect(q(host, `bulk-group-count-${g.id}`)!.textContent).toBe('1/2 done');
     finishAtOnce = false;
+  });
+});
+
+describe('1.3.2 — operator 1.3.1 follow-ups', () => {
+  it('F6: stage chips live only in the expanded file list, and Open is enabled once the project record exists (paused/failed included)', async () => {
+    const h = store();
+    const runner = makeRunner();
+    const g = runner.createGroup(h.store.createDrafts(2))!;
+    const [id] = g.rowIds;
+    runner.start([{ id: id!, name: 'Harbour' }]);
+    const row = runner.snapshot().find(r => r.id === id)!;
+    row.phase = 'paused';
+    row.message = 'CUDA OOM on worker-7';
+    row.checkpoint = 'staged';
+    const { host } = await mount(modal(h, 0, { runner }));
+    expect(q(host, `bulk-stages-${id}`)).toBeNull();
+    await act(async () => { await h.store.addFiles(id!, fourFiles()); });
+    expect(q(host, `bulk-stages-${id}`)).toBeNull();
+    await act(async () => { (q(host, `bulk-files-toggle-${id}`) as HTMLButtonElement).click(); });
+    expect(q(host, `bulk-stages-${id}`)).not.toBeNull();
+    const open = q(host, `bulk-open-${id}`) as HTMLButtonElement;
+    expect(open.disabled).toBe(false);
+  });
+
+  it('F5: the truncated status line is clickable and the popover shows the full message', async () => {
+    const h = store();
+    const runner = makeRunner();
+    const g = runner.createGroup(h.store.createDrafts(2))!;
+    const [id] = g.rowIds;
+    runner.start([{ id: id!, name: 'Harbour' }]);
+    const row = runner.snapshot().find(r => r.id === id)!;
+    row.phase = 'failed';
+    row.message = 'The cloud job failed (worker-error). CUDA OOM on worker-7: device-side assert';
+    row.workerSec = 12;
+    const { host } = await mount(modal(h, 0, { runner }));
+    const status = q(host, `bulk-status-${id}`)!;
+    expect(status.getAttribute('role')).toBe('button');
+    await act(async () => { (status as HTMLButtonElement).click(); });
+    const pop = q(host, `bulk-status-pop-${id}`)!;
+    expect(pop.textContent).toContain('CUDA OOM on worker-7');
+    expect(pop.textContent).toMatch(/\$|s worked/);
+  });
+
+  it('F6: footer grammar is "1 project" and the cost line counts failed-row GPU time', async () => {
+    const h = store();
+    const runner = makeRunner();
+    const g = runner.createGroup(h.store.createDrafts(2))!;
+    const [id] = g.rowIds;
+    runner.start([{ id: id!, name: 'Harbour' }]);
+    const row = runner.snapshot().find(r => r.id === id)!;
+    row.phase = 'failed';
+    row.workerSec = 40;
+    const { host } = await mount(modal(h, 0, { runner }));
+    const footer = q(host, 'bulk-batch-line')?.textContent ?? q(host, 'bulk-footer')!.textContent ?? '';
+    expect(footer).not.toMatch(/1 projects/);
+    expect(footer).not.toContain('no cloud GPU time used');
+    expect(footer).toMatch(/40 s worked/);
   });
 });
 

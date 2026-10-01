@@ -136,4 +136,11 @@ describe('CloudError', () => {
     ];
     for (const e of all) expect(describeCloudError(e).length).toBeGreaterThan(5);
   });
+
+  it('jobFailed and server keep the gateway\'s message verbatim', () => {
+    expect(describeCloudError({ kind: 'jobFailed', jobId: 'j', code: 'worker-error', detail: 'CUDA OOM on worker-7' }))
+      .toContain('CUDA OOM on worker-7');
+    expect(describeCloudError({ kind: 'server', status: 502, detail: 'bad gateway from modal' }))
+      .toContain('bad gateway from modal');
+  });
 });
