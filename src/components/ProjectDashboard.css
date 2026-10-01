@@ -275,7 +275,9 @@
 
 /* ---------- Grid & cards ---------- */
 
-.kxd-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(252px, 1fr)); gap: 22px; }
+/* Fixed-width cards: the bulk panel opening or closing changes how many fit
+   in a row, never their size. */
+.kxd-grid { display: grid; grid-template-columns: repeat(auto-fill, 252px); justify-content: start; gap: 22px; }
 
 .kxd-card {
   background: var(--kxd-surface);
@@ -430,6 +432,6 @@
   .kxd-search { order: 3; max-width: none; }
   .kxd-brand-sub { display: none; }
   .kxd-main-inner { padding: 28px 20px 60px; }
-  .kxd-grid { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 14px; }
+  .kxd-grid { grid-template-columns: repeat(auto-fill, 160px); gap: 14px; }
   .kxd-section-head { flex-wrap: wrap; gap: 10px; }
 }

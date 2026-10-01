@@ -7,7 +7,7 @@
 // toggle, 2–30 rows each, at most 10 groups. A batch saved before groups
 // existed becomes one default group. Groups persist with the batch.
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   BULK_GROUP_MAX_ROWS, BULK_GROUP_MIN_ROWS, BULK_MAX_GROUPS, BulkBatchRunner, groupProgress, batchProgress,
 } from './bulkBatch';
@@ -23,15 +23,15 @@ const boot = (disk: ReturnType<typeof memory>, exists: (id: string) => boolean =
 const ids = (n: number, p = 'r'): string[] => Array.from({ length: n }, (_, i) => `${p}${i}`);
 
 describe('bulk groups', () => {
-  it('limits: 2–30 rows per group, at most 10 groups', () => {
-    expect([BULK_GROUP_MIN_ROWS, BULK_GROUP_MAX_ROWS, BULK_MAX_GROUPS]).toEqual([2, 30, 10]);
+  it('limits: 2–30 rows per group, at most 5 groups at a time', () => {
+    expect([BULK_GROUP_MIN_ROWS, BULK_GROUP_MAX_ROWS, BULK_MAX_GROUPS]).toEqual([2, 30, 5]);
     const runner = boot(memory());
     expect(runner.createGroup(ids(1))).toBeUndefined();
     expect(runner.createGroup(ids(31))).toBeUndefined();
-    for (let g = 0; g < 10; g += 1) expect(runner.createGroup(ids(2, `g${g}-`))).toBeDefined();
+    for (let g = 0; g < 5; g += 1) expect(runner.createGroup(ids(2, `g${g}-`))).toBeDefined();
     expect(runner.createGroup(ids(2, 'x'))).toBeUndefined();
     expect(runner.canCreateGroup()).toBe(false);
-    expect(runner.groups()).toHaveLength(10);
+    expect(runner.groups()).toHaveLength(5);
   });
 
   it('each group has a name and a collapse toggle; both persist across a restart', () => {
@@ -155,5 +155,53 @@ describe('1.3.0 — unbuilt bulk rows for the storage scanner', () => {
     expect(unbuiltBulkRowIds(memory())).toEqual([]);
     const junk = memory(); junk.setItem('kinetix:bulk-batch:v1', '{not json'); junk.setItem('kinetix:bulk-drafts:v1', 'nope');
     expect(unbuiltBulkRowIds(junk)).toEqual([]);
+  });
+});
+
+describe('rows outside any group', () => {
+  it('are adopted into one group (any count, even at the group limit) so every row has a Build Timeline', () => {
+    const runner = boot(memory());
+    for (let g = 0; g < 5; g += 1) runner.createGroup(ids(2, `g${g}-`));
+    const adopted = runner.adoptRows(['loose']);
+    expect(adopted?.rowIds).toEqual(['loose']);
+    expect(runner.groups()).toHaveLength(6);
+    expect(runner.adoptRows([])).toBeUndefined();
+  });
+});
+
+describe('1.3.1 — a built row keeps its cost and files across a restart', () => {
+  it('the record keeps the worker-seconds the queue reported and the summary saved at Build Timeline', async () => {
+    const disk = memory();
+    let worked = 0;
+    const queue = new SyncQueue({ ...engine, workerSec: () => worked });
+    const runner = new BulkBatchRunner({
+      queue, exists: () => true, storage: disk,
+      enqueue: rows => queue.enqueue(rows.map(r => ({ id: r.id, label: r.name, run: async () => { worked += 42; return { status: 'done' as const }; } }))),
+    });
+    const summary = { files: [{ id: 'script', kind: 'script' as const, name: 's.txt' }], slots: { script: true, scene: false, voiceover: false, media: false }, mediaCount: 0 };
+    runner.start([{ id: 'p1', name: 'One', summary }]);
+    await vi.waitFor(() => expect(runner.snapshot()[0]!.workerSec).toBe(42));
+    // "Restart": a new runner over the same disk, no queue items at all.
+    const after = boot(disk);
+    expect(after.snapshot()[0]!.summary).toEqual(summary);
+    expect(after.snapshot()[0]!.workerSec).toBe(42);
+  });
+
+  it('the drawer rebuilds a built row from that summary (not a blank "0 files" row)', async () => {
+    const { BulkRowStore } = await import('./bulkRows');
+    const store = new BulkRowStore({
+      loadStaged: async () => null, writeStaged: async () => {}, createProject: async () => true, purge: async () => {},
+      removeBundleAsset: async () => {}, hashAudio: async () => 'h', probeDuration: async () => 1, cloudActive: () => false,
+      stageAudio: async () => ({}), ingestBundle: async () => ({ kind: 'not-a-bundle' }) as never,
+    });
+    store.syncBuilt([{ id: 'p1', name: 'One', summary: {
+      files: [{ id: 'script', kind: 'script', name: 's.txt' }, { id: 'asset:1', kind: 'media', name: 'a.png' }],
+      slots: { script: true, scene: false, voiceover: false, media: true }, mediaCount: 1,
+    } }]);
+    const row = store.snapshot()[0]!;
+    expect(row.built).toBe(true);
+    expect(row.files.map(f => f.name)).toEqual(['s.txt', 'a.png']);
+    expect(row.slots.media).toBe(true);
+    expect(row.mediaCount).toBe(1);
   });
 });

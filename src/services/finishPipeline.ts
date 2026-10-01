@@ -74,15 +74,46 @@ export interface FinishStages {
     skippedSegments: number,
     timestamp: number,
   ) => SyncLogEntry;
+  /**
+   * The run's full sync log — the same report entries the editor's Build
+   * Timeline writes (WPM, silence / malformed-token, skips, word coverage,
+   * tail, numbers, scene density, the summary, no-asset, freeze frames).
+   * Report-only: it reads the run, it never changes a timing. Absent: the
+   * summary line alone.
+   */
+  buildRunLog?: (run: FinishRunLog) => { entries: SyncLogEntry[]; silenceErrorCount: number; noAssetCount?: number };
+}
+
+/** Everything one finished run's log is built from. */
+export interface FinishRunLog {
+  syncRunId: string;
+  at: number;
+  parsed: readonly VideoSegment[];
+  audioDuration: number;
+  aligned: AlignFromCacheResult;
+  kept: VideoSegment[];
+  keptAlignments: SegmentAlignment[];
+  skipped: { segmentIndex: number }[];
+  finalSegments: VideoSegment[];
+  assets: Asset[];
 }
 
 export interface FinishPipelineInput {
   project: Project;
   staged: StagedFiles;
+  /** Extra entries for this run's log (the bulk batch's cloud billing line). */
+  extraLogEntries?: (syncRunId: string, at: number) => SyncLogEntry[];
   /** Owner stamped on the staged set. Null means "not stamped" (empty or first load). */
   stagedOwnerId: string | null;
   stages: FinishStages;
   persistVoiceover: (projectId: string, file: File) => Promise<Asset | null>;
+  /**
+   * The editor's own media step (`persistStagedMedia` in App.tsx): commits the
+   * staged media files and zips into the project. Gets the list accumulated
+   * so far (dedup is against it) and returns the full list; a zip carrying the
+   * audio names the voiceover. Required: a build without it drops the media.
+   */
+  persistMedia: (projectId: string, staged: StagedFiles, assets: Asset[]) => Promise<{ assets: Asset[]; voiceoverId?: string }>;
   probeDuration: (asset: Asset) => Promise<number>;
   checkpoint?: BulkCheckpoint;
   onCheckpoint?: (checkpoint: BulkCheckpoint) => void;
@@ -144,7 +175,7 @@ export async function runFinishPipeline(input: FinishPipelineInput): Promise<Fin
     : start.sceneDetails;
   const scriptHash = await hashScript(scriptText, sceneText);
 
-  const allAssets: Asset[] = [...start.assets];
+  let allAssets: Asset[] = [...start.assets];
   let voiceoverId = start.voiceoverId;
   let audioHash = start.lastTranscribedAudioHash;
 
@@ -156,6 +187,15 @@ export async function runFinishPipeline(input: FinishPipelineInput): Promise<Fin
     allAssets.push(asset);
     voiceoverId = asset.id;
     audioHash = await hashAudio(staged.voiceoverFile.file);
+  }
+
+  // Media (files and zips), exactly as the editor's Build Timeline commits them.
+  const media = await input.persistMedia(start.id, staged, allAssets);
+  allAssets = media.assets;
+  if (media.voiceoverId !== undefined && media.voiceoverId !== voiceoverId) {
+    voiceoverId = media.voiceoverId;
+    const zipVoiceover = allAssets.find(a => a.id === voiceoverId);
+    audioHash = zipVoiceover?.file ? await hashAudio(zipVoiceover.file) : undefined;
   }
 
   const voiceover = allAssets.find(a => a.id === voiceoverId);
@@ -276,9 +316,18 @@ export async function runFinishPipeline(input: FinishPipelineInput): Promise<Fin
     lastSyncSpine: audioHash !== undefined ? { audioHash, scriptHash, engineKey } : start.lastSyncSpine,
     unappliedTranscript: undefined,
   };
+  const runLog = stages.buildRunLog
+    ? stages.buildRunLog({
+      syncRunId, at: stampAt, parsed, audioDuration, aligned, kept, keptAlignments, skipped,
+      finalSegments: finalTimed, assets: allAssets,
+    })
+    : {
+      entries: [stages.buildSyncInfoEntry(syncRunId, aligned.segments.length, kept.length, skipped.length, stampAt)],
+      silenceErrorCount: 0,
+    };
   next = appendSyncLogEntries(
     next,
-    [stages.buildSyncInfoEntry(syncRunId, aligned.segments.length, kept.length, skipped.length, stampAt)],
+    [...runLog.entries, ...(input.extraLogEntries?.(syncRunId, stampAt) ?? [])],
     {
       syncRunId,
       timestamp: stampAt,
@@ -286,6 +335,8 @@ export async function runFinishPipeline(input: FinishPipelineInput): Promise<Fin
       coveredSegments: kept.length,
       skippedSegments: skipped.length,
       aborted: false,
+      silenceErrorCount: runLog.silenceErrorCount,
+      ...(runLog.noAssetCount !== undefined ? { noAssetCount: runLog.noAssetCount } : {}),
     },
   );
 

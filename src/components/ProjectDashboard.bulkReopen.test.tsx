@@ -143,12 +143,40 @@ describe('U6 — the dashboard bulk button carries the batch signal', () => {
     expect(bulkButtons()[0]!.querySelector('[data-testid="bulk-failed-dot"]')!.textContent).toBe('2');
   });
 
-  it('nothing running and nothing failed: the plain button', async () => {
+  it('1.3.1: after the batch finishes the signal stays — a full ring and "n/m" — until the batch is cleared', async () => {
     batchRows = [{ id: 'p1', name: 'One', phase: 'done' }, { id: 'p2', name: 'Two', phase: 'done' }];
     await mount(() => {});
     const button = bulkButtons()[0]!;
-    expect(button.querySelector('[data-testid="bulk-ring"]')).toBeNull();
+    expect(button.querySelector('[data-testid="bulk-ring"]')!.getAttribute('data-progress')).toBe('1');
+    expect(button.querySelector('[data-testid="dashboard-bulk-count"]')!.textContent).toBe('2/2');
     expect(button.querySelector('[data-testid="bulk-failed-dot"]')).toBeNull();
+  });
+
+  it('no batch at all (or only drafts, nothing built yet): the plain button', async () => {
+    await mount(() => {});
+    const button = bulkButtons()[0]!;
+    expect(button.querySelector('[data-testid="bulk-ring"]')).toBeNull();
     expect(button.textContent).toBe('Bulk Projects');
+  });
+});
+
+describe('1.3.1 — the bulk panel docks as the dashboard’s left column', () => {
+  it('the dashboard gives the panel its width on the left (padding: its background still fills the window)', async () => {
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+    const render = async (inset: number): Promise<void> => {
+      await act(async () => {
+        root.render(
+          <ProjectDashboard currentProjectId={null} onSelectProject={() => {}} onNewProject={() => {}} onOpenAppSettings={() => {}} parseProjectData={async () => []} onBulkOpen={() => {}} bulkDockInset={inset} />,
+        );
+      });
+    };
+    await render(480);
+    const rootEl = container.querySelector('.kxd-root') as HTMLElement;
+    expect(rootEl.style.paddingLeft).toBe('480px');
+    expect(rootEl.style.left).toBe('');
+    await render(0);
+    expect(rootEl.style.paddingLeft).toBe('0px');
   });
 });

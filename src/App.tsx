@@ -174,6 +174,7 @@ import {
   asApplySyncResult,
   STAGED_FOR_ANOTHER_PROJECT_MESSAGE,
   type FinishStages,
+  type FinishRunLog,
 } from './services/finishPipeline';
 import { verifyBulkRecords } from './services/bulkRepair';
 import { defaultBulkRepairDeps as bulkRepairDeps } from './services/bulkRepairDeps';
@@ -403,6 +404,7 @@ import { SpeedBadge, SPEED_LADDER } from './components/SpeedBadge';
 import { ProjectDashboard } from './components/ProjectDashboard';
 import { BulkProjectsModal } from './components/BulkProjectsModal';
 import { bulkBatchRunner } from './services/bulkSyncQueue';
+import { cloudCostLine } from './services/cloudQueueJob';
 import { NewProjectModal, type NewProjectChoices } from './components/NewProjectModal';
 import { ProjectSettingsModal } from './components/ProjectSettingsModal';
 import { AppSettingsModal } from './components/AppSettingsModal';
@@ -535,6 +537,51 @@ type PendingVoiceoverSync = { file: File; asset: Asset; audioHash?: string };
 // ---------------------------------------------------------------------------
 // Module-level helpers for the atomic Apply Sync flow
 // ---------------------------------------------------------------------------
+
+const BULK_DRAWER_OPEN_KEY = 'kinetix:bulk-drawer-open:v1';
+/** The bulk panel's width, and the narrowest window it docks on (else it overlays). */
+const BULK_DRAWER_WIDTH = 480;
+const BULK_DOCK_MIN_WIDTH = 900;
+function readBulkDrawerOpen(): boolean {
+  try { return localStorage.getItem(BULK_DRAWER_OPEN_KEY) === '1'; } catch { return false; }
+}
+function writeBulkDrawerOpen(open: boolean): void {
+  try {
+    if (open) localStorage.setItem(BULK_DRAWER_OPEN_KEY, '1');
+    else localStorage.removeItem(BULK_DRAWER_OPEN_KEY);
+  } catch { /* storage unavailable: the drawer just starts closed */ }
+}
+
+/**
+ * The staged media step of Build Timeline: commits the staged media files and
+ * zips into the project's asset list. One implementation for the editor's own
+ * Apply Sync and the bulk finish pipeline (`persistMedia`), so a bulk project
+ * built in the background gets its media exactly as the editor would. Dedup
+ * is by name against `assets` (everything accumulated so far). Returns the
+ * full list; `voiceoverId` when a zip carried the audio.
+ */
+async function persistStagedMedia(
+  projectId: string,
+  staged: StagedFiles,
+  assets: Asset[],
+): Promise<{ assets: Asset[]; voiceoverId?: string }> {
+  const allAssets = [...assets];
+  let voiceoverId: string | undefined;
+  for (const sf of staged.assetFiles) {
+    if (allAssets.some(a => a.name === sf.file.name)) continue;
+    const ext = sf.file.name.split('.').pop()?.toLowerCase() ?? '';
+    const type: Asset['type'] = ['mp4', 'mov', 'webm', 'm4v'].includes(ext) ? 'video' : 'image';
+    const asset = await persistFileToAsset(projectId, sf.file, type);
+    if (asset) allAssets.push(asset);
+  }
+  for (const sf of staged.zipFiles) {
+    const ingested = await ingestZip(projectId, sf.file);
+    const { kept, audioAssetId } = await mergeExtractedZipAssets(projectId, allAssets, ingested.assets);
+    allAssets.push(...kept);
+    if (audioAssetId !== undefined) voiceoverId = audioAssetId;
+  }
+  return { assets: allAssets, voiceoverId };
+}
 
 /**
  * Persists a single media file to IndexedDB and returns a fully-formed Asset,
@@ -1862,6 +1909,51 @@ function isTextEntryElement(el: Element | null): boolean {
   return false;
 }
 
+/**
+ * A bulk-built run's sync log: the SAME report entries, from the same builders
+ * and in the same order, that the editor's Build Timeline writes for a run.
+ * Report-only — every check here reads the run and never changes a timing.
+ */
+function buildFinishRunLog(run: FinishRunLog): { entries: SyncLogEntry[]; silenceErrorCount: number; noAssetCount?: number } {
+  const { syncRunId, at, aligned, kept, keptAlignments } = run;
+  const skipped = run.skipped as SkippedSegmentRecord[];
+  const words = run.parsed.reduce((n, s) => n + (s.text?.trim() ? s.text.trim().split(/\s+/).length : 0), 0);
+  const wpmCheckEntry = buildWpmCheckLogEntry(syncRunId, words, run.audioDuration, at);
+  const grouped = (entry: SyncLogEntry | undefined): SyncLogEntry[] => (entry ? [entry] : []);
+  const entries: SyncLogEntry[] = [
+    ...(wpmCheckEntry ? [wpmCheckEntry] : []),
+    ...(aligned.silenceError ? [buildSilenceErrorEntry(syncRunId, aligned.silenceError, at)] : []),
+    ...(aligned.malformedTokenCount > 0
+      ? [buildMalformedTokenEntry(syncRunId, aligned.malformedTokenCount, aligned.totalTokenCount, at)]
+      : []),
+    ...(skipped.length > 0 ? buildSkipLogEntries(syncRunId, skipped, at) : []),
+    ...grouped(buildGroupedViolationEntry(syncRunId, validateWordCoverage(kept, keptAlignments), at)),
+    ...grouped(buildGroupedViolationEntry(syncRunId, validateTailWords(kept, keptAlignments), at)),
+    ...grouped(buildGroupedViolationEntry(syncRunId, validateNumericWords(kept, keptAlignments), at)),
+    ...grouped(buildGroupedViolationEntry(syncRunId, validateSceneDensity(kept, keptAlignments), at)),
+    buildSyncInfoEntry(syncRunId, aligned.segments.length, kept.length, skipped.length, at),
+  ];
+  const noAssetNumbers = run.finalSegments.map((seg, i) => (seg.assetId ? null : i + 1)).filter((n): n is number => n !== null);
+  const noAssetEntry = buildNoAssetSummaryEntry(
+    syncRunId, noAssetNumbers, run.finalSegments.length, run.assets.filter(a => a.type !== 'audio').length, at,
+  );
+  if (noAssetEntry) entries.push(noAssetEntry);
+  entries.push(...buildFreezeFrameEntries(syncRunId, run.finalSegments, run.assets, at));
+  return {
+    entries,
+    silenceErrorCount: aligned.silenceError ? 1 : 0,
+    ...(noAssetNumbers.length > 0 ? { noAssetCount: noAssetNumbers.length } : {}),
+  };
+}
+
+/** The bulk batch's cloud billing line for this project's sync log (what the
+ *  drawer showed while it ran). Nothing when the row used no cloud time. */
+function bulkBillingLog(projectId: string, syncRunId: string, at: number): SyncLogEntry[] {
+  const workerSec = bulkBatchRunner().snapshot().find(r => r.id === projectId)?.workerSec ?? 0;
+  if (!(workerSec > 0)) return [];
+  return [makeSyncLogEntry(syncRunId, 'info', BULK_COPY.billingLog(cloudCostLine(workerSec)), undefined, at)];
+}
+
 const FINISH_STAGES: FinishStages = {
   parseProjectData,
   evaluateCoverageGate,
@@ -1869,6 +1961,7 @@ const FINISH_STAGES: FinishStages = {
   retileCoveredSegments,
   emptySceneDocAbortMessage,
   buildSyncInfoEntry,
+  buildRunLog: buildFinishRunLog,
 };
 
 export default function App() {
@@ -2297,8 +2390,10 @@ export default function App() {
   // Wave 3 U7.5 — the Bulk Projects rows modal lives here, not in the
   // dashboard: finishing a timeline opens that project in the editor, which
   // unmounts the dashboard, and the modal must survive that.
-  const [bulkMounted, setBulkMounted] = useState(false);
+  // The drawer's open state survives a reload: open before it, open after.
+  const [bulkMounted, setBulkMounted] = useState(readBulkDrawerOpen);
   const [bulkHidden, setBulkHidden] = useState(false);
+  useEffect(() => { writeBulkDrawerOpen(bulkMounted && !bulkHidden); }, [bulkMounted, bulkHidden]);
   // The batch's rows, live — the editor's right-edge handle shows their count.
   const bulkBatch = bulkBatchRunner(parseProjectData);
   const bulkBatchRows = useSyncExternalStore(l => bulkBatch.subscribe(l), () => bulkBatch.snapshot());
@@ -2308,6 +2403,24 @@ export default function App() {
   const openBulkDrawer = useCallback(() => {
     setBulkHidden(false);
     setBulkMounted(true);
+  }, []);
+  const bulkDrawerOpen = bulkMounted && !bulkHidden;
+  // The dashboard's Bulk Projects button toggles the panel.
+  const toggleBulkDrawer = useCallback(() => {
+    if (bulkDrawerOpen) setBulkHidden(true);
+    else openBulkDrawer();
+  }, [bulkDrawerOpen, openBulkDrawer]);
+  // On the dashboard the panel DOCKS as its left column (the grid moves over to
+  // make room) when the window is wide enough; on a narrow window, and in the
+  // editor, it slides over the content as before.
+  const [bulkDockWide, setBulkDockWide] = useState(() => typeof window === 'undefined' || window.matchMedia?.(`(min-width: ${BULK_DOCK_MIN_WIDTH}px)`).matches !== false);
+  useEffect(() => {
+    const mq = window.matchMedia?.(`(min-width: ${BULK_DOCK_MIN_WIDTH}px)`);
+    if (!mq) return;
+    const on = (): void => setBulkDockWide(mq.matches);
+    on();
+    mq.addEventListener?.('change', on);
+    return () => mq.removeEventListener?.('change', on);
   }, []);
   const [dashboardVersion, setDashboardVersion] = useState(0);
   const [showProjectSettingsModal, setShowProjectSettingsModal] = useState(false);
@@ -4073,12 +4186,15 @@ export default function App() {
     if (liveProjectRef.current.bulkContext) {
       setIsProcessing(true);
       try {
+        const bulkProjectId = liveProjectRef.current.id;
         const result = await runFinishPipeline({
           project: liveProjectRef.current,
           staged,
           stagedOwnerId: stagedOwner,
           stages: FINISH_STAGES,
           persistVoiceover: (pid, file) => persistFileToAsset(pid, file, 'audio'),
+          persistMedia: persistStagedMedia,
+          extraLogEntries: (runId, at) => bulkBillingLog(bulkProjectId, runId, at),
           probeDuration: asset => resolveVoiceoverDuration(asset, liveProjectRef.current.id),
           now: Date.now,
         });
@@ -4320,20 +4436,10 @@ export default function App() {
         if (reusingPending) setPendingVoiceoverSync(null);
       }
     }
-    for (const sf of staged.assetFiles) {
-      if (allAssets.some(a => a.name === sf.file.name)) continue;
-      const ext = sf.file.name.split('.').pop()?.toLowerCase() ?? '';
-      const type: Asset['type'] = ['mp4', 'mov', 'webm', 'm4v'].includes(ext) ? 'video' : 'image';
-      const asset = await persistFileToAsset(projectRef.current.id, sf.file, type);
-      if (asset) allAssets.push(asset);
-    }
-    for (const sf of staged.zipFiles) {
-      const ingested = await ingestZip(projectRef.current.id, sf.file);
-      const { kept, audioAssetId } = await mergeExtractedZipAssets(
-        projectRef.current.id, allAssets, ingested.assets,
-      );
-      allAssets.push(...kept);
-      if (audioAssetId !== undefined) newVoiceoverId = audioAssetId;
+    {
+      const media = await persistStagedMedia(projectRef.current.id, staged, allAssets);
+      allAssets.splice(0, allAssets.length, ...media.assets);
+      if (media.voiceoverId !== undefined) newVoiceoverId = media.voiceoverId;
     }
 
     // WS2 quick-close — operator ruling (2026-09-05): no resolvable voiceover
@@ -8504,6 +8610,8 @@ export default function App() {
             checkpoint,
             stages: FINISH_STAGES,
             persistVoiceover: (pid, file) => persistFileToAsset(pid, file, 'audio'),
+            persistMedia: persistStagedMedia,
+            extraLogEntries: (runId, at) => bulkBillingLog(projectId, runId, at),
             probeDuration: asset => resolveVoiceoverDuration(asset, projectId),
             save: async p => { await saveProject(p); },
             onCheckpoint: c => runner.noteCheckpoint(projectId, c),
@@ -8604,7 +8712,8 @@ export default function App() {
       onOpenAppSettings={() => setShowAppSettingsModal(true)}
       onAssetCleanupFailed={showToast}
       parseProjectData={parseProjectData}
-      onBulkOpen={openBulkDrawer}
+      onBulkOpen={toggleBulkDrawer}
+      bulkDockInset={bulkDrawerOpen && bulkDockWide ? BULK_DRAWER_WIDTH : 0}
       metasVersion={dashboardVersion}
       bulkOpen={bulkMounted}
       onProjectsDeleted={dropDeletedFromEditor}
@@ -9737,6 +9846,7 @@ export default function App() {
       {bulkMounted && (
         <BulkProjectsModal
           hidden={bulkHidden}
+          docked={showDashboard && bulkDockWide}
           createBlankProject={makeDefaultProject}
           parseProjectData={parseProjectData}
           onProjectsCreated={() => setDashboardVersion(v => v + 1)}

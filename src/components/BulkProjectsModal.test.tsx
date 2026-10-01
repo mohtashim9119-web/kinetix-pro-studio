@@ -35,7 +35,7 @@ vi.mock('../services/bulkSyncQueue', async () => {
   };
 });
 
-import { BulkCountDialog, BulkProjectsModal } from './BulkProjectsModal';
+import { BulkProjectsModal } from './BulkProjectsModal';
 import { BulkRowStore, type BulkRowDeps } from '../services/bulkRows';
 import { cloudSyncQueue, queueProjectsForCloudSync } from '../services/bulkSyncQueue';
 import { BulkBatchRunner } from '../services/bulkBatch';
@@ -83,31 +83,6 @@ const mount = async (el: React.ReactElement): Promise<{ root: ReturnType<typeof 
 };
 const q = (host: HTMLElement, id: string): HTMLElement | null => host.querySelector(`[data-testid="${id}"]`);
 
-describe('BulkCountDialog', () => {
-  it('confirms a whole number in range and refuses everything else', async () => {
-    const onConfirm = vi.fn();
-    const { host } = await mount(<BulkCountDialog onConfirm={onConfirm} onCancel={() => {}} />);
-    const input = q(host, 'bulk-count-input') as HTMLInputElement;
-    const confirm = q(host, 'bulk-count-confirm') as HTMLButtonElement;
-    expect(input.value).toBe('3');
-    const set = async (v: string): Promise<void> => {
-      await act(async () => {
-        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, v);
-        input.dispatchEvent(new Event('input', { bubbles: true }));
-      });
-    };
-    await set('31');
-    expect(confirm.disabled).toBe(true);
-    expect(host.textContent).toContain('Enter a whole number from 2 to 30.');
-    await set('1');
-    expect(confirm.disabled).toBe(true);
-    await set('4');
-    expect(confirm.disabled).toBe(false);
-    await act(async () => { confirm.click(); });
-    expect(onConfirm).toHaveBeenCalledWith(4);
-  });
-});
-
 const fourFiles = (): File[] => [
   new File(['line'], 'script.txt'), new File(['[a] x\n[b] y\n[c] z'], 'scene.txt'),
   new File(['a'], 'vo.wav'), new File(['i'], 'a.png'),
@@ -129,6 +104,9 @@ const modalEl = (h: Harness, extra: Partial<React.ComponentProps<typeof BulkProj
     onOpenProject={() => {}} onClose={() => {}} store={h.store} runner={makeRunner()} {...extra}
   />
 );
+/** The Build Timeline button of the group holding this row. */
+const buildFor = (host: HTMLElement, rowId: string): HTMLButtonElement =>
+  q(host, `bulk-row-${rowId}`)!.closest('section')!.querySelector('[data-testid^="bulk-build-"]') as HTMLButtonElement;
 const rowIds = (host: HTMLElement): string[] =>
   [...host.querySelectorAll('[data-testid^="bulk-row-"]')].map(el => el.getAttribute('data-testid')!.replace('bulk-row-', ''));
 
@@ -140,22 +118,24 @@ describe('BulkProjectsModal — draft rows', () => {
     expect(h.created).toEqual([]);
     const [a] = rowIds(host);
     await act(async () => { await h.store.addFiles(a!, fourFiles()); });
-    expect((q(host, 'bulk-build') as HTMLButtonElement).disabled).toBe(true);
+    expect(buildFor(host, a!).disabled).toBe(true);
     const name = q(host, `bulk-name-${a}`) as HTMLInputElement;
-    expect(name.placeholder).toBe('Project name (required)');
+    expect(name.placeholder).toBe('Project name');
+    expect(name.getAttribute('aria-required')).toBe('true');
     await setValue(name, '  Harbour  ');
-    expect((q(host, 'bulk-build') as HTMLButtonElement).disabled).toBe(false);
+    expect(buildFor(host, a!).disabled).toBe(false);
   });
 
-  it('B5: an empty media chip reads "Optional" (no warning icon), and fills to a count once media lands', async () => {
+  it('B5: an empty media chip reads just "Media" (media stays optional for Build), and fills to a count once media lands', async () => {
     const h = store();
     const { host } = await mount(modal(h, 1));
     const [id] = rowIds(host);
     const chip = () => q(host, `bulk-slots-${id}`)!.querySelector('[data-slot="media"]')!;
-    expect(chip().textContent).toContain('Optional');
+    expect(chip().textContent).toBe('Media');
     expect(chip().getAttribute('data-filled')).toBe('false');
     await act(async () => { await h.store.addFiles(id!, fourFiles()); });
-    expect(chip().textContent).not.toContain('Optional');
+    expect(chip().textContent).toBe('Media · 1');
+    expect(chip().getAttribute('data-filled')).toBe('true');
   });
 
   it('a group\'s Add project appends a row to it, and stops at 30', async () => {
@@ -174,6 +154,8 @@ describe('BulkProjectsModal — draft rows', () => {
     const [a, b] = rowIds(host);
     await act(async () => { await h.store.addFiles(a!, [...fourFiles(), new File(['j'], 'wrong.png')]); });
     await act(async () => { (q(host, `bulk-files-toggle-${a}`) as HTMLButtonElement).click(); });
+    // Media is one row; its own arrow lists the individual files.
+    await act(async () => { (q(host, `bulk-media-toggle-${a}`) as HTMLButtonElement).click(); });
     expect(q(host, `bulk-files-${a}`)!.textContent).toContain('wrong.png');
     await act(async () => { (host.querySelector('[aria-label="Delete wrong.png"]') as HTMLButtonElement).click(); });
     await vi.waitFor(() => expect(q(host, `bulk-files-${a}`)!.textContent).not.toContain('wrong.png'));
@@ -198,7 +180,7 @@ describe('BulkProjectsModal — draft rows', () => {
       await h.store.addFiles(ids[1]!, fourFiles()); h.store.setTypedName(ids[1]!, 'Valley');
       await h.store.addFiles(ids[2]!, [new File(['s'], 'script.txt')]); h.store.setTypedName(ids[2]!, 'Half');
     });
-    await act(async () => { (q(host, 'bulk-build') as HTMLButtonElement).click(); });
+    await act(async () => { buildFor(host, ids[0]!).click(); });
     await vi.waitFor(() => expect(h.created).toEqual(['Alpine', 'Valley']));
     expect(onCreated).toHaveBeenCalled();
     await vi.waitFor(() => expect(rowIds(host)).toEqual(ids));
@@ -229,7 +211,7 @@ describe('BulkProjectsModal — draft rows', () => {
     const { host } = await mount(modal(h, 1, { onOpenProject: onOpen, runner: makeRunner(finalize) }));
     const [id] = rowIds(host);
     await act(async () => { await h.store.addFiles(id!, fourFiles()); h.store.setTypedName(id!, 'Harbour'); });
-    await act(async () => { (q(host, 'bulk-build') as HTMLButtonElement).click(); });
+    await act(async () => { buildFor(host, id!).click(); });
     await vi.waitFor(() => expect(finalize).toHaveBeenCalledWith(id, { userInitiated: false }));
     expect(q(host, `bulk-status-${id}`)!.textContent).toBe('Building the timeline…');
     expect(q(host, `bulk-open-${id}`)).toBeNull();
@@ -248,7 +230,7 @@ describe('BulkProjectsModal — draft rows', () => {
     const { host } = await mount(modal(h, 1, { runner: makeRunner(async () => ({ ok: false, message: 'Sync cancelled.' })) }));
     const [id] = rowIds(host);
     await act(async () => { await h.store.addFiles(id!, fourFiles()); h.store.setTypedName(id!, 'Harbour'); });
-    await act(async () => { (q(host, 'bulk-build') as HTMLButtonElement).click(); });
+    await act(async () => { buildFor(host, id!).click(); });
     await vi.waitFor(() => expect(q(host, `bulk-open-${id}`)).not.toBeNull());
     expect(q(host, `bulk-status-${id}`)!.textContent).toContain('the timeline could not be finished');
     expect(q(host, `bulk-status-${id}`)!.textContent).toContain('Sync cancelled.');
@@ -273,7 +255,7 @@ describe('BulkProjectsModal — draft rows', () => {
     const { root, host } = await mount(modal(h, 1, { runner }));
     const [id] = rowIds(host);
     await act(async () => { await h.store.addFiles(id!, fourFiles()); h.store.setTypedName(id!, 'Harbour'); });
-    await act(async () => { (q(host, 'bulk-build') as HTMLButtonElement).click(); });
+    await act(async () => { buildFor(host, id!).click(); });
     await vi.waitFor(() => expect(q(host, `bulk-status-${id}`)!.textContent).toBe('Transcribing on the cloud…'));
     // Hide mid-run, then reopen (the dashboard's / editor handle's door).
     await act(async () => { root.render(modal(h, 0, { runner, hidden: true })); });
@@ -287,35 +269,83 @@ describe('BulkProjectsModal — draft rows', () => {
     await act(async () => { cloudSyncQueue.cancelAll(); });
   });
 
-  it('U3: "Create Projects" lives inside the drawer — asks 2–30, makes ONE new group of that many empty rows, existing rows untouched', async () => {
+  it('create a group inline: a 2–30 field and "Create Group" — the group appears at once, no popup', async () => {
     const h = store();
     const runner = makeRunner();
-    const { host } = await mount(modal(h, 1, { runner }));
-    const before = rowIds(host);
-    expect(q(host, 'bulk-new-batch')).toBeNull();
-    await act(async () => { (q(host, 'bulk-create') as HTMLButtonElement).click(); });
-    const input = host.querySelector('[data-testid="bulk-count-input"]') as HTMLInputElement;
-    await setValue(input, '1');
-    expect((host.querySelector('[data-testid="bulk-count-confirm"]') as HTMLButtonElement).disabled).toBe(true);
-    await setValue(input, '2');
-    await act(async () => { (host.querySelector('[data-testid="bulk-count-confirm"]') as HTMLButtonElement).click(); });
+    const { host } = await mount(modal(h, 0, { runner }));
+    expect(q(host, 'bulk-create-heading')!.textContent).toBe('New group');
+    const field = q(host, 'bulk-create-count') as HTMLInputElement;
+    const create = q(host, 'bulk-create') as HTMLButtonElement;
+    expect(field.getAttribute('aria-label')).toBe('Number of projects');
+    expect(field.min).toBe('2');
+    expect(field.max).toBe('30');
+    for (const bad of ['1', '31', '', '2.5']) {
+      await setValue(field, bad);
+      expect(create.disabled, `"${bad}" must not create`).toBe(true);
+    }
+    await setValue(field, '4');
+    expect(create.textContent).toBe('Create Group');
+    await act(async () => { create.click(); });
+    expect(document.querySelector('[data-testid="bulk-count-input"]')).toBeNull();
+    expect(document.querySelector('[role="dialog"][aria-modal="true"]')).toBeNull();
     expect(runner.groups()).toHaveLength(1);
     const group = runner.groups()[0]!;
-    expect(group.rowIds).toHaveLength(2);
-    expect(q(host, `bulk-group-section-${group.id}`)!.querySelectorAll('[data-testid^="bulk-row-"]')).toHaveLength(2);
-    expect(rowIds(host)).toEqual([...group.rowIds, ...before]);
-    expect(host.querySelector('[data-testid="bulk-count-input"]')).toBeNull();
+    expect(q(host, `bulk-group-section-${group.id}`)!.querySelectorAll('[data-testid^="bulk-row-"]')).toHaveLength(4);
     // A group's own "Add project" adds a row to THAT group.
     await act(async () => { (q(host, `bulk-add-${group.id}`) as HTMLButtonElement).click(); });
-    expect(runner.groups()[0]!.rowIds).toHaveLength(3);
+    expect(runner.groups()[0]!.rowIds).toHaveLength(5);
   });
 
-  it('U3: at 10 groups "Create Projects" is off', async () => {
+  it('at most 5 groups exist at a time: at 5, "Create Group" is off and says why', async () => {
     const h = store();
     const runner = makeRunner();
-    for (let g = 0; g < 10; g += 1) runner.createGroup([`g${g}a`, `g${g}b`]);
+    for (let g = 0; g < 5; g += 1) runner.createGroup([`g${g}a`, `g${g}b`]);
     const { host } = await mount(modal(h, 0, { runner }));
     expect((q(host, 'bulk-create') as HTMLButtonElement).disabled).toBe(true);
+    expect(host.textContent).toContain('Up to 5 groups');
+  });
+
+  it('a group can be renamed in place (Enter saves, Escape cancels)', async () => {
+    const h = store();
+    const runner = makeRunner();
+    const g = runner.createGroup(h.store.createDrafts(2))!;
+    const { host } = await mount(modal(h, 0, { runner }));
+    await act(async () => { (q(host, `bulk-group-rename-${g.id}`) as HTMLButtonElement).click(); });
+    const input = q(host, `bulk-group-name-${g.id}`) as HTMLInputElement;
+    expect(input.value).toBe('Group 1');
+    await setValue(input, 'Client A');
+    await act(async () => { input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); });
+    expect(runner.groups()[0]!.name).toBe('Client A');
+    expect(q(host, `bulk-group-${g.id}`)!.textContent).toContain('Client A');
+    await act(async () => { (q(host, `bulk-group-rename-${g.id}`) as HTMLButtonElement).click(); });
+    const again = q(host, `bulk-group-name-${g.id}`) as HTMLInputElement;
+    await setValue(again, 'Nope');
+    await act(async () => { again.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); });
+    expect(runner.groups()[0]!.name).toBe('Client A');
+  });
+
+  it('each group has its own Build Timeline: it builds only that group\'s rows; there is no bottom Build or Cancel-all button and no intro text', async () => {
+    finishAtOnce = false;
+    cloudSyncQueue.clearFinished();
+    const h = store();
+    const runner = makeRunner();
+    const g1 = runner.createGroup(h.store.createDrafts(2))!;
+    const g2 = runner.createGroup(h.store.createDrafts(2))!;
+    const { host } = await mount(modal(h, 0, { runner }));
+    expect(q(host, 'bulk-build')).toBeNull();
+    expect(q(host, 'bulk-cancel-all')).toBeNull();
+    expect(host.textContent).not.toContain('Drop files onto a row');
+    await act(async () => {
+      await h.store.addFiles(g1.rowIds[0]!, fourFiles()); h.store.setTypedName(g1.rowIds[0]!, 'One');
+      await h.store.addFiles(g2.rowIds[0]!, fourFiles()); h.store.setTypedName(g2.rowIds[0]!, 'Two');
+    });
+    const b1 = q(host, `bulk-build-${g1.id}`) as HTMLButtonElement;
+    expect(b1.textContent).toBe('Build Timeline');
+    await act(async () => { b1.click(); });
+    await vi.waitFor(() => expect(h.created).toEqual(['One']));
+    expect(runner.snapshot().map(r => r.id)).toEqual([g1.rowIds[0]]);
+    expect((q(host, `bulk-build-${g2.id}`) as HTMLButtonElement).disabled).toBe(false);
+    await act(async () => { cloudSyncQueue.cancelAll(); });
   });
 
   it('v1.2.2: a row deferred while the operator edits reads "Ready — one click to finish", and its Open finishes it', async () => {
@@ -328,7 +358,7 @@ describe('BulkProjectsModal — draft rows', () => {
     const { host } = await mount(modal(h, 1, { runner, onFinishRow }));
     const [id] = rowIds(host);
     await act(async () => { await h.store.addFiles(id!, fourFiles()); h.store.setTypedName(id!, 'Harbour'); });
-    await act(async () => { (q(host, 'bulk-build') as HTMLButtonElement).click(); });
+    await act(async () => { buildFor(host, id!).click(); });
     await vi.waitFor(() => expect(q(host, `bulk-status-${id}`)!.textContent).toBe('Ready — one click to finish'));
     expect(finalize).toHaveBeenCalledTimes(1);
     await act(async () => { (q(host, `bulk-open-${id}`) as HTMLButtonElement).click(); });
@@ -413,12 +443,15 @@ describe('Bulk UI rebuild U4 — row files', () => {
     expect(h.store.snapshot().find(r => r.projectId === b)!.files.map(f => f.name)).toEqual(['script.txt', 'scene.txt', 'vo.wav', 'a.png']);
   });
 
-  it('the media chip reads "Optional"; the three spine chips do not', async () => {
+  it('the four chips read Script · Scenes · Audio · Media, each with its type icon, on one line', async () => {
     const h = store();
     const { host } = await mount(modal(h, 2));
     const [a] = rowIds(host);
-    const chips = [...q(host, `bulk-slots-${a}`)!.querySelectorAll('[data-slot]')];
-    expect(chips.filter(c => c.textContent!.includes('Optional')).map(c => c.getAttribute('data-slot'))).toEqual(['media']);
+    const slots = q(host, `bulk-slots-${a}`)!;
+    expect(slots.className).toContain('flex-nowrap');
+    const chips = [...slots.querySelectorAll('[data-slot]')];
+    expect(chips.map(c => c.textContent)).toEqual(['Script', 'Scenes', 'Audio', 'Media']);
+    for (const c of chips) expect(c.querySelector('svg')).not.toBeNull();
   });
 });
 
@@ -488,7 +521,7 @@ describe('1.3.0 landing — the background pipeline drives drawer rows to ready'
     const [id] = g.rowIds;
     const { root, host } = await mount(modal(h, 0, { runner, onOpenProject: onOpen, onFinishRow }));
     await act(async () => { await h.store.addFiles(id!, fourFiles()); h.store.setTypedName(id!, 'Harbour'); });
-    await act(async () => { (q(host, 'bulk-build') as HTMLButtonElement).click(); });
+    await act(async () => { buildFor(host, id!).click(); });
     await act(async () => { root.render(modal(h, 0, { runner, onOpenProject: onOpen, onFinishRow, hidden: true })); });
     await vi.waitFor(() => expect(runner.snapshot().find(r => r.id === id)?.phase).toBe('done'));
     expect(finalize).toHaveBeenCalledWith(id, { userInitiated: false });
@@ -500,5 +533,56 @@ describe('1.3.0 landing — the background pipeline drives drawer rows to ready'
     expect(onFinishRow).not.toHaveBeenCalled();
     expect(q(host, `bulk-group-count-${g.id}`)!.textContent).toBe('1/2 done');
     finishAtOnce = false;
+  });
+});
+
+describe('1.3.1 — row files, message line, docking', () => {
+  it('every row shows its file count on its own line — "0 files" (arrow off) before any upload', async () => {
+    const h = store();
+    const { host } = await mount(modal(h, 2));
+    const [a] = rowIds(host);
+    const toggle = q(host, `bulk-files-toggle-${a}`) as HTMLButtonElement;
+    expect(toggle.textContent).toBe('0 files');
+    expect(toggle.disabled).toBe(true);
+  });
+
+  it('the Media row replaces or deletes ONLY the media (delete asks first); script, scenes and audio stay', async () => {
+    const h = store();
+    const { host } = await mount(modal(h, 2));
+    const [a] = rowIds(host);
+    await act(async () => { await h.store.addFiles(a!, [...fourFiles(), new File(['j'], 'b.png')]); });
+    await act(async () => { (q(host, `bulk-files-toggle-${a}`) as HTMLButtonElement).click(); });
+    const list = q(host, `bulk-files-${a}`)!;
+    expect(list.querySelector('[aria-label="Replace all media (a bundle zip replaces every slot)"]')).not.toBeNull();
+    await act(async () => { await h.store.replaceMedia(a!, [new File(['n'], 'new.png'), new File(['t'], 'ignored.txt')]); });
+    const names = (): string[] => h.store.snapshot().find(r => r.projectId === a)!.files.map(f => f.name);
+    expect(names()).toEqual(['script.txt', 'scene.txt', 'vo.wav', 'new.png']);
+    await act(async () => { (q(host, `bulk-media-delete-${a}`) as HTMLButtonElement).click(); });
+    expect(document.querySelector('[role="dialog"][aria-label="Delete all media?"]')).not.toBeNull();
+    await act(async () => { (document.querySelector('[data-testid="confirm-dialog-confirm"]') as HTMLButtonElement).click(); });
+    await vi.waitFor(() => expect(names()).toEqual(['script.txt', 'scene.txt', 'vo.wav']));
+  });
+
+  it('several messages share ONE line: ‹ n/m › steps through them; the status comes first', async () => {
+    const h = store();
+    const { host } = await mount(modal(h, 2));
+    const [a] = rowIds(host);
+    await act(async () => { await h.store.addFiles(a!, [...fourFiles(), new File(['?'], 'notes.pdf')]); });
+    const status = (): string => q(host, `bulk-status-${a}`)!.textContent ?? '';
+    const first = status();
+    const arrows = q(host, `bulk-msgs-${a}`)!;
+    expect(arrows.textContent).toContain('1/2');
+    await act(async () => { (arrows.querySelector('[aria-label="Next message"]') as HTMLButtonElement).click(); });
+    expect(status()).toContain('skipped');
+    await act(async () => { (q(host, `bulk-msgs-${a}`)!.querySelector('[aria-label="Previous message"]') as HTMLButtonElement).click(); });
+    expect(status()).toBe(first);
+  });
+
+  it('docked beside the dashboard it is a flat column; over content it casts a shadow', async () => {
+    const h = store();
+    const { root, host } = await mount(modal(h, 0, { docked: true }));
+    expect(q(host, 'bulk-modal')!.className).not.toContain('shadow-[');
+    await act(async () => { root.render(modal(h, 0, { docked: false })); });
+    expect(q(host, 'bulk-modal')!.className).toContain('shadow-[');
   });
 });

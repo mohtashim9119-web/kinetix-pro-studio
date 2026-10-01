@@ -39,7 +39,7 @@ import { deleteStagedFile, putStagedFile } from './stagedFilesStore';
 import { computeAudioHash } from './spine';
 import { BUILD_TIMELINE_COPY, missingSpineSlots, type BuildTimelineSlots } from './buildTimelineGate';
 import { rowIncompleteReason } from './bulkContext';
-import { BULK_DRAFTS_KEY as DRAFTS_KEY } from './bulkBatch';
+import { BULK_DRAFTS_KEY as DRAFTS_KEY, type BatchRowSummary } from './bulkBatch';
 
 export type BulkAudioState = 'none' | 'preparing' | 'ready' | 'failed' | 'local';
 
@@ -188,7 +188,6 @@ export async function classifyRowDrop(
         scene = outcome.sceneFile;
         bundleVoiceover = outcome.voiceoverFile;
         bundleMedia.push(...outcome.mediaAssets);
-        notes.push(`Bundle “${file.name}”: script, scene doc, voiceover and ${outcome.mediaAssets.length} media file${outcome.mediaAssets.length === 1 ? '' : 's'}.`);
       }
     } else if (ext === 'txt' || ext === 'rtf') {
       texts.push({ file, role: detectTextFileRole(stripRtfIfNeeded(await file.text())) });
@@ -332,14 +331,20 @@ export class BulkRowStore {
   /** Rows for projects the persistent batch already created (a reopened
    *  window): shown locked, in step with the batch record. Also drops built
    *  rows the operator cleared. */
-  syncBuilt(records: readonly { id: string; name: string }[]): void {
+  syncBuilt(records: readonly { id: string; name: string; summary?: BatchRowSummary }[]): void {
     let changed = false;
     const ids = new Set(records.map(r => r.id));
     for (const rec of records) {
       if (this.rows.has(rec.id)) continue;
-      this.rows.set(rec.id, { ...this.blankRow(rec.id), typedName: rec.name, built: true });
+      // A built row keeps what it was built from: the summary saved at Build
+      // Timeline, else (a row built before summaries) its own staged files.
+      const shown = rec.summary
+        ? { files: rec.summary.files.map(f => ({ ...f })), slots: { ...rec.summary.slots }, mediaCount: rec.summary.mediaCount }
+        : {};
+      this.rows.set(rec.id, { ...this.blankRow(rec.id), ...shown, typedName: rec.name, built: true });
       this.order.push(rec.id);
       changed = true;
+      if (!rec.summary) void this.restoreBuiltFiles(rec.id);
     }
     for (const id of [...this.order]) {
       if (this.rows.get(id)!.built && !ids.has(id)) {
@@ -351,7 +356,19 @@ export class BulkRowStore {
     if (changed) this.emit();
   }
 
-  /** "Create Projects": n empty draft rows (one new group). */
+  private async restoreBuiltFiles(id: string): Promise<void> {
+    const st = await this.deps.loadStaged(id).catch(() => null);
+    if (!st || !this.rows.get(id)?.built) return;
+    this.refresh(id, st);
+  }
+
+  /** What a row holds, for the batch record (names and slots only). */
+  summaryOf(id: string): BatchRowSummary | undefined {
+    const r = this.rows.get(id);
+    return r ? { files: r.files.map(f => ({ ...f })), slots: { ...r.slots }, mediaCount: r.mediaCount } : undefined;
+  }
+
+  /** "Create Group": n empty draft rows (one new group). */
   createDrafts(n: number): string[] {
     const ids: string[] = [];
     for (let i = 0; i < n && this.canAddRow(); i += 1) ids.push(this.pushRow());
@@ -475,6 +492,31 @@ export class BulkRowStore {
     await this.addFiles(id, files);
   }
 
+  /** Deletes every media file of a row (staged files, zips, bundle media);
+   *  script, scene doc and voiceover stay. */
+  async removeMedia(id: string): Promise<void> {
+    const row = this.rows.get(id);
+    if (!row || row.built) return;
+    const prev = (await this.deps.loadStaged(id)) ?? EMPTY_STAGED;
+    const next: StagedFiles = { ...prev, assetFiles: [], zipFiles: [] };
+    await this.deps.writeStaged(id, prev, next);
+    for (const asset of this.bundle.get(id) ?? []) await this.deps.removeBundleAsset(id, asset);
+    this.bundle.delete(id);
+    this.refresh(id, next, { notes: [] });
+  }
+
+  /** Replaces all media with this set. Only media files and zips are taken,
+   *  so a stray script or audio file is ignored — but a BUNDLE zip carries
+   *  every slot and replaces them too (the button's copy says so). */
+  async replaceMedia(id: string, files: readonly File[]): Promise<void> {
+    const row = this.rows.get(id);
+    if (!row || row.built) return;
+    const media = files.filter(f => /\.zip$/i.test(f.name) || detectMediaType(f.name) !== undefined);
+    if (media.length === 0) return;
+    await this.removeMedia(id);
+    await this.addFiles(id, media);
+  }
+
   /** Clears every file of a row, keeping the row and its name. */
   async clearFiles(id: string): Promise<void> {
     const row = this.rows.get(id);
@@ -509,10 +551,13 @@ export class BulkRowStore {
    * Every other row stays a draft — an empty one quietly, a half-filled one
    * with the reason it was left out. Nothing is discarded by itself.
    */
-  async buildReady(): Promise<{ created: { id: string; name: string }[]; skips: Record<string, string> }> {
+  async buildReady(scope?: readonly string[]): Promise<{ created: { id: string; name: string }[]; skips: Record<string, string> }> {
     const created: { id: string; name: string }[] = [];
     const skips: Record<string, string> = {};
+    // A group's Build Timeline builds only that group's rows.
+    const only = scope ? new Set(scope) : undefined;
     for (const id of [...this.order]) {
+      if (only && !only.has(id)) continue;
       const r = this.rows.get(id)!;
       if (r.built) continue;
       const empty = r.files.length === 0 && r.typedName.trim() === '';

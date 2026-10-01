@@ -106,6 +106,7 @@ function baseInput(id: string, extras: Partial<FinishPipelineInput> = {}): Finis
       id: `vo-${id}`, name: file.name, url: 'blob:test', type: 'audio', file, addedAt: 1, duration: 1,
     } as Asset),
     probeDuration: async () => 1,
+    persistMedia: async (_pid, _st, assets) => ({ assets }),
     now: () => NOW,
     lookupTranscript: async () => ({ tokens: TOKENS, language: 'en' }),
     runFa: async () => ({
@@ -259,5 +260,92 @@ describe('U4 — a finished background row is ready to Open, with no project swi
     await vi.waitFor(() => expect(runner.snapshot()[0]!.phase).toBe('done'));
     expect(runner.snapshot()[0]!.checkpoint).toBe('ready');
     expect(switchProject).not.toHaveBeenCalled();
+  });
+});
+
+describe('1.3.1 — a finished bulk project carries its staged media', () => {
+  const img = (name: string): Asset => ({ id: `a-${name}`, name, url: 'blob:x', type: 'image', addedAt: 2 } as Asset);
+
+  it('staged media files and zips are committed into the project, and the scenes are planned WITH them', async () => {
+    const { staged } = stagedFor('m');
+    staged.assetFiles = [{ file: new File(['i'], 'one.png'), key: 'k1' }, { file: new File(['j'], 'two.jpg'), key: 'k2' }];
+    staged.zipFiles = [{ file: new File(['z'], 'more.zip'), key: 'k3' }];
+    const seen: { staged: StagedFiles; before: string[] }[] = [];
+    const planned: string[][] = [];
+    const result = await runFinishPipeline(baseInput('m', {
+      staged,
+      persistMedia: async (_pid, st, assets) => {
+        seen.push({ staged: st, before: assets.map(a => a.name) });
+        return { assets: [...assets, img('one.png'), img('two.jpg'), img('from-zip.png')] };
+      },
+      stages: { ...stages, parseProjectData: async (_s, _c, assets) => { planned.push(assets.map(a => a.name)); return [segment()]; } },
+    }));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(seen).toHaveLength(1);
+    expect(seen[0]!.staged.assetFiles.map(f => f.file.name)).toEqual(['one.png', 'two.jpg']);
+    expect(seen[0]!.staged.zipFiles.map(f => f.file.name)).toEqual(['more.zip']);
+    // The voiceover is already in the list the media step adds to (dedup is against everything).
+    expect(seen[0]!.before).toEqual(['vo-m.m4a']);
+    expect(result.project.assets.map(a => a.name)).toEqual(['vo-m.m4a', 'one.png', 'two.jpg', 'from-zip.png']);
+    expect(planned[0]).toEqual(['vo-m.m4a', 'one.png', 'two.jpg', 'from-zip.png']);
+    expect(result.project.voiceoverId).toBe('vo-m');
+  });
+
+  it('a zip that carries the audio names the voiceover, as the editor does', async () => {
+    const { staged } = stagedFor('z');
+    const zipAudio = { id: 'zip-audio', name: 'vo.wav', url: 'blob:z', type: 'audio', addedAt: 3, duration: 1, file: new File(['a'], 'vo.wav') } as Asset;
+    const result = await runFinishPipeline(baseInput('z', {
+      staged: { ...staged, voiceoverFile: null, zipFiles: [{ file: new File(['z'], 'all.zip'), key: 'k' }] },
+      persistMedia: async (_pid, _st, assets) => ({ assets: [...assets, zipAudio], voiceoverId: 'zip-audio' }),
+    }));
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.project.voiceoverId).toBe('zip-audio');
+  });
+
+  it('both call sites hand the pipeline the editor’s own media step', () => {
+    const app = readFileSync(resolve(import.meta.dirname, '..', 'App.tsx'), 'utf-8');
+    const calls = app.split('runFinishPipeline({').slice(1).map(c => c.slice(0, c.indexOf('});')));
+    expect(calls.length).toBeGreaterThanOrEqual(2);
+    for (const call of calls) expect(call).toContain('persistMedia: persistStagedMedia');
+    // …and the editor's own Build Timeline uses that same step (extracted, not copied).
+    expect(app).toContain('await persistStagedMedia(projectRef.current.id, staged, allAssets)');
+  });
+});
+
+describe('1.3.1 — a bulk-built project gets the editor’s sync log', () => {
+  it('the run log comes from the injected editor builder (with the run’s real data), then the billing line', async () => {
+    const seen: { kept: number; final: number; assets: string[] }[] = [];
+    const result = await runFinishPipeline(baseInput('log', {
+      stages: {
+        ...stages,
+        buildRunLog: run => {
+          seen.push({ kept: run.kept.length, final: run.finalSegments.length, assets: run.assets.map(a => a.name) });
+          return {
+            entries: [
+              { id: 'w', syncRunId: run.syncRunId, type: 'warning', message: 'pace', timestamp: run.at },
+              { id: 'i', syncRunId: run.syncRunId, type: 'info', message: 'Sync completed', timestamp: run.at },
+            ],
+            silenceErrorCount: 0,
+            noAssetCount: 1,
+          };
+        },
+      },
+      extraLogEntries: (runId, at) => [{ id: 'b', syncRunId: runId, type: 'info', message: 'Cloud billing (bulk build): 42 s worked · about $0.01.', timestamp: at }],
+    }));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(seen).toEqual([{ kept: 1, final: 1, assets: ['vo-log.m4a'] }]);
+    expect(result.project.syncLog!.map(e => e.message)).toEqual(['pace', 'Sync completed', 'Cloud billing (bulk build): 42 s worked · about $0.01.']);
+    const summary = result.project.syncRunSummaries!.at(-1)!;
+    expect(summary.noAssetCount).toBe(1);
+    expect(summary.silenceErrorCount).toBe(0);
+  });
+
+  it('App wires the editor’s builders (one shared run-log function) and the billing line at both call sites', () => {
+    const app = readFileSync(resolve(import.meta.dirname, '..', 'App.tsx'), 'utf-8');
+    expect(app).toContain('buildRunLog: buildFinishRunLog,');
+    const calls = app.split('runFinishPipeline({').slice(1).map(c => c.slice(0, c.indexOf('});')));
+    for (const call of calls) expect(call).toMatch(/extraLogEntries: \(runId, at\) => bulkBillingLog\(/);
   });
 });
