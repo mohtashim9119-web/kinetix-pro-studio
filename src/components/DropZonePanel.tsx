@@ -366,8 +366,10 @@ interface Props {
    *  once the sync has finished READING them — see the note there. */
   onApplySync: () => void | Promise<unknown>;
   /** Publishes this panel's staged files upward on every change, synchronously.
-   *  App.tsx mirrors it into a ref that Apply Sync reads. */
-  onStagedFilesChange: (staged: StagedFiles) => void;
+   *  App.tsx mirrors it into a ref that Apply Sync reads. `ownerProjectId` is
+   *  the project those files belong to — Apply Sync refuses a set staged for
+   *  a different project than the one it is building. */
+  onStagedFilesChange: (staged: StagedFiles, ownerProjectId: string) => void;
   /** Incremented by App.tsx after a successful banner-triggered Apply Sync
    *  (the recovery banner calls the shared entry point directly, bypassing
    *  this panel's own `triggerSync`). A change clears this panel's staged
@@ -705,11 +707,15 @@ export function DropZonePanel({
   const persistChainRef = useRef<Promise<void>>(Promise.resolve());
   const projectIdRef = useRef(projectId);
   projectIdRef.current = projectId;
+  // The project the staged set in `stagedRef` belongs to. Advanced only by the
+  // restore effect below, which first empties the set — so it never names a
+  // project whose files the set does not hold.
+  const stagedOwnerRef = useRef(projectId);
 
   const reconcileStagedPersistence = (prev: StagedFiles, next: StagedFiles): void => {
     const plan = planStagedReconcile(prev, next, ALL_PERSISTED_SLOTS);
     if (plan.write.length === 0 && plan.remove.length === 0) return;
-    const owner = projectIdRef.current;
+    const owner = stagedOwnerRef.current;
     persistChainRef.current = persistChainRef.current
       .then(async () => {
         // Deletes first: a replaced singleton slot writes to the same compound
@@ -736,7 +742,7 @@ export function DropZonePanel({
     const prev = stagedRef.current;
     const next = updater(prev);
     stagedRef.current = next;
-    onStagedFilesChange(next);
+    onStagedFilesChange(next, stagedOwnerRef.current);
     setStaged(next);
     reconcileStagedPersistence(prev, next);
   };
@@ -748,7 +754,7 @@ export function DropZonePanel({
   // would read the stale set. Republishing what this panel actually holds keeps
   // the two definitionally equal at every mount.
   useEffect(() => {
-    onStagedFilesChange(stagedRef.current);
+    onStagedFilesChange(stagedRef.current, stagedOwnerRef.current);
   }, [onStagedFilesChange]);
 
   // Mirrors `triggerSync`'s clear for a sync applied from the recovery banner
@@ -776,6 +782,19 @@ export function DropZonePanel({
   // the outgoing project's rows into the incoming project's panel.
   useEffect(() => {
     let cancelled = false;
+    // An in-editor project switch (bulk finish goes project → project without
+    // the dashboard) keeps this panel MOUNTED, so the staged set still holds
+    // the previous project's files. They are not this project's: drop them
+    // (in memory only — the previous project's persisted rows stay its own)
+    // before restoring this project's, or "never clobber" below would keep
+    // them and Build Timeline would build this project from the previous
+    // project's script, scene doc and voiceover — the v1.2.1 bulk cross-write.
+    if (stagedOwnerRef.current !== projectId) {
+      stagedOwnerRef.current = projectId;
+      stagedRef.current = EMPTY_STAGED;
+      onStagedFilesChange(EMPTY_STAGED, projectId);
+      setStaged(EMPTY_STAGED);
+    }
     void (async () => {
       try {
         const rows = await getStagedFilesForProject(projectId);
@@ -801,7 +820,7 @@ export function DropZonePanel({
         }
 
         stagedRef.current = restored;
-        onStagedFilesChange(restored);
+        onStagedFilesChange(restored, projectId);
         setStaged(restored);
       } catch (err) {
         console.error('[kinetix] staged-slot restore failed:', err);

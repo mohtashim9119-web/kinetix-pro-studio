@@ -203,7 +203,7 @@ describe('WS2-50 — DropZonePanel supplies live staged state, never a literal',
       body,
       'updateStaged no longer publishes the change to App.tsx — the shared ref would go stale ' +
         'and Apply Sync would run on files the user has since replaced.',
-    ).toContain('onStagedFilesChange(next);');
+    ).toContain('onStagedFilesChange(next, stagedOwnerRef.current);');
   });
 
   it('the panel republishes what it holds on every mount', () => {
@@ -214,6 +214,6 @@ describe('WS2-50 — DropZonePanel supplies live staged state, never a literal',
       PANEL_SRC,
       'the mount-time publish is gone — after a dashboard round trip the panel and Apply Sync ' +
         'would disagree about what is staged.',
-    ).toMatch(/useEffect\(\(\) => \{\s*onStagedFilesChange\(stagedRef\.current\);\s*\}, \[onStagedFilesChange\]\);/);
+    ).toMatch(/useEffect\(\(\) => \{\s*onStagedFilesChange\(stagedRef\.current, stagedOwnerRef\.current\);\s*\}, \[onStagedFilesChange\]\);/);
   });
 });

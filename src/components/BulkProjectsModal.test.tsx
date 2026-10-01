@@ -63,7 +63,7 @@ const memStorage = (): Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> => {
   const m = new Map<string, string>();
   return { getItem: k => m.get(k) ?? null, setItem: (k, v) => { m.set(k, v); }, removeItem: k => { m.delete(k); } };
 };
-const makeRunner = (finalize?: (id: string) => Promise<{ ok: boolean; message?: string }>): BulkBatchRunner => {
+const makeRunner = (finalize?: (id: string, req: { userInitiated: boolean }) => Promise<{ ok: boolean; message?: string; deferred?: boolean }>): BulkBatchRunner => {
   const r = new BulkBatchRunner({
     queue: cloudSyncQueue,
     enqueue: rows => { queueProjectsForCloudSync(rows, async () => []); },
@@ -219,7 +219,7 @@ describe('BulkProjectsModal — draft rows', () => {
     const [id] = rowIds(host);
     await act(async () => { await h.store.addFiles(id!, fourFiles()); h.store.setTypedName(id!, 'Harbour'); });
     await act(async () => { (q(host, 'bulk-build') as HTMLButtonElement).click(); });
-    await vi.waitFor(() => expect(finalize).toHaveBeenCalledWith(id));
+    await vi.waitFor(() => expect(finalize).toHaveBeenCalledWith(id, { userInitiated: false }));
     expect(q(host, `bulk-status-${id}`)!.textContent).toBe('Building the timeline…');
     expect(q(host, `bulk-open-${id}`)).toBeNull();
     await act(async () => { finish({ ok: true }); });
@@ -252,5 +252,62 @@ describe('BulkProjectsModal — draft rows', () => {
     expect(drawer.className).toContain('pointer-events-none');
     expect(drawer.getAttribute('aria-hidden')).toBe('true');
     expect(rowIds(host)).toHaveLength(1);
+  });
+
+  it('v1.2.2: a mid-run hide and reopen shows the SAME running batch with live progress — no quantity prompt', async () => {
+    finishAtOnce = false;
+    cloudSyncQueue.clearFinished();
+    const h = store();
+    const runner = makeRunner();
+    const { root, host } = await mount(modal(h, 1, { runner }));
+    const [id] = rowIds(host);
+    await act(async () => { await h.store.addFiles(id!, fourFiles()); h.store.setTypedName(id!, 'Harbour'); });
+    await act(async () => { (q(host, 'bulk-build') as HTMLButtonElement).click(); });
+    await vi.waitFor(() => expect(q(host, `bulk-status-${id}`)!.textContent).toBe('Transcribing on the cloud…'));
+    // Hide mid-run, then reopen (the dashboard's / editor handle's door).
+    await act(async () => { root.render(modal(h, 0, { runner, hidden: true })); });
+    expect(q(host, 'bulk-modal')!.getAttribute('data-hidden')).toBe('true');
+    await act(async () => { root.render(modal(h, 0, { runner, hidden: false })); });
+    expect(q(host, 'bulk-modal')!.getAttribute('data-hidden')).toBe('false');
+    expect(rowIds(host)).toEqual([id]);
+    expect(q(host, `bulk-status-${id}`)!.textContent).toBe('Transcribing on the cloud…');
+    expect(runner.snapshot().map(r => r.phase)).toEqual(['cloud']);
+    expect(host.querySelector('[data-testid="bulk-count-input"]')).toBeNull();
+    await act(async () => { cloudSyncQueue.cancelAll(); });
+  });
+
+  it('v1.2.2: "New batch" lives inside the drawer — asks how many, adds that many empty rows, running rows untouched', async () => {
+    const h = store();
+    const { host } = await mount(modal(h, 1));
+    const before = rowIds(host);
+    const newBatch = q(host, 'bulk-new-batch') as HTMLButtonElement | null;
+    expect(newBatch, 'the drawer has no "New batch" control').not.toBeNull();
+    await act(async () => { newBatch!.click(); });
+    const input = host.querySelector('[data-testid="bulk-count-input"]') as HTMLInputElement;
+    expect(input).not.toBeNull();
+    await setValue(input, '2');
+    await act(async () => { (host.querySelector('[data-testid="bulk-count-confirm"]') as HTMLButtonElement).click(); });
+    const after = rowIds(host);
+    expect(after).toHaveLength(before.length + 2);
+    expect(after.slice(0, before.length)).toEqual(before);
+    expect(host.querySelector('[data-testid="bulk-count-input"]')).toBeNull();
+  });
+
+  it('v1.2.2: a row deferred while the operator edits reads "Ready — one click to finish", and its Open finishes it', async () => {
+    finishAtOnce = true;
+    cloudSyncQueue.clearFinished();
+    const h = store();
+    const onFinishRow = vi.fn();
+    const finalize = vi.fn(async () => ({ ok: false, deferred: true }));
+    const runner = makeRunner(finalize);
+    const { host } = await mount(modal(h, 1, { runner, onFinishRow }));
+    const [id] = rowIds(host);
+    await act(async () => { await h.store.addFiles(id!, fourFiles()); h.store.setTypedName(id!, 'Harbour'); });
+    await act(async () => { (q(host, 'bulk-build') as HTMLButtonElement).click(); });
+    await vi.waitFor(() => expect(q(host, `bulk-status-${id}`)!.textContent).toBe('Ready — one click to finish'));
+    expect(finalize).toHaveBeenCalledTimes(1);
+    await act(async () => { (q(host, `bulk-open-${id}`) as HTMLButtonElement).click(); });
+    await vi.waitFor(() => expect(onFinishRow).toHaveBeenCalledWith(id));
+    finishAtOnce = false;
   });
 });

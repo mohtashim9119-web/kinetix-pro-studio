@@ -20,6 +20,19 @@ import { cloudTranscribeLanguage } from './cloudSyncEngine';
 /** How long finish waits for the editor to become ready after the active steps. */
 export const BULK_FINISH_WAIT_MS = 90_000;
 
+/** v1.2.2 — input in the editor this recently means the operator is working there. */
+export const BULK_ACTIVE_EDIT_MS = 20_000;
+
+/**
+ * Is the operator actively editing? Then a finish must not flip the editor
+ * into another project under them: the row waits for its own Open. Busy means
+ * the editor is open AND (they touched it within `BULK_ACTIVE_EDIT_MS`, or a
+ * sync is running there). The dashboard is never "editing".
+ */
+export function isOperatorActivelyEditing(s: { editorOpen: boolean; syncRunning: boolean; msSinceInput: number }): boolean {
+  return s.editorOpen && (s.syncRunning || s.msSinceInput < BULK_ACTIVE_EDIT_MS);
+}
+
 export interface CachedTranscript {
   tokens: TranscriptToken[];
   /** The language key the hit was stored under (the batch key, or `auto`). */
@@ -69,6 +82,9 @@ export interface BulkFinishDeps {
   readReady: () => BulkReady;
   applySync: () => Promise<{ ok: boolean; message?: string }>;
   saveNow: () => Promise<void>;
+  /** True once the operator has navigated since this finish began: stop and
+   *  leave the row ready for its Open rather than fight their switch. */
+  shouldYield?: () => boolean;
   now?: () => number;
   wait?: (ms: number) => Promise<void>;
 }
@@ -82,14 +98,18 @@ export async function runBulkProjectFinish(
   id: string,
   deps: BulkFinishDeps,
   waitMs: number = BULK_FINISH_WAIT_MS,
-): Promise<{ ok: boolean; message?: string }> {
+): Promise<{ ok: boolean; message?: string; deferred?: boolean }> {
+  const yielded = (): boolean => deps.shouldYield?.() === true;
+  if (yielded()) return { ok: false, deferred: true };
   await deps.switchProject(id);
+  if (yielded()) return { ok: false, deferred: true };
   const adopted = await deps.adoptCachedTranscript(id);
   if (!adopted) await deps.forceStartTranscription(id);
   const now = deps.now ?? Date.now;
   const wait = deps.wait ?? ((ms: number) => new Promise<void>(r => { setTimeout(r, ms); }));
   const deadline = now() + waitMs;
   for (;;) {
+    if (yielded()) return { ok: false, deferred: true };
     const s = deps.readReady();
     if (s.projectId === id && s.built) return { ok: true };
     if (s.projectId === id && s.ready) break;
@@ -98,6 +118,7 @@ export async function runBulkProjectFinish(
     }
     await wait(100);
   }
+  if (yielded()) return { ok: false, deferred: true };
   const result = await deps.applySync();
   if (!result.ok) return result;
   await deps.saveNow();

@@ -20,7 +20,7 @@ import { BULK_COPY, BULK_MAX_PROJECTS, parseBulkCount } from '../services/bulkCo
 import { BulkRowStore, defaultBulkRowDeps, type BulkRowState } from '../services/bulkRows';
 import type { Project } from '../types';
 import { bulkBatchRunner, cloudSyncQueue } from '../services/bulkSyncQueue';
-import { isBatchRowFinal, type BatchRow, type BulkBatchRunner } from '../services/bulkBatch';
+import { READY_TO_FINISH, isBatchRowFinal, type BatchRow, type BulkBatchRunner } from '../services/bulkBatch';
 import { CLOUD_USD_PER_WORKER_SEC, type CloudQueueDeps } from '../services/cloudQueueJob';
 import { collectDroppedFiles } from '../services/droppedFiles';
 import { missingSpineSlots } from '../services/buildTimelineGate';
@@ -111,10 +111,12 @@ interface RowProps {
   onRemoveRow: () => void;
   onCancel: () => void;
   onOpen: () => void;
+  /** Built on the cloud but not finished yet: Open finishes it, into the editor. */
+  onFinish: () => void;
   onRetry: () => void;
 }
 
-function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFile, onClearFiles, onRemoveRow, onCancel, onOpen, onRetry }: RowProps): React.ReactElement {
+function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFile, onClearFiles, onRemoveRow, onCancel, onOpen, onFinish, onRetry }: RowProps): React.ReactElement {
   const filesRef = useRef<HTMLInputElement>(null);
   const folderRef = useRef<HTMLInputElement>(null);
   const [over, setOver] = useState(false);
@@ -128,6 +130,7 @@ function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFi
   const status = record
     ? phase === 'queued' ? 'Waiting'
     : phase === 'cloud' ? (item?.phase ?? 'Working on the cloud…')
+    : phase === 'cloud-done' && record.awaitingOpen ? READY_TO_FINISH
     : phase === 'cloud-done' || phase === 'finishing' ? BULK_COPY.building
     : phase === 'done' ? 'Ready'
     : phase === 'finish-failed' ? BULK_COPY.finishFailed(record.message ?? '')
@@ -171,11 +174,11 @@ function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFi
         />
         <div className="flex-1" />
         {row.busy && <span className="text-[11px] text-[var(--kx-muted)]">Adding…</span>}
-        {(phase === 'done' || phase === 'finish-failed') && (
+        {(phase === 'done' || phase === 'finish-failed' || (phase === 'cloud-done' && record?.awaitingOpen)) && (
           <button
             type="button"
             data-testid={`bulk-open-${row.projectId}`}
-            onClick={onOpen}
+            onClick={phase === 'cloud-done' ? onFinish : onOpen}
             className="flex-shrink-0 h-8 text-[12px] px-3 rounded-[8px] bg-[var(--kx-surface-2)] border border-[var(--kx-line-2)] text-[var(--kx-text)] hover:border-[#F27D26] transition-colors"
           >
             {BULK_COPY.open}
@@ -294,8 +297,8 @@ function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFi
 }
 
 export function BulkProjectsModal({
-  initialCount, createBlankProject, parseProjectData, onOpenProject, onClose, onProjectsCreated,
-  runner: injectedRunner, queue = cloudSyncQueue, store: injected, hidden = false,
+  initialCount, createBlankProject, parseProjectData, onOpenProject, onFinishRow, onClose, onProjectsCreated,
+  runner: injectedRunner, queue = cloudSyncQueue, store: injected, hidden = false, addRowsSignal,
 }: {
   /** How many empty rows to start with (0 when reopening a running batch).
    *  Rows are drafts: no project exists yet. */
@@ -303,6 +306,8 @@ export function BulkProjectsModal({
   createBlankProject: () => Project;
   parseProjectData: CloudQueueDeps['parseProjectData'];
   onOpenProject: (id: string) => void;
+  /** A row built on the cloud and waiting for its Open: finish it now. */
+  onFinishRow?: (id: string) => void;
   onClose: () => void;
   /** Projects were just created (Build Timeline): the dashboard should refresh. */
   onProjectsCreated?: () => void;
@@ -313,6 +318,9 @@ export function BulkProjectsModal({
   store?: BulkRowStore;
   /** Hide keeps the batch mounted and running. It does not close it. */
   hidden?: boolean;
+  /** A create from outside (the dashboard, no batch yet) while this drawer is
+   *  already mounted: add `count` empty rows. `seq` makes each request new. */
+  addRowsSignal?: { count: number; seq: number };
 }): React.ReactElement {
   const runner = useMemo(() => injectedRunner ?? bulkBatchRunner(parseProjectData), [injectedRunner, parseProjectData]);
   const [store, setStore] = useState<BulkRowStore | null>(injected ?? null);
@@ -335,6 +343,17 @@ export function BulkProjectsModal({
   const snap = useSyncExternalStore(l => queue.subscribe(l), () => queue.snapshot());
   const records = useSyncExternalStore(l => runner.subscribe(l), () => runner.snapshot());
   const [skips, setSkips] = useState<Record<string, string>>({});
+  // v1.2.2 — creating a new batch lives HERE (the dashboard's button reopens
+  // the existing one). It adds empty draft rows; running rows are untouched.
+  const [askingNewBatch, setAskingNewBatch] = useState(false);
+  const addRows = (count: number): void => { for (let i = 0; i < count; i += 1) if (!store?.addRow()) break; };
+  const lastAddSeq = useRef(addRowsSignal?.seq);
+  useEffect(() => {
+    if (!store || !addRowsSignal || addRowsSignal.seq === lastAddSeq.current) return;
+    lastAddSeq.current = addRowsSignal.seq;
+    addRows(addRowsSignal.count);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [store, addRowsSignal]);
   // While this window is open, finished cloud work is turned into real timelines.
   useEffect(() => runner.holdFinishOpen(), [runner]);
   // The rows of projects the batch already made (a reopened window) come from its record.
@@ -362,6 +381,12 @@ export function BulkProjectsModal({
 
   const close = (): void => { void (store?.discardUnbuilt() ?? Promise.resolve()).finally(onClose); };
   const open = (id: string): void => { void (store?.discardUnbuilt() ?? Promise.resolve()).finally(() => onOpenProject(id)); };
+  const finishRow = (id: string): void => {
+    void (store?.discardUnbuilt() ?? Promise.resolve()).finally(() => {
+      if (onFinishRow) onFinishRow(id);
+      else if (!runner.finishNow(id)) onOpenProject(id);
+    });
+  };
 
   return (
     <div
@@ -406,6 +431,7 @@ export function BulkProjectsModal({
               onRemoveRow={() => void store?.discardRow(row.projectId)}
               onCancel={() => queue.cancel(row.projectId)}
               onOpen={() => open(row.projectId)}
+              onFinish={() => finishRow(row.projectId)}
               onRetry={() => runner.retry(row.projectId)}
             />
           ))}
@@ -427,6 +453,15 @@ export function BulkProjectsModal({
               >
                 <Plus size={13} />
                 {BULK_COPY.addProject}
+              </button>
+              <button
+                type="button"
+                data-testid="bulk-new-batch"
+                className={`${BTN_CANCEL} disabled:opacity-40 disabled:cursor-not-allowed`}
+                disabled={!store?.canAddRow()}
+                onClick={() => setAskingNewBatch(true)}
+              >
+                {BULK_COPY.newBatch}
               </button>
               {anyFinal && (
                 <button type="button" data-testid="bulk-clear-finished" className={BTN_CANCEL} onClick={() => runner.clearFinished()}>
@@ -453,6 +488,12 @@ export function BulkProjectsModal({
           </div>
         </div>
       </div>
+      {askingNewBatch && (
+        <BulkCountDialog
+          onCancel={() => setAskingNewBatch(false)}
+          onConfirm={count => { setAskingNewBatch(false); addRows(count); }}
+        />
+      )}
     </div>
   );
 }

@@ -13,7 +13,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { TranscriptToken } from '../types';
 import { decideStagingStart, isBulkAutoFireSuppressed, peekCloudTranscript } from './bulkContext';
-import { lookupBatchTranscript, runBulkProjectFinish, type BulkReady } from './bulkFinish';
+import { lookupBatchTranscript, runBulkProjectFinish, type BulkReady, isOperatorActivelyEditing, BULK_ACTIVE_EDIT_MS } from './bulkFinish';
 import { __resetStageGapsForTests, noteStageGap, STAGE_GAP_WARN_MS } from './cloudSyncEngine';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(), Channel: class {} }));
@@ -195,6 +195,35 @@ describe('row 2 finish — active', () => {
       const first = await finishRow('en');
       const second = await finishRow('en');
       expect(first.ok && second.ok).toBe(true);
+    }
+  });
+});
+
+describe('v1.2.2 — finishing never fights the operator', () => {
+  it('actively editing = editor open AND (recent input or a sync running); the dashboard never is', () => {
+    expect(isOperatorActivelyEditing({ editorOpen: true, syncRunning: false, msSinceInput: 1_000 })).toBe(true);
+    expect(isOperatorActivelyEditing({ editorOpen: true, syncRunning: true, msSinceInput: 10 * BULK_ACTIVE_EDIT_MS })).toBe(true);
+    expect(isOperatorActivelyEditing({ editorOpen: true, syncRunning: false, msSinceInput: BULK_ACTIVE_EDIT_MS })).toBe(false);
+    expect(isOperatorActivelyEditing({ editorOpen: false, syncRunning: true, msSinceInput: 0 })).toBe(false);
+  });
+
+  it('yields (deferred) as soon as the operator navigates — before the switch, while waiting, or before Build Timeline', async () => {
+    for (const at of [0, 1, 2]) {
+      let checks = 0;
+      const applySync = vi.fn(async () => ({ ok: true }));
+      const switchProject = vi.fn(async () => undefined);
+      const result = await runBulkProjectFinish('p', {
+        switchProject,
+        adoptCachedTranscript: async () => true,
+        forceStartTranscription: async () => undefined,
+        readReady: () => ({ projectId: 'p', ready: true, built: false, why: '' }),
+        applySync,
+        saveNow: async () => undefined,
+        shouldYield: () => checks++ >= at,
+      });
+      expect(result, `yield point ${at}`).toEqual({ ok: false, deferred: true });
+      expect(applySync).not.toHaveBeenCalled();
+      expect(switchProject).toHaveBeenCalledTimes(at === 0 ? 0 : 1);
     }
   });
 });
