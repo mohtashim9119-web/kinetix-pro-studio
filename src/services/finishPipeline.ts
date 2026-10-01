@@ -83,6 +83,13 @@ export interface FinishPipelineInput {
   stagedOwnerId: string | null;
   stages: FinishStages;
   persistVoiceover: (projectId: string, file: File) => Promise<Asset | null>;
+  /**
+   * The editor's own media step (`persistStagedMedia` in App.tsx): commits the
+   * staged media files and zips into the project. Gets the list accumulated
+   * so far (dedup is against it) and returns the full list; a zip carrying the
+   * audio names the voiceover. Required: a build without it drops the media.
+   */
+  persistMedia: (projectId: string, staged: StagedFiles, assets: Asset[]) => Promise<{ assets: Asset[]; voiceoverId?: string }>;
   probeDuration: (asset: Asset) => Promise<number>;
   checkpoint?: BulkCheckpoint;
   onCheckpoint?: (checkpoint: BulkCheckpoint) => void;
@@ -144,7 +151,7 @@ export async function runFinishPipeline(input: FinishPipelineInput): Promise<Fin
     : start.sceneDetails;
   const scriptHash = await hashScript(scriptText, sceneText);
 
-  const allAssets: Asset[] = [...start.assets];
+  let allAssets: Asset[] = [...start.assets];
   let voiceoverId = start.voiceoverId;
   let audioHash = start.lastTranscribedAudioHash;
 
@@ -156,6 +163,15 @@ export async function runFinishPipeline(input: FinishPipelineInput): Promise<Fin
     allAssets.push(asset);
     voiceoverId = asset.id;
     audioHash = await hashAudio(staged.voiceoverFile.file);
+  }
+
+  // Media (files and zips), exactly as the editor's Build Timeline commits them.
+  const media = await input.persistMedia(start.id, staged, allAssets);
+  allAssets = media.assets;
+  if (media.voiceoverId !== undefined && media.voiceoverId !== voiceoverId) {
+    voiceoverId = media.voiceoverId;
+    const zipVoiceover = allAssets.find(a => a.id === voiceoverId);
+    audioHash = zipVoiceover?.file ? await hashAudio(zipVoiceover.file) : undefined;
   }
 
   const voiceover = allAssets.find(a => a.id === voiceoverId);

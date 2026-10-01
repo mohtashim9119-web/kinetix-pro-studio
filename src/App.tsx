@@ -537,6 +537,37 @@ type PendingVoiceoverSync = { file: File; asset: Asset; audioHash?: string };
 // ---------------------------------------------------------------------------
 
 /**
+ * The staged media step of Build Timeline: commits the staged media files and
+ * zips into the project's asset list. One implementation for the editor's own
+ * Apply Sync and the bulk finish pipeline (`persistMedia`), so a bulk project
+ * built in the background gets its media exactly as the editor would. Dedup
+ * is by name against `assets` (everything accumulated so far). Returns the
+ * full list; `voiceoverId` when a zip carried the audio.
+ */
+async function persistStagedMedia(
+  projectId: string,
+  staged: StagedFiles,
+  assets: Asset[],
+): Promise<{ assets: Asset[]; voiceoverId?: string }> {
+  const allAssets = [...assets];
+  let voiceoverId: string | undefined;
+  for (const sf of staged.assetFiles) {
+    if (allAssets.some(a => a.name === sf.file.name)) continue;
+    const ext = sf.file.name.split('.').pop()?.toLowerCase() ?? '';
+    const type: Asset['type'] = ['mp4', 'mov', 'webm', 'm4v'].includes(ext) ? 'video' : 'image';
+    const asset = await persistFileToAsset(projectId, sf.file, type);
+    if (asset) allAssets.push(asset);
+  }
+  for (const sf of staged.zipFiles) {
+    const ingested = await ingestZip(projectId, sf.file);
+    const { kept, audioAssetId } = await mergeExtractedZipAssets(projectId, allAssets, ingested.assets);
+    allAssets.push(...kept);
+    if (audioAssetId !== undefined) voiceoverId = audioAssetId;
+  }
+  return { assets: allAssets, voiceoverId };
+}
+
+/**
  * Persists a single media file to IndexedDB and returns a fully-formed Asset,
  * or null if the write fails. Does NOT call setProject.
  */
@@ -4079,6 +4110,7 @@ export default function App() {
           stagedOwnerId: stagedOwner,
           stages: FINISH_STAGES,
           persistVoiceover: (pid, file) => persistFileToAsset(pid, file, 'audio'),
+          persistMedia: persistStagedMedia,
           probeDuration: asset => resolveVoiceoverDuration(asset, liveProjectRef.current.id),
           now: Date.now,
         });
@@ -4320,20 +4352,10 @@ export default function App() {
         if (reusingPending) setPendingVoiceoverSync(null);
       }
     }
-    for (const sf of staged.assetFiles) {
-      if (allAssets.some(a => a.name === sf.file.name)) continue;
-      const ext = sf.file.name.split('.').pop()?.toLowerCase() ?? '';
-      const type: Asset['type'] = ['mp4', 'mov', 'webm', 'm4v'].includes(ext) ? 'video' : 'image';
-      const asset = await persistFileToAsset(projectRef.current.id, sf.file, type);
-      if (asset) allAssets.push(asset);
-    }
-    for (const sf of staged.zipFiles) {
-      const ingested = await ingestZip(projectRef.current.id, sf.file);
-      const { kept, audioAssetId } = await mergeExtractedZipAssets(
-        projectRef.current.id, allAssets, ingested.assets,
-      );
-      allAssets.push(...kept);
-      if (audioAssetId !== undefined) newVoiceoverId = audioAssetId;
+    {
+      const media = await persistStagedMedia(projectRef.current.id, staged, allAssets);
+      allAssets.splice(0, allAssets.length, ...media.assets);
+      if (media.voiceoverId !== undefined) newVoiceoverId = media.voiceoverId;
     }
 
     // WS2 quick-close — operator ruling (2026-09-05): no resolvable voiceover
@@ -8504,6 +8526,7 @@ export default function App() {
             checkpoint,
             stages: FINISH_STAGES,
             persistVoiceover: (pid, file) => persistFileToAsset(pid, file, 'audio'),
+            persistMedia: persistStagedMedia,
             probeDuration: asset => resolveVoiceoverDuration(asset, projectId),
             save: async p => { await saveProject(p); },
             onCheckpoint: c => runner.noteCheckpoint(projectId, c),
