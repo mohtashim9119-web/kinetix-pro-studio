@@ -1,6 +1,7 @@
 # Project Status
 
-Last updated: 2026-10-01 — v1.3.0 bulk landing on `main` (`ws1-bulk2-landing` → `main`: merges of `ws1-bulk2-pipeline` and `ws1-bulk2-ui`, then the wiring between them). The operator's bulk workflow replaces the 1.2.2 interim finishing UX. Landed unverified per operator instruction; installers are built by the operator, and the operator's real-window verification of 1.3.0 precedes distribution. Open count unchanged at **40/40** (at cap) — found-and-fixed is prose, outside the count.
+Last updated: 2026-10-02 — v1.3.1 on `main` (`ws1-bulk-media-fix` → `main`): bulk builds now save their media (found and fixed), the bulk drawer docks as the dashboard's left column with a restyle, built rows keep their cost and files across reloads, and bulk-built projects get the editor's sync log. Installers are built by the operator; the operator's real-window verification of 1.3.1 precedes distribution. Open count unchanged at **40/40** (at cap) — found-and-fixed is prose, outside the count.
+Prior header: 2026-10-01 — v1.3.0 bulk landing on `main` (`ws1-bulk2-landing` → `main`: merges of `ws1-bulk2-pipeline` and `ws1-bulk2-ui`, then the wiring between them). The operator's bulk workflow replaces the 1.2.2 interim finishing UX. Landed unverified per operator instruction; installers are built by the operator, and the operator's real-window verification of 1.3.0 precedes distribution. Open count unchanged at **40/40** (at cap) — found-and-fixed is prose, outside the count.
 Prior header: 2026-10-01 — v1.2.2 P0 stabilization on `main` (`ws1-bulk-stabilize` → `main`): the operator's real-window verification of 1.2.1 FAILED (bulk finish wrote row 1's content into every row's record), so 1.2.1 is held from distribution and superseded by 1.2.2; the team stays on 1.1.1 until the operator verifies 1.2.2. The operator's planned bulk workflow is pending and supersedes the interim finishing UX. Open count unchanged at **40/40** (at cap) — found-and-fixed is prose, outside the count.
 Prior header (2026-10-01): v1.2.1 fix-forward on `main` (`ws1-drawer-layering` → `main`): the bulk drawer was painted over by the dashboard, so 1.2.0 was held from distribution by the operator and is superseded by 1.2.1. Open count unchanged at **40/40** (at cap) — found-and-fixed is prose, outside the count.
 Prior header (2026-10-01): v1.2.0 bulk-queue landing on `main` (merge `08f1bd7`, `ws1-bulk-queue` → `main`). Open count unchanged at **40/40** (at cap) — found-and-fixed is prose, outside the count. Landed unverified per operator instruction; operator verification on the built 1.2.0 precedes distribution; fix-forward is 1.2.1.
@@ -195,6 +196,34 @@ What landed (`edf917b`, branch merge of `origin/main` at `fe91035` / `cf8157e`):
 **FOUND AND FIXED — recorded here in prose, outside the open count:**
 - **The storage scanner read unbuilt bulk rows as orphaned data.** A draft row's bundle media and vault refs sit on disk under its id with no project record until Build Timeline, so the consistency scan reported them as "Files belonging to … remain, but the project itself is gone". Quarantine re-runs that scan, so it could have moved them. Both now take the unbuilt bulk row ids (`pendingIds`) and treat those rows as normal. A tombstoned id is never excused (`a4a4a77`; Rust tests in `storage_consistency.rs` and `storage_quarantine.rs`).
 - Open-count arithmetic: 40 (v1.2.2) → **40/40, unchanged** — no new open line; the defect above is closed in this landing.
+
+### v1.3.1 — bulk media fix, drawer docking, sync-log parity (`ws1-bulk-media-fix` → `main`)
+**FOUND AND FIXED — recorded here in prose, outside the open count:**
+- **Bulk builds saved no media (`4749263`).** Operator repro on 1.3.0: every slot read green in the drawer, the cloud work and finish ran clean, but an opened project had none of its media, staged or committed; re-adding the files and syncing with the wand brought them in. Cause: the extracted finish pipeline (`finishPipeline.ts`) committed only the script, scene doc and voiceover; the editor's media step (staged media files and zips into the project's assets) was never part of it, so both of its callers — the background finalizer and the wand on a bulk project — dropped the media. Fix: the editor's media step is now ONE function (`persistStagedMedia`, `App.tsx`), used by the editor's own Build Timeline and passed to the pipeline as a REQUIRED step from both call sites (a call without it does not compile; a source test pins both sites). Projects built on 1.3.0 are not repaired retroactively: re-add their media (or rebuild the row).
+- Open-count arithmetic: 40 (v1.3.0) → **40/40, unchanged** — the defect above is closed in this landing.
+
+**Also landed (operator-directed):**
+- **Dashboard bulk button** keeps its ring and "n/m" after a batch finishes, until the batch is cleared (`e6d1576`).
+- **Drawer workflow (`2317baa`).** "Create Group" is inline (a 2–30 field and one button; the count popup is gone), groups rename in place, every group has its own Build Timeline (the bottom bar is gone), and at most 5 groups exist at a time.
+- **Drawer restyle and docking (`360bc3f`).**
+  - The panel uses the dashboard's neutral palette, and each group sits in its own box.
+  - A row reads name / Open / Upload, then one line of chips (Script · Scenes · Audio · Media, with type icons), then "N files", then ONE fixed-height message line with prev/next arrows and the bin.
+  - The file list is four rows. Media replaces or deletes only the media (a bundle zip replaces every slot; the copy says so) and has its own collapsible per-file list.
+  - The panel stays open across a reload. At 900px and wider it docks as the dashboard's left column: fixed-width cards, a translate-only FLIP glide on the panel's curve, and no background flash. Narrower windows and the editor keep the overlay.
+- **Built rows keep their cost and files (`663ee99`).** The batch record keeps each row's cloud worker-seconds and a names-only file summary saved at Build Timeline, so a reload no longer shows "0 files" with no cost. Rows built before this fall back to their staged files; their cost was never recorded.
+- **Sync-log parity, report only (`e377d71`).** A bulk build wrote only the one-line run summary. It now writes the editor's own report entries, from the editor's builders in the editor's order, plus a "Cloud billing (bulk build): …" line. No timing changes.
+
+**Pending architect decision (not in this landing):** the bulk pipeline is a separate, shorter implementation of Build Timeline. It does not run several of the editor's steps that come after alignment:
+- the R.5–R.13 rule corrections and victim re-timing;
+- absorbed-gap and placeholder skip handling;
+- automatic media matching;
+- carrying effects forward and restoring locks;
+- the engine boundary-delta check;
+- stamping findings onto the timing provenance.
+
+The same files can therefore yield a different timeline in bulk than in the editor. The operator's requirement is one Build Timeline (the editor's) run for each bulk row; the options were handed to the architect.
+
+Gates on the branch before the merge: `tsc` clean; `npm test` 5022 passed / 78 skipped (baseline 5011); `cargo test` 554; `vite build` OK; `pytest cloud` 53. Re-run from `main` after the `--no-ff` merge.
 
 ### Deferred Tasks
 - [DEFERRED · ASR ENGINE LIMITATION] Row 52 ("Llívia") — Whisper never transcribed isolated token; owner ruling 2026-09-03
