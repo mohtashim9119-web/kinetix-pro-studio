@@ -25,20 +25,14 @@ import { FA_PROJECT_DEFAULT_ON, shouldPersistFaChoice } from './faGate';
 import { lookupCloudCache } from './cloudGateway';
 import { cloudTranscribeLanguage } from './cloudSyncEngine';
 
-/** One "Create Projects" makes one group of 2–30 rows (bulkBatch.ts). */
+/** One "Create Group" makes one group of 2–30 rows (bulkBatch.ts). */
 export const BULK_MAX_PROJECTS = 30;
 export const BULK_MIN_PROJECTS = 2;
 
 export const BULK_COPY = {
   button: 'Bulk Projects',
-  dialogTitle: 'Bulk Projects',
-  quantityLabel: 'How many projects?',
-  quantityHint: (max: number, min = BULK_MIN_PROJECTS): string => `${min} to ${max}. They become one group, each project its own row to fill.`,
   quantityInvalid: (max: number, min = BULK_MIN_PROJECTS): string => `Enter a whole number from ${min} to ${max}.`,
-  create: 'Create projects',
-  cancel: 'Cancel',
   modalTitle: 'Bulk Projects',
-  modalIntro: 'Drop files onto a row: loose files, a folder, a zip, or one bundle zip that carries the script, scene doc, voiceover and media. Nothing uses the cloud GPU until you press Build Timeline.',
   rowDrop: 'Drop files, a folder or a zip here',
   /** Bulk UI rebuild U4 — one Upload button with a small menu. */
   upload: 'Upload',
@@ -65,15 +59,20 @@ export const BULK_COPY = {
   cancelAll: 'Cancel all',
   open: 'Open project',
   close: 'Hide',
-  closeNote: 'Hiding this drawer does not stop a batch that is already building, and the editor stays usable. Nothing here is cleared unless you clear it.',
   retry: 'Retry',
   addProject: 'Add project',
   clearFinished: 'Clear finished',
   batchButton: (n: number): string => `Bulk builds (${n})`,
-  /** Bulk UI rebuild U3 — creating lives inside the drawer, one group per create. */
-  createProjects: 'Create Projects',
-  groupsFull: (max: number): string => `Up to ${max} groups — clear one to make room`,
-  emptyDrawer: 'No bulk projects yet. Create Projects makes a group of 2 to 30 rows to fill.',
+  /** 1.3.1 — a group is created inline: a 2–30 field and one button, no popup. */
+  newGroup: 'New group',
+  groupCountLabel: 'Number of projects',
+  groupCountPlaceholder: '2–30',
+  createGroup: 'Create Group',
+  groupsFull: (max: number): string => `Up to ${max} groups at a time. Clear a finished group to make room.`,
+  renameGroup: (name: string): string => `Rename ${name}`,
+  groupNameLabel: 'Group name',
+  footerNote: 'Builds keep running while this panel is hidden.',
+  emptyDrawer: 'No groups yet. Create one above.',
   removeProject: 'Delete project',
   deleteRowTitle: 'Delete this project?',
   deleteRowBody: (name: string, created: boolean): string =>

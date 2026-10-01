@@ -8,8 +8,8 @@
 // a count when any row failed. Same palette as the drawer (orange progress on
 // the #282828 line, the app's red for failure).
 
-import React from 'react';
-import { ChevronDown, ChevronRight } from 'lucide-react';
+import React, { useState } from 'react';
+import { ChevronDown, ChevronRight, Pencil } from 'lucide-react';
 import { BULK_COPY } from '../services/bulkContext';
 import type { BulkGroup, BulkProgress } from '../services/bulkBatch';
 
@@ -52,13 +52,41 @@ export function FailedDot({ count }: { count: number }): React.ReactElement | nu
   );
 }
 
-export function BulkGroupHeader({ group, progress, onToggle, children }: {
+export function BulkGroupHeader({ group, progress, onToggle, onRename, children }: {
   group: BulkGroup;
   progress: BulkProgress;
   onToggle: () => void;
+  /** Rename in place (Enter / blur saves, Escape cancels). Absent: no rename. */
+  onRename?: (name: string) => void;
   /** Group actions (Clear finished), right-aligned. */
   children?: React.ReactNode;
 }): React.ReactElement {
+  const [draft, setDraft] = useState<string | null>(null);
+  const save = (): void => {
+    if (draft !== null && draft.trim() && draft.trim() !== group.name) onRename?.(draft.trim());
+    setDraft(null);
+  };
+  if (draft !== null) {
+    return (
+      <div data-testid={`bulk-group-${group.id}`} className="flex items-center gap-2 py-2">
+        <input
+          data-testid={`bulk-group-name-${group.id}`}
+          aria-label={BULK_COPY.groupNameLabel}
+          value={draft}
+          maxLength={60}
+          onChange={e => setDraft(e.target.value)}
+          onBlur={save}
+          onKeyDown={e => {
+            if (e.key === 'Enter') { e.preventDefault(); save(); }
+            if (e.key === 'Escape') { e.preventDefault(); setDraft(null); }
+          }}
+          className="h-7 min-w-0 flex-1 bg-[#1A1A1A] border border-[#333] px-2 rounded-md text-[12px] font-semibold text-[var(--kx-text)] outline-none focus:border-[#F27D26]"
+          // eslint-disable-next-line jsx-a11y/no-autofocus
+          autoFocus
+        />
+      </div>
+    );
+  }
   return (
     <div data-testid={`bulk-group-${group.id}`} className="flex items-center gap-2 py-2">
       <button
@@ -77,6 +105,18 @@ export function BulkGroupHeader({ group, progress, onToggle, children }: {
         </span>
         <FailedDot count={progress.failed} />
       </button>
+      {onRename && (
+        <button
+          type="button"
+          data-testid={`bulk-group-rename-${group.id}`}
+          aria-label={BULK_COPY.renameGroup(group.name)}
+          title={BULK_COPY.renameGroup(group.name)}
+          onClick={() => setDraft(group.name)}
+          className="flex-shrink-0 w-6 h-6 flex items-center justify-center rounded text-gray-500 hover:text-white transition-colors"
+        >
+          <Pencil size={12} />
+        </button>
+      )}
       {children}
     </div>
   );

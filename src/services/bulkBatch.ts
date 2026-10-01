@@ -102,11 +102,12 @@ export function unbuiltBulkRowIds(storage: Pick<Storage, 'getItem'> | undefined 
   return [...ids].filter(id => !records.has(id));
 }
 
-// Bulk UI rebuild U1 — GROUPS. A group is what one "Create Projects" made: a
+// Bulk UI rebuild U1 — GROUPS. A group is what one "Create Group" made: a
 // name, a collapse toggle and its rows (draft ids and built records alike).
 export const BULK_GROUP_MIN_ROWS = 2;
 export const BULK_GROUP_MAX_ROWS = 30;
-export const BULK_MAX_GROUPS = 10;
+/** Groups that may exist at a time (operator ruling, 1.3.1). */
+export const BULK_MAX_GROUPS = 5;
 
 export interface BulkGroup {
   id: string;
@@ -217,6 +218,19 @@ export class BulkBatchRunner {
     if (!this.canCreateGroup()) return undefined;
     if (rowIds.length < BULK_GROUP_MIN_ROWS || rowIds.length > BULK_GROUP_MAX_ROWS) return undefined;
     const group: BulkGroup = { id: crypto.randomUUID(), name: name?.trim() || this.nextGroupName(), collapsed: false, rowIds: [...rowIds] };
+    this.groupList.push(group);
+    this.commit();
+    return { ...group, rowIds: [...group.rowIds] };
+  }
+
+  /** Rows outside any group (drafts saved before groups, or a seed) get one,
+   *  so every row has its group's Build Timeline. Bypasses the create limits:
+   *  these rows already exist. */
+  adoptRows(rowIds: readonly string[]): BulkGroup | undefined {
+    const grouped = new Set(this.groupList.flatMap(g => g.rowIds));
+    const loose = rowIds.filter(id => !grouped.has(id));
+    if (loose.length === 0) return undefined;
+    const group: BulkGroup = { id: crypto.randomUUID(), name: this.nextGroupName(), collapsed: false, rowIds: loose };
     this.groupList.push(group);
     this.commit();
     return { ...group, rowIds: [...group.rowIds] };

@@ -351,7 +351,7 @@ export class BulkRowStore {
     if (changed) this.emit();
   }
 
-  /** "Create Projects": n empty draft rows (one new group). */
+  /** "Create Group": n empty draft rows (one new group). */
   createDrafts(n: number): string[] {
     const ids: string[] = [];
     for (let i = 0; i < n && this.canAddRow(); i += 1) ids.push(this.pushRow());
@@ -509,10 +509,13 @@ export class BulkRowStore {
    * Every other row stays a draft — an empty one quietly, a half-filled one
    * with the reason it was left out. Nothing is discarded by itself.
    */
-  async buildReady(): Promise<{ created: { id: string; name: string }[]; skips: Record<string, string> }> {
+  async buildReady(scope?: readonly string[]): Promise<{ created: { id: string; name: string }[]; skips: Record<string, string> }> {
     const created: { id: string; name: string }[] = [];
     const skips: Record<string, string> = {};
+    // A group's Build Timeline builds only that group's rows.
+    const only = scope ? new Set(scope) : undefined;
     for (const id of [...this.order]) {
+      if (only && !only.has(id)) continue;
       const r = this.rows.get(id)!;
       if (r.built) continue;
       const empty = r.files.length === 0 && r.typedName.trim() === '';

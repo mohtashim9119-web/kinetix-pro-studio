@@ -23,15 +23,15 @@ const boot = (disk: ReturnType<typeof memory>, exists: (id: string) => boolean =
 const ids = (n: number, p = 'r'): string[] => Array.from({ length: n }, (_, i) => `${p}${i}`);
 
 describe('bulk groups', () => {
-  it('limits: 2–30 rows per group, at most 10 groups', () => {
-    expect([BULK_GROUP_MIN_ROWS, BULK_GROUP_MAX_ROWS, BULK_MAX_GROUPS]).toEqual([2, 30, 10]);
+  it('limits: 2–30 rows per group, at most 5 groups at a time', () => {
+    expect([BULK_GROUP_MIN_ROWS, BULK_GROUP_MAX_ROWS, BULK_MAX_GROUPS]).toEqual([2, 30, 5]);
     const runner = boot(memory());
     expect(runner.createGroup(ids(1))).toBeUndefined();
     expect(runner.createGroup(ids(31))).toBeUndefined();
-    for (let g = 0; g < 10; g += 1) expect(runner.createGroup(ids(2, `g${g}-`))).toBeDefined();
+    for (let g = 0; g < 5; g += 1) expect(runner.createGroup(ids(2, `g${g}-`))).toBeDefined();
     expect(runner.createGroup(ids(2, 'x'))).toBeUndefined();
     expect(runner.canCreateGroup()).toBe(false);
-    expect(runner.groups()).toHaveLength(10);
+    expect(runner.groups()).toHaveLength(5);
   });
 
   it('each group has a name and a collapse toggle; both persist across a restart', () => {
@@ -155,5 +155,16 @@ describe('1.3.0 — unbuilt bulk rows for the storage scanner', () => {
     expect(unbuiltBulkRowIds(memory())).toEqual([]);
     const junk = memory(); junk.setItem('kinetix:bulk-batch:v1', '{not json'); junk.setItem('kinetix:bulk-drafts:v1', 'nope');
     expect(unbuiltBulkRowIds(junk)).toEqual([]);
+  });
+});
+
+describe('rows outside any group', () => {
+  it('are adopted into one group (any count, even at the group limit) so every row has a Build Timeline', () => {
+    const runner = boot(memory());
+    for (let g = 0; g < 5; g += 1) runner.createGroup(ids(2, `g${g}-`));
+    const adopted = runner.adoptRows(['loose']);
+    expect(adopted?.rowIds).toEqual(['loose']);
+    expect(runner.groups()).toHaveLength(6);
+    expect(runner.adoptRows([])).toBeUndefined();
   });
 });

@@ -41,65 +41,6 @@ const BTN_PRIMARY = 'flex-1 bg-[#F27D26] text-white p-3 rounded-xl text-[10px] f
 const ICON_BTN = 'flex items-center justify-center w-9 h-9 rounded-[8px] bg-[var(--kx-surface-2)] border border-[var(--kx-line-2)] text-[var(--kx-text)] opacity-80 hover:opacity-100 hover:border-[#F27D26] transition flex-shrink-0';
 const CHIP = 'flex-shrink-0 flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-[6px]';
 
-/** The "how many?" question. */
-export function BulkCountDialog({ onConfirm, onCancel, max = BULK_MAX_PROJECTS, min = BULK_MIN_PROJECTS }: {
-  onConfirm: (count: number) => void;
-  onCancel: () => void;
-  max?: number;
-  min?: number;
-}): React.ReactElement {
-  const [raw, setRaw] = useState('3');
-  const count = parseBulkCount(raw, max, min);
-  const invalid = count === null && raw.trim() !== '';
-  return (
-    <div className={SHELL}>
-      <form
-        className="bg-[#111] border border-[#282828] rounded-2xl p-8 w-full max-w-sm shadow-2xl"
-        role="dialog"
-        aria-modal="true"
-        aria-label={BULK_COPY.dialogTitle}
-        onSubmit={e => { e.preventDefault(); if (count !== null) onConfirm(count); }}
-      >
-        <div className="flex items-center justify-between mb-6">
-          <h2 className="text-sm font-black uppercase tracking-[0.2em]">{BULK_COPY.dialogTitle}</h2>
-          <button
-            type="button"
-            onClick={onCancel}
-            aria-label={BULK_COPY.close}
-            className="text-gray-500 hover:text-white transition-colors focus:outline-none focus:ring-2 focus:ring-[#F27D26] rounded"
-          >
-            <X size={16} />
-          </button>
-        </div>
-        <label className={LABEL} htmlFor="bulk-count">{BULK_COPY.quantityLabel}</label>
-        <input
-          id="bulk-count"
-          data-testid="bulk-count-input"
-          type="number"
-          min={min}
-          max={max}
-          step={1}
-          value={raw}
-          onChange={e => setRaw(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Escape') onCancel(); }}
-          className="w-full bg-[#1A1A1A] border border-[#282828] p-4 rounded-xl text-sm font-bold outline-none focus:border-[#F27D26] transition-colors"
-          // eslint-disable-next-line jsx-a11y/no-autofocus
-          autoFocus
-        />
-        <p className={`mt-2 text-[9px] uppercase tracking-widest ${invalid ? 'text-amber-300' : 'text-gray-600'}`}>
-          {invalid ? BULK_COPY.quantityInvalid(max, min) : BULK_COPY.quantityHint(max, min)}
-        </p>
-        <div className="flex gap-3 mt-6">
-          <button type="button" onClick={onCancel} className={BTN_CANCEL}>{BULK_COPY.cancel}</button>
-          <button type="submit" data-testid="bulk-count-confirm" className={BTN_PRIMARY} disabled={count === null}>
-            {BULK_COPY.create}
-          </button>
-        </div>
-      </form>
-    </div>
-  );
-}
-
 function rowCost(item: Readonly<QueueItem>): string {
   return `${item.workerSec.toFixed(0)} s worked · about ${formatUsd(item.workerSec * CLOUD_USD_PER_WORKER_SEC)}`;
 }
@@ -414,13 +355,15 @@ export function BulkProjectsModal({
   const records = useSyncExternalStore(l => runner.subscribe(l), () => runner.snapshot());
   const groups = useSyncExternalStore(l => runner.subscribe(l), () => runner.groups());
   const [skips, setSkips] = useState<Record<string, string>>({});
-  // Bulk UI rebuild U3 — creating lives HERE, never on the dashboard: one
-  // "Create Projects" is one new group of 2–30 empty draft rows.
-  const [askingCreate, setAskingCreate] = useState(false);
-  const createGroup = (count: number): void => {
-    if (!store || !runner.canCreateGroup()) return;
+  // 1.3.1 — a group is created inline (a 2–30 field and "Create Group"),
+  // never through a popup and never from the dashboard.
+  const [countRaw, setCountRaw] = useState('');
+  const count = parseBulkCount(countRaw, BULK_MAX_PROJECTS, BULK_MIN_PROJECTS);
+  const createGroup = (): void => {
+    if (!store || count === null || !runner.canCreateGroup()) return;
     const ids = store.createDrafts(count);
-    if (!runner.createGroup(ids)) void Promise.all(ids.map(id => store.discardRow(id)));
+    if (!runner.createGroup(ids)) { void Promise.all(ids.map(id => store.discardRow(id))); return; }
+    setCountRaw('');
   };
   const addToGroup = (groupId: string): void => {
     const id = store?.addRow();
@@ -433,12 +376,14 @@ export function BulkProjectsModal({
   const cloud = readSyncEngineHost() === 'cloud';
   const items = useMemo(() => new Map(snap.items.map(i => [i.id, i])), [snap.items]);
   const recordById = useMemo(() => new Map(records.map(r => [r.id, r])), [records]);
-  const complete = rows.filter(r => !r.built && r.typedName.trim().length > 0 && missingSpineSlots(r.slots).length === 0);
-  const canBuild = cloud && complete.length > 0;
-  const anyRunning = records.some(r => r.phase === 'queued' || r.phase === 'cloud');
+  const isComplete = (r: BulkRowState): boolean => !r.built && r.typedName.trim().length > 0 && missingSpineSlots(r.slots).length === 0;
   const line = queue.batchLine();
 
   const rowById = new Map(rows.map(r => [r.projectId, r]));
+  // Every row belongs to a group (each group carries the Build Timeline): a
+  // draft found outside one (saved before groups, or seeded) is adopted.
+  const looseKey = rows.filter(r => !r.built && !groups.some(g => g.rowIds.includes(r.projectId))).map(r => r.projectId).join('|');
+  useEffect(() => { if (looseKey) runner.adoptRows(looseKey.split('|')); }, [looseKey, runner]);
   const inGroup = new Set(groups.flatMap(g => g.rowIds));
   const loose = rows.filter(r => !inGroup.has(r.projectId));
   const renderRow = (row: BulkRowState): React.ReactElement => (
@@ -462,12 +407,16 @@ export function BulkProjectsModal({
     />
   );
 
-  const build = (): void => {
+  const build = (groupRowIds: readonly string[]): void => {
     void (async () => {
       if (!store) return;
-      // Only now do projects exist. Every other row stays a draft.
-      const { created, skips: left } = await store.buildReady();
-      setSkips(left);
+      // Only now do projects exist — for this group's rows. Every other row stays a draft.
+      const { created, skips: left } = await store.buildReady(groupRowIds);
+      setSkips(prev => {
+        const next = { ...prev };
+        for (const id of groupRowIds) delete next[id];
+        return { ...next, ...left };
+      });
       if (created.length === 0) return;
       onProjectsCreated?.();
       runner.start(created);
@@ -523,18 +472,41 @@ export function BulkProjectsModal({
               <X size={16} />
             </button>
           </div>
-          <p className="text-xs leading-relaxed text-gray-400">{BULK_COPY.modalIntro}</p>
-          <button
-            type="button"
-            data-testid="bulk-create"
-            className={`${BTN_PRIMARY} mt-4 w-full flex items-center justify-center gap-1.5`}
-            disabled={!store || !runner.canCreateGroup()}
-            title={runner.canCreateGroup() ? undefined : BULK_COPY.groupsFull(BULK_MAX_GROUPS)}
-            onClick={() => setAskingCreate(true)}
-          >
-            <Plus size={13} />
-            {BULK_COPY.createProjects}
-          </button>
+          <div className="mt-4">
+            <span data-testid="bulk-create-heading" className={LABEL}>{BULK_COPY.newGroup}</span>
+            <form
+              className="flex items-center gap-2"
+              onSubmit={e => { e.preventDefault(); createGroup(); }}
+            >
+              <input
+                data-testid="bulk-create-count"
+                type="number"
+                inputMode="numeric"
+                min={BULK_MIN_PROJECTS}
+                max={BULK_MAX_PROJECTS}
+                step={1}
+                aria-label={BULK_COPY.groupCountLabel}
+                placeholder={BULK_COPY.groupCountPlaceholder}
+                value={countRaw}
+                disabled={!runner.canCreateGroup()}
+                onChange={e => setCountRaw(e.target.value)}
+                className="w-full min-w-0 flex-1 h-10 bg-[#1A1A1A] border border-[#333] px-3 rounded-lg text-[13px] font-semibold text-[var(--kx-text)] placeholder:text-gray-500 placeholder:font-normal outline-none focus:border-[#F27D26] transition-colors disabled:opacity-40"
+              />
+              <button
+                type="submit"
+                data-testid="bulk-create"
+                className={`${BTN_PRIMARY} flex-none h-10 px-5 py-0 flex items-center gap-1.5`}
+                disabled={!store || count === null || !runner.canCreateGroup()}
+              >
+                {BULK_COPY.createGroup}
+              </button>
+            </form>
+            {!runner.canCreateGroup() ? (
+              <p className="mt-2 text-[11px] leading-snug text-gray-500">{BULK_COPY.groupsFull(BULK_MAX_GROUPS)}</p>
+            ) : countRaw.trim() !== '' && count === null ? (
+              <p className="mt-2 text-[11px] leading-snug text-amber-300">{BULK_COPY.quantityInvalid(BULK_MAX_PROJECTS)}</p>
+            ) : null}
+          </div>
         </div>
         <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar px-8 py-2 space-y-3" data-testid="bulk-groups">
           {groups.length === 0 && rows.length === 0 && (
@@ -548,6 +520,7 @@ export function BulkProjectsModal({
                   group={group}
                   progress={groupProgress(group, records)}
                   onToggle={() => runner.setCollapsed(group.id, !group.collapsed)}
+                  onRename={name => runner.renameGroup(group.id, name)}
                 >
                   {group.rowIds.some(id => { const p = recordById.get(id)?.phase; return p !== undefined && isBatchRowFinal(p); }) && (
                     <button
@@ -563,17 +536,30 @@ export function BulkProjectsModal({
                 {!group.collapsed && (
                   <>
                     <ol className="space-y-3">{members.map(renderRow)}</ol>
-                    <button
-                      type="button"
-                      data-testid={`bulk-add-${group.id}`}
-                      className="mt-2 flex items-center gap-1.5 text-[11px] text-gray-400 hover:text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                      disabled={group.rowIds.length >= BULK_GROUP_MAX_ROWS}
-                      title={group.rowIds.length >= BULK_GROUP_MAX_ROWS ? `Up to ${BULK_GROUP_MAX_ROWS} projects in a group` : undefined}
-                      onClick={() => addToGroup(group.id)}
-                    >
-                      <Plus size={12} />
-                      {BULK_COPY.addProject}
-                    </button>
+                    <div className="mt-3 flex items-center gap-3">
+                      <button
+                        type="button"
+                        data-testid={`bulk-add-${group.id}`}
+                        className="flex items-center gap-1.5 text-[11px] text-gray-400 hover:text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                        disabled={group.rowIds.length >= BULK_GROUP_MAX_ROWS}
+                        title={group.rowIds.length >= BULK_GROUP_MAX_ROWS ? `Up to ${BULK_GROUP_MAX_ROWS} projects in a group` : undefined}
+                        onClick={() => addToGroup(group.id)}
+                      >
+                        <Plus size={12} />
+                        {BULK_COPY.addProject}
+                      </button>
+                      <div className="flex-1" />
+                      <button
+                        type="button"
+                        data-testid={`bulk-build-${group.id}`}
+                        className={`${BTN_PRIMARY} flex-none px-5 py-2.5`}
+                        disabled={!cloud || !members.some(isComplete)}
+                        title={!cloud ? BULK_COPY.notCloud : !members.some(isComplete) ? BULK_COPY.buildNeeds : undefined}
+                        onClick={() => build(group.rowIds)}
+                      >
+                        {BULK_COPY.build}
+                      </button>
+                    </div>
                   </>
                 )}
               </section>
@@ -581,31 +567,10 @@ export function BulkProjectsModal({
           })}
           {loose.length > 0 && <ol className="space-y-3">{loose.map(renderRow)}</ol>}
         </div>
-        <div className="px-8 pt-4 pb-8 flex-shrink-0">
-          <div className="border-t border-white/[0.06] pt-3">
-            {line && <p className="text-[11px] leading-snug text-gray-400 mb-2" data-testid="bulk-batch-line">{line}</p>}
-            {!canBuild && !anyRunning && (
-              <p className="text-[11px] leading-snug text-gray-400 mb-3">{!cloud ? BULK_COPY.notCloud : BULK_COPY.buildNeeds}</p>
-            )}
-            <div className="flex gap-3">
-              {anyRunning && (
-                <button type="button" data-testid="bulk-cancel-all" className={BTN_CANCEL} onClick={() => queue.cancelAll()}>
-                  {BULK_COPY.cancelAll}
-                </button>
-              )}
-              <button
-                type="button"
-                data-testid="bulk-build"
-                className={BTN_PRIMARY}
-                disabled={!canBuild}
-                title={!cloud ? BULK_COPY.notCloud : complete.length === 0 ? BULK_COPY.buildNeeds : undefined}
-                onClick={build}
-              >
-                {BULK_COPY.build}
-              </button>
-            </div>
-            <p className="mt-3 text-[10px] leading-snug text-gray-500">{BULK_COPY.closeNote}</p>
-          </div>
+        <div className="px-8 pt-3 pb-6 flex-shrink-0 border-t border-white/[0.06]" data-testid="bulk-footer">
+          {line && <p className="text-[11px] leading-snug text-gray-400 mb-1" data-testid="bulk-batch-line">{line}</p>}
+          {!cloud && <p className="text-[11px] leading-snug text-amber-300/90 mb-1">{BULK_COPY.notCloud}</p>}
+          <p className="text-[10px] leading-snug text-gray-500">{BULK_COPY.footerNote}</p>
         </div>
       </div>
       {confirmDelete && (
@@ -615,12 +580,6 @@ export function BulkProjectsModal({
           confirmLabel={BULK_COPY.deleteRowConfirm}
           onCancel={() => setConfirmDelete(null)}
           onConfirm={() => { const row = confirmDelete; setConfirmDelete(null); void deleteRow(row); }}
-        />
-      )}
-      {askingCreate && (
-        <BulkCountDialog
-          onCancel={() => setAskingCreate(false)}
-          onConfirm={count => { setAskingCreate(false); createGroup(count); }}
         />
       )}
     </div>
