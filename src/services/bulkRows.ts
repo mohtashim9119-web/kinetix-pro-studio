@@ -308,6 +308,14 @@ export class BulkRowStore {
     if (changed) this.emit();
   }
 
+  /** "Create Projects": n empty draft rows (one new group). */
+  createDrafts(n: number): string[] {
+    const ids: string[] = [];
+    for (let i = 0; i < n && this.canAddRow(); i += 1) ids.push(this.pushRow());
+    if (ids.length > 0) this.emit();
+    return ids;
+  }
+
   /** "Add project": one more empty draft row. */
   addRow(): string | undefined {
     if (!this.canAddRow()) return undefined;

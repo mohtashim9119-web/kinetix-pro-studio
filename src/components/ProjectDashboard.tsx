@@ -12,7 +12,6 @@ import { readSyncEngineHost, onSyncEngineHostChange, type SyncEngineHost } from 
 import { bulkBatchRunner, queueProjectsForCloudSync } from '../services/bulkSyncQueue';
 import type { CloudQueueDeps } from '../services/cloudQueueJob';
 import { SyncQueuePanel } from './SyncQueuePanel';
-import { BulkCountDialog } from './BulkProjectsModal';
 import { BULK_COPY } from '../services/bulkContext';
 import { Z } from './overlayLayers';
 import './ProjectDashboard.css';
@@ -62,11 +61,12 @@ interface Props {
    */
   parseProjectData?: CloudQueueDeps['parseProjectData'];
   /**
-   * Wave 3 U7.5 — "Bulk Projects" asked for N rows. Nothing is created yet:
-   * App hosts the rows modal (it must outlive the dashboard while timelines are
-   * finished in the editor) and projects appear here when Build Timeline runs.
+   * Bulk UI rebuild U3 — opens the bulk drawer. That is ALL the dashboard's
+   * bulk button does: it never asks a number (creating lives in the drawer).
+   * App hosts the drawer (it must outlive the dashboard while timelines are
+   * finished in the editor). A bulk project shows here only once it is built.
    */
-  onBulkStart?: (count: number) => void;
+  onBulkOpen?: () => void;
   /** Bumped by App when projects were created/removed behind the dashboard. */
   metasVersion?: number;
   /** The rows modal is open: the queue is shown there, not here too. */
@@ -95,7 +95,7 @@ export function ProjectDashboard({
   onOpenAppSettings,
   onAssetCleanupFailed,
   parseProjectData,
-  onBulkStart,
+  onBulkOpen,
   metasVersion = 0,
   bulkOpen = false,
   onProjectsDeleted,
@@ -107,8 +107,6 @@ export function ProjectDashboard({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [showBulkConfirm, setShowBulkConfirm] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
-  // Wave 3 U7.5 — Bulk Projects: the "how many?" step, then the rows modal.
-  const [bulkAsking, setBulkAsking] = useState(false);
   // The persistent batch: reachable from here until it is cleared, even after a reload.
   const batch = bulkBatchRunner(parseProjectData);
   const batchRows = useSyncExternalStore(l => batch.subscribe(l), () => batch.snapshot());
@@ -155,7 +153,10 @@ export function ProjectDashboard({
     return () => window.removeEventListener('keydown', handler);
   }, []);
 
-  const filtered = metas.filter(m => m.name.toLowerCase().includes(search.trim().toLowerCase()));
+  // Bulk UI rebuild U3 — a bulk project lives in the drawer ONLY until its
+  // timeline is built; then it joins the grid.
+  const unbuiltBulk = new Set(batchRows.filter(r => r.phase !== 'done').map(r => r.id));
+  const filtered = metas.filter(m => !unbuiltBulk.has(m.id) && m.name.toLowerCase().includes(search.trim().toLowerCase()));
   const visibleIds = filtered.map(m => m.id);
   const allVisibleSelected = visibleIds.length > 0 && visibleIds.every(id => selectedIds.has(id));
   const selectedCount = selectedIds.size;
@@ -266,15 +267,10 @@ export function ProjectDashboard({
         </div>
 
         <div className="kxd-actions">
-          {/* v1.2.2 — ONE bulk door. With a batch it opens THAT batch (a
-              mid-run reopen must never ask for a new quantity); creating a
-              new batch lives inside the drawer. With none, it creates. */}
-          {onBulkStart && batchRows.length > 0 ? (
-            <button className="kxd-btn kxd-btn-quiet" data-testid="dashboard-bulk-batch" onClick={() => onBulkStart(0)}>
-              {BULK_COPY.viewBatch(batchRows.length)}
-            </button>
-          ) : onBulkStart && parseProjectData && (
-            <button className="kxd-btn kxd-btn-quiet" data-testid="dashboard-bulk-projects" onClick={() => setBulkAsking(true)}>
+          {/* Bulk UI rebuild U3 — ONE bulk door, and it only ever opens the
+              drawer. It never asks a number: creating lives in the drawer. */}
+          {onBulkOpen && parseProjectData && (
+            <button className="kxd-btn kxd-btn-quiet" data-testid="dashboard-bulk" onClick={onBulkOpen}>
               {BULK_COPY.button}
             </button>
           )}
@@ -505,12 +501,6 @@ export function ProjectDashboard({
         </div>
       </main>
 
-      {bulkAsking && (
-        <BulkCountDialog
-          onCancel={() => setBulkAsking(false)}
-          onConfirm={count => { setBulkAsking(false); onBulkStart?.(count); }}
-        />
-      )}
 
       {showBulkConfirm && (
         <div className="kxd-dialog-scrim">

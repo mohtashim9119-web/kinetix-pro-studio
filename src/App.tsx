@@ -2284,26 +2284,17 @@ export default function App() {
   // Wave 3 U7.5 — the Bulk Projects rows modal lives here, not in the
   // dashboard: finishing a timeline opens that project in the editor, which
   // unmounts the dashboard, and the modal must survive that.
-  const [bulkRowCount, setBulkRowCount] = useState<number | null>(null);
+  const [bulkMounted, setBulkMounted] = useState(false);
   const [bulkHidden, setBulkHidden] = useState(false);
   // The batch's rows, live — the editor's right-edge handle shows their count.
   const bulkBatch = bulkBatchRunner(parseProjectData);
   const bulkBatchRows = useSyncExternalStore(l => bulkBatch.subscribe(l), () => bulkBatch.snapshot());
-  // ONE open logic for every door into the drawer (the dashboard's "Bulk builds
-  // (n)" button and the editor handle): un-hide, and mount it if it is not.
-  //
-  // Mounted once, then only hidden: a create asked for while it is mounted
-  // (the dashboard with no batch yet) adds rows to it instead of a remount.
-  const bulkMountedRef = useRef(false);
-  const [bulkAddRows, setBulkAddRows] = useState<{ count: number; seq: number } | undefined>(undefined);
-  const openBulkDrawer = useCallback((count: number) => {
+  // ONE open logic for every door into the drawer (the dashboard's bulk button
+  // and the editor handle): un-hide, and mount it if it is not. Mounted once,
+  // then only hidden. It never asks a number — creating lives in the drawer.
+  const openBulkDrawer = useCallback(() => {
     setBulkHidden(false);
-    if (bulkMountedRef.current) {
-      if (count > 0) setBulkAddRows(a => ({ count, seq: (a?.seq ?? 0) + 1 }));
-      return;
-    }
-    bulkMountedRef.current = true;
-    setBulkRowCount(count);
+    setBulkMounted(true);
   }, []);
   const [dashboardVersion, setDashboardVersion] = useState(0);
   const [showProjectSettingsModal, setShowProjectSettingsModal] = useState(false);
@@ -8645,9 +8636,9 @@ export default function App() {
       onOpenAppSettings={() => setShowAppSettingsModal(true)}
       onAssetCleanupFailed={showToast}
       parseProjectData={parseProjectData}
-      onBulkStart={openBulkDrawer}
+      onBulkOpen={openBulkDrawer}
       metasVersion={dashboardVersion}
-      bulkOpen={bulkRowCount !== null}
+      bulkOpen={bulkMounted}
       onProjectsDeleted={ids => {
         // The editor may still hold a project the dashboard just deleted (the
         // last one opened): drop it, so it cannot be written back or resumed.
@@ -9782,11 +9773,9 @@ export default function App() {
           whichever view is up. The dashboard stays mounted behind it and is
           only unmounted once `handleNewProjectConfirm` swaps in the new
           project, so cancelling needs no view restore. */}
-      {bulkRowCount !== null && (
+      {bulkMounted && (
         <BulkProjectsModal
-          initialCount={bulkRowCount}
           hidden={bulkHidden}
-          addRowsSignal={bulkAddRows}
           createBlankProject={makeDefaultProject}
           parseProjectData={parseProjectData}
           onProjectsCreated={() => setDashboardVersion(v => v + 1)}
@@ -9802,8 +9791,8 @@ export default function App() {
       {!showDashboard && (
         <BulkDrawerHandle
           count={bulkBatchRows.length}
-          drawerOpen={bulkRowCount !== null && !bulkHidden}
-          onOpen={() => openBulkDrawer(0)}
+          drawerOpen={bulkMounted && !bulkHidden}
+          onOpen={openBulkDrawer}
         />
       )}
       {showNewProjectModal && (

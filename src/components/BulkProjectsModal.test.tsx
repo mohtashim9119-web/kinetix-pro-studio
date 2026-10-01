@@ -56,7 +56,7 @@ function store(): Harness {
     hashAudio: async () => 'h', probeDuration: async () => 30,
     cloudActive: () => true, stageAudio: async () => ({}), ingestBundle: classifyAndIngestBundleZip,
   };
-  return { store: new BulkRowStore(deps, 25), created, purged };
+  return { store: new BulkRowStore(deps, 300), created, purged };
 }
 const blank = (): never => ({} as never);
 const memStorage = (): Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> => {
@@ -96,9 +96,11 @@ describe('BulkCountDialog', () => {
         input.dispatchEvent(new Event('input', { bubbles: true }));
       });
     };
-    await set('26');
+    await set('31');
     expect(confirm.disabled).toBe(true);
-    expect(host.textContent).toContain('Enter a whole number from 1 to 25.');
+    expect(host.textContent).toContain('Enter a whole number from 2 to 30.');
+    await set('1');
+    expect(confirm.disabled).toBe(true);
     await set('4');
     expect(confirm.disabled).toBe(false);
     await act(async () => { confirm.click(); });
@@ -116,9 +118,14 @@ const setValue = async (el: HTMLInputElement, v: string): Promise<void> => {
     el.dispatchEvent(new Event('input', { bubbles: true }));
   });
 };
-const modal = (h: Harness, count: number, extra: Partial<React.ComponentProps<typeof BulkProjectsModal>> = {}): React.ReactElement => (
+/** `count` loose draft rows seeded into the store (0: leave it as it is). */
+const modal = (h: Harness, count: number, extra: Partial<React.ComponentProps<typeof BulkProjectsModal>> = {}): React.ReactElement => {
+  if (count > 0) h.store.init(count);
+  return modalEl(h, extra);
+};
+const modalEl = (h: Harness, extra: Partial<React.ComponentProps<typeof BulkProjectsModal>>): React.ReactElement => (
   <BulkProjectsModal
-    initialCount={count} createBlankProject={blank} parseProjectData={async () => []}
+    createBlankProject={blank} parseProjectData={async () => []}
     onOpenProject={() => {}} onClose={() => {}} store={h.store} runner={makeRunner()} {...extra}
   />
 );
@@ -151,11 +158,14 @@ describe('BulkProjectsModal — draft rows', () => {
     expect(chip().textContent).not.toContain('Optional');
   });
 
-  it('Add project appends a row', async () => {
+  it('a group\'s Add project appends a row to it, and stops at 30', async () => {
     const h = store();
-    const { host } = await mount(modal(h, 2));
-    await act(async () => { (q(host, 'bulk-add') as HTMLButtonElement).click(); });
-    expect(rowIds(host)).toHaveLength(3);
+    const runner = makeRunner();
+    const g = runner.createGroup(h.store.createDrafts(29))!;
+    const { host } = await mount(modal(h, 0, { runner }));
+    await act(async () => { (q(host, `bulk-add-${g.id}`) as HTMLButtonElement).click(); });
+    expect(rowIds(host)).toHaveLength(30);
+    expect((q(host, `bulk-add-${g.id}`) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it('wrong files can be removed one by one, or all at once (Clear files), and a whole row can be removed', async () => {
@@ -276,21 +286,35 @@ describe('BulkProjectsModal — draft rows', () => {
     await act(async () => { cloudSyncQueue.cancelAll(); });
   });
 
-  it('v1.2.2: "New batch" lives inside the drawer — asks how many, adds that many empty rows, running rows untouched', async () => {
+  it('U3: "Create Projects" lives inside the drawer — asks 2–30, makes ONE new group of that many empty rows, existing rows untouched', async () => {
     const h = store();
-    const { host } = await mount(modal(h, 1));
+    const runner = makeRunner();
+    const { host } = await mount(modal(h, 1, { runner }));
     const before = rowIds(host);
-    const newBatch = q(host, 'bulk-new-batch') as HTMLButtonElement | null;
-    expect(newBatch, 'the drawer has no "New batch" control').not.toBeNull();
-    await act(async () => { newBatch!.click(); });
+    expect(q(host, 'bulk-new-batch')).toBeNull();
+    await act(async () => { (q(host, 'bulk-create') as HTMLButtonElement).click(); });
     const input = host.querySelector('[data-testid="bulk-count-input"]') as HTMLInputElement;
-    expect(input).not.toBeNull();
+    await setValue(input, '1');
+    expect((host.querySelector('[data-testid="bulk-count-confirm"]') as HTMLButtonElement).disabled).toBe(true);
     await setValue(input, '2');
     await act(async () => { (host.querySelector('[data-testid="bulk-count-confirm"]') as HTMLButtonElement).click(); });
-    const after = rowIds(host);
-    expect(after).toHaveLength(before.length + 2);
-    expect(after.slice(0, before.length)).toEqual(before);
+    expect(runner.groups()).toHaveLength(1);
+    const group = runner.groups()[0]!;
+    expect(group.rowIds).toHaveLength(2);
+    expect(q(host, `bulk-group-section-${group.id}`)!.querySelectorAll('[data-testid^="bulk-row-"]')).toHaveLength(2);
+    expect(rowIds(host)).toEqual([...group.rowIds, ...before]);
     expect(host.querySelector('[data-testid="bulk-count-input"]')).toBeNull();
+    // A group's own "Add project" adds a row to THAT group.
+    await act(async () => { (q(host, `bulk-add-${group.id}`) as HTMLButtonElement).click(); });
+    expect(runner.groups()[0]!.rowIds).toHaveLength(3);
+  });
+
+  it('U3: at 10 groups "Create Projects" is off', async () => {
+    const h = store();
+    const runner = makeRunner();
+    for (let g = 0; g < 10; g += 1) runner.createGroup([`g${g}a`, `g${g}b`]);
+    const { host } = await mount(modal(h, 0, { runner }));
+    expect((q(host, 'bulk-create') as HTMLButtonElement).disabled).toBe(true);
   });
 
   it('v1.2.2: a row deferred while the operator edits reads "Ready — one click to finish", and its Open finishes it', async () => {

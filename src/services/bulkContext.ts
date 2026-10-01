@@ -25,15 +25,16 @@ import { FA_PROJECT_DEFAULT_ON, shouldPersistFaChoice } from './faGate';
 import { lookupCloudCache } from './cloudGateway';
 import { cloudTranscribeLanguage } from './cloudSyncEngine';
 
-/** Sane ceiling on one bulk creation. Operator-swappable. */
-export const BULK_MAX_PROJECTS = 25;
+/** One "Create Projects" makes one group of 2–30 rows (bulkBatch.ts). */
+export const BULK_MAX_PROJECTS = 30;
+export const BULK_MIN_PROJECTS = 2;
 
 export const BULK_COPY = {
   button: 'Bulk Projects',
   dialogTitle: 'Bulk Projects',
   quantityLabel: 'How many projects?',
-  quantityHint: (max: number): string => `1 to ${max}. Each gets its own row to fill.`,
-  quantityInvalid: (max: number): string => `Enter a whole number from 1 to ${max}.`,
+  quantityHint: (max: number, min = BULK_MIN_PROJECTS): string => `${min} to ${max}. They become one group, each project its own row to fill.`,
+  quantityInvalid: (max: number, min = BULK_MIN_PROJECTS): string => `Enter a whole number from ${min} to ${max}.`,
   create: 'Create projects',
   cancel: 'Cancel',
   modalTitle: 'Bulk Projects',
@@ -67,10 +68,10 @@ export const BULK_COPY = {
   addProject: 'Add project',
   clearFinished: 'Clear finished',
   batchButton: (n: number): string => `Bulk builds (${n})`,
-  /** v1.2.2 — the dashboard's one bulk door while a batch exists. */
-  viewBatch: (n: number): string => `View batch (${n})`,
-  /** v1.2.2 — create-new, inside the drawer. */
-  newBatch: 'New batch',
+  /** Bulk UI rebuild U3 — creating lives inside the drawer, one group per create. */
+  createProjects: 'Create Projects',
+  groupsFull: (max: number): string => `Up to ${max} groups — clear one to make room`,
+  emptyDrawer: 'No bulk projects yet. Create Projects makes a group of 2 to 30 rows to fill.',
   removeProject: 'Remove project',
   clearFiles: 'Clear files',
   removeFile: (name: string): string => `Remove ${name}`,
@@ -96,12 +97,12 @@ export function rowIncompleteReason(
   return `Add ${list} to build the timeline`;
 }
 
-/** A whole number in 1..max, else null. */
-export function parseBulkCount(raw: string, max: number = BULK_MAX_PROJECTS): number | null {
+/** A whole number in min..max, else null. */
+export function parseBulkCount(raw: string, max: number = BULK_MAX_PROJECTS, min: number = BULK_MIN_PROJECTS): number | null {
   const text = raw.trim();
   if (!/^\d+$/.test(text)) return null;
   const n = Number(text);
-  return n >= 1 && n <= max ? n : null;
+  return n >= min && n <= max ? n : null;
 }
 
 /** Nothing may start cloud work for this project unprompted. */

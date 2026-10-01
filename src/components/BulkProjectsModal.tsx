@@ -16,11 +16,13 @@
 
 import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { AlertCircle, Check, ChevronDown, ChevronRight, FilePlus, FolderPlus, Plus, Trash2, X } from 'lucide-react';
-import { BULK_COPY, BULK_MAX_PROJECTS, parseBulkCount } from '../services/bulkContext';
+import { BULK_COPY, BULK_MAX_PROJECTS, BULK_MIN_PROJECTS, parseBulkCount } from '../services/bulkContext';
 import { BulkRowStore, defaultBulkRowDeps, type BulkRowState } from '../services/bulkRows';
 import type { Project } from '../types';
 import { bulkBatchRunner, cloudSyncQueue } from '../services/bulkSyncQueue';
-import { READY_TO_FINISH, groupProgress, isBatchRowFinal, type BatchRow, type BulkBatchRunner } from '../services/bulkBatch';
+import {
+  BULK_GROUP_MAX_ROWS, BULK_MAX_GROUPS, READY_TO_FINISH, groupProgress, isBatchRowFinal, type BatchRow, type BulkBatchRunner,
+} from '../services/bulkBatch';
 import { BulkGroupHeader } from './BulkProgress';
 import { CLOUD_USD_PER_WORKER_SEC, type CloudQueueDeps } from '../services/cloudQueueJob';
 import { collectDroppedFiles } from '../services/droppedFiles';
@@ -38,13 +40,14 @@ const ICON_BTN = 'flex items-center justify-center w-9 h-9 rounded-[8px] bg-[var
 const CHIP = 'flex-shrink-0 flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-[6px]';
 
 /** The "how many?" question. */
-export function BulkCountDialog({ onConfirm, onCancel, max = BULK_MAX_PROJECTS }: {
+export function BulkCountDialog({ onConfirm, onCancel, max = BULK_MAX_PROJECTS, min = BULK_MIN_PROJECTS }: {
   onConfirm: (count: number) => void;
   onCancel: () => void;
   max?: number;
+  min?: number;
 }): React.ReactElement {
   const [raw, setRaw] = useState('3');
-  const count = parseBulkCount(raw, max);
+  const count = parseBulkCount(raw, max, min);
   const invalid = count === null && raw.trim() !== '';
   return (
     <div className={SHELL}>
@@ -71,7 +74,7 @@ export function BulkCountDialog({ onConfirm, onCancel, max = BULK_MAX_PROJECTS }
           id="bulk-count"
           data-testid="bulk-count-input"
           type="number"
-          min={1}
+          min={min}
           max={max}
           step={1}
           value={raw}
@@ -82,7 +85,7 @@ export function BulkCountDialog({ onConfirm, onCancel, max = BULK_MAX_PROJECTS }
           autoFocus
         />
         <p className={`mt-2 text-[9px] uppercase tracking-widest ${invalid ? 'text-amber-300' : 'text-gray-600'}`}>
-          {invalid ? BULK_COPY.quantityInvalid(max) : BULK_COPY.quantityHint(max)}
+          {invalid ? BULK_COPY.quantityInvalid(max, min) : BULK_COPY.quantityHint(max, min)}
         </p>
         <div className="flex gap-3 mt-6">
           <button type="button" onClick={onCancel} className={BTN_CANCEL}>{BULK_COPY.cancel}</button>
@@ -298,12 +301,9 @@ function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFi
 }
 
 export function BulkProjectsModal({
-  initialCount, createBlankProject, parseProjectData, onOpenProject, onFinishRow, onClose, onProjectsCreated,
-  runner: injectedRunner, queue = cloudSyncQueue, store: injected, hidden = false, addRowsSignal,
+  createBlankProject, parseProjectData, onOpenProject, onFinishRow, onClose, onProjectsCreated,
+  runner: injectedRunner, queue = cloudSyncQueue, store: injected, hidden = false,
 }: {
-  /** How many empty rows to start with (0 when reopening a running batch).
-   *  Rows are drafts: no project exists yet. */
-  initialCount: number;
   createBlankProject: () => Project;
   parseProjectData: CloudQueueDeps['parseProjectData'];
   onOpenProject: (id: string) => void;
@@ -319,20 +319,15 @@ export function BulkProjectsModal({
   store?: BulkRowStore;
   /** Hide keeps the batch mounted and running. It does not close it. */
   hidden?: boolean;
-  /** A create from outside (the dashboard, no batch yet) while this drawer is
-   *  already mounted: add `count` empty rows. `seq` makes each request new. */
-  addRowsSignal?: { count: number; seq: number };
 }): React.ReactElement {
   const runner = useMemo(() => injectedRunner ?? bulkBatchRunner(parseProjectData), [injectedRunner, parseProjectData]);
   const [store, setStore] = useState<BulkRowStore | null>(injected ?? null);
   useEffect(() => {
-    if (injected) { injected.init(initialCount); return; }
+    if (injected) return;
     let live = true;
     void defaultBulkRowDeps(createBlankProject).then(deps => {
       if (!live) return;
-      const created = new BulkRowStore(deps, BULK_MAX_PROJECTS);
-      created.init(initialCount);
-      setStore(created);
+      setStore(new BulkRowStore(deps, BULK_MAX_GROUPS * BULK_GROUP_MAX_ROWS));
     });
     return () => { live = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -345,17 +340,18 @@ export function BulkProjectsModal({
   const records = useSyncExternalStore(l => runner.subscribe(l), () => runner.snapshot());
   const groups = useSyncExternalStore(l => runner.subscribe(l), () => runner.groups());
   const [skips, setSkips] = useState<Record<string, string>>({});
-  // v1.2.2 — creating a new batch lives HERE (the dashboard's button reopens
-  // the existing one). It adds empty draft rows; running rows are untouched.
-  const [askingNewBatch, setAskingNewBatch] = useState(false);
-  const addRows = (count: number): void => { for (let i = 0; i < count; i += 1) if (!store?.addRow()) break; };
-  const lastAddSeq = useRef(addRowsSignal?.seq);
-  useEffect(() => {
-    if (!store || !addRowsSignal || addRowsSignal.seq === lastAddSeq.current) return;
-    lastAddSeq.current = addRowsSignal.seq;
-    addRows(addRowsSignal.count);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [store, addRowsSignal]);
+  // Bulk UI rebuild U3 — creating lives HERE, never on the dashboard: one
+  // "Create Projects" is one new group of 2–30 empty draft rows.
+  const [askingCreate, setAskingCreate] = useState(false);
+  const createGroup = (count: number): void => {
+    if (!store || !runner.canCreateGroup()) return;
+    const ids = store.createDrafts(count);
+    if (!runner.createGroup(ids)) void Promise.all(ids.map(id => store.discardRow(id)));
+  };
+  const addToGroup = (groupId: string): void => {
+    const id = store?.addRow();
+    if (id && !runner.addRowToGroup(groupId, id)) void store?.discardRow(id);
+  };
   // While this window is open, finished cloud work is turned into real timelines.
   useEffect(() => runner.holdFinishOpen(), [runner]);
   // The rows of projects the batch already made (a reopened window) come from its record.
@@ -439,8 +435,22 @@ export function BulkProjectsModal({
             </button>
           </div>
           <p className="text-xs leading-relaxed text-gray-400">{BULK_COPY.modalIntro}</p>
+          <button
+            type="button"
+            data-testid="bulk-create"
+            className={`${BTN_PRIMARY} mt-4 w-full flex items-center justify-center gap-1.5`}
+            disabled={!store || !runner.canCreateGroup()}
+            title={runner.canCreateGroup() ? undefined : BULK_COPY.groupsFull(BULK_MAX_GROUPS)}
+            onClick={() => setAskingCreate(true)}
+          >
+            <Plus size={13} />
+            {BULK_COPY.createProjects}
+          </button>
         </div>
         <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar px-8 py-2 space-y-3" data-testid="bulk-groups">
+          {groups.length === 0 && rows.length === 0 && (
+            <p data-testid="bulk-empty" className="text-[12px] leading-snug text-[var(--kx-muted)]">{BULK_COPY.emptyDrawer}</p>
+          )}
           {groups.map(group => {
             const members = group.rowIds.map(id => rowById.get(id)).filter((r): r is BulkRowState => !!r);
             return (
@@ -450,7 +460,22 @@ export function BulkProjectsModal({
                   progress={groupProgress(group, records)}
                   onToggle={() => runner.setCollapsed(group.id, !group.collapsed)}
                 />
-                {!group.collapsed && <ol className="space-y-3">{members.map(renderRow)}</ol>}
+                {!group.collapsed && (
+                  <>
+                    <ol className="space-y-3">{members.map(renderRow)}</ol>
+                    <button
+                      type="button"
+                      data-testid={`bulk-add-${group.id}`}
+                      className="mt-2 flex items-center gap-1.5 text-[11px] text-gray-400 hover:text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                      disabled={group.rowIds.length >= BULK_GROUP_MAX_ROWS}
+                      title={group.rowIds.length >= BULK_GROUP_MAX_ROWS ? `Up to ${BULK_GROUP_MAX_ROWS} projects in a group` : undefined}
+                      onClick={() => addToGroup(group.id)}
+                    >
+                      <Plus size={12} />
+                      {BULK_COPY.addProject}
+                    </button>
+                  </>
+                )}
               </section>
             );
           })}
@@ -463,26 +488,6 @@ export function BulkProjectsModal({
               <p className="text-[11px] leading-snug text-gray-400 mb-3">{!cloud ? BULK_COPY.notCloud : BULK_COPY.buildNeeds}</p>
             )}
             <div className="flex gap-3">
-              <button
-                type="button"
-                data-testid="bulk-add"
-                className={`${BTN_CANCEL} flex items-center justify-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed`}
-                disabled={!store?.canAddRow()}
-                title={store?.canAddRow() ? undefined : `Up to ${BULK_MAX_PROJECTS} projects`}
-                onClick={() => store?.addRow()}
-              >
-                <Plus size={13} />
-                {BULK_COPY.addProject}
-              </button>
-              <button
-                type="button"
-                data-testid="bulk-new-batch"
-                className={`${BTN_CANCEL} disabled:opacity-40 disabled:cursor-not-allowed`}
-                disabled={!store?.canAddRow()}
-                onClick={() => setAskingNewBatch(true)}
-              >
-                {BULK_COPY.newBatch}
-              </button>
               {anyFinal && (
                 <button type="button" data-testid="bulk-clear-finished" className={BTN_CANCEL} onClick={() => runner.clearFinished()}>
                   {BULK_COPY.clearFinished}
@@ -508,10 +513,10 @@ export function BulkProjectsModal({
           </div>
         </div>
       </div>
-      {askingNewBatch && (
+      {askingCreate && (
         <BulkCountDialog
-          onCancel={() => setAskingNewBatch(false)}
-          onConfirm={count => { setAskingNewBatch(false); addRows(count); }}
+          onCancel={() => setAskingCreate(false)}
+          onConfirm={count => { setAskingCreate(false); createGroup(count); }}
         />
       )}
     </div>
