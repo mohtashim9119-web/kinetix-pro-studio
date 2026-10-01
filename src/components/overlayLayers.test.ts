@@ -72,7 +72,8 @@ describe('overlay scale', () => {
   it('the drawer, the dashboard and every former z-200 modal sit on their ruled layers', () => {
     const src = (rel: string): string => readFileSync(join(SRC, rel), 'utf8');
     expect(src('components/BulkProjectsModal.tsx')).toContain('${Z.drawer}');
-    expect(src('components/BulkProjectsModal.tsx')).toContain('${Z.dialog}'); // its own count dialog stays above
+    // (Its count popup is gone — Create Group is inline; its confirms are ConfirmDialog, on Z.dialog.)
+    expect(src('components/ConfirmDialog.tsx')).toContain('${Z.dialog}');
     expect(src('components/ProjectDashboard.tsx')).toContain('Z.dashboard');
     for (const rel of [
       'components/NewProjectModal.tsx', 'components/ProjectSettingsModal.tsx', 'components/ManageModelsModal.tsx',

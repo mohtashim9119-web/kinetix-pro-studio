@@ -120,20 +120,22 @@ describe('BulkProjectsModal — draft rows', () => {
     await act(async () => { await h.store.addFiles(a!, fourFiles()); });
     expect(buildFor(host, a!).disabled).toBe(true);
     const name = q(host, `bulk-name-${a}`) as HTMLInputElement;
-    expect(name.placeholder).toBe('Project name (required)');
+    expect(name.placeholder).toBe('Project name');
+    expect(name.getAttribute('aria-required')).toBe('true');
     await setValue(name, '  Harbour  ');
     expect(buildFor(host, a!).disabled).toBe(false);
   });
 
-  it('B5: an empty media chip reads "Optional" (no warning icon), and fills to a count once media lands', async () => {
+  it('B5: an empty media chip reads just "Media" (media stays optional for Build), and fills to a count once media lands', async () => {
     const h = store();
     const { host } = await mount(modal(h, 1));
     const [id] = rowIds(host);
     const chip = () => q(host, `bulk-slots-${id}`)!.querySelector('[data-slot="media"]')!;
-    expect(chip().textContent).toContain('Optional');
+    expect(chip().textContent).toBe('Media');
     expect(chip().getAttribute('data-filled')).toBe('false');
     await act(async () => { await h.store.addFiles(id!, fourFiles()); });
-    expect(chip().textContent).not.toContain('Optional');
+    expect(chip().textContent).toBe('Media · 1');
+    expect(chip().getAttribute('data-filled')).toBe('true');
   });
 
   it('a group\'s Add project appends a row to it, and stops at 30', async () => {
@@ -152,6 +154,8 @@ describe('BulkProjectsModal — draft rows', () => {
     const [a, b] = rowIds(host);
     await act(async () => { await h.store.addFiles(a!, [...fourFiles(), new File(['j'], 'wrong.png')]); });
     await act(async () => { (q(host, `bulk-files-toggle-${a}`) as HTMLButtonElement).click(); });
+    // Media is one row; its own arrow lists the individual files.
+    await act(async () => { (q(host, `bulk-media-toggle-${a}`) as HTMLButtonElement).click(); });
     expect(q(host, `bulk-files-${a}`)!.textContent).toContain('wrong.png');
     await act(async () => { (host.querySelector('[aria-label="Delete wrong.png"]') as HTMLButtonElement).click(); });
     await vi.waitFor(() => expect(q(host, `bulk-files-${a}`)!.textContent).not.toContain('wrong.png'));
@@ -439,12 +443,15 @@ describe('Bulk UI rebuild U4 — row files', () => {
     expect(h.store.snapshot().find(r => r.projectId === b)!.files.map(f => f.name)).toEqual(['script.txt', 'scene.txt', 'vo.wav', 'a.png']);
   });
 
-  it('the media chip reads "Optional"; the three spine chips do not', async () => {
+  it('the four chips read Script · Scenes · Audio · Media, each with its type icon, on one line', async () => {
     const h = store();
     const { host } = await mount(modal(h, 2));
     const [a] = rowIds(host);
-    const chips = [...q(host, `bulk-slots-${a}`)!.querySelectorAll('[data-slot]')];
-    expect(chips.filter(c => c.textContent!.includes('Optional')).map(c => c.getAttribute('data-slot'))).toEqual(['media']);
+    const slots = q(host, `bulk-slots-${a}`)!;
+    expect(slots.className).toContain('flex-nowrap');
+    const chips = [...slots.querySelectorAll('[data-slot]')];
+    expect(chips.map(c => c.textContent)).toEqual(['Script', 'Scenes', 'Audio', 'Media']);
+    for (const c of chips) expect(c.querySelector('svg')).not.toBeNull();
   });
 });
 
@@ -526,5 +533,56 @@ describe('1.3.0 landing — the background pipeline drives drawer rows to ready'
     expect(onFinishRow).not.toHaveBeenCalled();
     expect(q(host, `bulk-group-count-${g.id}`)!.textContent).toBe('1/2 done');
     finishAtOnce = false;
+  });
+});
+
+describe('1.3.1 — row files, message line, docking', () => {
+  it('every row shows its file count on its own line — "0 files" (arrow off) before any upload', async () => {
+    const h = store();
+    const { host } = await mount(modal(h, 2));
+    const [a] = rowIds(host);
+    const toggle = q(host, `bulk-files-toggle-${a}`) as HTMLButtonElement;
+    expect(toggle.textContent).toBe('0 files');
+    expect(toggle.disabled).toBe(true);
+  });
+
+  it('the Media row replaces or deletes ONLY the media (delete asks first); script, scenes and audio stay', async () => {
+    const h = store();
+    const { host } = await mount(modal(h, 2));
+    const [a] = rowIds(host);
+    await act(async () => { await h.store.addFiles(a!, [...fourFiles(), new File(['j'], 'b.png')]); });
+    await act(async () => { (q(host, `bulk-files-toggle-${a}`) as HTMLButtonElement).click(); });
+    const list = q(host, `bulk-files-${a}`)!;
+    expect(list.querySelector('[aria-label="Replace all media (a bundle zip replaces every slot)"]')).not.toBeNull();
+    await act(async () => { await h.store.replaceMedia(a!, [new File(['n'], 'new.png'), new File(['t'], 'ignored.txt')]); });
+    const names = (): string[] => h.store.snapshot().find(r => r.projectId === a)!.files.map(f => f.name);
+    expect(names()).toEqual(['script.txt', 'scene.txt', 'vo.wav', 'new.png']);
+    await act(async () => { (q(host, `bulk-media-delete-${a}`) as HTMLButtonElement).click(); });
+    expect(document.querySelector('[role="dialog"][aria-label="Delete all media?"]')).not.toBeNull();
+    await act(async () => { (document.querySelector('[data-testid="confirm-dialog-confirm"]') as HTMLButtonElement).click(); });
+    await vi.waitFor(() => expect(names()).toEqual(['script.txt', 'scene.txt', 'vo.wav']));
+  });
+
+  it('several messages share ONE line: ‹ n/m › steps through them; the status comes first', async () => {
+    const h = store();
+    const { host } = await mount(modal(h, 2));
+    const [a] = rowIds(host);
+    await act(async () => { await h.store.addFiles(a!, [...fourFiles(), new File(['?'], 'notes.pdf')]); });
+    const status = (): string => q(host, `bulk-status-${a}`)!.textContent ?? '';
+    const first = status();
+    const arrows = q(host, `bulk-msgs-${a}`)!;
+    expect(arrows.textContent).toContain('1/2');
+    await act(async () => { (arrows.querySelector('[aria-label="Next message"]') as HTMLButtonElement).click(); });
+    expect(status()).toContain('skipped');
+    await act(async () => { (q(host, `bulk-msgs-${a}`)!.querySelector('[aria-label="Previous message"]') as HTMLButtonElement).click(); });
+    expect(status()).toBe(first);
+  });
+
+  it('docked beside the dashboard it is a flat column; over content it casts a shadow', async () => {
+    const h = store();
+    const { root, host } = await mount(modal(h, 0, { docked: true }));
+    expect(q(host, 'bulk-modal')!.className).not.toContain('shadow-[');
+    await act(async () => { root.render(modal(h, 0, { docked: false })); });
+    expect(q(host, 'bulk-modal')!.className).toContain('shadow-[');
   });
 });

@@ -536,6 +536,20 @@ type PendingVoiceoverSync = { file: File; asset: Asset; audioHash?: string };
 // Module-level helpers for the atomic Apply Sync flow
 // ---------------------------------------------------------------------------
 
+const BULK_DRAWER_OPEN_KEY = 'kinetix:bulk-drawer-open:v1';
+/** The bulk panel's width, and the narrowest window it docks on (else it overlays). */
+const BULK_DRAWER_WIDTH = 480;
+const BULK_DOCK_MIN_WIDTH = 900;
+function readBulkDrawerOpen(): boolean {
+  try { return localStorage.getItem(BULK_DRAWER_OPEN_KEY) === '1'; } catch { return false; }
+}
+function writeBulkDrawerOpen(open: boolean): void {
+  try {
+    if (open) localStorage.setItem(BULK_DRAWER_OPEN_KEY, '1');
+    else localStorage.removeItem(BULK_DRAWER_OPEN_KEY);
+  } catch { /* storage unavailable: the drawer just starts closed */ }
+}
+
 /**
  * The staged media step of Build Timeline: commits the staged media files and
  * zips into the project's asset list. One implementation for the editor's own
@@ -2328,8 +2342,10 @@ export default function App() {
   // Wave 3 U7.5 — the Bulk Projects rows modal lives here, not in the
   // dashboard: finishing a timeline opens that project in the editor, which
   // unmounts the dashboard, and the modal must survive that.
-  const [bulkMounted, setBulkMounted] = useState(false);
+  // The drawer's open state survives a reload: open before it, open after.
+  const [bulkMounted, setBulkMounted] = useState(readBulkDrawerOpen);
   const [bulkHidden, setBulkHidden] = useState(false);
+  useEffect(() => { writeBulkDrawerOpen(bulkMounted && !bulkHidden); }, [bulkMounted, bulkHidden]);
   // The batch's rows, live — the editor's right-edge handle shows their count.
   const bulkBatch = bulkBatchRunner(parseProjectData);
   const bulkBatchRows = useSyncExternalStore(l => bulkBatch.subscribe(l), () => bulkBatch.snapshot());
@@ -2339,6 +2355,24 @@ export default function App() {
   const openBulkDrawer = useCallback(() => {
     setBulkHidden(false);
     setBulkMounted(true);
+  }, []);
+  const bulkDrawerOpen = bulkMounted && !bulkHidden;
+  // The dashboard's Bulk Projects button toggles the panel.
+  const toggleBulkDrawer = useCallback(() => {
+    if (bulkDrawerOpen) setBulkHidden(true);
+    else openBulkDrawer();
+  }, [bulkDrawerOpen, openBulkDrawer]);
+  // On the dashboard the panel DOCKS as its left column (the grid moves over to
+  // make room) when the window is wide enough; on a narrow window, and in the
+  // editor, it slides over the content as before.
+  const [bulkDockWide, setBulkDockWide] = useState(() => typeof window === 'undefined' || window.matchMedia?.(`(min-width: ${BULK_DOCK_MIN_WIDTH}px)`).matches !== false);
+  useEffect(() => {
+    const mq = window.matchMedia?.(`(min-width: ${BULK_DOCK_MIN_WIDTH}px)`);
+    if (!mq) return;
+    const on = (): void => setBulkDockWide(mq.matches);
+    on();
+    mq.addEventListener?.('change', on);
+    return () => mq.removeEventListener?.('change', on);
   }, []);
   const [dashboardVersion, setDashboardVersion] = useState(0);
   const [showProjectSettingsModal, setShowProjectSettingsModal] = useState(false);
@@ -8627,7 +8661,8 @@ export default function App() {
       onOpenAppSettings={() => setShowAppSettingsModal(true)}
       onAssetCleanupFailed={showToast}
       parseProjectData={parseProjectData}
-      onBulkOpen={openBulkDrawer}
+      onBulkOpen={toggleBulkDrawer}
+      bulkDockInset={bulkDrawerOpen && bulkDockWide ? BULK_DRAWER_WIDTH : 0}
       metasVersion={dashboardVersion}
       bulkOpen={bulkMounted}
       onProjectsDeleted={dropDeletedFromEditor}
@@ -9760,6 +9795,7 @@ export default function App() {
       {bulkMounted && (
         <BulkProjectsModal
           hidden={bulkHidden}
+          docked={showDashboard && bulkDockWide}
           createBlankProject={makeDefaultProject}
           parseProjectData={parseProjectData}
           onProjectsCreated={() => setDashboardVersion(v => v + 1)}

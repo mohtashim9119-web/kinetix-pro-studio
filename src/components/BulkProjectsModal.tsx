@@ -15,7 +15,7 @@
 // is the sync-log Details line's quiet register.
 
 import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { AlertCircle, Check, ChevronDown, ChevronRight, Plus, RefreshCw, Trash2, Upload, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronLeft, ChevronRight, Clapperboard, ExternalLink, FileText, Image as ImageIcon, Mic, Plus, RefreshCw, Trash2, Upload, X } from 'lucide-react';
 import { BULK_COPY, BULK_MAX_PROJECTS, BULK_MIN_PROJECTS, parseBulkCount } from '../services/bulkContext';
 import { BulkRowStore, defaultBulkRowDeps, type BulkRowState } from '../services/bulkRows';
 import type { Project } from '../types';
@@ -33,17 +33,51 @@ import { Z } from './overlayLayers';
 import { ConfirmDialog } from './ConfirmDialog';
 import { deleteProjectEverywhere } from '../services/projectDelete';
 
-const SHELL = `fixed inset-0 ${Z.dialog} flex items-center justify-center bg-black/80 backdrop-blur-sm`;
-const DRAWER = `fixed top-0 left-0 ${Z.drawer} flex h-full w-[min(100vw,420px)] flex-col border-r border-[#282828] bg-[#111] shadow-2xl transition-transform duration-200`;
-const LABEL = 'text-[10px] uppercase tracking-widest text-gray-500 font-bold block mb-2';
-const BTN_CANCEL = 'flex-1 bg-transparent border border-[#282828] p-3 rounded-xl text-[10px] font-black uppercase tracking-widest text-gray-500 hover:text-white hover:border-gray-500 transition-all focus:outline-none focus:ring-2 focus:ring-gray-500';
-const BTN_PRIMARY = 'flex-1 bg-[#F27D26] text-white p-3 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-orange-400 transition-all focus:outline-none focus:ring-2 focus:ring-orange-400 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-[#F27D26]';
-const ICON_BTN = 'flex items-center justify-center w-9 h-9 rounded-[8px] bg-[var(--kx-surface-2)] border border-[var(--kx-line-2)] text-[var(--kx-text)] opacity-80 hover:opacity-100 hover:border-[#F27D26] transition flex-shrink-0';
-const CHIP = 'flex-shrink-0 flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-[6px]';
+const DRAWER = `fixed top-0 left-0 ${Z.drawer} flex h-full w-[min(100vw,480px)] flex-col border-r border-[var(--kx-line-2)] bg-[var(--kx-bg)] will-change-transform`;
+/** The panel's slide: the dashboard's glide uses the same curve (ProjectDashboard DOCK_MOTION). */
+const DRAWER_MOTION: React.CSSProperties = { transition: 'transform 340ms cubic-bezier(.22, 1, .36, 1)' };
+/** The dashboard's own neutral palette, so panel and dashboard read as one surface. */
+const DRAWER_PALETTE = {
+  '--kx-bg': '#0a0a0b',
+  '--kx-panel': '#111113',
+  '--kx-surface': '#19191c',
+  '--kx-surface-2': '#1e1e21',
+  '--kx-hover': '#242428',
+  '--kx-line': 'rgba(255,255,255,.07)',
+  '--kx-line-2': 'rgba(255,255,255,.12)',
+} as React.CSSProperties;
+/** Over content it casts a shadow; docked beside the dashboard it is a flat column. */
+const DRAWER_FLOAT = 'shadow-[8px_0_40px_rgba(0,0,0,.55)]';
+const LABEL = 'text-[10px] uppercase tracking-widest text-[var(--kx-muted)] font-bold block mb-2';
+// Enabled: the app's one orange. Disabled: a neutral, legible outline — never a faded orange.
+const BTN_PRIMARY = 'flex-1 border border-transparent bg-[var(--kx-accent)] text-[#1a0f06] p-3 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-[var(--kx-accent-hover)] transition-all focus:outline-none focus:ring-2 focus:ring-[var(--kx-accent-line)] disabled:bg-[var(--kx-surface-2)] disabled:text-[var(--kx-faint)] disabled:border-[var(--kx-line-2)] disabled:cursor-not-allowed';
+// Build Timeline stays orange in both states; disabled is a quieter orange.
+const BTN_BUILD = 'border border-transparent bg-[var(--kx-accent)] text-[#1a0f06] rounded-xl text-[10px] font-black uppercase tracking-widest shadow-[0_4px_18px_rgba(255,138,60,.18)] hover:bg-[var(--kx-accent-hover)] transition-all focus:outline-none focus:ring-2 focus:ring-[var(--kx-accent-line)] disabled:opacity-55 disabled:shadow-none disabled:cursor-not-allowed disabled:hover:bg-[var(--kx-accent)]';
+const FILE_LINE = 'flex items-center gap-2 px-3 py-1 text-[12px]';
+const FILE_KIND = 'w-20 flex-shrink-0 whitespace-nowrap text-[10px] uppercase tracking-widest text-[var(--kx-faint)]';
+const FILE_ICON = 'flex-shrink-0 w-6 h-6 flex items-center justify-center rounded text-gray-500 hover:text-white hover:bg-[var(--kx-hover)] transition-colors';
+const MSG_ARROW = 'w-5 h-6 flex items-center justify-center rounded text-[var(--kx-faint)] hover:text-white hover:bg-[var(--kx-hover)] transition-colors';
+const FIELD = 'bg-[var(--kx-surface-2)] border border-[var(--kx-line-2)] rounded-lg font-semibold text-[var(--kx-text)] placeholder:text-[var(--kx-faint)] placeholder:font-normal outline-none focus:border-[var(--kx-accent-line)] transition-colors disabled:cursor-not-allowed disabled:opacity-70';
+const ROW_BTN = 'flex-shrink-0 flex items-center gap-1.5 h-9 px-3 rounded-lg border border-[var(--kx-line-2)] bg-[var(--kx-surface-2)] text-[12px] font-semibold text-[var(--kx-text)] hover:border-[rgba(255,255,255,.22)] transition-colors disabled:text-[var(--kx-faint)] disabled:cursor-not-allowed disabled:hover:border-[var(--kx-line-2)]';
+const ROW_BTN_SM = 'flex-shrink-0 h-7 px-2.5 rounded-md border border-[var(--kx-line-2)] text-[11px] font-semibold text-[var(--kx-text)] hover:border-[rgba(255,255,255,.22)] transition-colors';
+const CHIP = 'flex-shrink-0 flex items-center gap-1 whitespace-nowrap text-[11px] font-semibold px-1.5 py-0.5 rounded-[6px]';
 
 function rowCost(item: Readonly<QueueItem>): string {
   return `${item.workerSec.toFixed(0)} s worked · about ${formatUsd(item.workerSec * CLOUD_USD_PER_WORKER_SEC)}`;
 }
+
+/** Each slot's type icon, in the Files tab's per-type colours. */
+const SLOT_ICON = {
+  script: { Icon: FileText, color: 'var(--kx-type-script)' },
+  scene: { Icon: Clapperboard, color: 'var(--kx-type-scene)' },
+  voiceover: { Icon: Mic, color: 'var(--kx-type-voice)' },
+  media: { Icon: ImageIcon, color: 'var(--kx-type-media)' },
+} as const;
+function SlotIcon({ slot }: { slot: keyof typeof SLOT_ICON }): React.ReactElement {
+  const { Icon, color } = SLOT_ICON[slot];
+  return <Icon size={11} aria-hidden="true" style={{ color }} />;
+}
+
 
 interface RowProps {
   row: BulkRowState;
@@ -56,6 +90,8 @@ interface RowProps {
   onRemoveFile: (fileId: string) => void;
   onReplaceFile: (fileId: string, file: File) => void;
   onReplaceAll: (files: File[]) => void;
+  onReplaceMedia: (files: File[]) => void;
+  onRemoveMedia: () => void;
   onClearFiles: () => void;
   onRemoveRow: () => void;
   onCancel: () => void;
@@ -65,7 +101,7 @@ interface RowProps {
   onRetry: () => void;
 }
 
-function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFile, onReplaceFile, onReplaceAll, onClearFiles, onRemoveRow, onCancel, onOpen, onFinish, onRetry }: RowProps): React.ReactElement {
+function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFile, onReplaceFile, onReplaceAll, onReplaceMedia, onRemoveMedia, onClearFiles, onRemoveRow, onCancel, onOpen, onFinish, onRetry }: RowProps): React.ReactElement {
   const filesRef = useRef<HTMLInputElement>(null);
   const folderRef = useRef<HTMLInputElement>(null);
   const replaceRef = useRef<HTMLInputElement>(null);
@@ -73,6 +109,10 @@ function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFi
   const replacing = useRef<string | null>(null);
   const [over, setOver] = useState(false);
   const [listOpen, setListOpen] = useState(false);
+  const [mediaOpen, setMediaOpen] = useState(false);
+  const [confirmMediaDelete, setConfirmMediaDelete] = useState(false);
+  const [msgIdx, setMsgIdx] = useState(0);
+  const mediaRef = useRef<HTMLInputElement>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   useEffect(() => { folderRef.current?.setAttribute('webkitdirectory', ''); }, []);
   const phase = record?.phase;
@@ -98,6 +138,17 @@ function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFi
   const quiet = status || audioText || (empty ? BULK_COPY.rowDrop : '');
   const dim = phase === 'skipped' || phase === 'cancelled' || (!record && !!skippedReason);
   const cost = item && item.workerSec > 0 && record ? rowCost(item) : '';
+  // The row's messages, one line at a time: its status first, then the cancel
+  // receipt and any problem notes (a broken bundle, skipped files).
+  const messages: { text: string; warn: boolean }[] = [
+    ...(row.busy ? [{ text: 'Adding…', warn: false }] : [{ text: `${quiet}${cost ? ` · ${cost}` : ''}`, warn: false }]),
+    ...(item?.receipt ? [{ text: item.receipt, warn: true }] : []),
+    ...row.notes.map(n => ({ text: n, warn: true })),
+  ].filter(m => m.text.trim() !== '');
+  const shown = messages.length === 0 ? 0 : Math.min(msgIdx, messages.length - 1);
+  const current = messages[shown] ?? { text: '', warn: false };
+  const openable = phase === 'done' || phase === 'finish-failed' || (phase === 'cloud-done' && !!record?.awaitingOpen);
+  const failedish = phase === 'failed' || phase === 'finish-failed' || phase === 'paused';
   return (
     <li
       data-testid={`bulk-row-${row.projectId}`}
@@ -110,8 +161,11 @@ function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFi
         if (locked) return;
         void collectDroppedFiles(e.dataTransfer).then(onFiles);
       }}
-      className={`rounded-[13px] border px-4 py-3.5 transition-colors bg-[var(--kx-surface)] border-[var(--kx-line-2)] hover:border-[rgba(255,255,255,.18)] ${over ? 'bg-[var(--kx-accent-soft)]' : ''}`}
+      className={`rounded-xl border p-3.5 transition-colors ${over
+        ? 'bg-[var(--kx-accent-soft)] border-[var(--kx-accent-line)]'
+        : 'bg-[var(--kx-surface)] border-[var(--kx-line-2)] hover:border-[rgba(255,255,255,.18)]'}`}
     >
+      {/* Row 1 — name, Open project, Upload. */}
       <div className="flex items-center gap-2">
         <input
           type="text"
@@ -123,62 +177,51 @@ function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFi
           disabled={locked}
           onChange={e => onName(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); }}
-          className="w-64 max-w-[60%] h-9 bg-[#1A1A1A] border border-[#333] px-3 rounded-lg text-[13px] font-semibold text-[var(--kx-text)] placeholder:text-gray-500 placeholder:font-normal outline-none focus:border-[#F27D26] transition-colors disabled:cursor-not-allowed"
+          className={`${FIELD} h-9 min-w-0 flex-1 px-3 text-[13px]`}
         />
-        <div className="flex-1" />
-        {row.busy && <span className="text-[11px] text-[var(--kx-muted)]">Adding…</span>}
-        {(phase === 'done' || phase === 'finish-failed' || (phase === 'cloud-done' && record?.awaitingOpen)) && (
-          <button
-            type="button"
-            data-testid={`bulk-open-${row.projectId}`}
-            onClick={phase === 'cloud-done' ? onFinish : onOpen}
-            className="flex-shrink-0 h-8 text-[12px] px-3 rounded-[8px] bg-[var(--kx-surface-2)] border border-[var(--kx-line-2)] text-[var(--kx-text)] hover:border-[#F27D26] transition-colors"
-          >
-            {BULK_COPY.open}
-          </button>
-        )}
-        {running ? (
-          <button
-            type="button"
-            data-testid={`bulk-cancel-${row.projectId}`}
-            onClick={onCancel}
-            className="flex-shrink-0 h-8 px-2 text-[12px] text-gray-400 hover:text-white transition-colors"
-          >
-            {BULK_COPY.cancelRow}
-          </button>
-        ) : !locked && (
-          <>
-            <div className="relative flex-shrink-0">
-              <button
-                type="button"
-                data-testid={`bulk-upload-${row.projectId}`}
-                aria-haspopup="menu"
-                aria-expanded={menuOpen}
-                aria-label={BULK_COPY.upload}
-                title={BULK_COPY.upload}
-                onClick={() => setMenuOpen(o => !o)}
-                className={ICON_BTN}
-              >
-                <Upload size={15} />
-              </button>
-              {menuOpen && (
-                <div role="menu" data-testid={`bulk-upload-menu-${row.projectId}`} className="absolute right-0 top-10 z-10 w-40 rounded-lg border border-[#282828] bg-[#111] py-1 shadow-2xl">
-                  <button type="button" role="menuitem" className="block w-full px-3 py-1.5 text-left text-[12px] text-[var(--kx-text)] hover:bg-[var(--kx-surface-2)]" onClick={() => { setMenuOpen(false); filesRef.current?.click(); }}>
-                    {BULK_COPY.uploadFiles}
-                  </button>
-                  <button type="button" role="menuitem" className="block w-full px-3 py-1.5 text-left text-[12px] text-[var(--kx-text)] hover:bg-[var(--kx-surface-2)]" onClick={() => { setMenuOpen(false); folderRef.current?.click(); }}>
-                    {BULK_COPY.uploadFolder}
-                  </button>
-                </div>
-              )}
-            </div>
-          </>
-        )}
-        <button type="button" aria-label={BULK_COPY.removeProject} title={BULK_COPY.removeProject} data-testid={`bulk-remove-${row.projectId}`} onClick={onRemoveRow} className={ICON_BTN}>
-          <Trash2 size={15} />
+        <button
+          type="button"
+          data-testid={openable ? `bulk-open-${row.projectId}` : undefined}
+          disabled={!openable}
+          title={openable ? undefined : BULK_COPY.openWhenReady}
+          onClick={phase === 'cloud-done' ? onFinish : onOpen}
+          className={`${ROW_BTN} ${openable
+            ? 'border-[var(--kx-accent-line)] text-[var(--kx-accent-2)] hover:bg-[var(--kx-accent-soft)]'
+            : ''}`}
+        >
+          <ExternalLink size={13} />
+          {BULK_COPY.openShort}
         </button>
+        <div className="relative flex-shrink-0">
+          <button
+            type="button"
+            data-testid={`bulk-upload-${row.projectId}`}
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            aria-label={BULK_COPY.upload}
+            title={BULK_COPY.upload}
+            disabled={locked || running}
+            onClick={() => setMenuOpen(o => !o)}
+            className={ROW_BTN}
+          >
+            <Upload size={13} />
+            {BULK_COPY.upload}
+          </button>
+          {menuOpen && !locked && (
+            <div role="menu" data-testid={`bulk-upload-menu-${row.projectId}`} className="absolute right-0 top-11 z-10 w-44 rounded-lg border border-[var(--kx-line-2)] bg-[var(--kx-surface-2)] py-1 shadow-2xl">
+              <button type="button" role="menuitem" className="block w-full px-3 py-2 text-left text-[12px] text-[var(--kx-text)] hover:bg-[var(--kx-hover)]" onClick={() => { setMenuOpen(false); filesRef.current?.click(); }}>
+                {BULK_COPY.uploadFiles}
+              </button>
+              <button type="button" role="menuitem" className="block w-full px-3 py-2 text-left text-[12px] text-[var(--kx-text)] hover:bg-[var(--kx-hover)]" onClick={() => { setMenuOpen(false); folderRef.current?.click(); }}>
+                {BULK_COPY.uploadFolder}
+              </button>
+            </div>
+          )}
+        </div>
       </div>
-      <div className="mt-3 flex flex-wrap items-center gap-1.5" data-testid={`bulk-slots-${row.projectId}`}>
+
+      {/* Row 2 — the four slots on ONE line; below it, the file count and its expand arrow. */}
+      <div className="mt-3 flex flex-nowrap items-center gap-1 overflow-hidden" data-testid={`bulk-slots-${row.projectId}`}>
         {(['script', 'scene', 'voiceover', 'media'] as const).map(slot => (
           <span
             key={slot}
@@ -188,56 +231,118 @@ function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFi
               ? 'bg-[var(--kx-ready-soft)] text-[var(--kx-ready)]'
               : 'bg-[var(--kx-surface-2)] text-[var(--kx-muted)]'}`}
           >
-            {row.slots[slot] ? <Check size={11} /> : slot === 'media' ? null : <AlertCircle size={11} />}
+            <SlotIcon slot={slot} />
             {BULK_COPY.slot[slot]}
             {slot === 'media' && row.mediaCount > 0 ? ` · ${row.mediaCount}` : ''}
-            {slot === 'media' && !row.slots.media ? ` · ${BULK_COPY.optional}` : ''}
+            {row.slots[slot] && <Check size={11} />}
           </span>
         ))}
-        {row.files.length > 0 && !locked && (
-          <button
-            type="button"
-            data-testid={`bulk-files-toggle-${row.projectId}`}
-            aria-expanded={listOpen}
-            onClick={() => setListOpen(o => !o)}
-            className="ml-1 flex items-center gap-1 text-[11px] text-[var(--kx-muted)] hover:text-[var(--kx-text)] transition-colors"
-          >
-            {listOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-            {BULK_COPY.filesToggle(row.files.length)}
-          </button>
-        )}
       </div>
+      <button
+        type="button"
+        data-testid={`bulk-files-toggle-${row.projectId}`}
+        aria-expanded={listOpen}
+        disabled={row.files.length === 0 || locked}
+        onClick={() => setListOpen(o => !o)}
+        className="mt-1.5 -ml-1.5 flex items-center gap-1 h-6 px-1.5 rounded-md text-[11px] text-[var(--kx-muted)] enabled:hover:text-[var(--kx-text)] enabled:hover:bg-[var(--kx-hover)] transition-colors disabled:cursor-default"
+      >
+        {BULK_COPY.filesToggle(row.files.length)}
+        {listOpen && row.files.length > 0 ? <ChevronDown size={12} /> : <ChevronRight size={12} className={row.files.length === 0 ? 'opacity-40' : ''} />}
+      </button>
       {listOpen && row.files.length > 0 && !locked && (
-        <div className="mt-2.5 rounded-lg border border-[var(--kx-line)] bg-[#0f1319] py-1" data-testid={`bulk-files-${row.projectId}`}>
+        <div className="mt-2 rounded-lg border border-[var(--kx-line)] bg-[var(--kx-panel)] py-1" data-testid={`bulk-files-${row.projectId}`}>
           <ul>
-            {row.files.map(f => (
-              <li key={f.id} className="flex items-center gap-2 px-3 py-1 text-[12px]">
-                <span className="w-24 flex-shrink-0 whitespace-nowrap text-[10px] uppercase tracking-widest text-[var(--kx-faint)]">{BULK_COPY.slot[f.kind]}</span>
-                <span className="flex-1 min-w-0 truncate text-[var(--kx-text)]">{f.name}</span>
-                {!f.id.startsWith('bundle:') && (
+            {(['script', 'scene', 'voiceover'] as const).map(kind => {
+              const f = row.files.find(x => x.id === kind);
+              return (
+                <li key={kind} className={FILE_LINE}>
+                  <span className={FILE_KIND}>{BULK_COPY.slot[kind]}</span>
+                  <span className={`flex-1 min-w-0 truncate ${f ? 'text-[var(--kx-text)]' : 'text-[var(--kx-faint)]'}`}>{f ? f.name : BULK_COPY.notAdded}</span>
                   <button
                     type="button"
-                    aria-label={BULK_COPY.replaceFile(f.name)}
-                    title={BULK_COPY.replaceFile(f.name)}
-                    onClick={() => { replacing.current = f.id; replaceRef.current?.click(); }}
-                    className="flex-shrink-0 w-6 h-6 flex items-center justify-center rounded text-gray-500 hover:text-white transition-colors"
+                    aria-label={f ? BULK_COPY.replaceFile(f.name) : BULK_COPY.addSlot(BULK_COPY.slot[kind])}
+                    title={f ? BULK_COPY.replaceFile(f.name) : BULK_COPY.addSlot(BULK_COPY.slot[kind])}
+                    onClick={() => { replacing.current = kind; replaceRef.current?.click(); }}
+                    className={FILE_ICON}
                   >
-                    <RefreshCw size={12} />
+                    {f ? <RefreshCw size={12} /> : <Upload size={12} />}
                   </button>
-                )}
-                <button
-                  type="button"
-                  aria-label={BULK_COPY.removeFile(f.name)}
-                  title={BULK_COPY.removeFile(f.name)}
-                  onClick={() => onRemoveFile(f.id)}
-                  className="flex-shrink-0 w-6 h-6 flex items-center justify-center rounded text-gray-500 hover:text-white transition-colors"
-                >
-                  <X size={13} />
-                </button>
-              </li>
-            ))}
+                  <button
+                    type="button"
+                    aria-label={f ? BULK_COPY.removeFile(f.name) : undefined}
+                    title={f ? BULK_COPY.removeFile(f.name) : undefined}
+                    disabled={!f}
+                    onClick={() => f && onRemoveFile(f.id)}
+                    className={`${FILE_ICON} enabled:hover:text-[var(--kx-danger)] disabled:invisible`}
+                  >
+                    <X size={13} />
+                  </button>
+                </li>
+              );
+            })}
+            {(() => {
+              const media = row.files.filter(x => x.kind === 'media');
+              return (
+                <>
+                  <li className={FILE_LINE}>
+                    <span className={FILE_KIND}>{BULK_COPY.slot.media}</span>
+                    <button
+                      type="button"
+                      data-testid={`bulk-media-toggle-${row.projectId}`}
+                      aria-expanded={mediaOpen}
+                      disabled={media.length === 0}
+                      onClick={() => setMediaOpen(o => !o)}
+                      className={`flex-1 min-w-0 flex items-center gap-1 text-left ${media.length ? 'text-[var(--kx-text)] hover:text-white' : 'text-[var(--kx-faint)] cursor-default'}`}
+                    >
+                      <span className="truncate">{media.length ? BULK_COPY.mediaCount(media.length) : BULK_COPY.notAdded}</span>
+                      {media.length > 0 && (mediaOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />)}
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={media.length ? BULK_COPY.replaceMedia : BULK_COPY.addSlot(BULK_COPY.slot.media)}
+                      title={media.length ? BULK_COPY.replaceMedia : BULK_COPY.addSlot(BULK_COPY.slot.media)}
+                      onClick={() => mediaRef.current?.click()}
+                      className={FILE_ICON}
+                    >
+                      {media.length ? <RefreshCw size={12} /> : <Upload size={12} />}
+                    </button>
+                    <button
+                      type="button"
+                      data-testid={`bulk-media-delete-${row.projectId}`}
+                      aria-label={media.length ? BULK_COPY.deleteMedia : undefined}
+                      title={media.length ? BULK_COPY.deleteMedia : undefined}
+                      disabled={media.length === 0}
+                      onClick={() => setConfirmMediaDelete(true)}
+                      className={`${FILE_ICON} enabled:hover:text-[var(--kx-danger)] disabled:invisible`}
+                    >
+                      <X size={13} />
+                    </button>
+                  </li>
+                  {mediaOpen && media.length > 0 && (
+                    <li className="mx-3 mb-1 max-h-56 overflow-y-auto custom-scrollbar rounded-md border border-[var(--kx-line)]">
+                      <ul>
+                        {media.map(f => (
+                          <li key={f.id} className="flex items-center gap-2 pl-3 pr-1 py-0.5 text-[12px]">
+                            <span className="flex-1 min-w-0 truncate text-[var(--kx-muted)]">{f.name}</span>
+                            <button
+                              type="button"
+                              aria-label={BULK_COPY.removeFile(f.name)}
+                              title={BULK_COPY.removeFile(f.name)}
+                              onClick={() => onRemoveFile(f.id)}
+                              className={`${FILE_ICON} hover:text-[var(--kx-danger)]`}
+                            >
+                              <X size={12} />
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    </li>
+                  )}
+                </>
+              );
+            })()}
           </ul>
-          <div className="px-3 pt-1 pb-1 border-t border-[var(--kx-line)] mt-1 flex items-center gap-4">
+          <div className="px-3 pt-1.5 pb-1 border-t border-[var(--kx-line)] mt-1 flex items-center justify-end gap-4">
             <button
               type="button"
               data-testid={`bulk-replace-all-${row.projectId}`}
@@ -251,7 +356,7 @@ function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFi
               type="button"
               data-testid={`bulk-clear-${row.projectId}`}
               onClick={onClearFiles}
-              className="flex items-center gap-1.5 text-[11px] text-gray-400 hover:text-white transition-colors"
+              className="flex items-center gap-1.5 text-[11px] text-gray-400 hover:text-[var(--kx-danger)] transition-colors"
             >
               <Trash2 size={12} />
               {BULK_COPY.clearFiles}
@@ -259,25 +364,66 @@ function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFi
           </div>
         </div>
       )}
-      <p
-        data-testid={`bulk-status-${row.projectId}`}
-        className={`mt-2.5 text-[12px] leading-snug ${dim ? 'text-[var(--kx-faint)]' : 'text-[var(--kx-muted)]'}`}
-      >
-        {quiet}{cost ? ` · ${cost}` : ''}
-      </p>
       {record?.checkpoint && (
-        <p className="mt-1.5 flex flex-wrap gap-1" data-testid={`bulk-stages-${row.projectId}`}>
+        <p className="mt-2.5 flex flex-wrap gap-1" data-testid={`bulk-stages-${row.projectId}`}>
           {(['staged', 'transcript-cached', 'aligned', 'built'] as const).map(stage => (
-            <span key={stage} className={`${CHIP} ${record.checkpoint === stage ? 'bg-[#F27D26]/20 text-[#F27D26]' : 'bg-[var(--kx-surface-2)] text-[var(--kx-faint)]'}`}>
+            <span key={stage} className={`${CHIP} ${record.checkpoint === stage ? 'bg-[var(--kx-accent-soft)] text-[var(--kx-accent-2)]' : 'bg-[var(--kx-surface-2)] text-[var(--kx-faint)]'}`}>
               {stage}
             </span>
           ))}
         </p>
       )}
-      {(phase === 'failed' || phase === 'finish-failed' || phase === 'paused') && (
-        <button type="button" data-testid={`bulk-retry-${row.projectId}`} className={`${BTN_CANCEL} mt-2`} onClick={onRetry}>
-          {BULK_COPY.retry}
+
+      {/* Row 3 — ONE fixed-height message line (status, then any problems;
+          the arrows step through them), Retry / Cancel, the bin in the corner. */}
+      <div className="mt-3 pt-2.5 border-t border-[var(--kx-line)] flex items-center gap-2 h-[38px]">
+        <p
+          data-testid={`bulk-status-${row.projectId}`}
+          title={current.text}
+          className={`flex-1 min-w-0 truncate text-[12px] leading-snug ${current.warn ? 'text-amber-300/90' : dim ? 'text-[var(--kx-faint)]' : 'text-[var(--kx-muted)]'}`}
+        >
+          {current.text}
+        </p>
+        {failedish && (
+          <button type="button" data-testid={`bulk-retry-${row.projectId}`} className={ROW_BTN_SM} onClick={onRetry}>
+            {BULK_COPY.retry}
+          </button>
+        )}
+        {running && (
+          <button type="button" data-testid={`bulk-cancel-${row.projectId}`} className={ROW_BTN_SM} onClick={onCancel}>
+            {BULK_COPY.cancelRow}
+          </button>
+        )}
+        {messages.length > 1 && (
+          <div className="flex-shrink-0 flex items-center" data-testid={`bulk-msgs-${row.projectId}`}>
+            <button type="button" aria-label={BULK_COPY.prevMessage} title={BULK_COPY.prevMessage} onClick={() => setMsgIdx(i => (i - 1 + messages.length) % messages.length)} className={MSG_ARROW}>
+              <ChevronLeft size={13} />
+            </button>
+            <span className="w-7 text-center text-[10px] tabular-nums text-[var(--kx-faint)]">{`${shown + 1}/${messages.length}`}</span>
+            <button type="button" aria-label={BULK_COPY.nextMessage} title={BULK_COPY.nextMessage} onClick={() => setMsgIdx(i => (i + 1) % messages.length)} className={MSG_ARROW}>
+              <ChevronRight size={13} />
+            </button>
+          </div>
+        )}
+        <button
+          type="button"
+          aria-label={BULK_COPY.removeProject}
+          title={BULK_COPY.removeProject}
+          data-testid={`bulk-remove-${row.projectId}`}
+          onClick={onRemoveRow}
+          className="flex-shrink-0 w-7 h-7 flex items-center justify-center rounded-md text-[var(--kx-faint)] hover:text-[var(--kx-danger)] hover:bg-[var(--kx-hover)] transition-colors"
+        >
+          <Trash2 size={14} />
         </button>
+      </div>
+      {confirmMediaDelete && (
+        <ConfirmDialog
+          title={BULK_COPY.deleteMediaTitle}
+          body={BULK_COPY.deleteMediaBody(row.mediaCount)}
+          confirmLabel={BULK_COPY.deleteRowConfirm}
+          onCancel={() => setConfirmMediaDelete(false)}
+          onConfirm={() => { setConfirmMediaDelete(false); setMediaOpen(false); onRemoveMedia(); }}
+        />
       )}
       <input ref={filesRef} type="file" multiple hidden onChange={e => { onFiles(Array.from(e.target.files ?? [])); e.target.value = ''; }} />
       <input ref={folderRef} type="file" multiple hidden onChange={e => { onFiles(Array.from(e.target.files ?? [])); e.target.value = ''; }} />
@@ -302,15 +448,20 @@ function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFi
         hidden
         onChange={e => { const files = Array.from(e.target.files ?? []); e.target.value = ''; if (files.length > 0) onReplaceAll(files); }}
       />
-      {item?.receipt && <p data-testid={`bulk-receipt-${row.projectId}`} className="mt-1.5 text-[11px] text-amber-300/80">{item.receipt}</p>}
-      {row.notes.map((n, i) => <p key={i} className="mt-1.5 text-[11px] text-amber-300/80">{n}</p>)}
+      <input
+        ref={mediaRef}
+        type="file"
+        multiple
+        hidden
+        onChange={e => { const files = Array.from(e.target.files ?? []); e.target.value = ''; if (files.length > 0) onReplaceMedia(files); }}
+      />
     </li>
   );
 }
 
 export function BulkProjectsModal({
   createBlankProject, parseProjectData, onOpenProject, onFinishRow, onClose, onProjectsCreated,
-  runner: injectedRunner, queue = cloudSyncQueue, store: injected, hidden = false,
+  runner: injectedRunner, queue = cloudSyncQueue, store: injected, hidden = false, docked = false,
   deleteProject = deleteProjectEverywhere, onProjectsDeleted,
 }: {
   createBlankProject: () => Project;
@@ -328,6 +479,8 @@ export function BulkProjectsModal({
   store?: BulkRowStore;
   /** Hide keeps the batch mounted and running. It does not close it. */
   hidden?: boolean;
+  /** Docked as the dashboard's left column (no shadow; the dashboard moves over). */
+  docked?: boolean;
   /** Deletes a created project everywhere (default: the dashboard's own delete). */
   deleteProject?: (id: string) => Promise<string[]>;
   /** A row's project was deleted: the dashboard and editor let go of it. */
@@ -398,6 +551,8 @@ export function BulkProjectsModal({
       onRemoveFile={fileId => void store?.removeFile(row.projectId, fileId)}
       onReplaceFile={(fileId, file) => void store?.replaceFile(row.projectId, fileId, file)}
       onReplaceAll={files => void store?.replaceAll(row.projectId, files)}
+      onReplaceMedia={files => void store?.replaceMedia(row.projectId, files)}
+      onRemoveMedia={() => void store?.removeMedia(row.projectId)}
       onClearFiles={() => void store?.clearFiles(row.projectId)}
       onRemoveRow={() => setConfirmDelete(row)}
       onCancel={() => queue.cancel(row.projectId)}
@@ -446,9 +601,19 @@ export function BulkProjectsModal({
     }
   };
 
+  // First open slides in too: one painted frame off-screen, then the slide.
+  const [entered, setEntered] = useState(false);
+  useEffect(() => {
+    let inner = 0;
+    const outer = requestAnimationFrame(() => { inner = requestAnimationFrame(() => setEntered(true)); });
+    return () => { cancelAnimationFrame(outer); cancelAnimationFrame(inner); };
+  }, []);
+  const off = hidden || !entered;
+
   return (
     <div
-      className={`${DRAWER} ${hidden ? '-translate-x-full pointer-events-none' : ''}`}
+      className={`${DRAWER} ${docked ? '' : DRAWER_FLOAT} ${off ? '-translate-x-full pointer-events-none' : ''}`}
+      style={{ ...DRAWER_PALETTE, ...DRAWER_MOTION }}
       data-testid="bulk-modal"
       data-hidden={hidden ? 'true' : 'false'}
       aria-hidden={hidden}
@@ -459,20 +624,23 @@ export function BulkProjectsModal({
         aria-label={BULK_COPY.modalTitle}
         className="flex flex-col h-full min-h-0"
       >
-        <div className="px-8 pt-7 pb-5 flex-shrink-0">
-          <div className="flex items-center justify-between mb-2">
-            <h2 className="text-sm font-black uppercase tracking-[0.2em]">{BULK_COPY.modalTitle}</h2>
+        <div className="px-6 pt-6 pb-5 flex-shrink-0 border-b border-[var(--kx-line)] bg-[var(--kx-panel)]">
+          <div className="flex items-center justify-between">
+            <h2 className="flex items-center gap-2.5 text-sm font-black uppercase tracking-[0.2em] text-[var(--kx-text)]">
+              <span aria-hidden="true" className="h-4 w-1 rounded-full bg-[var(--kx-accent)]" />
+              {BULK_COPY.modalTitle}
+            </h2>
             <button
               type="button"
               aria-label={BULK_COPY.close}
               data-testid="bulk-close"
               onClick={close}
-              className="text-gray-500 hover:text-white transition-colors focus:outline-none focus:ring-2 focus:ring-[#F27D26] rounded"
+              className="w-8 h-8 flex items-center justify-center rounded-lg text-[var(--kx-muted)] hover:text-white hover:bg-[var(--kx-hover)] transition-colors focus:outline-none focus:ring-2 focus:ring-[var(--kx-accent-line)]"
             >
               <X size={16} />
             </button>
           </div>
-          <div className="mt-4">
+          <div className="mt-5">
             <span data-testid="bulk-create-heading" className={LABEL}>{BULK_COPY.newGroup}</span>
             <form
               className="flex items-center gap-2"
@@ -490,7 +658,7 @@ export function BulkProjectsModal({
                 value={countRaw}
                 disabled={!runner.canCreateGroup()}
                 onChange={e => setCountRaw(e.target.value)}
-                className="w-full min-w-0 flex-1 h-10 bg-[#1A1A1A] border border-[#333] px-3 rounded-lg text-[13px] font-semibold text-[var(--kx-text)] placeholder:text-gray-500 placeholder:font-normal outline-none focus:border-[#F27D26] transition-colors disabled:opacity-40"
+                className={`${FIELD} w-full min-w-0 flex-1 h-10 px-3 text-[13px]`}
               />
               <button
                 type="submit"
@@ -508,14 +676,19 @@ export function BulkProjectsModal({
             ) : null}
           </div>
         </div>
-        <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar px-8 py-2 space-y-3" data-testid="bulk-groups">
+        <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar px-5 py-5 space-y-4" data-testid="bulk-groups">
           {groups.length === 0 && rows.length === 0 && (
-            <p data-testid="bulk-empty" className="text-[12px] leading-snug text-[var(--kx-muted)]">{BULK_COPY.emptyDrawer}</p>
+            <p data-testid="bulk-empty" className="rounded-2xl border border-dashed border-[var(--kx-line-2)] px-4 py-8 text-center text-[12px] leading-snug text-[var(--kx-muted)]">{BULK_COPY.emptyDrawer}</p>
           )}
           {groups.map(group => {
             const members = group.rowIds.map(id => rowById.get(id)).filter((r): r is BulkRowState => !!r);
             return (
-              <section key={group.id} data-testid={`bulk-group-section-${group.id}`}>
+              <section
+                key={group.id}
+                data-testid={`bulk-group-section-${group.id}`}
+                className="rounded-2xl border border-[var(--kx-line-2)] bg-[var(--kx-panel)] shadow-[0_1px_0_rgba(255,255,255,.03)_inset]"
+              >
+                <div className={`px-4 ${group.collapsed ? '' : 'border-b border-[var(--kx-line)]'}`}>
                 <BulkGroupHeader
                   group={group}
                   progress={groupProgress(group, records)}
@@ -533,14 +706,15 @@ export function BulkProjectsModal({
                     </button>
                   )}
                 </BulkGroupHeader>
+                </div>
                 {!group.collapsed && (
-                  <>
-                    <ol className="space-y-3">{members.map(renderRow)}</ol>
-                    <div className="mt-3 flex items-center gap-3">
+                  <div className="p-3">
+                    <ol className="space-y-2.5">{members.map(renderRow)}</ol>
+                    <div className="mt-3 px-1 flex items-center gap-3">
                       <button
                         type="button"
                         data-testid={`bulk-add-${group.id}`}
-                        className="flex items-center gap-1.5 text-[11px] text-gray-400 hover:text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                        className="flex items-center gap-1.5 h-8 px-2 rounded-md text-[12px] font-semibold text-[var(--kx-muted)] hover:text-white hover:bg-[var(--kx-hover)] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                         disabled={group.rowIds.length >= BULK_GROUP_MAX_ROWS}
                         title={group.rowIds.length >= BULK_GROUP_MAX_ROWS ? `Up to ${BULK_GROUP_MAX_ROWS} projects in a group` : undefined}
                         onClick={() => addToGroup(group.id)}
@@ -552,7 +726,7 @@ export function BulkProjectsModal({
                       <button
                         type="button"
                         data-testid={`bulk-build-${group.id}`}
-                        className={`${BTN_PRIMARY} flex-none px-5 py-2.5`}
+                        className={`${BTN_BUILD} flex-none px-5 py-2.5`}
                         disabled={!cloud || !members.some(isComplete)}
                         title={!cloud ? BULK_COPY.notCloud : !members.some(isComplete) ? BULK_COPY.buildNeeds : undefined}
                         onClick={() => build(group.rowIds)}
@@ -560,17 +734,17 @@ export function BulkProjectsModal({
                         {BULK_COPY.build}
                       </button>
                     </div>
-                  </>
+                  </div>
                 )}
               </section>
             );
           })}
           {loose.length > 0 && <ol className="space-y-3">{loose.map(renderRow)}</ol>}
         </div>
-        <div className="px-8 pt-3 pb-6 flex-shrink-0 border-t border-white/[0.06]" data-testid="bulk-footer">
+        <div className="px-6 pt-3 pb-5 flex-shrink-0 border-t border-[var(--kx-line)] bg-[var(--kx-panel)]" data-testid="bulk-footer">
           {line && <p className="text-[11px] leading-snug text-gray-400 mb-1" data-testid="bulk-batch-line">{line}</p>}
           {!cloud && <p className="text-[11px] leading-snug text-amber-300/90 mb-1">{BULK_COPY.notCloud}</p>}
-          <p className="text-[10px] leading-snug text-gray-500">{BULK_COPY.footerNote}</p>
+          <p className="text-[11px] leading-snug text-[var(--kx-faint)]">{BULK_COPY.footerNote}</p>
         </div>
       </div>
       {confirmDelete && (

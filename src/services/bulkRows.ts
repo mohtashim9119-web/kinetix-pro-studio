@@ -188,7 +188,6 @@ export async function classifyRowDrop(
         scene = outcome.sceneFile;
         bundleVoiceover = outcome.voiceoverFile;
         bundleMedia.push(...outcome.mediaAssets);
-        notes.push(`Bundle “${file.name}”: script, scene doc, voiceover and ${outcome.mediaAssets.length} media file${outcome.mediaAssets.length === 1 ? '' : 's'}.`);
       }
     } else if (ext === 'txt' || ext === 'rtf') {
       texts.push({ file, role: detectTextFileRole(stripRtfIfNeeded(await file.text())) });
@@ -473,6 +472,31 @@ export class BulkRowStore {
     if (!row || row.built || files.length === 0) return;
     await this.clearFiles(id);
     await this.addFiles(id, files);
+  }
+
+  /** Deletes every media file of a row (staged files, zips, bundle media);
+   *  script, scene doc and voiceover stay. */
+  async removeMedia(id: string): Promise<void> {
+    const row = this.rows.get(id);
+    if (!row || row.built) return;
+    const prev = (await this.deps.loadStaged(id)) ?? EMPTY_STAGED;
+    const next: StagedFiles = { ...prev, assetFiles: [], zipFiles: [] };
+    await this.deps.writeStaged(id, prev, next);
+    for (const asset of this.bundle.get(id) ?? []) await this.deps.removeBundleAsset(id, asset);
+    this.bundle.delete(id);
+    this.refresh(id, next, { notes: [] });
+  }
+
+  /** Replaces all media with this set. Only media files and zips are taken,
+   *  so a stray script or audio file is ignored — but a BUNDLE zip carries
+   *  every slot and replaces them too (the button's copy says so). */
+  async replaceMedia(id: string, files: readonly File[]): Promise<void> {
+    const row = this.rows.get(id);
+    if (!row || row.built) return;
+    const media = files.filter(f => /\.zip$/i.test(f.name) || detectMediaType(f.name) !== undefined);
+    if (media.length === 0) return;
+    await this.removeMedia(id);
+    await this.addFiles(id, media);
   }
 
   /** Clears every file of a row, keeping the row and its name. */

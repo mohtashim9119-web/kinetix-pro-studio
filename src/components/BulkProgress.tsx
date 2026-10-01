@@ -68,7 +68,7 @@ export function BulkGroupHeader({ group, progress, onToggle, onRename, children 
   };
   if (draft !== null) {
     return (
-      <div data-testid={`bulk-group-${group.id}`} className="flex items-center gap-2 py-2">
+      <div data-testid={`bulk-group-${group.id}`} className="flex items-center gap-2 py-3">
         <input
           data-testid={`bulk-group-name-${group.id}`}
           aria-label={BULK_COPY.groupNameLabel}
@@ -88,7 +88,7 @@ export function BulkGroupHeader({ group, progress, onToggle, onRename, children 
     );
   }
   return (
-    <div data-testid={`bulk-group-${group.id}`} className="flex items-center gap-2 py-2">
+    <div data-testid={`bulk-group-${group.id}`} className="flex items-center gap-2 py-3">
       <button
         type="button"
         data-testid={`bulk-group-toggle-${group.id}`}
