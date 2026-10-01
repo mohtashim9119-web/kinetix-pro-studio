@@ -15,21 +15,26 @@
 // is the sync-log Details line's quiet register.
 
 import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { AlertCircle, Check, ChevronDown, ChevronRight, FilePlus, FolderPlus, Plus, Trash2, X } from 'lucide-react';
-import { BULK_COPY, BULK_MAX_PROJECTS, parseBulkCount } from '../services/bulkContext';
+import { AlertCircle, Check, ChevronDown, ChevronRight, Plus, RefreshCw, Trash2, Upload, X } from 'lucide-react';
+import { BULK_COPY, BULK_MAX_PROJECTS, BULK_MIN_PROJECTS, parseBulkCount } from '../services/bulkContext';
 import { BulkRowStore, defaultBulkRowDeps, type BulkRowState } from '../services/bulkRows';
 import type { Project } from '../types';
 import { bulkBatchRunner, cloudSyncQueue } from '../services/bulkSyncQueue';
-import { READY_TO_FINISH, isBatchRowFinal, type BatchRow, type BulkBatchRunner } from '../services/bulkBatch';
+import {
+  BULK_GROUP_MAX_ROWS, BULK_MAX_GROUPS, READY_TO_FINISH, groupProgress, isBatchRowFinal, type BatchRow, type BulkBatchRunner,
+} from '../services/bulkBatch';
+import { BulkGroupHeader } from './BulkProgress';
 import { CLOUD_USD_PER_WORKER_SEC, type CloudQueueDeps } from '../services/cloudQueueJob';
 import { collectDroppedFiles } from '../services/droppedFiles';
 import { missingSpineSlots } from '../services/buildTimelineGate';
 import { formatUsd, type QueueItem, type SyncQueue } from '../services/syncQueue';
 import { readSyncEngineHost } from '../services/syncEngineHost';
 import { Z } from './overlayLayers';
+import { ConfirmDialog } from './ConfirmDialog';
+import { deleteProjectEverywhere } from '../services/projectDelete';
 
 const SHELL = `fixed inset-0 ${Z.dialog} flex items-center justify-center bg-black/80 backdrop-blur-sm`;
-const DRAWER = `fixed top-0 right-0 ${Z.drawer} flex h-full w-[min(100vw,420px)] flex-col border-l border-[#282828] bg-[#111] shadow-2xl transition-transform duration-200`;
+const DRAWER = `fixed top-0 left-0 ${Z.drawer} flex h-full w-[min(100vw,420px)] flex-col border-r border-[#282828] bg-[#111] shadow-2xl transition-transform duration-200`;
 const LABEL = 'text-[10px] uppercase tracking-widest text-gray-500 font-bold block mb-2';
 const BTN_CANCEL = 'flex-1 bg-transparent border border-[#282828] p-3 rounded-xl text-[10px] font-black uppercase tracking-widest text-gray-500 hover:text-white hover:border-gray-500 transition-all focus:outline-none focus:ring-2 focus:ring-gray-500';
 const BTN_PRIMARY = 'flex-1 bg-[#F27D26] text-white p-3 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-orange-400 transition-all focus:outline-none focus:ring-2 focus:ring-orange-400 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-[#F27D26]';
@@ -37,13 +42,14 @@ const ICON_BTN = 'flex items-center justify-center w-9 h-9 rounded-[8px] bg-[var
 const CHIP = 'flex-shrink-0 flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-[6px]';
 
 /** The "how many?" question. */
-export function BulkCountDialog({ onConfirm, onCancel, max = BULK_MAX_PROJECTS }: {
+export function BulkCountDialog({ onConfirm, onCancel, max = BULK_MAX_PROJECTS, min = BULK_MIN_PROJECTS }: {
   onConfirm: (count: number) => void;
   onCancel: () => void;
   max?: number;
+  min?: number;
 }): React.ReactElement {
   const [raw, setRaw] = useState('3');
-  const count = parseBulkCount(raw, max);
+  const count = parseBulkCount(raw, max, min);
   const invalid = count === null && raw.trim() !== '';
   return (
     <div className={SHELL}>
@@ -70,7 +76,7 @@ export function BulkCountDialog({ onConfirm, onCancel, max = BULK_MAX_PROJECTS }
           id="bulk-count"
           data-testid="bulk-count-input"
           type="number"
-          min={1}
+          min={min}
           max={max}
           step={1}
           value={raw}
@@ -81,7 +87,7 @@ export function BulkCountDialog({ onConfirm, onCancel, max = BULK_MAX_PROJECTS }
           autoFocus
         />
         <p className={`mt-2 text-[9px] uppercase tracking-widest ${invalid ? 'text-amber-300' : 'text-gray-600'}`}>
-          {invalid ? BULK_COPY.quantityInvalid(max) : BULK_COPY.quantityHint(max)}
+          {invalid ? BULK_COPY.quantityInvalid(max, min) : BULK_COPY.quantityHint(max, min)}
         </p>
         <div className="flex gap-3 mt-6">
           <button type="button" onClick={onCancel} className={BTN_CANCEL}>{BULK_COPY.cancel}</button>
@@ -107,6 +113,8 @@ interface RowProps {
   onName: (typed: string) => void;
   onFiles: (files: File[]) => void;
   onRemoveFile: (fileId: string) => void;
+  onReplaceFile: (fileId: string, file: File) => void;
+  onReplaceAll: (files: File[]) => void;
   onClearFiles: () => void;
   onRemoveRow: () => void;
   onCancel: () => void;
@@ -116,11 +124,15 @@ interface RowProps {
   onRetry: () => void;
 }
 
-function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFile, onClearFiles, onRemoveRow, onCancel, onOpen, onFinish, onRetry }: RowProps): React.ReactElement {
+function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFile, onReplaceFile, onReplaceAll, onClearFiles, onRemoveRow, onCancel, onOpen, onFinish, onRetry }: RowProps): React.ReactElement {
   const filesRef = useRef<HTMLInputElement>(null);
   const folderRef = useRef<HTMLInputElement>(null);
+  const replaceRef = useRef<HTMLInputElement>(null);
+  const replaceAllRef = useRef<HTMLInputElement>(null);
+  const replacing = useRef<string | null>(null);
   const [over, setOver] = useState(false);
   const [listOpen, setListOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   useEffect(() => { folderRef.current?.setAttribute('webkitdirectory', ''); }, []);
   const phase = record?.phase;
   const running = phase === 'queued' || phase === 'cloud';
@@ -195,17 +207,35 @@ function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFi
           </button>
         ) : !locked && (
           <>
-            <button type="button" aria-label={BULK_COPY.rowBrowseFiles} title={BULK_COPY.rowBrowseFiles} onClick={() => filesRef.current?.click()} className={ICON_BTN}>
-              <FilePlus size={15} />
-            </button>
-            <button type="button" aria-label={BULK_COPY.rowBrowseFolder} title={BULK_COPY.rowBrowseFolder} onClick={() => folderRef.current?.click()} className={ICON_BTN}>
-              <FolderPlus size={15} />
-            </button>
-            <button type="button" aria-label={BULK_COPY.removeProject} title={BULK_COPY.removeProject} data-testid={`bulk-remove-${row.projectId}`} onClick={onRemoveRow} className={ICON_BTN}>
-              <X size={15} />
-            </button>
+            <div className="relative flex-shrink-0">
+              <button
+                type="button"
+                data-testid={`bulk-upload-${row.projectId}`}
+                aria-haspopup="menu"
+                aria-expanded={menuOpen}
+                aria-label={BULK_COPY.upload}
+                title={BULK_COPY.upload}
+                onClick={() => setMenuOpen(o => !o)}
+                className={ICON_BTN}
+              >
+                <Upload size={15} />
+              </button>
+              {menuOpen && (
+                <div role="menu" data-testid={`bulk-upload-menu-${row.projectId}`} className="absolute right-0 top-10 z-10 w-40 rounded-lg border border-[#282828] bg-[#111] py-1 shadow-2xl">
+                  <button type="button" role="menuitem" className="block w-full px-3 py-1.5 text-left text-[12px] text-[var(--kx-text)] hover:bg-[var(--kx-surface-2)]" onClick={() => { setMenuOpen(false); filesRef.current?.click(); }}>
+                    {BULK_COPY.uploadFiles}
+                  </button>
+                  <button type="button" role="menuitem" className="block w-full px-3 py-1.5 text-left text-[12px] text-[var(--kx-text)] hover:bg-[var(--kx-surface-2)]" onClick={() => { setMenuOpen(false); folderRef.current?.click(); }}>
+                    {BULK_COPY.uploadFolder}
+                  </button>
+                </div>
+              )}
+            </div>
           </>
         )}
+        <button type="button" aria-label={BULK_COPY.removeProject} title={BULK_COPY.removeProject} data-testid={`bulk-remove-${row.projectId}`} onClick={onRemoveRow} className={ICON_BTN}>
+          <Trash2 size={15} />
+        </button>
       </div>
       <div className="mt-3 flex flex-wrap items-center gap-1.5" data-testid={`bulk-slots-${row.projectId}`}>
         {(['script', 'scene', 'voiceover', 'media'] as const).map(slot => (
@@ -243,6 +273,17 @@ function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFi
               <li key={f.id} className="flex items-center gap-2 px-3 py-1 text-[12px]">
                 <span className="w-24 flex-shrink-0 whitespace-nowrap text-[10px] uppercase tracking-widest text-[var(--kx-faint)]">{BULK_COPY.slot[f.kind]}</span>
                 <span className="flex-1 min-w-0 truncate text-[var(--kx-text)]">{f.name}</span>
+                {!f.id.startsWith('bundle:') && (
+                  <button
+                    type="button"
+                    aria-label={BULK_COPY.replaceFile(f.name)}
+                    title={BULK_COPY.replaceFile(f.name)}
+                    onClick={() => { replacing.current = f.id; replaceRef.current?.click(); }}
+                    className="flex-shrink-0 w-6 h-6 flex items-center justify-center rounded text-gray-500 hover:text-white transition-colors"
+                  >
+                    <RefreshCw size={12} />
+                  </button>
+                )}
                 <button
                   type="button"
                   aria-label={BULK_COPY.removeFile(f.name)}
@@ -255,7 +296,16 @@ function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFi
               </li>
             ))}
           </ul>
-          <div className="px-3 pt-1 pb-1 border-t border-[var(--kx-line)] mt-1">
+          <div className="px-3 pt-1 pb-1 border-t border-[var(--kx-line)] mt-1 flex items-center gap-4">
+            <button
+              type="button"
+              data-testid={`bulk-replace-all-${row.projectId}`}
+              onClick={() => replaceAllRef.current?.click()}
+              className="flex items-center gap-1.5 text-[11px] text-gray-400 hover:text-white transition-colors"
+            >
+              <RefreshCw size={12} />
+              {BULK_COPY.replaceAll}
+            </button>
             <button
               type="button"
               data-testid={`bulk-clear-${row.projectId}`}
@@ -290,6 +340,27 @@ function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFi
       )}
       <input ref={filesRef} type="file" multiple hidden onChange={e => { onFiles(Array.from(e.target.files ?? [])); e.target.value = ''; }} />
       <input ref={folderRef} type="file" multiple hidden onChange={e => { onFiles(Array.from(e.target.files ?? [])); e.target.value = ''; }} />
+      <input
+        ref={replaceRef}
+        data-testid={`bulk-replace-input-${row.projectId}`}
+        type="file"
+        hidden
+        onChange={e => {
+          const file = e.target.files?.[0];
+          const target = replacing.current;
+          replacing.current = null;
+          e.target.value = '';
+          if (file && target) onReplaceFile(target, file);
+        }}
+      />
+      <input
+        ref={replaceAllRef}
+        data-testid={`bulk-replace-all-input-${row.projectId}`}
+        type="file"
+        multiple
+        hidden
+        onChange={e => { const files = Array.from(e.target.files ?? []); e.target.value = ''; if (files.length > 0) onReplaceAll(files); }}
+      />
       {item?.receipt && <p data-testid={`bulk-receipt-${row.projectId}`} className="mt-1.5 text-[11px] text-amber-300/80">{item.receipt}</p>}
       {row.notes.map((n, i) => <p key={i} className="mt-1.5 text-[11px] text-amber-300/80">{n}</p>)}
     </li>
@@ -297,12 +368,10 @@ function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFi
 }
 
 export function BulkProjectsModal({
-  initialCount, createBlankProject, parseProjectData, onOpenProject, onFinishRow, onClose, onProjectsCreated,
-  runner: injectedRunner, queue = cloudSyncQueue, store: injected, hidden = false, addRowsSignal,
+  createBlankProject, parseProjectData, onOpenProject, onFinishRow, onClose, onProjectsCreated,
+  runner: injectedRunner, queue = cloudSyncQueue, store: injected, hidden = false,
+  deleteProject = deleteProjectEverywhere, onProjectsDeleted,
 }: {
-  /** How many empty rows to start with (0 when reopening a running batch).
-   *  Rows are drafts: no project exists yet. */
-  initialCount: number;
   createBlankProject: () => Project;
   parseProjectData: CloudQueueDeps['parseProjectData'];
   onOpenProject: (id: string) => void;
@@ -318,19 +387,20 @@ export function BulkProjectsModal({
   store?: BulkRowStore;
   /** Hide keeps the batch mounted and running. It does not close it. */
   hidden?: boolean;
-  /** A create from outside (the dashboard, no batch yet) while this drawer is
-   *  already mounted: add `count` empty rows. `seq` makes each request new. */
-  addRowsSignal?: { count: number; seq: number };
+  /** Deletes a created project everywhere (default: the dashboard's own delete). */
+  deleteProject?: (id: string) => Promise<string[]>;
+  /** A row's project was deleted: the dashboard and editor let go of it. */
+  onProjectsDeleted?: (ids: string[], failures: string[]) => void;
 }): React.ReactElement {
   const runner = useMemo(() => injectedRunner ?? bulkBatchRunner(parseProjectData), [injectedRunner, parseProjectData]);
   const [store, setStore] = useState<BulkRowStore | null>(injected ?? null);
   useEffect(() => {
-    if (injected) { injected.init(initialCount); return; }
+    if (injected) return;
     let live = true;
     void defaultBulkRowDeps(createBlankProject).then(deps => {
       if (!live) return;
-      const created = new BulkRowStore(deps, BULK_MAX_PROJECTS);
-      created.init(initialCount);
+      const created = new BulkRowStore(deps, BULK_MAX_GROUPS * BULK_GROUP_MAX_ROWS);
+      void created.hydrate();
       setStore(created);
     });
     return () => { live = false; };
@@ -342,18 +412,20 @@ export function BulkProjectsModal({
   );
   const snap = useSyncExternalStore(l => queue.subscribe(l), () => queue.snapshot());
   const records = useSyncExternalStore(l => runner.subscribe(l), () => runner.snapshot());
+  const groups = useSyncExternalStore(l => runner.subscribe(l), () => runner.groups());
   const [skips, setSkips] = useState<Record<string, string>>({});
-  // v1.2.2 — creating a new batch lives HERE (the dashboard's button reopens
-  // the existing one). It adds empty draft rows; running rows are untouched.
-  const [askingNewBatch, setAskingNewBatch] = useState(false);
-  const addRows = (count: number): void => { for (let i = 0; i < count; i += 1) if (!store?.addRow()) break; };
-  const lastAddSeq = useRef(addRowsSignal?.seq);
-  useEffect(() => {
-    if (!store || !addRowsSignal || addRowsSignal.seq === lastAddSeq.current) return;
-    lastAddSeq.current = addRowsSignal.seq;
-    addRows(addRowsSignal.count);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [store, addRowsSignal]);
+  // Bulk UI rebuild U3 — creating lives HERE, never on the dashboard: one
+  // "Create Projects" is one new group of 2–30 empty draft rows.
+  const [askingCreate, setAskingCreate] = useState(false);
+  const createGroup = (count: number): void => {
+    if (!store || !runner.canCreateGroup()) return;
+    const ids = store.createDrafts(count);
+    if (!runner.createGroup(ids)) void Promise.all(ids.map(id => store.discardRow(id)));
+  };
+  const addToGroup = (groupId: string): void => {
+    const id = store?.addRow();
+    if (id && !runner.addRowToGroup(groupId, id)) void store?.discardRow(id);
+  };
   // While this window is open, finished cloud work is turned into real timelines.
   useEffect(() => runner.holdFinishOpen(), [runner]);
   // The rows of projects the batch already made (a reopened window) come from its record.
@@ -364,13 +436,36 @@ export function BulkProjectsModal({
   const complete = rows.filter(r => !r.built && r.typedName.trim().length > 0 && missingSpineSlots(r.slots).length === 0);
   const canBuild = cloud && complete.length > 0;
   const anyRunning = records.some(r => r.phase === 'queued' || r.phase === 'cloud');
-  const anyFinal = records.some(r => isBatchRowFinal(r.phase));
   const line = queue.batchLine();
+
+  const rowById = new Map(rows.map(r => [r.projectId, r]));
+  const inGroup = new Set(groups.flatMap(g => g.rowIds));
+  const loose = rows.filter(r => !inGroup.has(r.projectId));
+  const renderRow = (row: BulkRowState): React.ReactElement => (
+    <BulkRow
+      key={row.projectId}
+      row={row}
+      item={items.get(row.projectId)}
+      skippedReason={skips[row.projectId]}
+      record={recordById.get(row.projectId)}
+      onName={typed => store?.setTypedName(row.projectId, typed)}
+      onFiles={files => void store?.addFiles(row.projectId, files)}
+      onRemoveFile={fileId => void store?.removeFile(row.projectId, fileId)}
+      onReplaceFile={(fileId, file) => void store?.replaceFile(row.projectId, fileId, file)}
+      onReplaceAll={files => void store?.replaceAll(row.projectId, files)}
+      onClearFiles={() => void store?.clearFiles(row.projectId)}
+      onRemoveRow={() => setConfirmDelete(row)}
+      onCancel={() => queue.cancel(row.projectId)}
+      onOpen={() => open(row.projectId)}
+      onFinish={() => finishRow(row.projectId)}
+      onRetry={() => runner.retry(row.projectId)}
+    />
+  );
 
   const build = (): void => {
     void (async () => {
       if (!store) return;
-      // Only now do projects exist: the real rows are created, empty drafts discarded.
+      // Only now do projects exist. Every other row stays a draft.
       const { created, skips: left } = await store.buildReady();
       setSkips(left);
       if (created.length === 0) return;
@@ -379,18 +474,32 @@ export function BulkProjectsModal({
     })();
   };
 
-  const close = (): void => { void (store?.discardUnbuilt() ?? Promise.resolve()).finally(onClose); };
-  const open = (id: string): void => { void (store?.discardUnbuilt() ?? Promise.resolve()).finally(() => onOpenProject(id)); };
+  // U5 — nothing clears by itself: hiding, opening or finishing keeps every draft.
+  const close = (): void => onClose();
+  const open = (id: string): void => onOpenProject(id);
   const finishRow = (id: string): void => {
-    void (store?.discardUnbuilt() ?? Promise.resolve()).finally(() => {
-      if (onFinishRow) onFinishRow(id);
-      else if (!runner.finishNow(id)) onOpenProject(id);
-    });
+    if (onFinishRow) onFinishRow(id);
+    else if (!runner.finishNow(id)) onOpenProject(id);
+  };
+
+  // U5 — per-row delete, behind a confirm: the row's record, its files, and
+  // (once created) the project they belong to.
+  const [confirmDelete, setConfirmDelete] = useState<BulkRowState | null>(null);
+  const deleteRow = async (row: BulkRowState): Promise<void> => {
+    if (row.built) {
+      const failures = await deleteProject(row.projectId);
+      runner.removeRow(row.projectId);
+      store?.forgetRow(row.projectId);
+      onProjectsDeleted?.([row.projectId], failures);
+    } else {
+      await store?.discardRow(row.projectId);
+      runner.removeRow(row.projectId);
+    }
   };
 
   return (
     <div
-      className={`${DRAWER} ${hidden ? 'translate-x-full pointer-events-none' : ''}`}
+      className={`${DRAWER} ${hidden ? '-translate-x-full pointer-events-none' : ''}`}
       data-testid="bulk-modal"
       data-hidden={hidden ? 'true' : 'false'}
       aria-hidden={hidden}
@@ -415,27 +524,63 @@ export function BulkProjectsModal({
             </button>
           </div>
           <p className="text-xs leading-relaxed text-gray-400">{BULK_COPY.modalIntro}</p>
+          <button
+            type="button"
+            data-testid="bulk-create"
+            className={`${BTN_PRIMARY} mt-4 w-full flex items-center justify-center gap-1.5`}
+            disabled={!store || !runner.canCreateGroup()}
+            title={runner.canCreateGroup() ? undefined : BULK_COPY.groupsFull(BULK_MAX_GROUPS)}
+            onClick={() => setAskingCreate(true)}
+          >
+            <Plus size={13} />
+            {BULK_COPY.createProjects}
+          </button>
         </div>
-        <ol className="flex-1 min-h-0 overflow-y-auto custom-scrollbar px-8 py-2 space-y-3">
-          {rows.map(row => (
-            <BulkRow
-              key={row.projectId}
-              row={row}
-              item={items.get(row.projectId)}
-              skippedReason={skips[row.projectId]}
-              record={recordById.get(row.projectId)}
-              onName={typed => store?.setTypedName(row.projectId, typed)}
-              onFiles={files => void store?.addFiles(row.projectId, files)}
-              onRemoveFile={fileId => void store?.removeFile(row.projectId, fileId)}
-              onClearFiles={() => void store?.clearFiles(row.projectId)}
-              onRemoveRow={() => void store?.discardRow(row.projectId)}
-              onCancel={() => queue.cancel(row.projectId)}
-              onOpen={() => open(row.projectId)}
-              onFinish={() => finishRow(row.projectId)}
-              onRetry={() => runner.retry(row.projectId)}
-            />
-          ))}
-        </ol>
+        <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar px-8 py-2 space-y-3" data-testid="bulk-groups">
+          {groups.length === 0 && rows.length === 0 && (
+            <p data-testid="bulk-empty" className="text-[12px] leading-snug text-[var(--kx-muted)]">{BULK_COPY.emptyDrawer}</p>
+          )}
+          {groups.map(group => {
+            const members = group.rowIds.map(id => rowById.get(id)).filter((r): r is BulkRowState => !!r);
+            return (
+              <section key={group.id} data-testid={`bulk-group-section-${group.id}`}>
+                <BulkGroupHeader
+                  group={group}
+                  progress={groupProgress(group, records)}
+                  onToggle={() => runner.setCollapsed(group.id, !group.collapsed)}
+                >
+                  {group.rowIds.some(id => { const p = recordById.get(id)?.phase; return p !== undefined && isBatchRowFinal(p); }) && (
+                    <button
+                      type="button"
+                      data-testid={`bulk-clear-finished-${group.id}`}
+                      onClick={() => runner.clearFinished(group.id)}
+                      className="flex-shrink-0 text-[11px] text-gray-400 hover:text-white transition-colors"
+                    >
+                      {BULK_COPY.clearFinished}
+                    </button>
+                  )}
+                </BulkGroupHeader>
+                {!group.collapsed && (
+                  <>
+                    <ol className="space-y-3">{members.map(renderRow)}</ol>
+                    <button
+                      type="button"
+                      data-testid={`bulk-add-${group.id}`}
+                      className="mt-2 flex items-center gap-1.5 text-[11px] text-gray-400 hover:text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                      disabled={group.rowIds.length >= BULK_GROUP_MAX_ROWS}
+                      title={group.rowIds.length >= BULK_GROUP_MAX_ROWS ? `Up to ${BULK_GROUP_MAX_ROWS} projects in a group` : undefined}
+                      onClick={() => addToGroup(group.id)}
+                    >
+                      <Plus size={12} />
+                      {BULK_COPY.addProject}
+                    </button>
+                  </>
+                )}
+              </section>
+            );
+          })}
+          {loose.length > 0 && <ol className="space-y-3">{loose.map(renderRow)}</ol>}
+        </div>
         <div className="px-8 pt-4 pb-8 flex-shrink-0">
           <div className="border-t border-white/[0.06] pt-3">
             {line && <p className="text-[11px] leading-snug text-gray-400 mb-2" data-testid="bulk-batch-line">{line}</p>}
@@ -443,31 +588,6 @@ export function BulkProjectsModal({
               <p className="text-[11px] leading-snug text-gray-400 mb-3">{!cloud ? BULK_COPY.notCloud : BULK_COPY.buildNeeds}</p>
             )}
             <div className="flex gap-3">
-              <button
-                type="button"
-                data-testid="bulk-add"
-                className={`${BTN_CANCEL} flex items-center justify-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed`}
-                disabled={!store?.canAddRow()}
-                title={store?.canAddRow() ? undefined : `Up to ${BULK_MAX_PROJECTS} projects`}
-                onClick={() => store?.addRow()}
-              >
-                <Plus size={13} />
-                {BULK_COPY.addProject}
-              </button>
-              <button
-                type="button"
-                data-testid="bulk-new-batch"
-                className={`${BTN_CANCEL} disabled:opacity-40 disabled:cursor-not-allowed`}
-                disabled={!store?.canAddRow()}
-                onClick={() => setAskingNewBatch(true)}
-              >
-                {BULK_COPY.newBatch}
-              </button>
-              {anyFinal && (
-                <button type="button" data-testid="bulk-clear-finished" className={BTN_CANCEL} onClick={() => runner.clearFinished()}>
-                  {BULK_COPY.clearFinished}
-                </button>
-              )}
               {anyRunning && (
                 <button type="button" data-testid="bulk-cancel-all" className={BTN_CANCEL} onClick={() => queue.cancelAll()}>
                   {BULK_COPY.cancelAll}
@@ -488,10 +608,19 @@ export function BulkProjectsModal({
           </div>
         </div>
       </div>
-      {askingNewBatch && (
+      {confirmDelete && (
+        <ConfirmDialog
+          title={BULK_COPY.deleteRowTitle}
+          body={BULK_COPY.deleteRowBody(confirmDelete.typedName.trim(), confirmDelete.built)}
+          confirmLabel={BULK_COPY.deleteRowConfirm}
+          onCancel={() => setConfirmDelete(null)}
+          onConfirm={() => { const row = confirmDelete; setConfirmDelete(null); void deleteRow(row); }}
+        />
+      )}
+      {askingCreate && (
         <BulkCountDialog
-          onCancel={() => setAskingNewBatch(false)}
-          onConfirm={count => { setAskingNewBatch(false); addRows(count); }}
+          onCancel={() => setAskingCreate(false)}
+          onConfirm={count => { setAskingCreate(false); createGroup(count); }}
         />
       )}
     </div>

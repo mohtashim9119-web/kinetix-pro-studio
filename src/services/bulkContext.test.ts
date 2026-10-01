@@ -104,10 +104,13 @@ describe('creation — one project per real row, at Build Timeline', () => {
   });
 
   it('the quantity is a whole number from 1 to the cap (25)', () => {
-    expect(BULK_MAX_PROJECTS).toBe(25);
+    // Bulk UI rebuild U3: one create is one group of 2–30.
+    expect(BULK_MAX_PROJECTS).toBe(30);
     expect(parseBulkCount('3')).toBe(3);
-    expect(parseBulkCount(' 25 ')).toBe(25);
-    for (const bad of ['0', '26', '', '2.5', '-1', 'abc']) expect(parseBulkCount(bad)).toBeNull();
-    expect(parseBulkCount('30', 40)).toBe(30);
+    expect(parseBulkCount(' 30 ')).toBe(30);
+    expect(parseBulkCount('2')).toBe(2);
+    for (const bad of ['0', '1', '31', '', '2.5', '-1', 'abc']) expect(parseBulkCount(bad)).toBeNull();
+    expect(parseBulkCount('35', 40)).toBe(35);
+    expect(parseBulkCount('1', 30, 1)).toBe(1);
   });
 });
