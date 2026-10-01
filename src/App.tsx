@@ -169,7 +169,7 @@ import {
 import { decideStagingStart, isBulkAutoFireSuppressed, peekCloudTranscript } from './services/bulkContext';
 import { lookupBatchTranscript, runBulkProjectFinish } from './services/bulkFinish';
 import { getStagedFilesForProject } from './services/stagedFilesStore';
-import { restoreStagedFiles } from './services/stagedFilesPersist';
+import { isStagedEmpty, restoreStagedFiles } from './services/stagedFilesPersist';
 import { takeClientFaStamp, withClientFaCache } from './services/clientFaCache';
 import type { TimingFinding, TimingProvenance } from './types';
 import {
@@ -1152,6 +1152,9 @@ export const NO_SCENE_DOC_MESSAGE = 'No scene doc is loaded, so there is nothing
  *  ever supplied one; states the requirement to build a timeline. */
 export const NO_VOICEOVER_MESSAGE =
   'A voiceover track is required to build the timeline. Add a voiceover file and try again.';
+/** v1.2.2 — the staged files on hand were staged for a different project. */
+export const STAGED_FOR_ANOTHER_PROJECT_MESSAGE =
+  'The staged files belong to a different project, so nothing was built. Reopen this project and try again.';
 export const EMPTY_TRANSCRIPT_MESSAGE = 'No speech was found in the audio. No timeline will be created.';
 export const FULL_MISMATCH_MESSAGE = "This voiceover doesn't match your scene doc. No timeline will be created.";
 
@@ -2345,8 +2348,12 @@ export default function App() {
   // are a read-only copy).
   const [stagedScriptFile, setStagedScriptFile] = useState<File | null>(null);
   const [stagedSceneFile, setStagedSceneFile] = useState<File | null>(null);
-  const handleStagedFilesChange = useCallback((next: StagedFiles): void => {
+  // The project `stagedFilesRef` was staged for (DropZonePanel names it on
+  // every publish). Apply Sync refuses a set staged for another project.
+  const stagedFilesOwnerRef = useRef<string | null>(null);
+  const handleStagedFilesChange = useCallback((next: StagedFiles, ownerProjectId: string): void => {
     stagedFilesRef.current = next;
+    stagedFilesOwnerRef.current = ownerProjectId;
     setStagedVoiceoverFile(next.voiceoverFile?.file ?? null);
     setStagedScriptFile(next.scriptFile?.file ?? null);
     setStagedSceneFile(next.sceneFile?.file ?? null);
@@ -4025,6 +4032,15 @@ export default function App() {
     // to clear its slots the instant it hands control over here (it does —
     // `triggerSync`) without the awaits further down observing the clear.
     const staged: StagedFiles = stagedFilesRef.current;
+    // Never build a project from files staged for another one (the v1.2.1
+    // bulk cross-write: an in-editor switch left the previous project's set
+    // in place). Refused before anything is read or written.
+    const stagedOwner = stagedFilesOwnerRef.current;
+    if (stagedOwner !== null && stagedOwner !== liveProjectRef.current.id && !isStagedEmpty(staged)) {
+      console.error('[kinetix] Apply Sync refused: staged files belong to project', stagedOwner,
+        'not', liveProjectRef.current.id);
+      return { ok: false, message: STAGED_FOR_ANOTHER_PROJECT_MESSAGE };
+    }
     syncMark('applySync:entry', { reset: true });
     setIsProcessing(true);
     // WS2 G2 completion, Unit 3 — clean start every run: never carries a
@@ -6077,7 +6093,7 @@ export default function App() {
       const ready = await ensureStagedSnapshotReady(
         projectId,
         stagedFilesRef.current,
-        handleStagedFilesChange,
+        next => handleStagedFilesChange(next, projectId),
       );
       if (!ready.ready) {
         showToast(ready.message);
@@ -8416,7 +8432,9 @@ export default function App() {
     built: !showDashboard && !!project.lastSyncSpine && project.segments.length > 0 && stagedVoiceoverFile === null,
     why: showDashboard ? 'the project is not open' : stagedVoiceoverFile === null ? 'its staged files are still restoring'
       : !transcriptionReady ? 'its transcript is not ready' : applySyncDisabled ? 'Build Timeline is not available' : isProcessing ? 'a sync is already running' : '',
+    // The staged files must be THIS project's (see `stagedFilesOwnerRef`).
     ready: !showDashboard && !isProcessing && stagedVoiceoverFile !== null
+      && stagedFilesOwnerRef.current === project.id
       && transcriptionReady && !applySyncDisabled,
   };
   const finalizeBulkProject = useCallback(async (id: string): Promise<{ ok: boolean; message?: string }> => {
@@ -8425,20 +8443,24 @@ export default function App() {
       return await runBulkProjectFinish(id, {
         switchProject: projectId => bulkLatest.current.switchProject(projectId),
         adoptCachedTranscript: async projectId => {
-          if (projectRef.current.id !== projectId) return false;
+          // `liveProjectRef`, not `projectRef`: the switch has just resolved
+          // and `projectRef` is mirrored after the next render, so it still
+          // names the OUTGOING project here and the cache hit was never adopted.
+          const live = liveProjectRef.current;
+          if (live.id !== projectId) return false;
           const pending = pendingVoiceoverRef.current;
           let staged = pending?.file ?? null;
           if (!staged) {
             const restored = restoreStagedFiles(await getStagedFilesForProject(projectId));
             staged = restored.voiceoverFile?.file ?? null;
           }
-          let audioHash = pending?.audioHash ?? projectRef.current.lastTranscribedAudioHash;
+          let audioHash = pending?.audioHash ?? live.lastTranscribedAudioHash;
           if (!audioHash && staged) audioHash = await computeAudioHash(staged);
           if (!audioHash) return false;
-          const found = await lookupBatchTranscript(audioHash, projectRef.current.language);
+          const found = await lookupBatchTranscript(audioHash, live.language);
           if (!found) return false;
           const assetId = pendingVoiceoverRef.current?.asset.id
-            ?? projectRef.current.voiceoverId
+            ?? live.voiceoverId
             ?? `bulk-${projectId}`;
           setProject(p => ({
             ...p,
