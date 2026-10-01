@@ -309,6 +309,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const PANEL_SRC = readFileSync(resolve(HERE, '..', 'components', 'DropZonePanel.tsx'), 'utf-8');
 const DASHBOARD_SRC = readFileSync(resolve(HERE, '..', 'components', 'ProjectDashboard.tsx'), 'utf-8');
 const APP_SRC = readFileSync(resolve(HERE, '..', 'App.tsx'), 'utf-8');
+const DELETE_SRC = readFileSync(resolve(HERE, 'projectDelete.ts'), 'utf-8');
 
 describe('WS2-50 — the delete contract is actually invoked', () => {
   it('updateStaged reconciles persistence at the single choke point', () => {
@@ -354,11 +355,15 @@ describe('WS2-50 — the delete contract is actually invoked', () => {
   });
 
   it('deleting a project deletes its staged rows', () => {
+    // The dashboard's delete and the bulk drawer's row delete share ONE
+    // project delete (projectDelete.ts); the staged-rows step lives there.
+    expect(DASHBOARD_SRC, 'ProjectDashboard no longer deletes through the shared project delete')
+      .toContain('await deleteProjectEverywhere(id)');
     expect(
-      DASHBOARD_SRC,
-      'ProjectDashboard no longer clears staged rows on delete — they outlive the only thing ' +
+      DELETE_SRC,
+      'the shared project delete no longer clears staged rows — they outlive the only thing ' +
         'that could ever restore them.',
-    ).toContain("step('staged files cleanup', id, () => deleteAllStagedForProject(id))");
+    ).toContain("step('staged files cleanup', () => deleteAllStagedForProject(id))");
   });
 });
 
