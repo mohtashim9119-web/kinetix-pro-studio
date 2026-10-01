@@ -81,6 +81,51 @@ export function stagesToRun(
 
 const KEY = 'kinetix:bulk-batch:v1';
 
+// Bulk UI rebuild U1 — GROUPS. A group is what one "Create Projects" made: a
+// name, a collapse toggle and its rows (draft ids and built records alike).
+export const BULK_GROUP_MIN_ROWS = 2;
+export const BULK_GROUP_MAX_ROWS = 30;
+export const BULK_MAX_GROUPS = 10;
+
+export interface BulkGroup {
+  id: string;
+  name: string;
+  collapsed: boolean;
+  /** Draft ids (no project yet) and batch record ids, in row order. */
+  rowIds: string[];
+}
+
+export interface BulkProgress {
+  done: number;
+  total: number;
+  failed: number;
+  /** Any row still working on the cloud or finishing. */
+  running: boolean;
+}
+
+const FAILED: ReadonlySet<BatchPhase> = new Set(['failed', 'finish-failed']);
+const RUNNING: ReadonlySet<BatchPhase> = new Set(['queued', 'cloud', 'cloud-done', 'finishing']);
+
+function progressOf(rowIds: readonly string[], records: readonly BatchRow[]): BulkProgress {
+  const byId = new Map(records.map(r => [r.id, r]));
+  const out: BulkProgress = { done: 0, total: rowIds.length, failed: 0, running: false };
+  for (const id of rowIds) {
+    const phase = byId.get(id)?.phase;
+    if (phase === undefined) continue;
+    if (phase === 'done') out.done += 1;
+    if (FAILED.has(phase)) out.failed += 1;
+    if (RUNNING.has(phase)) out.running = true;
+  }
+  return out;
+}
+
+/** "n/m done", the failed count and whether anything is running, for one group. */
+export const groupProgress = (group: BulkGroup, records: readonly BatchRow[]): BulkProgress => progressOf(group.rowIds, records);
+
+/** The same over every group (the dashboard's bulk button). */
+export const batchProgress = (groups: readonly BulkGroup[], records: readonly BatchRow[]): BulkProgress =>
+  progressOf(groups.flatMap(g => g.rowIds), records);
+
 const TERMINAL: ReadonlySet<BatchPhase> = new Set(['done', 'finish-failed', 'paused', 'failed', 'cancelled', 'skipped']);
 export const isBatchRowFinal = (p: BatchPhase): boolean => TERMINAL.has(p);
 
@@ -95,6 +140,9 @@ export interface BatchRunnerDeps {
 
 export class BulkBatchRunner {
   private rows: BatchRow[] = [];
+  private groupList: BulkGroup[] = [];
+  private groupView: readonly BulkGroup[] = [];
+  private readyListeners = new Set<(row: { id: string; name: string }) => void>();
   private listeners = new Set<() => void>();
   private view: readonly BatchRow[] = [];
   private finalize: ((id: string, req: FinishRequest) => Promise<FinishResult>) | undefined;
@@ -117,15 +165,92 @@ export class BulkBatchRunner {
       const raw = this.storage?.getItem(KEY);
       const parsed = raw ? JSON.parse(raw) as { rows?: BatchRow[] } : null;
       if (parsed?.rows && Array.isArray(parsed.rows)) this.rows = parsed.rows.filter(r => r && typeof r.id === 'string');
-    } catch { this.rows = []; }
+      const groups = (parsed as { groups?: BulkGroup[] } | null)?.groups;
+      if (Array.isArray(groups)) {
+        this.groupList = groups
+          .filter(g => g && typeof g.id === 'string' && Array.isArray(g.rowIds))
+          .map(g => ({ id: g.id, name: String(g.name ?? ''), collapsed: g.collapsed === true, rowIds: g.rowIds.filter(x => typeof x === 'string') }));
+      }
+    } catch { this.rows = []; this.groupList = []; }
+    // A batch saved before groups existed: one default group holds every row.
+    const grouped = new Set(this.groupList.flatMap(g => g.rowIds));
+    const loose = this.rows.filter(r => !grouped.has(r.id)).map(r => r.id);
+    if (loose.length > 0) this.groupList.push({ id: crypto.randomUUID(), name: this.nextGroupName(), collapsed: false, rowIds: loose });
     this.view = this.rows.map(r => ({ ...r }));
+    this.groupView = this.groupList.map(g => ({ ...g, rowIds: [...g.rowIds] }));
+  }
+
+  groups(): readonly BulkGroup[] { return this.groupView; }
+
+  private nextGroupName(): string {
+    const used = new Set(this.groupList.map(g => g.name));
+    let n = 1;
+    while (used.has(`Group ${n}`)) n += 1;
+    return `Group ${n}`;
+  }
+
+  canCreateGroup(): boolean { return this.groupList.length < BULK_MAX_GROUPS; }
+
+  /** A new group over these (draft) row ids: 2–30 rows, at most 10 groups. */
+  createGroup(rowIds: readonly string[], name?: string): BulkGroup | undefined {
+    if (!this.canCreateGroup()) return undefined;
+    if (rowIds.length < BULK_GROUP_MIN_ROWS || rowIds.length > BULK_GROUP_MAX_ROWS) return undefined;
+    const group: BulkGroup = { id: crypto.randomUUID(), name: name?.trim() || this.nextGroupName(), collapsed: false, rowIds: [...rowIds] };
+    this.groupList.push(group);
+    this.commit();
+    return { ...group, rowIds: [...group.rowIds] };
+  }
+
+  /** One more row in a group, up to 30. */
+  addRowToGroup(groupId: string, rowId: string): boolean {
+    const group = this.groupList.find(g => g.id === groupId);
+    if (!group || group.rowIds.length >= BULK_GROUP_MAX_ROWS) return false;
+    if (!group.rowIds.includes(rowId)) group.rowIds.push(rowId);
+    this.commit();
+    return true;
+  }
+
+  setCollapsed(groupId: string, collapsed: boolean): void {
+    const group = this.groupList.find(g => g.id === groupId);
+    if (!group || group.collapsed === collapsed) return;
+    group.collapsed = collapsed;
+    this.commit();
+  }
+
+  renameGroup(groupId: string, name: string): void {
+    const group = this.groupList.find(g => g.id === groupId);
+    const next = name.trim();
+    if (!group || !next || group.name === next) return;
+    group.name = next;
+    this.commit();
+  }
+
+  /** The operator deleted this row: its record and its place in its group go. */
+  removeRow(id: string): void {
+    this.rows = this.rows.filter(r => r.id !== id);
+    this.deps.queue.cancel(id);
+    this.dropFromGroups([id]);
+    this.commit();
+  }
+
+  private dropFromGroups(ids: readonly string[]): void {
+    const gone = new Set(ids);
+    for (const g of this.groupList) g.rowIds = g.rowIds.filter(x => !gone.has(x));
+    this.groupList = this.groupList.filter(g => g.rowIds.length > 0);
+  }
+
+  /** "Project N ready" — a row's timeline just finished. Nothing is opened. */
+  onReady(l: (row: { id: string; name: string }) => void): () => void {
+    this.readyListeners.add(l);
+    return () => { this.readyListeners.delete(l); };
   }
 
   private commit(): void {
     this.view = this.rows.map(r => ({ ...r }));
+    this.groupView = this.groupList.map(g => ({ ...g, rowIds: [...g.rowIds] }));
     try {
-      if (this.rows.length === 0) this.storage?.removeItem(KEY);
-      else this.storage?.setItem(KEY, JSON.stringify({ rows: this.rows }));
+      if (this.rows.length === 0 && this.groupList.length === 0) this.storage?.removeItem(KEY);
+      else this.storage?.setItem(KEY, JSON.stringify({ rows: this.rows, groups: this.groupList }));
     } catch { /* storage unavailable: still works this session */ }
     for (const l of this.listeners) l();
   }
@@ -144,6 +269,10 @@ export class BulkBatchRunner {
       if (this.rows.some(r => r.id === c.id)) continue;
       this.rows.push({ id: c.id, name: c.name, phase: 'queued' });
     }
+    // A row started outside any group (no drawer) still belongs to one.
+    const grouped = new Set(this.groupList.flatMap(g => g.rowIds));
+    const loose = created.filter(c => !grouped.has(c.id)).map(c => c.id);
+    if (loose.length > 0) this.groupList.push({ id: crypto.randomUUID(), name: this.nextGroupName(), collapsed: false, rowIds: loose });
     this.commit();
     this.deps.enqueue(created.map(c => ({ id: c.id, name: c.name })));
   }
@@ -160,9 +289,11 @@ export class BulkBatchRunner {
   }
 
   private forgetMissing(): void {
-    const before = this.rows.length;
-    this.rows = this.rows.filter(r => this.deps.exists(r.id));
-    if (this.rows.length !== before) this.commit();
+    const missing = this.rows.filter(r => !this.deps.exists(r.id)).map(r => r.id);
+    if (missing.length === 0) return;
+    this.rows = this.rows.filter(r => !missing.includes(r.id));
+    this.dropFromGroups(missing);
+    this.commit();
   }
 
   /** Projects deleted from the dashboard leave the batch. */
@@ -170,7 +301,7 @@ export class BulkBatchRunner {
     const before = this.rows.length;
     this.rows = this.rows.filter(r => !ids.includes(r.id));
     for (const id of ids) this.deps.queue.cancel(id);
-    if (this.rows.length !== before) this.commit();
+    if (this.rows.length !== before) { this.dropFromGroups(ids); this.commit(); }
   }
 
   /** Run this row again from its checkpoint. Content changes start over. */
@@ -196,9 +327,13 @@ export class BulkBatchRunner {
     this.commit();
   }
 
-  /** The operator clears the finished part of the batch from view. */
-  clearFinished(): void {
-    this.rows = this.rows.filter(r => !isBatchRowFinal(r.phase));
+  /** The operator clears the finished part of the batch (or of one group)
+   *  from view. Only ever on the operator's click — nothing clears by itself. */
+  clearFinished(groupId?: string): void {
+    const scope = groupId === undefined ? undefined : new Set(this.groupList.find(g => g.id === groupId)?.rowIds ?? []);
+    const gone = this.rows.filter(r => isBatchRowFinal(r.phase) && (!scope || scope.has(r.id))).map(r => r.id);
+    this.rows = this.rows.filter(r => !gone.includes(r.id));
+    this.dropFromGroups(gone);
     this.commit();
   }
 
@@ -311,6 +446,7 @@ export class BulkBatchRunner {
         const row = this.rows.find(r => r.id === id);
         if (row) row.checkpoint = 'built';
         this.commit();
+        if (row) for (const l of this.readyListeners) l({ id: row.id, name: row.name });
       }
     } finally {
       this.finishing.delete(id);
