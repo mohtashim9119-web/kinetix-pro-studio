@@ -55,12 +55,18 @@ import { mintSyncLogId } from './syncLog';
 import { BUILD_TIMELINE_COPY, missingSpineSlots, type BuildTimelineSlots } from './buildTimelineGate';
 import { stagesToRun, type BulkCheckpoint } from './bulkBatch';
 import { lookupBatchTranscript } from './bulkFinish';
-import type { QueueEngine, QueueJob, QueueJobOutcome } from './syncQueue';
+import { formatUsd, type QueueEngine, type QueueJob, type QueueJobOutcome } from './syncQueue';
 
 /** Mirrors `cloud/sync_core.py`'s USD_PER_WORKER_SEC (T4 + 2 cores + 8 GiB);
  *  equality pinned by `syncQueue.test.ts`. A rate-card estimate — Modal's
  *  invoice is the truth. */
 export const CLOUD_USD_PER_WORKER_SEC = (0.59 + 0.0473 * 2 + 0.008 * 8) / 3600;
+
+/** One row's cloud work in plain words — the drawer's cost line and the
+ *  project's billing log entry say the same thing. */
+export function cloudCostLine(workerSec: number): string {
+  return `${workerSec.toFixed(0)} s worked · about ${formatUsd(workerSec * CLOUD_USD_PER_WORKER_SEC)}`;
+}
 
 export const cloudQueueEngine: QueueEngine = {
   workerSec: cloudWorkerSecTotal,

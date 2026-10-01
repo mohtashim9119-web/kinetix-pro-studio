@@ -7,7 +7,7 @@
 // toggle, 2–30 rows each, at most 10 groups. A batch saved before groups
 // existed becomes one default group. Groups persist with the batch.
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   BULK_GROUP_MAX_ROWS, BULK_GROUP_MIN_ROWS, BULK_MAX_GROUPS, BulkBatchRunner, groupProgress, batchProgress,
 } from './bulkBatch';
@@ -166,5 +166,42 @@ describe('rows outside any group', () => {
     expect(adopted?.rowIds).toEqual(['loose']);
     expect(runner.groups()).toHaveLength(6);
     expect(runner.adoptRows([])).toBeUndefined();
+  });
+});
+
+describe('1.3.1 — a built row keeps its cost and files across a restart', () => {
+  it('the record keeps the worker-seconds the queue reported and the summary saved at Build Timeline', async () => {
+    const disk = memory();
+    let worked = 0;
+    const queue = new SyncQueue({ ...engine, workerSec: () => worked });
+    const runner = new BulkBatchRunner({
+      queue, exists: () => true, storage: disk,
+      enqueue: rows => queue.enqueue(rows.map(r => ({ id: r.id, label: r.name, run: async () => { worked += 42; return { status: 'done' as const }; } }))),
+    });
+    const summary = { files: [{ id: 'script', kind: 'script' as const, name: 's.txt' }], slots: { script: true, scene: false, voiceover: false, media: false }, mediaCount: 0 };
+    runner.start([{ id: 'p1', name: 'One', summary }]);
+    await vi.waitFor(() => expect(runner.snapshot()[0]!.workerSec).toBe(42));
+    // "Restart": a new runner over the same disk, no queue items at all.
+    const after = boot(disk);
+    expect(after.snapshot()[0]!.summary).toEqual(summary);
+    expect(after.snapshot()[0]!.workerSec).toBe(42);
+  });
+
+  it('the drawer rebuilds a built row from that summary (not a blank "0 files" row)', async () => {
+    const { BulkRowStore } = await import('./bulkRows');
+    const store = new BulkRowStore({
+      loadStaged: async () => null, writeStaged: async () => {}, createProject: async () => true, purge: async () => {},
+      removeBundleAsset: async () => {}, hashAudio: async () => 'h', probeDuration: async () => 1, cloudActive: () => false,
+      stageAudio: async () => ({}), ingestBundle: async () => ({ kind: 'not-a-bundle' }) as never,
+    });
+    store.syncBuilt([{ id: 'p1', name: 'One', summary: {
+      files: [{ id: 'script', kind: 'script', name: 's.txt' }, { id: 'asset:1', kind: 'media', name: 'a.png' }],
+      slots: { script: true, scene: false, voiceover: false, media: true }, mediaCount: 1,
+    } }]);
+    const row = store.snapshot()[0]!;
+    expect(row.built).toBe(true);
+    expect(row.files.map(f => f.name)).toEqual(['s.txt', 'a.png']);
+    expect(row.slots.media).toBe(true);
+    expect(row.mediaCount).toBe(1);
   });
 });

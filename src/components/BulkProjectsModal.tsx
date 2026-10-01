@@ -24,10 +24,10 @@ import {
   BULK_GROUP_MAX_ROWS, BULK_MAX_GROUPS, READY_TO_FINISH, groupProgress, isBatchRowFinal, type BatchRow, type BulkBatchRunner,
 } from '../services/bulkBatch';
 import { BulkGroupHeader } from './BulkProgress';
-import { CLOUD_USD_PER_WORKER_SEC, type CloudQueueDeps } from '../services/cloudQueueJob';
+import { cloudCostLine, type CloudQueueDeps } from '../services/cloudQueueJob';
 import { collectDroppedFiles } from '../services/droppedFiles';
 import { missingSpineSlots } from '../services/buildTimelineGate';
-import { formatUsd, type QueueItem, type SyncQueue } from '../services/syncQueue';
+import { type QueueItem, type SyncQueue } from '../services/syncQueue';
 import { readSyncEngineHost } from '../services/syncEngineHost';
 import { Z } from './overlayLayers';
 import { ConfirmDialog } from './ConfirmDialog';
@@ -61,10 +61,6 @@ const FIELD = 'bg-[var(--kx-surface-2)] border border-[var(--kx-line-2)] rounded
 const ROW_BTN = 'flex-shrink-0 flex items-center gap-1.5 h-9 px-3 rounded-lg border border-[var(--kx-line-2)] bg-[var(--kx-surface-2)] text-[12px] font-semibold text-[var(--kx-text)] hover:border-[rgba(255,255,255,.22)] transition-colors disabled:text-[var(--kx-faint)] disabled:cursor-not-allowed disabled:hover:border-[var(--kx-line-2)]';
 const ROW_BTN_SM = 'flex-shrink-0 h-7 px-2.5 rounded-md border border-[var(--kx-line-2)] text-[11px] font-semibold text-[var(--kx-text)] hover:border-[rgba(255,255,255,.22)] transition-colors';
 const CHIP = 'flex-shrink-0 flex items-center gap-1 whitespace-nowrap text-[11px] font-semibold px-1.5 py-0.5 rounded-[6px]';
-
-function rowCost(item: Readonly<QueueItem>): string {
-  return `${item.workerSec.toFixed(0)} s worked · about ${formatUsd(item.workerSec * CLOUD_USD_PER_WORKER_SEC)}`;
-}
 
 /** Each slot's type icon, in the Files tab's per-type colours. */
 const SLOT_ICON = {
@@ -137,7 +133,9 @@ function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFi
   // else what the voiceover prep is doing, else how to fill the row.
   const quiet = status || audioText || (empty ? BULK_COPY.rowDrop : '');
   const dim = phase === 'skipped' || phase === 'cancelled' || (!record && !!skippedReason);
-  const cost = item && item.workerSec > 0 && record ? rowCost(item) : '';
+  // The cost line: live from the queue, else what the record kept (a restart).
+  const workerSec = Math.max(item?.workerSec ?? 0, record?.workerSec ?? 0);
+  const cost = record && workerSec > 0 ? cloudCostLine(workerSec) : '';
   // The row's messages, one line at a time: its status first, then the cancel
   // receipt and any problem notes (a broken bundle, skipped files).
   const messages: { text: string; warn: boolean }[] = [
@@ -574,7 +572,7 @@ export function BulkProjectsModal({
       });
       if (created.length === 0) return;
       onProjectsCreated?.();
-      runner.start(created);
+      runner.start(created.map(c => ({ ...c, summary: store.summaryOf(c.id) })));
     })();
   };
 

@@ -45,6 +45,17 @@ export interface BatchRow {
    *  so the flip into this project was deferred: it waits for its own Open
    *  ("ready — one click to finish") instead of finishing on its own. */
   awaitingOpen?: boolean;
+  /** Cloud worker-seconds this row used — its cost line survives a restart. */
+  workerSec?: number;
+  /** What the row held at Build Timeline (names and slots only, no bytes), so a
+   *  built row still reads "17 files" with its four slots after a restart. */
+  summary?: BatchRowSummary;
+}
+
+export interface BatchRowSummary {
+  files: { id: string; kind: 'script' | 'scene' | 'voiceover' | 'media'; name: string }[];
+  slots: { script: boolean; scene: boolean; voiceover: boolean; media: boolean };
+  mediaCount: number;
 }
 
 export interface FinishRequest {
@@ -299,10 +310,10 @@ export class BulkBatchRunner {
   }
 
   /** New projects were created: record them and queue their cloud work. */
-  start(created: readonly { id: string; name: string }[]): void {
+  start(created: readonly { id: string; name: string; summary?: BatchRowSummary }[]): void {
     for (const c of created) {
       if (this.rows.some(r => r.id === c.id)) continue;
-      this.rows.push({ id: c.id, name: c.name, phase: 'queued' });
+      this.rows.push({ id: c.id, name: c.name, phase: 'queued', ...(c.summary ? { summary: c.summary } : {}) });
     }
     // A row started outside any group (no drawer) still belongs to one.
     const grouped = new Set(this.groupList.flatMap(g => g.rowIds));
@@ -403,6 +414,8 @@ export class BulkBatchRunner {
     let changed = false;
     for (const item of this.deps.queue.snapshot().items) {
       const row = this.rows.find(r => r.id === item.id);
+      // The cost line is kept on the record (it survives a restart).
+      if (row && item.workerSec > (row.workerSec ?? 0)) { row.workerSec = item.workerSec; changed = true; }
       if (!row || isBatchRowFinal(row.phase) || row.phase === 'finishing') continue;
       const next = this.mapQueue(item, row);
       const fromPhase: BulkCheckpoint | undefined =

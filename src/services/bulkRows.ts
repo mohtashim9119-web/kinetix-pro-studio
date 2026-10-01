@@ -39,7 +39,7 @@ import { deleteStagedFile, putStagedFile } from './stagedFilesStore';
 import { computeAudioHash } from './spine';
 import { BUILD_TIMELINE_COPY, missingSpineSlots, type BuildTimelineSlots } from './buildTimelineGate';
 import { rowIncompleteReason } from './bulkContext';
-import { BULK_DRAFTS_KEY as DRAFTS_KEY } from './bulkBatch';
+import { BULK_DRAFTS_KEY as DRAFTS_KEY, type BatchRowSummary } from './bulkBatch';
 
 export type BulkAudioState = 'none' | 'preparing' | 'ready' | 'failed' | 'local';
 
@@ -331,14 +331,20 @@ export class BulkRowStore {
   /** Rows for projects the persistent batch already created (a reopened
    *  window): shown locked, in step with the batch record. Also drops built
    *  rows the operator cleared. */
-  syncBuilt(records: readonly { id: string; name: string }[]): void {
+  syncBuilt(records: readonly { id: string; name: string; summary?: BatchRowSummary }[]): void {
     let changed = false;
     const ids = new Set(records.map(r => r.id));
     for (const rec of records) {
       if (this.rows.has(rec.id)) continue;
-      this.rows.set(rec.id, { ...this.blankRow(rec.id), typedName: rec.name, built: true });
+      // A built row keeps what it was built from: the summary saved at Build
+      // Timeline, else (a row built before summaries) its own staged files.
+      const shown = rec.summary
+        ? { files: rec.summary.files.map(f => ({ ...f })), slots: { ...rec.summary.slots }, mediaCount: rec.summary.mediaCount }
+        : {};
+      this.rows.set(rec.id, { ...this.blankRow(rec.id), ...shown, typedName: rec.name, built: true });
       this.order.push(rec.id);
       changed = true;
+      if (!rec.summary) void this.restoreBuiltFiles(rec.id);
     }
     for (const id of [...this.order]) {
       if (this.rows.get(id)!.built && !ids.has(id)) {
@@ -348,6 +354,18 @@ export class BulkRowStore {
       }
     }
     if (changed) this.emit();
+  }
+
+  private async restoreBuiltFiles(id: string): Promise<void> {
+    const st = await this.deps.loadStaged(id).catch(() => null);
+    if (!st || !this.rows.get(id)?.built) return;
+    this.refresh(id, st);
+  }
+
+  /** What a row holds, for the batch record (names and slots only). */
+  summaryOf(id: string): BatchRowSummary | undefined {
+    const r = this.rows.get(id);
+    return r ? { files: r.files.map(f => ({ ...f })), slots: { ...r.slots }, mediaCount: r.mediaCount } : undefined;
   }
 
   /** "Create Group": n empty draft rows (one new group). */
