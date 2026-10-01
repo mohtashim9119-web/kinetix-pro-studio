@@ -117,13 +117,16 @@ export function ProjectDashboard({
   /** Ids that were absent last time this process rendered the grid. */
   const enteringIds = useRef<Set<string>>(new Set());
 
+  // Re-read the grid when the background pipeline makes a row ready: its
+  // record was just saved with the built timeline (scene count, date).
+  const readyKey = batchRows.filter(r => r.phase === 'done').map(r => r.id).join('|');
   useEffect(() => {
     const data = loadAllMetas();
     data.sort((a, b) => (b.savedAt ?? 0) - (a.savedAt ?? 0));
     enteringIds.current = new Set(data.filter(m => !seenProjectIds.has(m.id)).map(m => m.id));
     data.forEach(m => seenProjectIds.add(m.id));
     setMetas(data);
-  }, [metasVersion]);
+  }, [metasVersion, readyKey]);
 
   useEffect(() => {
     void navigator.storage?.estimate?.().then(({ usage, quota }) => {
@@ -153,10 +156,10 @@ export function ProjectDashboard({
     return () => window.removeEventListener('keydown', handler);
   }, []);
 
-  // Bulk UI rebuild U3 — a bulk project lives in the drawer ONLY until its
-  // timeline is built; then it joins the grid.
-  const unbuiltBulk = new Set(batchRows.filter(r => r.phase !== 'done').map(r => r.id));
-  const filtered = metas.filter(m => !unbuiltBulk.has(m.id) && m.name.toLowerCase().includes(search.trim().toLowerCase()));
+  // 1.3.0 — an unbuilt bulk row is a drawer draft with no project record, so
+  // it never reaches this grid; Build Timeline creates the record and that is
+  // what flips the row onto it.
+  const filtered = metas.filter(m => m.name.toLowerCase().includes(search.trim().toLowerCase()));
   const visibleIds = filtered.map(m => m.id);
   const allVisibleSelected = visibleIds.length > 0 && visibleIds.every(id => selectedIds.has(id));
   const selectedCount = selectedIds.size;

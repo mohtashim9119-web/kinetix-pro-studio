@@ -474,3 +474,31 @@ describe('Bulk UI rebuild U5 — delete and persist', () => {
     expect(q(host, 'bulk-clear-finished-g2')).not.toBeNull();
   });
 });
+
+describe('1.3.0 landing — the background pipeline drives drawer rows to ready', () => {
+  it('with the drawer hidden, Build Timeline → cloud → background finish → "Ready" with Open enabled; nothing opens or navigates', async () => {
+    finishAtOnce = true;
+    cloudSyncQueue.clearFinished();
+    const h = store();
+    const onOpen = vi.fn();
+    const onFinishRow = vi.fn();
+    const finalize = vi.fn(async () => ({ ok: true }));
+    const runner = makeRunner(finalize);
+    const g = runner.createGroup(h.store.createDrafts(2))!;
+    const [id] = g.rowIds;
+    const { root, host } = await mount(modal(h, 0, { runner, onOpenProject: onOpen, onFinishRow }));
+    await act(async () => { await h.store.addFiles(id!, fourFiles()); h.store.setTypedName(id!, 'Harbour'); });
+    await act(async () => { (q(host, 'bulk-build') as HTMLButtonElement).click(); });
+    await act(async () => { root.render(modal(h, 0, { runner, onOpenProject: onOpen, onFinishRow, hidden: true })); });
+    await vi.waitFor(() => expect(runner.snapshot().find(r => r.id === id)?.phase).toBe('done'));
+    expect(finalize).toHaveBeenCalledWith(id, { userInitiated: false });
+    expect(q(host, `bulk-status-${id}`)!.textContent).toBe('Ready');
+    const open = q(host, `bulk-open-${id}`) as HTMLButtonElement;
+    expect(open).not.toBeNull();
+    expect(open.disabled).toBe(false);
+    expect(onOpen).not.toHaveBeenCalled();
+    expect(onFinishRow).not.toHaveBeenCalled();
+    expect(q(host, `bulk-group-count-${g.id}`)!.textContent).toBe('1/2 done');
+    finishAtOnce = false;
+  });
+});

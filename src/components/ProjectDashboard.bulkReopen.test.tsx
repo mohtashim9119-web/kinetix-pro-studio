@@ -97,7 +97,7 @@ describe('dashboard bulk button — opens the drawer, never asks a number', () =
     expect(container.querySelector('[data-testid="bulk-count-input"]')).toBeNull();
   });
 
-  it('a bulk project is NOT on the grid until it is built; a built one is', async () => {
+  it('1.3.0: Build Timeline flips a row onto the grid — a created bulk project shows while its pipeline runs; a draft (no record yet) never does', async () => {
     metas = [
       { id: 'mine', name: 'Hand made', savedAt: 3, segmentCount: 2 },
       { id: 'p1', name: 'Bulk running', savedAt: 2, segmentCount: 0 },
@@ -106,11 +106,24 @@ describe('dashboard bulk button — opens the drawer, never asks a number', () =
     ];
     batchRows = [{ id: 'p1', name: 'Bulk running', phase: 'cloud' }, { id: 'p2', name: 'Bulk failed', phase: 'failed' }, { id: 'p3', name: 'Bulk built', phase: 'done' }];
     await mount(() => {});
-    const text = container.textContent ?? '';
-    expect(text).toContain('Hand made');
-    expect(text).toContain('Bulk built');
-    expect(text).not.toContain('Bulk running');
-    expect(text).not.toContain('Bulk failed');
+    for (const id of ['mine', 'p1', 'p2', 'p3']) expect(container.querySelector(`[data-testid="project-card-${id}"]`)).not.toBeNull();
+    expect(container.querySelector('[data-testid="project-card-draft-1"]')).toBeNull();
+  });
+
+  it('1.3.0: when the background pipeline makes a row ready, the grid re-reads it (its built scene count shows)', async () => {
+    metas = [{ id: 'p1', name: 'Bulk', savedAt: 1, segmentCount: 0 }];
+    batchRows = [{ id: 'p1', name: 'Bulk', phase: 'finishing' }];
+    await mount(() => {});
+    expect(container.querySelector('[data-testid="project-card-p1"]')!.textContent).toContain('0 scenes');
+    // The pipeline saved the record (7 scenes) and the row turned ready.
+    metas = [{ id: 'p1', name: 'Bulk', savedAt: 2, segmentCount: 7 }];
+    batchRows = [{ id: 'p1', name: 'Bulk', phase: 'done' }];
+    await act(async () => {
+      root.render(
+        <ProjectDashboard currentProjectId={null} onSelectProject={() => {}} onNewProject={() => {}} onOpenAppSettings={() => {}} parseProjectData={async () => []} onBulkOpen={() => {}} />,
+      );
+    });
+    expect(container.querySelector('[data-testid="project-card-p1"]')!.textContent).toContain('7 scenes');
   });
 });
 
