@@ -401,6 +401,37 @@ export class BulkRowStore {
     this.refresh(id, next, extra);
   }
 
+  /** Replaces one file. A slot file (script / scene doc / voiceover) stays in
+   *  ITS slot whatever the new file looks like; a media file is swapped. */
+  async replaceFile(id: string, fileId: string, file: File): Promise<void> {
+    const row = this.rows.get(id);
+    if (!row || row.built) return;
+    const slot = fileId === 'script' ? 'scriptFile' : fileId === 'scene' ? 'sceneFile' : fileId === 'voiceover' ? 'voiceoverFile' : null;
+    if (!slot) {
+      await this.removeFile(id, fileId);
+      await this.addFiles(id, [file]);
+      return;
+    }
+    const prev = (await this.deps.loadStaged(id)) ?? EMPTY_STAGED;
+    const next: StagedFiles = { ...prev, [slot]: staged(file) };
+    await this.deps.writeStaged(id, prev, next);
+    const extra: Partial<BulkRowState> = { notes: [] };
+    if (slot === 'voiceoverFile') {
+      this.audioToken.set(id, (this.audioToken.get(id) ?? 0) + 1);
+      extra.audio = { state: this.deps.cloudActive() ? 'preparing' : 'local' };
+    }
+    this.refresh(id, next, extra);
+    if (slot === 'voiceoverFile' && this.deps.cloudActive()) void this.prepareAudio(id, file);
+  }
+
+  /** Replace all: the row's files become exactly this new set. */
+  async replaceAll(id: string, files: readonly File[]): Promise<void> {
+    const row = this.rows.get(id);
+    if (!row || row.built || files.length === 0) return;
+    await this.clearFiles(id);
+    await this.addFiles(id, files);
+  }
+
   /** Clears every file of a row, keeping the row and its name. */
   async clearFiles(id: string): Promise<void> {
     const row = this.rows.get(id);

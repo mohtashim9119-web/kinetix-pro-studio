@@ -175,7 +175,7 @@ describe('BulkProjectsModal — draft rows', () => {
     await act(async () => { await h.store.addFiles(a!, [...fourFiles(), new File(['j'], 'wrong.png')]); });
     await act(async () => { (q(host, `bulk-files-toggle-${a}`) as HTMLButtonElement).click(); });
     expect(q(host, `bulk-files-${a}`)!.textContent).toContain('wrong.png');
-    await act(async () => { (host.querySelector('[aria-label="Remove wrong.png"]') as HTMLButtonElement).click(); });
+    await act(async () => { (host.querySelector('[aria-label="Delete wrong.png"]') as HTMLButtonElement).click(); });
     await vi.waitFor(() => expect(q(host, `bulk-files-${a}`)!.textContent).not.toContain('wrong.png'));
     expect(q(host, `bulk-files-${a}`)!.textContent).toContain('a.png');
     await act(async () => { (q(host, `bulk-clear-${a}`) as HTMLButtonElement).click(); });
@@ -368,5 +368,55 @@ describe('Bulk UI rebuild U2 — left-edge drawer with group headers', () => {
     await act(async () => { (q(host, 'bulk-group-toggle-g1') as HTMLButtonElement).click(); });
     expect(q(host, 'bulk-group-section-g1')!.querySelectorAll('[data-testid^="bulk-row-"]')).toHaveLength(0);
     expect(runner.groups()[0]!.collapsed).toBe(true);
+  });
+});
+
+const pick = async (input: HTMLInputElement, files: File[]): Promise<void> => {
+  Object.defineProperty(input, 'files', { configurable: true, value: files });
+  await act(async () => { input.dispatchEvent(new Event('change', { bubbles: true })); });
+};
+
+describe('Bulk UI rebuild U4 — row files', () => {
+  it('one Upload button opens a small menu: "Files & zips…" and "Folder…"', async () => {
+    const h = store();
+    const { host } = await mount(modal(h, 2));
+    const [a] = rowIds(host);
+    expect(host.querySelectorAll(`[data-testid="bulk-row-${a}"] [aria-label="Upload"]`)).toHaveLength(1);
+    expect(q(host, `bulk-upload-menu-${a}`)).toBeNull();
+    await act(async () => { (q(host, `bulk-upload-${a}`) as HTMLButtonElement).click(); });
+    const items = [...q(host, `bulk-upload-menu-${a}`)!.querySelectorAll('[role="menuitem"]')].map(el => el.textContent);
+    expect(items).toEqual(['Files & zips…', 'Folder…']);
+  });
+
+  it('expanded: each file can be replaced or deleted, and the whole row replaced or deleted', async () => {
+    const h = store();
+    const { host } = await mount(modal(h, 2));
+    const [a, b] = rowIds(host);
+    await act(async () => { await h.store.addFiles(a!, fourFiles()); await h.store.addFiles(b!, fourFiles()); });
+    await act(async () => { (q(host, `bulk-files-toggle-${a}`) as HTMLButtonElement).click(); });
+    const list = q(host, `bulk-files-${a}`)!;
+    expect(list.querySelector('[aria-label="Replace script.txt"]')).not.toBeNull();
+    expect(list.querySelector('[aria-label="Delete script.txt"]')).not.toBeNull();
+    // Replace the script.
+    await act(async () => { (list.querySelector('[aria-label="Replace script.txt"]') as HTMLButtonElement).click(); });
+    await pick(q(host, `bulk-replace-input-${a}`) as HTMLInputElement, [new File(['new'], 'better.txt')]);
+    await vi.waitFor(() => expect(q(host, `bulk-files-${a}`)!.textContent).toContain('better.txt'));
+    expect(q(host, `bulk-files-${a}`)!.textContent).not.toContain('script.txt');
+    // Replace all.
+    await pick(q(host, `bulk-replace-all-input-${a}`) as HTMLInputElement, [new File(['x'], 'only.png')]);
+    await vi.waitFor(() => expect(h.store.snapshot().find(r => r.projectId === a)!.files.map(f => f.name)).toEqual(['only.png']));
+    // Delete all.
+    await act(async () => { (q(host, `bulk-clear-${a}`) as HTMLButtonElement).click(); });
+    await vi.waitFor(() => expect(h.store.snapshot().find(r => r.projectId === a)!.files).toEqual([]));
+    // Row b never moved.
+    expect(h.store.snapshot().find(r => r.projectId === b)!.files.map(f => f.name)).toEqual(['script.txt', 'scene.txt', 'vo.wav', 'a.png']);
+  });
+
+  it('the media chip reads "Optional"; the three spine chips do not', async () => {
+    const h = store();
+    const { host } = await mount(modal(h, 2));
+    const [a] = rowIds(host);
+    const chips = [...q(host, `bulk-slots-${a}`)!.querySelectorAll('[data-slot]')];
+    expect(chips.filter(c => c.textContent!.includes('Optional')).map(c => c.getAttribute('data-slot'))).toEqual(['media']);
   });
 });

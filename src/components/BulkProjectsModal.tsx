@@ -15,7 +15,7 @@
 // is the sync-log Details line's quiet register.
 
 import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { AlertCircle, Check, ChevronDown, ChevronRight, FilePlus, FolderPlus, Plus, Trash2, X } from 'lucide-react';
+import { AlertCircle, Check, ChevronDown, ChevronRight, Plus, RefreshCw, Trash2, Upload, X } from 'lucide-react';
 import { BULK_COPY, BULK_MAX_PROJECTS, BULK_MIN_PROJECTS, parseBulkCount } from '../services/bulkContext';
 import { BulkRowStore, defaultBulkRowDeps, type BulkRowState } from '../services/bulkRows';
 import type { Project } from '../types';
@@ -111,6 +111,8 @@ interface RowProps {
   onName: (typed: string) => void;
   onFiles: (files: File[]) => void;
   onRemoveFile: (fileId: string) => void;
+  onReplaceFile: (fileId: string, file: File) => void;
+  onReplaceAll: (files: File[]) => void;
   onClearFiles: () => void;
   onRemoveRow: () => void;
   onCancel: () => void;
@@ -120,11 +122,15 @@ interface RowProps {
   onRetry: () => void;
 }
 
-function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFile, onClearFiles, onRemoveRow, onCancel, onOpen, onFinish, onRetry }: RowProps): React.ReactElement {
+function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFile, onReplaceFile, onReplaceAll, onClearFiles, onRemoveRow, onCancel, onOpen, onFinish, onRetry }: RowProps): React.ReactElement {
   const filesRef = useRef<HTMLInputElement>(null);
   const folderRef = useRef<HTMLInputElement>(null);
+  const replaceRef = useRef<HTMLInputElement>(null);
+  const replaceAllRef = useRef<HTMLInputElement>(null);
+  const replacing = useRef<string | null>(null);
   const [over, setOver] = useState(false);
   const [listOpen, setListOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   useEffect(() => { folderRef.current?.setAttribute('webkitdirectory', ''); }, []);
   const phase = record?.phase;
   const running = phase === 'queued' || phase === 'cloud';
@@ -199,12 +205,30 @@ function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFi
           </button>
         ) : !locked && (
           <>
-            <button type="button" aria-label={BULK_COPY.rowBrowseFiles} title={BULK_COPY.rowBrowseFiles} onClick={() => filesRef.current?.click()} className={ICON_BTN}>
-              <FilePlus size={15} />
-            </button>
-            <button type="button" aria-label={BULK_COPY.rowBrowseFolder} title={BULK_COPY.rowBrowseFolder} onClick={() => folderRef.current?.click()} className={ICON_BTN}>
-              <FolderPlus size={15} />
-            </button>
+            <div className="relative flex-shrink-0">
+              <button
+                type="button"
+                data-testid={`bulk-upload-${row.projectId}`}
+                aria-haspopup="menu"
+                aria-expanded={menuOpen}
+                aria-label={BULK_COPY.upload}
+                title={BULK_COPY.upload}
+                onClick={() => setMenuOpen(o => !o)}
+                className={ICON_BTN}
+              >
+                <Upload size={15} />
+              </button>
+              {menuOpen && (
+                <div role="menu" data-testid={`bulk-upload-menu-${row.projectId}`} className="absolute right-0 top-10 z-10 w-40 rounded-lg border border-[#282828] bg-[#111] py-1 shadow-2xl">
+                  <button type="button" role="menuitem" className="block w-full px-3 py-1.5 text-left text-[12px] text-[var(--kx-text)] hover:bg-[var(--kx-surface-2)]" onClick={() => { setMenuOpen(false); filesRef.current?.click(); }}>
+                    {BULK_COPY.uploadFiles}
+                  </button>
+                  <button type="button" role="menuitem" className="block w-full px-3 py-1.5 text-left text-[12px] text-[var(--kx-text)] hover:bg-[var(--kx-surface-2)]" onClick={() => { setMenuOpen(false); folderRef.current?.click(); }}>
+                    {BULK_COPY.uploadFolder}
+                  </button>
+                </div>
+              )}
+            </div>
             <button type="button" aria-label={BULK_COPY.removeProject} title={BULK_COPY.removeProject} data-testid={`bulk-remove-${row.projectId}`} onClick={onRemoveRow} className={ICON_BTN}>
               <X size={15} />
             </button>
@@ -247,6 +271,17 @@ function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFi
               <li key={f.id} className="flex items-center gap-2 px-3 py-1 text-[12px]">
                 <span className="w-24 flex-shrink-0 whitespace-nowrap text-[10px] uppercase tracking-widest text-[var(--kx-faint)]">{BULK_COPY.slot[f.kind]}</span>
                 <span className="flex-1 min-w-0 truncate text-[var(--kx-text)]">{f.name}</span>
+                {!f.id.startsWith('bundle:') && (
+                  <button
+                    type="button"
+                    aria-label={BULK_COPY.replaceFile(f.name)}
+                    title={BULK_COPY.replaceFile(f.name)}
+                    onClick={() => { replacing.current = f.id; replaceRef.current?.click(); }}
+                    className="flex-shrink-0 w-6 h-6 flex items-center justify-center rounded text-gray-500 hover:text-white transition-colors"
+                  >
+                    <RefreshCw size={12} />
+                  </button>
+                )}
                 <button
                   type="button"
                   aria-label={BULK_COPY.removeFile(f.name)}
@@ -259,7 +294,16 @@ function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFi
               </li>
             ))}
           </ul>
-          <div className="px-3 pt-1 pb-1 border-t border-[var(--kx-line)] mt-1">
+          <div className="px-3 pt-1 pb-1 border-t border-[var(--kx-line)] mt-1 flex items-center gap-4">
+            <button
+              type="button"
+              data-testid={`bulk-replace-all-${row.projectId}`}
+              onClick={() => replaceAllRef.current?.click()}
+              className="flex items-center gap-1.5 text-[11px] text-gray-400 hover:text-white transition-colors"
+            >
+              <RefreshCw size={12} />
+              {BULK_COPY.replaceAll}
+            </button>
             <button
               type="button"
               data-testid={`bulk-clear-${row.projectId}`}
@@ -294,6 +338,27 @@ function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFi
       )}
       <input ref={filesRef} type="file" multiple hidden onChange={e => { onFiles(Array.from(e.target.files ?? [])); e.target.value = ''; }} />
       <input ref={folderRef} type="file" multiple hidden onChange={e => { onFiles(Array.from(e.target.files ?? [])); e.target.value = ''; }} />
+      <input
+        ref={replaceRef}
+        data-testid={`bulk-replace-input-${row.projectId}`}
+        type="file"
+        hidden
+        onChange={e => {
+          const file = e.target.files?.[0];
+          const target = replacing.current;
+          replacing.current = null;
+          e.target.value = '';
+          if (file && target) onReplaceFile(target, file);
+        }}
+      />
+      <input
+        ref={replaceAllRef}
+        data-testid={`bulk-replace-all-input-${row.projectId}`}
+        type="file"
+        multiple
+        hidden
+        onChange={e => { const files = Array.from(e.target.files ?? []); e.target.value = ''; if (files.length > 0) onReplaceAll(files); }}
+      />
       {item?.receipt && <p data-testid={`bulk-receipt-${row.projectId}`} className="mt-1.5 text-[11px] text-amber-300/80">{item.receipt}</p>}
       {row.notes.map((n, i) => <p key={i} className="mt-1.5 text-[11px] text-amber-300/80">{n}</p>)}
     </li>
@@ -378,6 +443,8 @@ export function BulkProjectsModal({
       onName={typed => store?.setTypedName(row.projectId, typed)}
       onFiles={files => void store?.addFiles(row.projectId, files)}
       onRemoveFile={fileId => void store?.removeFile(row.projectId, fileId)}
+      onReplaceFile={(fileId, file) => void store?.replaceFile(row.projectId, fileId, file)}
+      onReplaceAll={files => void store?.replaceAll(row.projectId, files)}
       onClearFiles={() => void store?.clearFiles(row.projectId)}
       onRemoveRow={() => void store?.discardRow(row.projectId)}
       onCancel={() => queue.cancel(row.projectId)}
