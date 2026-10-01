@@ -141,3 +141,19 @@ describe('U6 — the ready toast', () => {
     expect(BULK_COPY.ready('Project 7')).toBe('Project 7 ready');
   });
 });
+
+describe('1.3.0 — unbuilt bulk rows for the storage scanner', () => {
+  it('lists drafts (grouped or loose) and never a row that has a project record', async () => {
+    const { unbuiltBulkRowIds } = await import('./bulkBatch');
+    const disk = memory();
+    disk.setItem('kinetix:bulk-batch:v1', JSON.stringify({
+      rows: [{ id: 'built', name: 'B', phase: 'cloud' }],
+      groups: [{ id: 'g', name: 'G', collapsed: false, rowIds: ['built', 'draft-1'] }],
+    }));
+    disk.setItem('kinetix:bulk-drafts:v1', JSON.stringify({ drafts: [{ id: 'draft-1', typedName: '', bundle: [] }, { id: 'loose', typedName: 'x', bundle: [] }] }));
+    expect(unbuiltBulkRowIds(disk).sort()).toEqual(['draft-1', 'loose']);
+    expect(unbuiltBulkRowIds(memory())).toEqual([]);
+    const junk = memory(); junk.setItem('kinetix:bulk-batch:v1', '{not json'); junk.setItem('kinetix:bulk-drafts:v1', 'nope');
+    expect(unbuiltBulkRowIds(junk)).toEqual([]);
+  });
+});

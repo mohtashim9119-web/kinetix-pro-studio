@@ -81,6 +81,26 @@ export function stagesToRun(
 }
 
 const KEY = 'kinetix:bulk-batch:v1';
+/** Where the drawer's draft rows persist (written by `bulkRows.ts`). */
+export const BULK_DRAFTS_KEY = 'kinetix:bulk-drafts:v1';
+
+/**
+ * Ids of bulk rows that are not built yet: drafts with staged files (and
+ * maybe bundle media) but no project record until Build Timeline. The
+ * storage scanner treats these as normal rows, not orphaned data.
+ */
+export function unbuiltBulkRowIds(storage: Pick<Storage, 'getItem'> | undefined = typeof localStorage !== 'undefined' ? localStorage : undefined): string[] {
+  const read = (key: string): unknown => { try { const raw = storage?.getItem(key); return raw ? JSON.parse(raw) : null; } catch { return null; } };
+  const batch = read(KEY) as { rows?: { id?: unknown }[]; groups?: { rowIds?: unknown[] }[] } | null;
+  const drafts = read(BULK_DRAFTS_KEY) as { drafts?: { id?: unknown }[] } | null;
+  const records = new Set((Array.isArray(batch?.rows) ? batch!.rows : []).map(r => r?.id));
+  const ids = new Set<string>();
+  for (const g of Array.isArray(batch?.groups) ? batch!.groups : []) {
+    for (const id of Array.isArray(g?.rowIds) ? g.rowIds : []) if (typeof id === 'string') ids.add(id);
+  }
+  for (const d of Array.isArray(drafts?.drafts) ? drafts!.drafts : []) if (typeof d?.id === 'string') ids.add(d.id);
+  return [...ids].filter(id => !records.has(id));
+}
 
 // Bulk UI rebuild U1 — GROUPS. A group is what one "Create Projects" made: a
 // name, a collapse toggle and its rows (draft ids and built records alike).

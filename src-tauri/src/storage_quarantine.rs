@@ -474,7 +474,9 @@ pub async fn storage_quarantine_project(
     dashboard_ids: Vec<String>,
     deleted_ids: Vec<String>,
     allow_record_not_on_dashboard: bool,
+    pending_ids: Option<Vec<String>>,
 ) -> Result<QuarantineReport, String> {
+    refuse_unbuilt_bulk_row(&id, &deleted_ids, pending_ids.as_deref().unwrap_or_default())?;
     let root = crate::storage_root::resolve_storage_root(&app)?;
     tauri::async_runtime::spawn_blocking(move || {
         quarantine_project(&root, &id, &dashboard_ids, &deleted_ids, allow_record_not_on_dashboard)
@@ -483,9 +485,26 @@ pub async fn storage_quarantine_project(
     .map_err(|e| format!("quarantine task failed: {e}"))?
 }
 
+/// An unbuilt bulk row (no record until Build Timeline) is normal, not
+/// orphaned: its staged media must never be quarantined. A deleted id is.
+pub fn refuse_unbuilt_bulk_row(id: &str, deleted_ids: &[String], pending_ids: &[String]) -> Result<(), String> {
+    if pending_ids.iter().any(|p| p == id) && !deleted_ids.iter().any(|d| d == id) {
+        return Err(format!("project {id} is an unbuilt bulk row — not orphaned data, refusing to quarantine"));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_unbuilt_bulk_row_is_never_quarantined() {
+        let p = vec!["eeee5555".to_string()];
+        assert!(refuse_unbuilt_bulk_row("eeee5555", &[], &p).is_err());
+        assert!(refuse_unbuilt_bulk_row("eeee5555", &p, &p).is_ok());
+        assert!(refuse_unbuilt_bulk_row("aaaa1111", &[], &p).is_ok());
+    }
 
     fn tmp(tag: &str) -> PathBuf {
         let d = std::env::temp_dir().join(format!(

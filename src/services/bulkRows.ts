@@ -39,6 +39,7 @@ import { deleteStagedFile, putStagedFile } from './stagedFilesStore';
 import { computeAudioHash } from './spine';
 import { BUILD_TIMELINE_COPY, missingSpineSlots, type BuildTimelineSlots } from './buildTimelineGate';
 import { rowIncompleteReason } from './bulkContext';
+import { BULK_DRAFTS_KEY as DRAFTS_KEY } from './bulkBatch';
 
 export type BulkAudioState = 'none' | 'preparing' | 'ready' | 'failed' | 'local';
 
@@ -84,7 +85,6 @@ export interface BulkRowDeps {
   draftStorage?: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
 }
 
-const DRAFTS_KEY = 'kinetix:bulk-drafts:v1';
 interface StoredDraft { id: string; typedName: string; bundle: Asset[] }
 
 /** Duration is probed once per audio content (it crosses IPC as the whole
