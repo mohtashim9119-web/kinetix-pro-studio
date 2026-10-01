@@ -24,7 +24,7 @@ import {
   BULK_GROUP_MAX_ROWS, BULK_MAX_GROUPS, READY_TO_FINISH, groupProgress, isBatchRowFinal, type BatchRow, type BulkBatchRunner,
 } from '../services/bulkBatch';
 import { BulkGroupHeader } from './BulkProgress';
-import { cloudCostLine, type CloudQueueDeps } from '../services/cloudQueueJob';
+import { bulkFooterLine, cloudCostLine, type CloudQueueDeps } from '../services/cloudQueueJob';
 import { collectDroppedFiles } from '../services/droppedFiles';
 import { missingSpineSlots } from '../services/buildTimelineGate';
 import { type QueueItem, type SyncQueue } from '../services/syncQueue';
@@ -110,11 +110,12 @@ function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFi
   const [msgIdx, setMsgIdx] = useState(0);
   const mediaRef = useRef<HTMLInputElement>(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [statusOpen, setStatusOpen] = useState(false);
   useEffect(() => { folderRef.current?.setAttribute('webkitdirectory', ''); }, []);
   const phase = record?.phase;
   const running = phase === 'queued' || phase === 'cloud';
-  // Once the project exists the row is a read-out, not an editor.
-  const locked = row.built;
+  // Files stay editable until the first successful finish.
+  const locked = row.sealed;
   const empty = !Object.values(row.slots).some(Boolean);
   const status = record
     ? phase === 'queued' ? 'Waiting'
@@ -145,7 +146,7 @@ function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFi
   ].filter(m => m.text.trim() !== '');
   const shown = messages.length === 0 ? 0 : Math.min(msgIdx, messages.length - 1);
   const current = messages[shown] ?? { text: '', warn: false };
-  const openable = phase === 'done' || phase === 'finish-failed' || (phase === 'cloud-done' && !!record?.awaitingOpen);
+  const openable = row.built || !!record;
   const failedish = phase === 'failed' || phase === 'finish-failed' || phase === 'paused';
   return (
     <li
@@ -179,7 +180,7 @@ function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFi
         />
         <button
           type="button"
-          data-testid={openable ? `bulk-open-${row.projectId}` : undefined}
+          data-testid={`bulk-open-${row.projectId}`}
           disabled={!openable}
           title={openable ? undefined : BULK_COPY.openWhenReady}
           onClick={phase === 'cloud-done' ? onFinish : onOpen}
@@ -218,37 +219,47 @@ function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFi
         </div>
       </div>
 
-      {/* Row 2 — the four slots on ONE line; below it, the file count and its expand arrow. */}
-      <div className="mt-3 flex flex-nowrap items-center gap-1 overflow-hidden" data-testid={`bulk-slots-${row.projectId}`}>
-        {(['script', 'scene', 'voiceover', 'media'] as const).map(slot => (
-          <span
-            key={slot}
-            data-slot={slot}
-            data-filled={row.slots[slot]}
-            className={`${CHIP} ${row.slots[slot]
-              ? 'bg-[var(--kx-ready-soft)] text-[var(--kx-ready)]'
-              : 'bg-[var(--kx-surface-2)] text-[var(--kx-muted)]'}`}
-          >
-            <SlotIcon slot={slot} />
-            {BULK_COPY.slot[slot]}
-            {slot === 'media' && row.mediaCount > 0 ? ` · ${row.mediaCount}` : ''}
-            {row.slots[slot] && <Check size={11} />}
-          </span>
-        ))}
-      </div>
+      {/* Row 2 — file count; chips and stages live in the expanded detail so
+          every collapsed row is the same height. */}
       <button
         type="button"
         data-testid={`bulk-files-toggle-${row.projectId}`}
         aria-expanded={listOpen}
-        disabled={row.files.length === 0 || locked}
+        disabled={row.files.length === 0}
         onClick={() => setListOpen(o => !o)}
-        className="mt-1.5 -ml-1.5 flex items-center gap-1 h-6 px-1.5 rounded-md text-[11px] text-[var(--kx-muted)] enabled:hover:text-[var(--kx-text)] enabled:hover:bg-[var(--kx-hover)] transition-colors disabled:cursor-default"
+        className="mt-3 -ml-1.5 flex items-center gap-1 h-6 px-1.5 rounded-md text-[11px] text-[var(--kx-muted)] enabled:hover:text-[var(--kx-text)] enabled:hover:bg-[var(--kx-hover)] transition-colors disabled:cursor-default"
       >
         {BULK_COPY.filesToggle(row.files.length)}
         {listOpen && row.files.length > 0 ? <ChevronDown size={12} /> : <ChevronRight size={12} className={row.files.length === 0 ? 'opacity-40' : ''} />}
       </button>
-      {listOpen && row.files.length > 0 && !locked && (
+      {listOpen && row.files.length > 0 && (
         <div className="mt-2 rounded-lg border border-[var(--kx-line)] bg-[var(--kx-panel)] py-1" data-testid={`bulk-files-${row.projectId}`}>
+          <div className="px-3 pt-2 pb-1.5 flex flex-nowrap items-center gap-1 overflow-hidden" data-testid={`bulk-slots-${row.projectId}`}>
+            {(['script', 'scene', 'voiceover', 'media'] as const).map(slot => (
+              <span
+                key={slot}
+                data-slot={slot}
+                data-filled={row.slots[slot]}
+                className={`${CHIP} ${row.slots[slot]
+                  ? 'bg-[var(--kx-ready-soft)] text-[var(--kx-ready)]'
+                  : 'bg-[var(--kx-surface-2)] text-[var(--kx-muted)]'}`}
+              >
+                <SlotIcon slot={slot} />
+                {BULK_COPY.slot[slot]}
+                {slot === 'media' && row.mediaCount > 0 ? ` · ${row.mediaCount}` : ''}
+                {row.slots[slot] && <Check size={11} />}
+              </span>
+            ))}
+          </div>
+          {record?.checkpoint && (
+            <p className="px-3 pb-2 flex flex-wrap gap-1" data-testid={`bulk-stages-${row.projectId}`}>
+              {(['staged', 'transcript-cached', 'aligned', 'built'] as const).map(stage => (
+                <span key={stage} className={`${CHIP} ${record.checkpoint === stage ? 'bg-[var(--kx-accent-soft)] text-[var(--kx-accent-2)]' : 'bg-[var(--kx-surface-2)] text-[var(--kx-faint)]'}`}>
+                  {stage}
+                </span>
+              ))}
+            </p>
+          )}
           <ul>
             {(['script', 'scene', 'voiceover'] as const).map(kind => {
               const f = row.files.find(x => x.id === kind);
@@ -256,6 +267,8 @@ function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFi
                 <li key={kind} className={FILE_LINE}>
                   <span className={FILE_KIND}>{BULK_COPY.slot[kind]}</span>
                   <span className={`flex-1 min-w-0 truncate ${f ? 'text-[var(--kx-text)]' : 'text-[var(--kx-faint)]'}`}>{f ? f.name : BULK_COPY.notAdded}</span>
+                  {!locked && (
+                    <>
                   <button
                     type="button"
                     aria-label={f ? BULK_COPY.replaceFile(f.name) : BULK_COPY.addSlot(BULK_COPY.slot[kind])}
@@ -275,6 +288,8 @@ function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFi
                   >
                     <X size={13} />
                   </button>
+                    </>
+                  )}
                 </li>
               );
             })}
@@ -295,6 +310,8 @@ function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFi
                       <span className="truncate">{media.length ? BULK_COPY.mediaCount(media.length) : BULK_COPY.notAdded}</span>
                       {media.length > 0 && (mediaOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />)}
                     </button>
+                    {!locked && (
+                      <>
                     <button
                       type="button"
                       aria-label={media.length ? BULK_COPY.replaceMedia : BULK_COPY.addSlot(BULK_COPY.slot.media)}
@@ -315,6 +332,8 @@ function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFi
                     >
                       <X size={13} />
                     </button>
+                      </>
+                    )}
                   </li>
                   {mediaOpen && media.length > 0 && (
                     <li className="mx-3 mb-1 max-h-56 overflow-y-auto custom-scrollbar rounded-md border border-[var(--kx-line)]">
@@ -322,6 +341,7 @@ function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFi
                         {media.map(f => (
                           <li key={f.id} className="flex items-center gap-2 pl-3 pr-1 py-0.5 text-[12px]">
                             <span className="flex-1 min-w-0 truncate text-[var(--kx-muted)]">{f.name}</span>
+                            {!locked && (
                             <button
                               type="button"
                               aria-label={BULK_COPY.removeFile(f.name)}
@@ -331,6 +351,7 @@ function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFi
                             >
                               <X size={12} />
                             </button>
+                            )}
                           </li>
                         ))}
                       </ul>
@@ -340,6 +361,7 @@ function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFi
               );
             })()}
           </ul>
+          {!locked && (
           <div className="px-3 pt-1.5 pb-1 border-t border-[var(--kx-line)] mt-1 flex items-center justify-end gap-4">
             <button
               type="button"
@@ -360,28 +382,33 @@ function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFi
               {BULK_COPY.clearFiles}
             </button>
           </div>
+          )}
         </div>
-      )}
-      {record?.checkpoint && (
-        <p className="mt-2.5 flex flex-wrap gap-1" data-testid={`bulk-stages-${row.projectId}`}>
-          {(['staged', 'transcript-cached', 'aligned', 'built'] as const).map(stage => (
-            <span key={stage} className={`${CHIP} ${record.checkpoint === stage ? 'bg-[var(--kx-accent-soft)] text-[var(--kx-accent-2)]' : 'bg-[var(--kx-surface-2)] text-[var(--kx-faint)]'}`}>
-              {stage}
-            </span>
-          ))}
-        </p>
       )}
 
       {/* Row 3 — ONE fixed-height message line (status, then any problems;
           the arrows step through them), Retry / Cancel, the bin in the corner. */}
-      <div className="mt-3 pt-2.5 border-t border-[var(--kx-line)] flex items-center gap-2 h-[38px]">
-        <p
+      <div className="mt-3 pt-2.5 border-t border-[var(--kx-line)] flex items-center gap-2 h-[38px] relative">
+        <button
+          type="button"
           data-testid={`bulk-status-${row.projectId}`}
+          role="button"
           title={current.text}
-          className={`flex-1 min-w-0 truncate text-[12px] leading-snug ${current.warn ? 'text-amber-300/90' : dim ? 'text-[var(--kx-faint)]' : 'text-[var(--kx-muted)]'}`}
+          onClick={() => { if (current.text) setStatusOpen(o => !o); }}
+          className={`flex-1 min-w-0 truncate text-left text-[12px] leading-snug ${current.warn ? 'text-amber-300/90' : dim ? 'text-[var(--kx-faint)]' : 'text-[var(--kx-muted)]'}`}
         >
           {current.text}
-        </p>
+        </button>
+        {statusOpen && current.text && (
+          <div
+            data-testid={`bulk-status-pop-${row.projectId}`}
+            className="absolute left-0 right-12 bottom-[42px] z-20 rounded-lg border border-[var(--kx-line-2)] bg-[var(--kx-surface-2)] px-3 py-2 text-[12px] text-[var(--kx-text)] shadow-2xl"
+          >
+            <p className="whitespace-pre-wrap break-words">{quiet || current.text}</p>
+            {cost ? <p className="mt-1 text-[var(--kx-muted)]">{cost}</p> : null}
+            {record?.phase ? <p className="mt-1 text-[11px] text-[var(--kx-faint)]">{record.phase}{record.checkpoint ? ` · ${record.checkpoint}` : ''}</p> : null}
+          </div>
+        )}
         {failedish && (
           <button type="button" data-testid={`bulk-retry-${row.projectId}`} className={ROW_BTN_SM} onClick={onRetry}>
             {BULK_COPY.retry}
@@ -528,7 +555,7 @@ export function BulkProjectsModal({
   const items = useMemo(() => new Map(snap.items.map(i => [i.id, i])), [snap.items]);
   const recordById = useMemo(() => new Map(records.map(r => [r.id, r])), [records]);
   const isComplete = (r: BulkRowState): boolean => !r.built && r.typedName.trim().length > 0 && missingSpineSlots(r.slots).length === 0;
-  const line = queue.batchLine();
+  const line = bulkFooterLine(records, queue.batchLine());
 
   const rowById = new Map(rows.map(r => [r.projectId, r]));
   // Every row belongs to a group (each group carries the Build Timeline): a

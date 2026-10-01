@@ -349,3 +349,38 @@ describe('1.3.1 — a bulk-built project gets the editor’s sync log', () => {
     for (const call of calls) expect(call).toMatch(/extraLogEntries: \(runId, at\) => bulkBillingLog\(/);
   });
 });
+
+describe('F4 — cache-hit finish wall time (bulk-only pipeline; park if unify deletes it)', () => {
+  it('records per-seam milliseconds on a cache-hit finish', async () => {
+    const ms: Record<string, number> = {};
+    const wrap = <A extends unknown[], T>(name: string, fn: (...a: A) => Promise<T>) => async (...a: A): Promise<T> => {
+      const t0 = performance.now();
+      try { return await fn(...a); } finally { ms[name] = performance.now() - t0; }
+    };
+    const t0 = performance.now();
+    const result = await runFinishPipeline(baseInput('f4', {
+      persistVoiceover: wrap('persistVoiceover', async (_pid, file) => ({
+        id: 'vo-f4', name: file.name, url: 'blob:test', type: 'audio', file, addedAt: 1, duration: 1,
+      } as Asset)),
+      persistMedia: wrap('persistMedia', async (_pid, _st, assets) => ({ assets })),
+      lookupTranscript: wrap('lookupTranscript', async () => ({ tokens: TOKENS, language: 'en' })),
+      runFa: wrap('runFa', async () => ({
+        status: 'ok' as const,
+        tokens: FA_WORDS,
+        unscriptedRuns: [],
+        cloudProvenance: { engine: 'fa-cloud', model: 'fa-en', modelVersion: 'rev-1' },
+        cloudCached: true,
+      })),
+      alignFromCache: wrap('alignFromCache', async () => aligned()),
+      stages: {
+        ...stages,
+        parseProjectData: wrap('parse', async () => [segment()]),
+      },
+    }));
+    ms.total = performance.now() - t0;
+    // eslint-disable-next-line no-console
+    console.info('[F4 cache-hit finish ms]', ms);
+    expect(result.ok).toBe(true);
+    expect(ms.total).toBeGreaterThan(0);
+  });
+});

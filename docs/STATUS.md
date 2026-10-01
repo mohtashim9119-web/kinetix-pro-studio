@@ -1,6 +1,7 @@
 # Project Status
 
-Last updated: 2026-10-02 — v1.3.1 on `main` (`ws1-bulk-media-fix` → `main`): bulk builds now save their media (found and fixed), the bulk drawer docks as the dashboard's left column with a restyle, built rows keep their cost and files across reloads, and bulk-built projects get the editor's sync log. Installers are built by the operator; the operator's real-window verification of 1.3.1 precedes distribution. Open count unchanged at **40/40** (at cap) — found-and-fixed is prose, outside the count.
+Last updated: 2026-10-02 — v1.3.2 on `main` (`ws1-bulk-fixes` → `main`): operator 1.3.1 follow-ups — real cloud errors on the row/log/record, files stay editable until the first successful build, staged restore on open, honest Paused/Build-failed dashboard cards, a clickable status popover, chips only in the expanded row, footer cost/grammar, Open on paused/failed. Cache-hit finish slowness is parked (bulk-only pipeline the unify merge deletes). Installers are built by the operator. Open count unchanged at **40/40** (at cap) — found-and-fixed is prose, outside the count.
+Prior header: 2026-10-02 — v1.3.1 on `main` (`ws1-bulk-media-fix` → `main`): bulk builds now save their media (found and fixed), the bulk drawer docks as the dashboard's left column with a restyle, built rows keep their cost and files across reloads, and bulk-built projects get the editor's sync log. Installers are built by the operator; the operator's real-window verification of 1.3.1 precedes distribution. Open count unchanged at **40/40** (at cap) — found-and-fixed is prose, outside the count.
 Prior header: 2026-10-01 — v1.3.0 bulk landing on `main` (`ws1-bulk2-landing` → `main`: merges of `ws1-bulk2-pipeline` and `ws1-bulk2-ui`, then the wiring between them). The operator's bulk workflow replaces the 1.2.2 interim finishing UX. Landed unverified per operator instruction; installers are built by the operator, and the operator's real-window verification of 1.3.0 precedes distribution. Open count unchanged at **40/40** (at cap) — found-and-fixed is prose, outside the count.
 Prior header: 2026-10-01 — v1.2.2 P0 stabilization on `main` (`ws1-bulk-stabilize` → `main`): the operator's real-window verification of 1.2.1 FAILED (bulk finish wrote row 1's content into every row's record), so 1.2.1 is held from distribution and superseded by 1.2.2; the team stays on 1.1.1 until the operator verifies 1.2.2. The operator's planned bulk workflow is pending and supersedes the interim finishing UX. Open count unchanged at **40/40** (at cap) — found-and-fixed is prose, outside the count.
 Prior header (2026-10-01): v1.2.1 fix-forward on `main` (`ws1-drawer-layering` → `main`): the bulk drawer was painted over by the dashboard, so 1.2.0 was held from distribution by the operator and is superseded by 1.2.1. Open count unchanged at **40/40** (at cap) — found-and-fixed is prose, outside the count.
@@ -224,6 +225,23 @@ What landed (`edf917b`, branch merge of `origin/main` at `fe91035` / `cf8157e`):
 The same files can therefore yield a different timeline in bulk than in the editor. The operator's requirement is one Build Timeline (the editor's) run for each bulk row; the options were handed to the architect.
 
 Gates on the branch before the merge: `tsc` clean; `npm test` 5022 passed / 78 skipped (baseline 5011); `cargo test` 554; `vite build` OK; `pytest cloud` 53. Re-run from `main` after the `--no-ff` merge.
+
+### v1.3.2 — operator 1.3.1 bulk follow-ups (`ws1-bulk-fixes` → `main`)
+**FOUND AND FIXED — recorded here in prose, outside the open count:**
+- **Catch-all `inference-failed` dropped the gateway's real error.** A failing cloud call now carries a typed kind plus the server message verbatim into the row, the pause record, and the project's sync log (`cloudFailureReport`; paused batch rows show `detail`, not only the bucket).
+- **Built-at-Create locked files too early.** Rename/replace/delete stay allowed until the first successful finish (`sealed`); a content-key change starts over, unchanged Retry resumes the checkpoint.
+- **Opening a failed bulk project showed no staged files.** DropZone now publishes the IndexedDB restore *before* awaiting voiceover adoption, so a cancelled adopt (callback churn on open) cannot blank the panel.
+- **Dashboard cards for paused/failed bulk rows looked like empty 0-scene projects.** They now show **Paused** / **Build failed**. Rows still appear the moment Build Timeline creates the record.
+- Open-count arithmetic: 40 (v1.3.1) → **40/40, unchanged**.
+
+**Also landed:**
+- Fixed-height status line is clickable: a popover shows full status, cost, and the real error.
+- Stage chips live only in the expanded file detail (collapsed rows one height).
+- Footer uses "1 project", and billed seconds on failed rows (never "no cloud GPU time used" while a row shows cost). Open is enabled wherever a project record exists (paused/failed included).
+
+**PARKED (F4 — do not polish doomed code):** cache-hit finish wall time on the extracted bulk pipeline, unit-measured with instant seams: persistVoiceover ~0.05ms, persistMedia ~0.02ms, parse ~0.05ms, lookupTranscript ~0.02ms, runFa ~0.04ms, alignFromCache ~0.08ms, **total ~4.6ms** (the rest is hashing/snap/save in `finishPipeline.ts`). Operator-perceived slowness on a real cache-hit row lives in this bulk-only pipeline, which the upcoming unify merge deletes. No production polish this landing.
+
+Gates on the branch before the merge: `tsc` clean; `npm test` 5034 passed / 78 skipped (baseline 5022); `cargo test` 554; `vite build` OK; `pytest cloud` 53; chunkPlanM4 + golden replay included in `npm test`. Re-run from `main` after the `--no-ff` merge.
 
 ### Deferred Tasks
 - [DEFERRED · ASR ENGINE LIMITATION] Row 52 ("Llívia") — Whisper never transcribed isolated token; owner ruling 2026-09-03

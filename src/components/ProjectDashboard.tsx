@@ -465,6 +465,10 @@ export function ProjectDashboard({
               const isSelected = selectedIds.has(meta.id);
               const isCurrent = meta.id === currentProjectId;
               const scenes = meta.segmentCount ?? 0;
+              const bulkPhase = batchRows.find(r => r.id === meta.id)?.phase;
+              const bulkBadge = bulkPhase === 'paused' ? 'Paused'
+                : bulkPhase === 'failed' || bulkPhase === 'finish-failed' ? 'Build failed'
+                : undefined;
               const classes = [
                 'kxd-card',
                 isSelected ? 'is-selected' : '',
@@ -530,16 +534,18 @@ export function ProjectDashboard({
                       </div>
                     </div>
 
-                    {scenes > 0 && (
+                    {bulkBadge ? (
+                      <div className="kxd-scene-badge">{bulkBadge}</div>
+                    ) : scenes > 0 ? (
                       <div className="kxd-scene-badge">{scenes} scene{scenes !== 1 ? 's' : ''}</div>
-                    )}
+                    ) : null}
                     {isCurrent && <span className="kxd-current-badge">CURRENT</span>}
                   </div>
 
                   <div className="kxd-card-body">
                     <h3 className="kxd-card-title">{meta.name}</h3>
                     <div className="kxd-card-date">
-                      {scenes === 0 ? '0 scenes · ' : ''}
+                      {bulkBadge ? `${bulkBadge} · ` : scenes === 0 ? '0 scenes · ' : ''}
                       {meta.savedAt ? formatDate(meta.savedAt) : '—'}
                     </div>
                   </div>

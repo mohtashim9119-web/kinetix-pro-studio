@@ -35,6 +35,7 @@ function boot(storage: ReturnType<typeof memory>, exists: (id: string) => boolea
           ctx.signal.addEventListener('abort', () => rej(new Error('aborted')));
         });
         if (how === 'failed') return { status: 'failed', detail: 'row failed' };
+        if (how === 'paused') return { status: 'paused', reason: 'inference-failed', detail: 'CUDA OOM on worker-7' };
         return { status: 'done' };
       },
     }))),
@@ -43,6 +44,7 @@ function boot(storage: ReturnType<typeof memory>, exists: (id: string) => boolea
     queue, runner, started,
     finishCloud: (id: string) => gates.get(id)?.('done'),
     failCloud: (id: string) => gates.get(id)?.('failed'),
+    pauseCloud: (id: string) => gates.get(id)?.('paused'),
   };
 }
 const phases = (r: BulkBatchRunner) => Object.fromEntries(r.snapshot().map(x => [x.id, x.phase]));
@@ -166,6 +168,16 @@ describe('a persistent batch', () => {
     await vi.waitFor(() => expect(started).toEqual(['a', 'b']));
     finishCloud('b');
     await vi.waitFor(() => expect(phases(runner).b).toBe('cloud-done'));
+  });
+
+  it('F1: a paused row keeps the gateway\'s real message, not only inference-failed', async () => {
+    const { runner, started, pauseCloud } = boot(memory());
+    runner.start([{ id: 'a', name: 'A' }]);
+    await vi.waitFor(() => expect(started).toEqual(['a']));
+    pauseCloud('a');
+    await vi.waitFor(() => expect(phases(runner).a).toBe('paused'));
+    expect(runner.snapshot()[0]!.message).toContain('CUDA OOM on worker-7');
+    expect(runner.snapshot()[0]!.message).not.toBe('inference-failed');
   });
 
   it('a crash between every stage resumes from that checkpoint', () => {

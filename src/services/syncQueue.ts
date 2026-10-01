@@ -286,7 +286,8 @@ export class SyncQueue {
     const cost = b.workerSec > 0
       ? `about ${formatUsd(b.estimatedUsd)} of cloud GPU (${b.workerSec.toFixed(0)} s worked)`
       : 'no cloud GPU time used';
-    return `${this.view.items.length} projects: ${parts.join(', ')} · ${cost}`;
+    const n = this.view.items.length;
+    return `${n} ${n === 1 ? 'project' : 'projects'}: ${parts.join(', ')} · ${cost}`;
   }
 }
 

@@ -47,6 +47,7 @@ import {
   releaseCloudJob,
   runCloudJob,
   toCloudError,
+  describeCloudError,
   type CloudAlignResult,
   type CloudChunk,
   type CloudError,
@@ -314,6 +315,26 @@ export function cloudPauseReason(error: CloudError): CloudPauseReason {
   return 'inference-failed';
 }
 
+/** What a failed cloud call actually was: the pause bucket (dialog routing),
+ *  the typed gateway kind, and the server's own message verbatim. */
+export function cloudFailureReport(error: CloudError): {
+  pauseReason: CloudPauseReason;
+  typedKind: CloudError['kind'];
+  code?: string;
+  serverMessage: string;
+  display: string;
+} {
+  const serverMessage = 'detail' in error && typeof error.detail === 'string' ? error.detail : '';
+  const code = error.kind === 'jobFailed' || error.kind === 'rejected' ? error.code : undefined;
+  return {
+    pauseReason: cloudPauseReason(error),
+    typedKind: error.kind,
+    code,
+    serverMessage,
+    display: describeCloudError(error),
+  };
+}
+
 /** The one retry's wait: long enough for a network blip or a gateway
  *  container restart, short enough not to feel like a hang. */
 export const CLOUD_RETRY_DELAY_MS = 3000;
@@ -547,7 +568,11 @@ export async function transcribeViaCloud(args: {
     if (err instanceof DOMException) throw err;
     const cloud = toCloudError(err);
     if (cloud.kind === 'cancelled') throw abortError();
-    throw new CloudStageError(cloud, cloud.kind === 'tooLong' && cloud.estimatedSec !== undefined ? cloud.detail : `Cloud transcription failed: ${describeForStaging(cloud)}`);
+    const report = cloudFailureReport(cloud);
+    throw new CloudStageError(
+      cloud,
+      cloud.kind === 'tooLong' && cloud.estimatedSec !== undefined ? cloud.detail : `Cloud transcription failed: ${report.display}`,
+    );
   }
 }
 

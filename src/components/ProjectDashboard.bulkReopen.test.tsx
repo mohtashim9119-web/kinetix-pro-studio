@@ -108,6 +108,14 @@ describe('dashboard bulk button — opens the drawer, never asks a number', () =
     await mount(() => {});
     for (const id of ['mine', 'p1', 'p2', 'p3']) expect(container.querySelector(`[data-testid="project-card-${id}"]`)).not.toBeNull();
     expect(container.querySelector('[data-testid="project-card-draft-1"]')).toBeNull();
+    expect(container.querySelector('[data-testid="project-card-p2"]')!.textContent).toMatch(/Build failed/);
+    batchRows = [{ id: 'p1', name: 'Bulk running', phase: 'cloud' }, { id: 'p2', name: 'Bulk failed', phase: 'paused' }, { id: 'p3', name: 'Bulk built', phase: 'done' }];
+    await act(async () => {
+      root.render(
+        <ProjectDashboard currentProjectId={null} onSelectProject={() => {}} onNewProject={() => {}} onOpenAppSettings={() => {}} parseProjectData={async () => []} onBulkOpen={() => {}} />,
+      );
+    });
+    expect(container.querySelector('[data-testid="project-card-p2"]')!.textContent).toMatch(/Paused/);
   });
 
   it('1.3.0: when the background pipeline makes a row ready, the grid re-reads it (its built scene count shows)', async () => {

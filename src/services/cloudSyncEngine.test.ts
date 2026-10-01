@@ -27,6 +27,7 @@ import {
   CloudStageError,
   __resetCloudAudioInFlightForTests,
   __setCloudRetryDelayForTests,
+  cloudFailureReport,
   cloudPauseReason,
   cloudProgressPercent,
   isRetryableCloudError,
@@ -122,6 +123,25 @@ describe('transcribeForHost', () => {
       signal: new AbortController().signal, audioHash: HASH,
     });
     expect(r.detectedLanguage).toBeUndefined();
+  });
+
+  it('a failing call surfaces the gateway\'s real reason and server message, not only inference-failed', async () => {
+    const SERVER = 'CUDA OOM on worker-7: device-side assert';
+    gateway(() => { throw { kind: 'jobFailed', jobId: 'j9', code: 'worker-error', detail: SERVER }; });
+    const err = await transcribeForHost({
+      host: 'cloud', asset: asset(), durationSecs: 60, language: 'en', onProgress: () => {},
+      signal: new AbortController().signal, audioHash: HASH,
+    }).catch(e => e);
+    expect(err).toBeInstanceOf(CloudStageError);
+    const cloud = (err as CloudStageError).cloud;
+    expect(cloud).toMatchObject({ kind: 'jobFailed', code: 'worker-error', detail: SERVER });
+    const report = cloudFailureReport(cloud);
+    expect(report.pauseReason).toBe('inference-failed');
+    expect(report.typedKind).toBe('jobFailed');
+    expect(report.serverMessage).toBe(SERVER);
+    expect(err.message).toContain(SERVER);
+    expect(report.display).toContain(SERVER);
+    expect(report.display).toContain('worker-error');
   });
 
   it('cloud failures surface as a readable staging error carrying the typed cause', async () => {

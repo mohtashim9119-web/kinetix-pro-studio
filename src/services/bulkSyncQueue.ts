@@ -18,7 +18,10 @@ export function queueProjectsForCloudSync(
   projects: readonly { id: string; name: string; checkpoint?: import('./bulkBatch').BulkCheckpoint; contentKey?: string }[],
   parseProjectData: CloudQueueDeps['parseProjectData'],
 ): number {
-  const deps = defaultCloudQueueDeps(parseProjectData);
+  const deps: CloudQueueDeps = {
+    ...defaultCloudQueueDeps(parseProjectData),
+    noteContent: (id, key) => { runner?.noteContent(id, key); },
+  };
   return cloudSyncQueue.enqueue(projects.map(p => createCloudProjectJob(p, deps)));
 }
 
