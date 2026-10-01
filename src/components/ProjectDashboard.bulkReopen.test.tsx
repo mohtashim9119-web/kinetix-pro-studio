@@ -23,6 +23,8 @@ vi.mock('../services/syncEngineHost', async importActual => ({
 }));
 
 let batchRows: { id: string; name: string; phase: string }[] = [];
+let groupsFor: unknown;
+let groupsView: unknown[] = [];
 vi.mock('../services/bulkSyncQueue', async () => {
   const { SyncQueue } = await import('../services/syncQueue');
   const queue = new SyncQueue({ workerSec: () => 0, usdPerSec: 0, onDrain: () => {}, cancelReceipt: () => '' });
@@ -32,7 +34,10 @@ vi.mock('../services/bulkSyncQueue', async () => {
     bulkBatchRunner: () => ({
       subscribe: () => () => undefined,
       snapshot: () => batchRows,
-      groups: () => [{ id: 'g', name: 'G', collapsed: false, rowIds: batchRows.map(r => r.id) }],
+      groups: () => {
+        if (groupsFor !== batchRows) { groupsFor = batchRows; groupsView = [{ id: 'g', name: 'G', collapsed: false, rowIds: batchRows.map(r => r.id) }]; }
+        return groupsView;
+      },
       forget: () => undefined,
     }),
   };
@@ -106,5 +111,31 @@ describe('dashboard bulk button — opens the drawer, never asks a number', () =
     expect(text).toContain('Bulk built');
     expect(text).not.toContain('Bulk running');
     expect(text).not.toContain('Bulk failed');
+  });
+});
+
+describe('U6 — the dashboard bulk button carries the batch signal', () => {
+  it('while running: a small progress ring and "n/m"', async () => {
+    batchRows = [{ id: 'p1', name: 'One', phase: 'done' }, { id: 'p2', name: 'Two', phase: 'cloud' }, { id: 'p3', name: 'Three', phase: 'queued' }];
+    await mount(() => {});
+    const button = bulkButtons()[0]!;
+    expect(button.querySelector('[data-testid="bulk-ring"]')).not.toBeNull();
+    expect(button.querySelector('[data-testid="dashboard-bulk-count"]')!.textContent).toBe('1/3');
+    expect(button.querySelector('[data-testid="bulk-failed-dot"]')).toBeNull();
+  });
+
+  it('a failed row: a red dot with the count', async () => {
+    batchRows = [{ id: 'p1', name: 'One', phase: 'failed' }, { id: 'p2', name: 'Two', phase: 'finish-failed' }, { id: 'p3', name: 'Three', phase: 'done' }];
+    await mount(() => {});
+    expect(bulkButtons()[0]!.querySelector('[data-testid="bulk-failed-dot"]')!.textContent).toBe('2');
+  });
+
+  it('nothing running and nothing failed: the plain button', async () => {
+    batchRows = [{ id: 'p1', name: 'One', phase: 'done' }, { id: 'p2', name: 'Two', phase: 'done' }];
+    await mount(() => {});
+    const button = bulkButtons()[0]!;
+    expect(button.querySelector('[data-testid="bulk-ring"]')).toBeNull();
+    expect(button.querySelector('[data-testid="bulk-failed-dot"]')).toBeNull();
+    expect(button.textContent).toBe('Bulk Projects');
   });
 });

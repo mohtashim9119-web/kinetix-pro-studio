@@ -9,6 +9,8 @@ import { bulkBatchRunner, queueProjectsForCloudSync } from '../services/bulkSync
 import type { CloudQueueDeps } from '../services/cloudQueueJob';
 import { SyncQueuePanel } from './SyncQueuePanel';
 import { BULK_COPY } from '../services/bulkContext';
+import { batchProgress } from '../services/bulkBatch';
+import { FailedDot, ProgressRing } from './BulkProgress';
 import { Z } from './overlayLayers';
 import './ProjectDashboard.css';
 
@@ -106,6 +108,8 @@ export function ProjectDashboard({
   // The persistent batch: reachable from here until it is cleared, even after a reload.
   const batch = bulkBatchRunner(parseProjectData);
   const batchRows = useSyncExternalStore(l => batch.subscribe(l), () => batch.snapshot());
+  const batchGroups = useSyncExternalStore(l => batch.subscribe(l), () => batch.groups());
+  const bulkSignal = batchProgress(batchGroups, batchRows);
   const [storage, setStorage] = useState<{ usage: number; quota: number } | null>(null);
 
   const searchRef = useRef<HTMLInputElement>(null);
@@ -235,6 +239,14 @@ export function ProjectDashboard({
           {onBulkOpen && parseProjectData && (
             <button className="kxd-btn kxd-btn-quiet" data-testid="dashboard-bulk" onClick={onBulkOpen}>
               {BULK_COPY.button}
+              {/* U6 — the batch at a glance: a ring + n/m while running, a red dot when any row failed. */}
+              {bulkSignal.running && (
+                <span className="ml-2 inline-flex items-center gap-1 align-middle">
+                  <ProgressRing done={bulkSignal.done} total={bulkSignal.total} size={14} />
+                  <span data-testid="dashboard-bulk-count" className="text-[11px] tabular-nums">{`${bulkSignal.done}/${bulkSignal.total}`}</span>
+                </span>
+              )}
+              {bulkSignal.failed > 0 && <span className="ml-1.5 inline-flex align-middle"><FailedDot count={bulkSignal.failed} /></span>}
             </button>
           )}
           <button className="kxd-btn kxd-btn-accent" onClick={onNewProject}>

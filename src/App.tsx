@@ -166,7 +166,7 @@ import {
   startSyncIntent,
   subscribeSyncIntents,
 } from './services/cloudSyncIntent';
-import { decideStagingStart, isBulkAutoFireSuppressed, peekCloudTranscript } from './services/bulkContext';
+import { BULK_COPY, decideStagingStart, isBulkAutoFireSuppressed, peekCloudTranscript } from './services/bulkContext';
 import { isOperatorActivelyEditing, lookupBatchTranscript, runBulkProjectFinish } from './services/bulkFinish';
 import type { FinishRequest, FinishResult } from './services/bulkBatch';
 import { verifyBulkRecords } from './services/bulkRepair';
@@ -8573,6 +8573,10 @@ export default function App() {
   // Wave 3 U7.8 — the batch is a persistent background job (bulkBatch.ts):
   // App gives it the editor-side finish, and on boot it picks up where it stopped.
   useEffect(() => { bulkBatchRunner(parseProjectData).setFinalizer(finalizeBulkProject); }, [finalizeBulkProject]);
+  // U6 — a finished row says so in a toast ("Project N ready"). It never opens the project.
+  const bulkToastRef = useRef(showToast);
+  bulkToastRef.current = showToast;
+  useEffect(() => bulkBatchRunner(parseProjectData).onReady(row => bulkToastRef.current(BULK_COPY.ready(row.name))), []);
   // The editor may still hold a project just deleted (the dashboard's delete,
   // or a bulk row's): drop it, so it cannot be written back or resumed.
   const dropDeletedFromEditor = (ids: string[]): void => {

@@ -134,3 +134,10 @@ describe('bulk groups', () => {
     expect(runner.groups()[0]!.rowIds).toEqual(['b', 'draft']);
   });
 });
+
+describe('U6 — the ready toast', () => {
+  it('reads "Project N ready"', async () => {
+    const { BULK_COPY } = await import('./bulkContext');
+    expect(BULK_COPY.ready('Project 7')).toBe('Project 7 ready');
+  });
+});

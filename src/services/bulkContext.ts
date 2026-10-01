@@ -90,6 +90,8 @@ export const BULK_COPY = {
   doneCount: (done: number, total: number): string => `${done}/${total} done`,
   ringLabel: (done: number, total: number): string => `${done} of ${total} done`,
   failedCount: (n: number): string => `${n} failed`,
+  /** U6 — the one toast a finished row raises. It never opens anything. */
+  ready: (name: string): string => `${name} ready`,
   collapseGroup: (name: string): string => `Collapse ${name}`,
   expandGroup: (name: string): string => `Expand ${name}`,
 } as const;
