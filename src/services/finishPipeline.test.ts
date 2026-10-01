@@ -312,3 +312,40 @@ describe('1.3.1 — a finished bulk project carries its staged media', () => {
     expect(app).toContain('await persistStagedMedia(projectRef.current.id, staged, allAssets)');
   });
 });
+
+describe('1.3.1 — a bulk-built project gets the editor’s sync log', () => {
+  it('the run log comes from the injected editor builder (with the run’s real data), then the billing line', async () => {
+    const seen: { kept: number; final: number; assets: string[] }[] = [];
+    const result = await runFinishPipeline(baseInput('log', {
+      stages: {
+        ...stages,
+        buildRunLog: run => {
+          seen.push({ kept: run.kept.length, final: run.finalSegments.length, assets: run.assets.map(a => a.name) });
+          return {
+            entries: [
+              { id: 'w', syncRunId: run.syncRunId, type: 'warning', message: 'pace', timestamp: run.at },
+              { id: 'i', syncRunId: run.syncRunId, type: 'info', message: 'Sync completed', timestamp: run.at },
+            ],
+            silenceErrorCount: 0,
+            noAssetCount: 1,
+          };
+        },
+      },
+      extraLogEntries: (runId, at) => [{ id: 'b', syncRunId: runId, type: 'info', message: 'Cloud billing (bulk build): 42 s worked · about $0.01.', timestamp: at }],
+    }));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(seen).toEqual([{ kept: 1, final: 1, assets: ['vo-log.m4a'] }]);
+    expect(result.project.syncLog!.map(e => e.message)).toEqual(['pace', 'Sync completed', 'Cloud billing (bulk build): 42 s worked · about $0.01.']);
+    const summary = result.project.syncRunSummaries!.at(-1)!;
+    expect(summary.noAssetCount).toBe(1);
+    expect(summary.silenceErrorCount).toBe(0);
+  });
+
+  it('App wires the editor’s builders (one shared run-log function) and the billing line at both call sites', () => {
+    const app = readFileSync(resolve(import.meta.dirname, '..', 'App.tsx'), 'utf-8');
+    expect(app).toContain('buildRunLog: buildFinishRunLog,');
+    const calls = app.split('runFinishPipeline({').slice(1).map(c => c.slice(0, c.indexOf('});')));
+    for (const call of calls) expect(call).toMatch(/extraLogEntries: \(runId, at\) => bulkBillingLog\(/);
+  });
+});

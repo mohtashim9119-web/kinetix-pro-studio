@@ -101,6 +101,8 @@ export const BULK_COPY = {
   failedCount: (n: number): string => `${n} failed`,
   /** U6 — the one toast a finished row raises. It never opens anything. */
   ready: (name: string): string => `${name} ready`,
+  /** The project's sync log entry for its bulk cloud work. */
+  billingLog: (cost: string): string => `Cloud billing (bulk build): ${cost}.`,
   collapseGroup: (name: string): string => `Collapse ${name}`,
   expandGroup: (name: string): string => `Expand ${name}`,
 } as const;

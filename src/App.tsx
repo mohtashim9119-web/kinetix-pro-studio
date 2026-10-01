@@ -174,6 +174,7 @@ import {
   asApplySyncResult,
   STAGED_FOR_ANOTHER_PROJECT_MESSAGE,
   type FinishStages,
+  type FinishRunLog,
 } from './services/finishPipeline';
 import { verifyBulkRecords } from './services/bulkRepair';
 import { defaultBulkRepairDeps as bulkRepairDeps } from './services/bulkRepairDeps';
@@ -403,6 +404,7 @@ import { SpeedBadge, SPEED_LADDER } from './components/SpeedBadge';
 import { ProjectDashboard } from './components/ProjectDashboard';
 import { BulkProjectsModal } from './components/BulkProjectsModal';
 import { bulkBatchRunner } from './services/bulkSyncQueue';
+import { cloudCostLine } from './services/cloudQueueJob';
 import { NewProjectModal, type NewProjectChoices } from './components/NewProjectModal';
 import { ProjectSettingsModal } from './components/ProjectSettingsModal';
 import { AppSettingsModal } from './components/AppSettingsModal';
@@ -1907,6 +1909,51 @@ function isTextEntryElement(el: Element | null): boolean {
   return false;
 }
 
+/**
+ * A bulk-built run's sync log: the SAME report entries, from the same builders
+ * and in the same order, that the editor's Build Timeline writes for a run.
+ * Report-only — every check here reads the run and never changes a timing.
+ */
+function buildFinishRunLog(run: FinishRunLog): { entries: SyncLogEntry[]; silenceErrorCount: number; noAssetCount?: number } {
+  const { syncRunId, at, aligned, kept, keptAlignments } = run;
+  const skipped = run.skipped as SkippedSegmentRecord[];
+  const words = run.parsed.reduce((n, s) => n + (s.text?.trim() ? s.text.trim().split(/\s+/).length : 0), 0);
+  const wpmCheckEntry = buildWpmCheckLogEntry(syncRunId, words, run.audioDuration, at);
+  const grouped = (entry: SyncLogEntry | undefined): SyncLogEntry[] => (entry ? [entry] : []);
+  const entries: SyncLogEntry[] = [
+    ...(wpmCheckEntry ? [wpmCheckEntry] : []),
+    ...(aligned.silenceError ? [buildSilenceErrorEntry(syncRunId, aligned.silenceError, at)] : []),
+    ...(aligned.malformedTokenCount > 0
+      ? [buildMalformedTokenEntry(syncRunId, aligned.malformedTokenCount, aligned.totalTokenCount, at)]
+      : []),
+    ...(skipped.length > 0 ? buildSkipLogEntries(syncRunId, skipped, at) : []),
+    ...grouped(buildGroupedViolationEntry(syncRunId, validateWordCoverage(kept, keptAlignments), at)),
+    ...grouped(buildGroupedViolationEntry(syncRunId, validateTailWords(kept, keptAlignments), at)),
+    ...grouped(buildGroupedViolationEntry(syncRunId, validateNumericWords(kept, keptAlignments), at)),
+    ...grouped(buildGroupedViolationEntry(syncRunId, validateSceneDensity(kept, keptAlignments), at)),
+    buildSyncInfoEntry(syncRunId, aligned.segments.length, kept.length, skipped.length, at),
+  ];
+  const noAssetNumbers = run.finalSegments.map((seg, i) => (seg.assetId ? null : i + 1)).filter((n): n is number => n !== null);
+  const noAssetEntry = buildNoAssetSummaryEntry(
+    syncRunId, noAssetNumbers, run.finalSegments.length, run.assets.filter(a => a.type !== 'audio').length, at,
+  );
+  if (noAssetEntry) entries.push(noAssetEntry);
+  entries.push(...buildFreezeFrameEntries(syncRunId, run.finalSegments, run.assets, at));
+  return {
+    entries,
+    silenceErrorCount: aligned.silenceError ? 1 : 0,
+    ...(noAssetNumbers.length > 0 ? { noAssetCount: noAssetNumbers.length } : {}),
+  };
+}
+
+/** The bulk batch's cloud billing line for this project's sync log (what the
+ *  drawer showed while it ran). Nothing when the row used no cloud time. */
+function bulkBillingLog(projectId: string, syncRunId: string, at: number): SyncLogEntry[] {
+  const workerSec = bulkBatchRunner().snapshot().find(r => r.id === projectId)?.workerSec ?? 0;
+  if (!(workerSec > 0)) return [];
+  return [makeSyncLogEntry(syncRunId, 'info', BULK_COPY.billingLog(cloudCostLine(workerSec)), undefined, at)];
+}
+
 const FINISH_STAGES: FinishStages = {
   parseProjectData,
   evaluateCoverageGate,
@@ -1914,6 +1961,7 @@ const FINISH_STAGES: FinishStages = {
   retileCoveredSegments,
   emptySceneDocAbortMessage,
   buildSyncInfoEntry,
+  buildRunLog: buildFinishRunLog,
 };
 
 export default function App() {
@@ -4138,6 +4186,7 @@ export default function App() {
     if (liveProjectRef.current.bulkContext) {
       setIsProcessing(true);
       try {
+        const bulkProjectId = liveProjectRef.current.id;
         const result = await runFinishPipeline({
           project: liveProjectRef.current,
           staged,
@@ -4145,6 +4194,7 @@ export default function App() {
           stages: FINISH_STAGES,
           persistVoiceover: (pid, file) => persistFileToAsset(pid, file, 'audio'),
           persistMedia: persistStagedMedia,
+          extraLogEntries: (runId, at) => bulkBillingLog(bulkProjectId, runId, at),
           probeDuration: asset => resolveVoiceoverDuration(asset, liveProjectRef.current.id),
           now: Date.now,
         });
@@ -8561,6 +8611,7 @@ export default function App() {
             stages: FINISH_STAGES,
             persistVoiceover: (pid, file) => persistFileToAsset(pid, file, 'audio'),
             persistMedia: persistStagedMedia,
+            extraLogEntries: (runId, at) => bulkBillingLog(projectId, runId, at),
             probeDuration: asset => resolveVoiceoverDuration(asset, projectId),
             save: async p => { await saveProject(p); },
             onCheckpoint: c => runner.noteCheckpoint(projectId, c),

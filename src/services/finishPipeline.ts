@@ -74,11 +74,35 @@ export interface FinishStages {
     skippedSegments: number,
     timestamp: number,
   ) => SyncLogEntry;
+  /**
+   * The run's full sync log — the same report entries the editor's Build
+   * Timeline writes (WPM, silence / malformed-token, skips, word coverage,
+   * tail, numbers, scene density, the summary, no-asset, freeze frames).
+   * Report-only: it reads the run, it never changes a timing. Absent: the
+   * summary line alone.
+   */
+  buildRunLog?: (run: FinishRunLog) => { entries: SyncLogEntry[]; silenceErrorCount: number; noAssetCount?: number };
+}
+
+/** Everything one finished run's log is built from. */
+export interface FinishRunLog {
+  syncRunId: string;
+  at: number;
+  parsed: readonly VideoSegment[];
+  audioDuration: number;
+  aligned: AlignFromCacheResult;
+  kept: VideoSegment[];
+  keptAlignments: SegmentAlignment[];
+  skipped: { segmentIndex: number }[];
+  finalSegments: VideoSegment[];
+  assets: Asset[];
 }
 
 export interface FinishPipelineInput {
   project: Project;
   staged: StagedFiles;
+  /** Extra entries for this run's log (the bulk batch's cloud billing line). */
+  extraLogEntries?: (syncRunId: string, at: number) => SyncLogEntry[];
   /** Owner stamped on the staged set. Null means "not stamped" (empty or first load). */
   stagedOwnerId: string | null;
   stages: FinishStages;
@@ -292,9 +316,18 @@ export async function runFinishPipeline(input: FinishPipelineInput): Promise<Fin
     lastSyncSpine: audioHash !== undefined ? { audioHash, scriptHash, engineKey } : start.lastSyncSpine,
     unappliedTranscript: undefined,
   };
+  const runLog = stages.buildRunLog
+    ? stages.buildRunLog({
+      syncRunId, at: stampAt, parsed, audioDuration, aligned, kept, keptAlignments, skipped,
+      finalSegments: finalTimed, assets: allAssets,
+    })
+    : {
+      entries: [stages.buildSyncInfoEntry(syncRunId, aligned.segments.length, kept.length, skipped.length, stampAt)],
+      silenceErrorCount: 0,
+    };
   next = appendSyncLogEntries(
     next,
-    [stages.buildSyncInfoEntry(syncRunId, aligned.segments.length, kept.length, skipped.length, stampAt)],
+    [...runLog.entries, ...(input.extraLogEntries?.(syncRunId, stampAt) ?? [])],
     {
       syncRunId,
       timestamp: stampAt,
@@ -302,6 +335,8 @@ export async function runFinishPipeline(input: FinishPipelineInput): Promise<Fin
       coveredSegments: kept.length,
       skippedSegments: skipped.length,
       aborted: false,
+      silenceErrorCount: runLog.silenceErrorCount,
+      ...(runLog.noAssetCount !== undefined ? { noAssetCount: runLog.noAssetCount } : {}),
     },
   );
 
