@@ -266,14 +266,16 @@ export function ProjectDashboard({
         </div>
 
         <div className="kxd-actions">
-          {onBulkStart && parseProjectData && (
+          {/* v1.2.2 — ONE bulk door. With a batch it opens THAT batch (a
+              mid-run reopen must never ask for a new quantity); creating a
+              new batch lives inside the drawer. With none, it creates. */}
+          {onBulkStart && batchRows.length > 0 ? (
+            <button className="kxd-btn kxd-btn-quiet" data-testid="dashboard-bulk-batch" onClick={() => onBulkStart(0)}>
+              {BULK_COPY.viewBatch(batchRows.length)}
+            </button>
+          ) : onBulkStart && parseProjectData && (
             <button className="kxd-btn kxd-btn-quiet" data-testid="dashboard-bulk-projects" onClick={() => setBulkAsking(true)}>
               {BULK_COPY.button}
-            </button>
-          )}
-          {onBulkStart && batchRows.length > 0 && (
-            <button className="kxd-btn kxd-btn-quiet" data-testid="dashboard-bulk-batch" onClick={() => onBulkStart(0)}>
-              {BULK_COPY.batchButton(batchRows.length)}
             </button>
           )}
           <button className="kxd-btn kxd-btn-accent" onClick={onNewProject}>

@@ -41,7 +41,26 @@ export interface BatchRow {
   checkpoint?: BulkCheckpoint;
   /** `audioHash|scriptHash|engineKey` the checkpoint was written against. */
   contentKey?: string;
+  /** v1.2.2 — finished on the cloud, but the operator was busy in the editor,
+   *  so the flip into this project was deferred: it waits for its own Open
+   *  ("ready — one click to finish") instead of finishing on its own. */
+  awaitingOpen?: boolean;
 }
+
+export interface FinishRequest {
+  /** The operator asked for this row (its Open): no deferral, no return trip. */
+  userInitiated: boolean;
+}
+
+export interface FinishResult {
+  ok: boolean;
+  message?: string;
+  /** Not run (the operator is busy, or navigated mid-finish): wait for Open. */
+  deferred?: boolean;
+}
+
+/** The status line of a deferred row. */
+export const READY_TO_FINISH = 'Ready — one click to finish';
 
 /**
  * Stages still to run. A checkpoint skips what the gateway cache already
@@ -78,7 +97,7 @@ export class BulkBatchRunner {
   private rows: BatchRow[] = [];
   private listeners = new Set<() => void>();
   private view: readonly BatchRow[] = [];
-  private finalize: ((id: string) => Promise<{ ok: boolean; message?: string }>) | undefined;
+  private finalize: ((id: string, req: FinishRequest) => Promise<FinishResult>) | undefined;
   private finishEnabled = 0;
   private chain: Promise<void> = Promise.resolve();
   private finishing = new Set<string>();
@@ -184,7 +203,7 @@ export class BulkBatchRunner {
   }
 
   /** App wires the editor-side finish (open the project, Build Timeline, save). */
-  setFinalizer(f: (id: string) => Promise<{ ok: boolean; message?: string }>): void {
+  setFinalizer(f: (id: string, req: FinishRequest) => Promise<FinishResult>): void {
     this.finalize = f;
     this.pumpFinish();
   }
@@ -231,26 +250,62 @@ export class BulkBatchRunner {
     }
   }
 
+  // Rows finish ONE AT A TIME on one promise chain — never stacked. A row the
+  // operator deferred (busy in the editor) waits for its own Open.
   private pumpFinish(): void {
     if (!this.finalize || this.finishEnabled <= 0) return;
     for (const row of this.rows) {
-      if (row.phase !== 'cloud-done' || this.finishing.has(row.id)) continue;
+      if (row.phase !== 'cloud-done' || row.awaitingOpen || this.finishing.has(row.id)) continue;
       this.finishing.add(row.id);
-      this.chain = this.chain.then(() => this.finishOne(row.id));
+      this.chain = this.chain.then(() => this.finishOne(row.id, false));
     }
   }
 
-  private async finishOne(id: string): Promise<void> {
+  /** The operator's Open on a row that is built on the cloud: finish it now
+   *  (after whatever row is finishing), into the editor, and stay there. */
+  finishNow(id: string): boolean {
+    const row = this.rows.find(r => r.id === id);
+    if (!row || row.phase !== 'cloud-done' || !this.finalize) return false;
+    if (row.awaitingOpen) { row.awaitingOpen = false; row.message = undefined; this.commit(); }
+    if (this.finishing.has(id)) return true;
+    this.finishing.add(id);
+    this.chain = this.chain.then(() => this.finishOne(id, true));
+    return true;
+  }
+
+  /** A record the bulk guard reset (`bulkRepair.ts`): rebuild it from its own
+   *  files. Its cloud work is cached, so it goes straight to finishing. */
+  requeueForRebuild(id: string, name: string, message: string): void {
+    let row = this.rows.find(r => r.id === id);
+    if (!row) { row = { id, name, phase: 'cloud-done' }; this.rows.push(row); }
+    row.phase = 'cloud-done';
+    row.checkpoint = 'aligned';
+    row.awaitingOpen = false;
+    row.message = message;
+    this.commit();
+    this.pumpFinish();
+  }
+
+  private async finishOne(id: string, userInitiated: boolean): Promise<void> {
     try {
       const row = this.rows.find(r => r.id === id);
       if (!row || row.phase !== 'cloud-done') return;
       // Window closed since this was queued: leave it for next time.
-      if (this.finishEnabled <= 0 || !this.finalize) return;
+      if ((!userInitiated && this.finishEnabled <= 0) || !this.finalize) return;
+      if (!userInitiated && row.awaitingOpen) return;
       if (!this.deps.exists(id)) { this.forget([id]); return; }
       this.set(id, 'finishing');
-      let result: { ok: boolean; message?: string };
-      try { result = await this.finalize(id); } catch (err) { result = { ok: false, message: err instanceof Error ? err.message : String(err) }; }
-      if (!this.rows.some(r => r.id === id)) return; // deleted meanwhile
+      let result: FinishResult;
+      try { result = await this.finalize(id, { userInitiated }); } catch (err) { result = { ok: false, message: err instanceof Error ? err.message : String(err) }; }
+      const after = this.rows.find(r => r.id === id);
+      if (!after) return; // deleted meanwhile
+      if (result.deferred) {
+        after.phase = 'cloud-done';
+        after.awaitingOpen = true;
+        after.message = READY_TO_FINISH;
+        this.commit();
+        return;
+      }
       this.set(id, result.ok ? 'done' : 'finish-failed', result.ok ? undefined : result.message);
       if (result.ok) {
         const row = this.rows.find(r => r.id === id);

@@ -38,6 +38,8 @@ if (typeof (globalThis as { ResizeObserver?: unknown }).ResizeObserver === 'unde
 
 const ROW_A = 'bulk-row-a';
 const ROW_B = 'bulk-row-b';
+const ROW_C = 'bulk-row-c';
+const AUTO = { userInitiated: false } as const;
 
 function meta(id: string, name: string): ProjectMeta {
   return { id, name, savedAt: Date.now(), segmentCount: 0 };
@@ -57,7 +59,7 @@ vi.mock('./services/projectStore', async () => {
   const actual = await vi.importActual<typeof import('./services/projectStore')>('./services/projectStore');
   return {
     ...actual,
-    loadAllMetas: () => [meta(ROW_A, 'Row A'), meta(ROW_B, 'Row B')],
+    loadAllMetas: () => [meta(ROW_A, 'Row A'), meta(ROW_B, 'Row B'), meta(ROW_C, 'Row C')],
     loadProjectDetailed: async (id: string) => {
       const p = stored.get(id);
       return p ? { ok: true, project: p, savedAt: Date.now() } : null;
@@ -161,7 +163,7 @@ async function seedStaged(projectId: string, tag: string): Promise<void> {
 
 let container: HTMLDivElement;
 let root: Root;
-let finalizer: ((id: string) => Promise<{ ok: boolean; message?: string }>) | undefined;
+let finalizer: ((id: string, req: { userInitiated: boolean }) => Promise<{ ok: boolean; message?: string; deferred?: boolean }>) | undefined;
 
 function editorProjectId(): string | null {
   return container.querySelector('[data-testid="editor-root"]')?.getAttribute('data-project-id') ?? null;
@@ -176,10 +178,10 @@ beforeEach(async () => {
   stagedRows.clear();
   stored.set(ROW_A, bulkProject(ROW_A, 'Row A'));
   stored.set(ROW_B, bulkProject(ROW_B, 'Row B'));
-  await deleteAllStagedForProject(ROW_A);
-  await deleteAllStagedForProject(ROW_B);
+  stored.set(ROW_C, bulkProject(ROW_C, 'Row C'));
   await seedStaged(ROW_A, 'A');
   await seedStaged(ROW_B, 'B');
+  await seedStaged(ROW_C, 'C');
   const runner = bulkBatchRunner();
   vi.spyOn(runner, 'setFinalizer').mockImplementation(f => { finalizer = f; });
   container = document.createElement('div');
@@ -208,7 +210,7 @@ describe('bulk finish — every row is built from its OWN inputs', () => {
     readyTrace.length = 0;
     liveProjectId = ROW_B;
     let done = false;
-    void finalizer!(ROW_B).then(() => { done = true; });
+    void finalizer!(ROW_B, AUTO).then(() => { done = true; });
     for (let i = 0; i < 60 && !readyTrace.some(t => t.startsWith('adopt=')) && !done; i++) await flush(50);
     expect(
       readyTrace.find(t => t.startsWith('adopt=')),
@@ -232,7 +234,7 @@ describe('bulk finish — every row is built from its OWN inputs', () => {
     liveProjectId = ROW_B;
     let done = false;
     let finishResult: { ok: boolean; message?: string } | undefined;
-    void finalizer!(ROW_B).then(r => { done = true; finishResult = r; });
+    void finalizer!(ROW_B, AUTO).then(r => { done = true; finishResult = r; });
     for (let i = 0; i < 60 && !scriptReads.some(r => r.projectId === ROW_B) && !done; i++) await flush(50);
 
     expect(editorProjectId()).toBe(ROW_B);
@@ -250,4 +252,86 @@ describe('bulk finish — every row is built from its OWN inputs', () => {
     ).not.toContain('vo-A.m4a');
     void finishResult;
   }, 20_000);
+
+  it('20 runs × 3 distinct cached rows, finished in order from the dashboard: each row reads only its own files, and the operator ends where they were', async () => {
+    const rows = [[ROW_A, 'A'], [ROW_B, 'B'], [ROW_C, 'C']] as const;
+    for (let run = 0; run < 20; run += 1) {
+      scriptReads.length = 0;
+      assetWrites.length = 0;
+      expect(container.querySelector('[data-testid="project-grid"]'), `run ${run}: not on the dashboard`).not.toBeNull();
+      for (const [id] of rows) {
+        liveProjectId = id;
+        let done = false;
+        void finalizer!(id, AUTO).then(() => { done = true; });
+        for (let i = 0; i < 100 && !done; i++) await flush(20);
+        expect(done, `run ${run}: ${id} never settled`).toBe(true);
+      }
+      for (const [id, tag] of rows) {
+        const reads = scriptReads.filter(r => r.projectId === id);
+        expect(reads.length, `run ${run}: Build Timeline never ran for ${id}`).toBeGreaterThan(0);
+        for (const r of reads) expect({ script: r.script, scene: r.scene }, `run ${run}: ${id}`).toEqual({ script: `script ${tag}`, scene: `[Scene 1] scene ${tag}` });
+        const vo = assetWrites.filter(w => w.projectId === id).map(w => w.name);
+        expect(vo.every(n => n === `vo-${tag}.m4a`), `run ${run}: ${id} persisted ${vo.join(', ')}`).toBe(true);
+      }
+      // Sequential and returned: back on the dashboard, nothing stacked open.
+      expect(editorProjectId(), `run ${run}: finishing left the editor open`).toBeNull();
+    }
+  }, 120_000);
+
+  it('an operator ACTIVELY editing is not flipped away: the row is deferred and the editor stays put', async () => {
+    const card = container.querySelector<HTMLElement>(`[data-testid="project-card-${ROW_A}"]`);
+    await act(async () => { card!.click(); });
+    await flush();
+    expect(editorProjectId()).toBe(ROW_A);
+    // They are working in the editor.
+    await act(async () => {
+      container.querySelector('[data-testid="editor-root"]')!.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+    });
+    const result = await finalizer!(ROW_B, AUTO);
+    expect(result.deferred).toBe(true);
+    await flush();
+    expect(editorProjectId()).toBe(ROW_A);
+    expect(scriptReads.filter(r => r.projectId === ROW_B)).toEqual([]);
+  });
+
+  it('their own Open finishes a row even while they are editing, and stays in that project', async () => {
+    const card = container.querySelector<HTMLElement>(`[data-testid="project-card-${ROW_A}"]`);
+    await act(async () => { card!.click(); });
+    await flush();
+    await act(async () => {
+      container.querySelector('[data-testid="editor-root"]')!.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+    });
+    liveProjectId = ROW_B;
+    let done = false;
+    void finalizer!(ROW_B, { userInitiated: true }).then(() => { done = true; });
+    for (let i = 0; i < 100 && !done; i++) await flush(20);
+    expect(scriptReads.filter(r => r.projectId === ROW_B).map(r => r.script)).toEqual(['script B']);
+    expect(editorProjectId()).toBe(ROW_B);
+  });
+
+  it('after finishing a row the editor returns to the project the operator was on', async () => {
+    const card = container.querySelector<HTMLElement>(`[data-testid="project-card-${ROW_A}"]`);
+    await act(async () => { card!.click(); });
+    await flush();
+    liveProjectId = ROW_B;
+    let done = false;
+    void finalizer!(ROW_B, AUTO).then(() => { done = true; });
+    for (let i = 0; i < 100 && !done; i++) await flush(20);
+    expect(scriptReads.some(r => r.projectId === ROW_B)).toBe(true);
+    await flush();
+    expect(editorProjectId()).toBe(ROW_A);
+  });
+
+  it('an operator who opens something mid-finish is not dragged back: finishing yields to them', async () => {
+    liveProjectId = ROW_B;
+    let result: { ok: boolean; deferred?: boolean } | undefined;
+    void finalizer!(ROW_B, AUTO).then(r => { result = r; });
+    // They open row C from the dashboard while B's finish is still switching.
+    const card = container.querySelector<HTMLElement>(`[data-testid="project-card-${ROW_C}"]`);
+    await act(async () => { card!.click(); });
+    for (let i = 0; i < 100 && !result; i++) await flush(20);
+    await flush();
+    expect(editorProjectId()).toBe(ROW_C);
+    expect(container.querySelector('[data-testid="project-grid"]')).toBeNull();
+  });
 });

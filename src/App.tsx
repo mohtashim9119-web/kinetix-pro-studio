@@ -167,7 +167,10 @@ import {
   subscribeSyncIntents,
 } from './services/cloudSyncIntent';
 import { decideStagingStart, isBulkAutoFireSuppressed, peekCloudTranscript } from './services/bulkContext';
-import { lookupBatchTranscript, runBulkProjectFinish } from './services/bulkFinish';
+import { isOperatorActivelyEditing, lookupBatchTranscript, runBulkProjectFinish } from './services/bulkFinish';
+import type { FinishRequest, FinishResult } from './services/bulkBatch';
+import { verifyBulkRecords } from './services/bulkRepair';
+import { defaultBulkRepairDeps as bulkRepairDeps } from './services/bulkRepairDeps';
 import { getStagedFilesForProject } from './services/stagedFilesStore';
 import { isStagedEmpty, restoreStagedFiles } from './services/stagedFilesPersist';
 import { takeClientFaStamp, withClientFaCache } from './services/clientFaCache';
@@ -1152,6 +1155,8 @@ export const NO_SCENE_DOC_MESSAGE = 'No scene doc is loaded, so there is nothing
  *  ever supplied one; states the requirement to build a timeline. */
 export const NO_VOICEOVER_MESSAGE =
   'A voiceover track is required to build the timeline. Add a voiceover file and try again.';
+/** v1.2.2 — a bulk record the guard reset, waiting to rebuild from its own files. */
+export const BULK_REPAIRED_MESSAGE = 'Repaired — rebuilding from its own files';
 /** v1.2.2 — the staged files on hand were staged for a different project. */
 export const STAGED_FOR_ANOTHER_PROJECT_MESSAGE =
   'The staged files belong to a different project, so nothing was built. Reopen this project and try again.';
@@ -2286,7 +2291,20 @@ export default function App() {
   const bulkBatchRows = useSyncExternalStore(l => bulkBatch.subscribe(l), () => bulkBatch.snapshot());
   // ONE open logic for every door into the drawer (the dashboard's "Bulk builds
   // (n)" button and the editor handle): un-hide, and mount it if it is not.
-  const openBulkDrawer = useCallback((count: number) => { setBulkHidden(false); setBulkRowCount(count); }, []);
+  //
+  // Mounted once, then only hidden: a create asked for while it is mounted
+  // (the dashboard with no batch yet) adds rows to it instead of a remount.
+  const bulkMountedRef = useRef(false);
+  const [bulkAddRows, setBulkAddRows] = useState<{ count: number; seq: number } | undefined>(undefined);
+  const openBulkDrawer = useCallback((count: number) => {
+    setBulkHidden(false);
+    if (bulkMountedRef.current) {
+      if (count > 0) setBulkAddRows(a => ({ count, seq: (a?.seq ?? 0) + 1 }));
+      return;
+    }
+    bulkMountedRef.current = true;
+    setBulkRowCount(count);
+  }, []);
   const [dashboardVersion, setDashboardVersion] = useState(0);
   const [showProjectSettingsModal, setShowProjectSettingsModal] = useState(false);
   // WS2 T4.1 — the machine-global settings surface. Separate flag from
@@ -2384,6 +2402,11 @@ export default function App() {
   const pendingVoiceoverRef = useRef<PendingVoiceoverSync | null>(null);
   /** While finish owns this project, switch-time cancel must not abort its transcription. */
   const bulkFinishGuardRef = useRef<string | null>(null);
+  /** v1.2.2 — bumped by every switch the OPERATOR makes (never bulk finish's
+   *  own), so finishing knows they opened something and must not drag them back. */
+  const userNavSeqRef = useRef(0);
+  /** v1.2.2 — the operator's last pointer/key input outside the bulk drawer. */
+  const lastEditorInputAtRef = useRef(0);
   // Wave 3 U4.6 — the staged voiceover's transcript readiness, mirrored by
   // an effect below, and the early-click waiters it wakes.
   const stagingTranscriptStateRef = useRef<StagingTranscriptState>({ ready: true, paused: false });
@@ -8154,6 +8177,20 @@ export default function App() {
     await refreshDegradedRecovery(projectId);
   }, [degradedRecovery, folderRelink]);
 
+  // Editor → dashboard: save, forget the open project, clear history.
+  const returnToDashboard = (): void => {
+    const current = liveProjectRef.current;
+    if (current.confirmed) void saveNow();
+    clearLastOpenedProjectId();
+    clearEditorSessionActive();
+    // Owner ruling 2026-08-08: returning to the dashboard clears
+    // history, and re-opening a project starts fresh — so the
+    // persisted copy goes too, not just the in-memory stack.
+    setHistory(emptyHistory<Project>());
+    void clearPersistedHistory(current.id);
+    setShowDashboard(true);
+  };
+
   const handleSwitchProject = async (
     id: string,
     opts?: { preserveUiState?: boolean; forceReload?: boolean },
@@ -8423,8 +8460,11 @@ export default function App() {
   // staged files to restore and its transcript to be adopted, run Apply Sync,
   // save. After it the project is a fully built timeline on disk, so Open
   // project needs no second click. Refs, because the modal outlives renders.
-  const bulkLatest = useRef({ switchProject: handleSwitchProject, applySync: handleApplySyncFromFiles, saveNow });
-  bulkLatest.current = { switchProject: handleSwitchProject, applySync: handleApplySyncFromFiles, saveNow };
+  const bulkLatest = useRef({ switchProject: handleSwitchProject, applySync: handleApplySyncFromFiles, saveNow, returnToDashboard });
+  bulkLatest.current = { switchProject: handleSwitchProject, applySync: handleApplySyncFromFiles, saveNow, returnToDashboard };
+  // v1.2.2 — where the operator is, for finishing that does not fight them.
+  const bulkViewRef = useRef({ showDashboard, isProcessing });
+  bulkViewRef.current = { showDashboard, isProcessing };
   const bulkBuildReadyRef = useRef({ projectId: '', ready: false, built: false, why: '' });
   bulkBuildReadyRef.current = {
     projectId: project.id,
@@ -8437,10 +8477,34 @@ export default function App() {
       && stagedFilesOwnerRef.current === project.id
       && transcriptionReady && !applySyncDisabled,
   };
-  const finalizeBulkProject = useCallback(async (id: string): Promise<{ ok: boolean; message?: string }> => {
+  // v1.2.2 interim finishing (the operator's planned workflow supersedes it):
+  //  - rows finish one at a time (the runner's chain);
+  //  - an operator ACTIVELY editing is never flipped away: the row waits as
+  //    "ready — one click to finish" for its own Open;
+  //  - after a row finishes, the app returns to where the operator was,
+  //    unless they opened something since (then it yields mid-finish too);
+  //  - the finished record is proven against its own staged files.
+  const finalizeBulkProject = useCallback(async (id: string, req: FinishRequest): Promise<FinishResult> => {
+    const view = bulkViewRef.current;
+    if (!req.userInitiated && isOperatorActivelyEditing({
+      editorOpen: !view.showDashboard,
+      syncRunning: view.isProcessing,
+      msSinceInput: Date.now() - lastEditorInputAtRef.current,
+    })) {
+      return { ok: false, deferred: true };
+    }
+    const origin = {
+      dashboard: view.showDashboard,
+      projectId: liveProjectRef.current.id,
+      confirmed: liveProjectRef.current.confirmed === true,
+      nav: userNavSeqRef.current,
+    };
+    const navigated = (): boolean => userNavSeqRef.current !== origin.nav;
     bulkFinishGuardRef.current = id;
+    let result: FinishResult;
     try {
-      return await runBulkProjectFinish(id, {
+      result = await runBulkProjectFinish(id, {
+        shouldYield: navigated,
         switchProject: projectId => bulkLatest.current.switchProject(projectId),
         adoptCachedTranscript: async projectId => {
           // `liveProjectRef`, not `projectRef`: the switch has just resolved
@@ -8502,6 +8566,18 @@ export default function App() {
     } finally {
       bulkFinishGuardRef.current = null;
     }
+    // The record just written must be this row's own content.
+    if (result.ok) {
+      const [verdict] = await verifyBulkRecords([id], bulkRepairDeps());
+      if (verdict?.status === 'repaired' || verdict?.status === 'repair-failed') {
+        result = { ok: false, message: `The timeline was not built from this project's own files (${verdict.detail}). Press Retry.` };
+      }
+    }
+    if (!req.userInitiated && !result.deferred && !navigated()) {
+      if (origin.dashboard) bulkLatest.current.returnToDashboard();
+      else if (origin.projectId !== id && origin.confirmed) await bulkLatest.current.switchProject(origin.projectId);
+    }
+    return result;
   }, [handleVoiceoverStaged, setProject]);
   // Wave 3 U7.8 — the batch is a persistent background job (bulkBatch.ts):
   // App gives it the editor-side finish, and on boot it picks up where it stopped.
@@ -8510,8 +8586,38 @@ export default function App() {
   useEffect(() => {
     if (isHydrating || bulkResumed.current) return;
     bulkResumed.current = true;
-    bulkBatchRunner(parseProjectData).resume();
+    const runner = bulkBatchRunner(parseProjectData);
+    runner.resume();
+    // v1.2.2 standing guard: every built bulk record in the batch is proven
+    // against its OWN staged files; one built from another project's files
+    // (the v1.2.1 cross-write) is reset and queued to rebuild from its own.
+    const ids = runner.snapshot().filter(r => r.phase === 'done' || r.checkpoint === 'built').map(r => r.id);
+    if (ids.length === 0) return;
+    void verifyBulkRecords(ids, bulkRepairDeps()).then(verdicts => {
+      const repaired = verdicts.filter(v => v.status === 'repaired');
+      for (const v of verdicts) if (v.status !== 'ok') console.warn('[kinetix] bulk record guard:', v);
+      for (const v of repaired) runner.requeueForRebuild(v.id, v.name, BULK_REPAIRED_MESSAGE);
+      if (repaired.length > 0) {
+        showToast(`${repaired.length} bulk project${repaired.length === 1 ? ' was' : 's were'} built from another project's files. ` +
+          'Reset; each rebuilds from its own files when you open the batch.');
+      }
+    });
   }, [isHydrating]);
+  // v1.2.2 — the operator's last input outside the bulk drawer: finishing a
+  // row never flips the editor away from someone actively working in it.
+  useEffect(() => {
+    const onInput = (e: Event): void => {
+      const t = e.target;
+      if (t instanceof Element && t.closest('[data-testid="bulk-modal"], [data-testid="bulk-drawer-handle"]')) return;
+      lastEditorInputAtRef.current = Date.now();
+    };
+    document.addEventListener('pointerdown', onInput, true);
+    document.addEventListener('keydown', onInput, true);
+    return () => {
+      document.removeEventListener('pointerdown', onInput, true);
+      document.removeEventListener('keydown', onInput, true);
+    };
+  }, []);
 
 
   const SHOW_GLOBAL_TEXT_LAYERS_IN_RIGHT_PANEL = false;
@@ -8534,7 +8640,7 @@ export default function App() {
     <ProjectDashboard
       currentProjectId={project.confirmed ? project.id : null}
       openingProjectId={openingProjectId}
-      onSelectProject={(id) => { void handleSwitchProject(id); }}
+      onSelectProject={(id) => { userNavSeqRef.current += 1; void handleSwitchProject(id); }}
       onNewProject={() => setShowNewProjectModal(true)}
       onOpenAppSettings={() => setShowAppSettingsModal(true)}
       onAssetCleanupFailed={showToast}
@@ -8665,15 +8771,8 @@ export default function App() {
             onApplyOverlayFilterPreset={(v) => setProject(p => ({ ...p, globalOverlayFilter: v as string }))}
             onApplyOverlayConfigPreset={(v) => setProject(p => ({ ...p, globalOverlayConfig: { ...p.globalOverlayConfig, ...v } }))}
             onBackToProjects={() => {
-              if (project.confirmed) void saveNow();
-              clearLastOpenedProjectId();
-              clearEditorSessionActive();
-              // Owner ruling 2026-08-08: returning to the dashboard clears
-              // history, and re-opening a project starts fresh — so the
-              // persisted copy goes too, not just the in-memory stack.
-              setHistory(emptyHistory<Project>());
-              void clearPersistedHistory(project.id);
-              setShowDashboard(true);
+              userNavSeqRef.current += 1;
+              returnToDashboard();
             }}
             projectName={project.name}
             onRename={(name) => setProject(p => ({ ...p, name }))}
@@ -9687,10 +9786,16 @@ export default function App() {
         <BulkProjectsModal
           initialCount={bulkRowCount}
           hidden={bulkHidden}
+          addRowsSignal={bulkAddRows}
           createBlankProject={makeDefaultProject}
           parseProjectData={parseProjectData}
           onProjectsCreated={() => setDashboardVersion(v => v + 1)}
-          onOpenProject={id => { setBulkHidden(true); void handleSwitchProject(id); }}
+          onOpenProject={id => { userNavSeqRef.current += 1; setBulkHidden(true); void handleSwitchProject(id); }}
+          onFinishRow={id => {
+            userNavSeqRef.current += 1;
+            setBulkHidden(true);
+            if (!bulkBatchRunner(parseProjectData).finishNow(id)) void handleSwitchProject(id);
+          }}
           onClose={() => setBulkHidden(true)}
         />
       )}

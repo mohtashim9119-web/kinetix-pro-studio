@@ -67,6 +67,10 @@ export const BULK_COPY = {
   addProject: 'Add project',
   clearFinished: 'Clear finished',
   batchButton: (n: number): string => `Bulk builds (${n})`,
+  /** v1.2.2 — the dashboard's one bulk door while a batch exists. */
+  viewBatch: (n: number): string => `View batch (${n})`,
+  /** v1.2.2 — create-new, inside the drawer. */
+  newBatch: 'New batch',
   removeProject: 'Remove project',
   clearFiles: 'Clear files',
   removeFile: (name: string): string => `Remove ${name}`,
