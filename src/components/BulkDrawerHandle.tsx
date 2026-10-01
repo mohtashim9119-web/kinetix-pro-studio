@@ -8,7 +8,7 @@
 //
 // The drawer hides and never closes, and opening a row's project hides it — so
 // once you are in the editor the dashboard's "Bulk builds (n)" button is out of
-// reach. This slim right-edge tab is the same door from the editor: present
+// reach. This slim left-edge tab (the drawer's own edge) is the same door from the editor: present
 // whenever a batch exists, carrying the batch's project count, and gone while
 // the drawer itself is open. It sits on the DRAWER layer (above editor
 // content, below every modal) and is rendered only when the caller says the
@@ -36,8 +36,8 @@ export function BulkDrawerHandle({ count, drawerOpen, onOpen }: BulkDrawerHandle
       onClick={onOpen}
       title={BULK_COPY.batchButton(count)}
       aria-label={BULK_COPY.batchButton(count)}
-      className={`fixed right-0 top-1/2 -translate-y-1/2 ${Z.drawer} flex flex-col items-center gap-2
-                  rounded-l-xl border border-r-0 border-[#282828] bg-[#111] px-1.5 py-3 shadow-2xl
+      className={`fixed left-0 top-1/2 -translate-y-1/2 ${Z.drawer} flex flex-col items-center gap-2
+                  rounded-r-xl border border-l-0 border-[#282828] bg-[#111] px-1.5 py-3 shadow-2xl
                   text-gray-400 hover:text-white hover:border-gray-500 transition-colors
                   focus:outline-none focus:ring-2 focus:ring-gray-500`}
     >

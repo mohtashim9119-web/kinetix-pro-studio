@@ -20,7 +20,8 @@ import { BULK_COPY, BULK_MAX_PROJECTS, parseBulkCount } from '../services/bulkCo
 import { BulkRowStore, defaultBulkRowDeps, type BulkRowState } from '../services/bulkRows';
 import type { Project } from '../types';
 import { bulkBatchRunner, cloudSyncQueue } from '../services/bulkSyncQueue';
-import { READY_TO_FINISH, isBatchRowFinal, type BatchRow, type BulkBatchRunner } from '../services/bulkBatch';
+import { READY_TO_FINISH, groupProgress, isBatchRowFinal, type BatchRow, type BulkBatchRunner } from '../services/bulkBatch';
+import { BulkGroupHeader } from './BulkProgress';
 import { CLOUD_USD_PER_WORKER_SEC, type CloudQueueDeps } from '../services/cloudQueueJob';
 import { collectDroppedFiles } from '../services/droppedFiles';
 import { missingSpineSlots } from '../services/buildTimelineGate';
@@ -29,7 +30,7 @@ import { readSyncEngineHost } from '../services/syncEngineHost';
 import { Z } from './overlayLayers';
 
 const SHELL = `fixed inset-0 ${Z.dialog} flex items-center justify-center bg-black/80 backdrop-blur-sm`;
-const DRAWER = `fixed top-0 right-0 ${Z.drawer} flex h-full w-[min(100vw,420px)] flex-col border-l border-[#282828] bg-[#111] shadow-2xl transition-transform duration-200`;
+const DRAWER = `fixed top-0 left-0 ${Z.drawer} flex h-full w-[min(100vw,420px)] flex-col border-r border-[#282828] bg-[#111] shadow-2xl transition-transform duration-200`;
 const LABEL = 'text-[10px] uppercase tracking-widest text-gray-500 font-bold block mb-2';
 const BTN_CANCEL = 'flex-1 bg-transparent border border-[#282828] p-3 rounded-xl text-[10px] font-black uppercase tracking-widest text-gray-500 hover:text-white hover:border-gray-500 transition-all focus:outline-none focus:ring-2 focus:ring-gray-500';
 const BTN_PRIMARY = 'flex-1 bg-[#F27D26] text-white p-3 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-orange-400 transition-all focus:outline-none focus:ring-2 focus:ring-orange-400 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-[#F27D26]';
@@ -342,6 +343,7 @@ export function BulkProjectsModal({
   );
   const snap = useSyncExternalStore(l => queue.subscribe(l), () => queue.snapshot());
   const records = useSyncExternalStore(l => runner.subscribe(l), () => runner.snapshot());
+  const groups = useSyncExternalStore(l => runner.subscribe(l), () => runner.groups());
   const [skips, setSkips] = useState<Record<string, string>>({});
   // v1.2.2 — creating a new batch lives HERE (the dashboard's button reopens
   // the existing one). It adds empty draft rows; running rows are untouched.
@@ -367,6 +369,28 @@ export function BulkProjectsModal({
   const anyFinal = records.some(r => isBatchRowFinal(r.phase));
   const line = queue.batchLine();
 
+  const rowById = new Map(rows.map(r => [r.projectId, r]));
+  const inGroup = new Set(groups.flatMap(g => g.rowIds));
+  const loose = rows.filter(r => !inGroup.has(r.projectId));
+  const renderRow = (row: BulkRowState): React.ReactElement => (
+    <BulkRow
+      key={row.projectId}
+      row={row}
+      item={items.get(row.projectId)}
+      skippedReason={skips[row.projectId]}
+      record={recordById.get(row.projectId)}
+      onName={typed => store?.setTypedName(row.projectId, typed)}
+      onFiles={files => void store?.addFiles(row.projectId, files)}
+      onRemoveFile={fileId => void store?.removeFile(row.projectId, fileId)}
+      onClearFiles={() => void store?.clearFiles(row.projectId)}
+      onRemoveRow={() => void store?.discardRow(row.projectId)}
+      onCancel={() => queue.cancel(row.projectId)}
+      onOpen={() => open(row.projectId)}
+      onFinish={() => finishRow(row.projectId)}
+      onRetry={() => runner.retry(row.projectId)}
+    />
+  );
+
   const build = (): void => {
     void (async () => {
       if (!store) return;
@@ -390,7 +414,7 @@ export function BulkProjectsModal({
 
   return (
     <div
-      className={`${DRAWER} ${hidden ? 'translate-x-full pointer-events-none' : ''}`}
+      className={`${DRAWER} ${hidden ? '-translate-x-full pointer-events-none' : ''}`}
       data-testid="bulk-modal"
       data-hidden={hidden ? 'true' : 'false'}
       aria-hidden={hidden}
@@ -416,26 +440,22 @@ export function BulkProjectsModal({
           </div>
           <p className="text-xs leading-relaxed text-gray-400">{BULK_COPY.modalIntro}</p>
         </div>
-        <ol className="flex-1 min-h-0 overflow-y-auto custom-scrollbar px-8 py-2 space-y-3">
-          {rows.map(row => (
-            <BulkRow
-              key={row.projectId}
-              row={row}
-              item={items.get(row.projectId)}
-              skippedReason={skips[row.projectId]}
-              record={recordById.get(row.projectId)}
-              onName={typed => store?.setTypedName(row.projectId, typed)}
-              onFiles={files => void store?.addFiles(row.projectId, files)}
-              onRemoveFile={fileId => void store?.removeFile(row.projectId, fileId)}
-              onClearFiles={() => void store?.clearFiles(row.projectId)}
-              onRemoveRow={() => void store?.discardRow(row.projectId)}
-              onCancel={() => queue.cancel(row.projectId)}
-              onOpen={() => open(row.projectId)}
-              onFinish={() => finishRow(row.projectId)}
-              onRetry={() => runner.retry(row.projectId)}
-            />
-          ))}
-        </ol>
+        <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar px-8 py-2 space-y-3" data-testid="bulk-groups">
+          {groups.map(group => {
+            const members = group.rowIds.map(id => rowById.get(id)).filter((r): r is BulkRowState => !!r);
+            return (
+              <section key={group.id} data-testid={`bulk-group-section-${group.id}`}>
+                <BulkGroupHeader
+                  group={group}
+                  progress={groupProgress(group, records)}
+                  onToggle={() => runner.setCollapsed(group.id, !group.collapsed)}
+                />
+                {!group.collapsed && <ol className="space-y-3">{members.map(renderRow)}</ol>}
+              </section>
+            );
+          })}
+          {loose.length > 0 && <ol className="space-y-3">{loose.map(renderRow)}</ol>}
+        </div>
         <div className="px-8 pt-4 pb-8 flex-shrink-0">
           <div className="border-t border-white/[0.06] pt-3">
             {line && <p className="text-[11px] leading-snug text-gray-400 mb-2" data-testid="bulk-batch-line">{line}</p>}

@@ -311,3 +311,38 @@ describe('BulkProjectsModal — draft rows', () => {
     finishAtOnce = false;
   });
 });
+
+const seededRunner = (rows: { id: string; name: string; phase: string }[], groups: { id: string; name: string; collapsed: boolean; rowIds: string[] }[]): BulkBatchRunner => {
+  const disk = memStorage();
+  disk.setItem('kinetix:bulk-batch:v1', JSON.stringify({ rows, groups }));
+  return new BulkBatchRunner({ queue: cloudSyncQueue, enqueue: () => {}, exists: () => true, storage: disk });
+};
+
+describe('Bulk UI rebuild U2 — left-edge drawer with group headers', () => {
+  it('the drawer sits on the LEFT edge and slides out to the left when hidden', async () => {
+    const h = store();
+    const { root, host } = await mount(modal(h, 0));
+    const drawer = q(host, 'bulk-modal')!;
+    expect(drawer.className).toContain('left-0');
+    expect(drawer.className).not.toContain('right-0');
+    await act(async () => { root.render(modal(h, 0, { hidden: true })); });
+    expect(q(host, 'bulk-modal')!.className).toContain('-translate-x-full');
+  });
+
+  it('rows render under their group header (ring, n/m done, red dot); collapse hides the rows and persists', async () => {
+    const h = store();
+    const runner = seededRunner(
+      [{ id: 'a', name: 'A', phase: 'done' }, { id: 'b', name: 'B', phase: 'failed' }, { id: 'c', name: 'C', phase: 'done' }, { id: 'd', name: 'D', phase: 'done' }],
+      [{ id: 'g1', name: 'Client A', collapsed: false, rowIds: ['a', 'b'] }, { id: 'g2', name: 'Client B', collapsed: false, rowIds: ['c', 'd'] }],
+    );
+    const { host } = await mount(modal(h, 0, { runner }));
+    const g1 = q(host, 'bulk-group-section-g1')!;
+    expect(g1.querySelector('[data-testid="bulk-group-count-g1"]')!.textContent).toBe('1/2 done');
+    expect(g1.querySelector('[data-testid="bulk-failed-dot"]')!.textContent).toBe('1');
+    expect(g1.querySelectorAll('[data-testid^="bulk-row-"]')).toHaveLength(2);
+    expect(q(host, 'bulk-group-section-g2')!.querySelector('[data-testid="bulk-failed-dot"]')).toBeNull();
+    await act(async () => { (q(host, 'bulk-group-toggle-g1') as HTMLButtonElement).click(); });
+    expect(q(host, 'bulk-group-section-g1')!.querySelectorAll('[data-testid^="bulk-row-"]')).toHaveLength(0);
+    expect(runner.groups()[0]!.collapsed).toBe(true);
+  });
+});

@@ -77,6 +77,12 @@ export const BULK_COPY = {
   filesToggle: (n: number): string => `${n} file${n === 1 ? '' : 's'}`,
   skipped: (why: string): string => `Skipped — ${why}`,
   notCloud: 'Bulk build runs on the Cloud engine (App Settings → Sync Engine).',
+  /** Bulk UI rebuild — group headers and the dashboard signal. */
+  doneCount: (done: number, total: number): string => `${done}/${total} done`,
+  ringLabel: (done: number, total: number): string => `${done} of ${total} done`,
+  failedCount: (n: number): string => `${n} failed`,
+  collapseGroup: (name: string): string => `Collapse ${name}`,
+  expandGroup: (name: string): string => `Expand ${name}`,
 } as const;
 
 /** Why a row cannot be built yet (name + the three spine slots), or undefined. */
