@@ -54,6 +54,7 @@ describe('checkpoint stages', () => {
     expect(stagesToRun('transcript-cached', false)).toEqual(['align', 'build']);
     expect(stagesToRun('aligned', false)).toEqual(['build']);
     expect(stagesToRun('built', false)).toEqual([]);
+    expect(stagesToRun('ready', false)).toEqual([]);
     expect(stagesToRun('aligned', true)).toEqual(['transcribe', 'align', 'build']);
   });
 });
@@ -84,7 +85,7 @@ describe('a persistent batch', () => {
     expect(phases(p2.runner)).toEqual({ a: 'cloud-done', b: 'cloud' });
   });
 
-  it('cloud work runs with NO window open; finishing the timelines waits for a window (or the operator), then runs one at a time', async () => {
+  it('cloud work runs with NO window open; finishing the timelines also runs in the background, one at a time', async () => {
     const disk = memory();
     const { runner, finishCloud, started } = boot(disk);
     const order: string[] = [];
@@ -92,15 +93,10 @@ describe('a persistent batch', () => {
     runner.start([{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }]);
     await vi.waitFor(() => expect(started).toEqual(['a']));
     finishCloud('a');
-    await vi.waitFor(() => expect(phases(runner).a).toBe('cloud-done'));
-    await new Promise(r => setTimeout(r, 20));
-    expect(order).toEqual([]); // no window: not finished yet
-    const release = runner.holdFinishOpen();
     await vi.waitFor(() => expect(phases(runner).a).toBe('done'));
     finishCloud('b');
     await vi.waitFor(() => expect(phases(runner)).toEqual({ a: 'done', b: 'done' }));
     expect(order).toEqual(['a', 'b']);
-    release();
   });
 
   it('a finish that fails is recorded with its reason (the project stays openable)', async () => {
@@ -232,29 +228,16 @@ describe('v1.2.2 — interim finishing: sequential, deferrable, repairable', () 
     expect(order).toEqual(['a', 'b', 'c']);
   });
 
-  it('a deferred row waits for its own Open (never re-finished on its own), and Open finishes it as the operator’s', async () => {
+  it('a deferred awaitingOpen row is finished on resume (background finish does not wait for Open)', async () => {
     const disk = memory();
-    disk.setItem('kinetix:bulk-batch:v1', JSON.stringify({ rows: [{ id: 'a', name: 'A', phase: 'cloud-done' }] }));
+    disk.setItem('kinetix:bulk-batch:v1', JSON.stringify({ rows: [{ id: 'a', name: 'A', phase: 'cloud-done', awaitingOpen: true, message: 'Ready — one click to finish' }] }));
     const { runner } = boot(disk);
-    const calls: [string, boolean][] = [];
-    runner.setFinalizer(async (id, req) => {
-      calls.push([id, req.userInitiated]);
-      return req.userInitiated ? { ok: true } : { ok: false, deferred: true };
-    });
-    runner.holdFinishOpen();
+    const calls: string[] = [];
+    runner.setFinalizer(async id => { calls.push(id); return { ok: true }; });
     runner.resume();
-    await vi.waitFor(() => expect(runner.snapshot()[0]!.awaitingOpen).toBe(true));
-    expect(runner.snapshot()[0]!.phase).toBe('cloud-done');
-    expect(runner.snapshot()[0]!.message).toBe('Ready — one click to finish');
-    // Another pump (a queue change, a second door) does not retry it.
-    runner.holdFinishOpen();
-    await new Promise(r => setTimeout(r, 20));
-    expect(calls).toEqual([['a', false]]);
-    // It survives a reload as deferred.
-    expect(JSON.parse(disk.getItem('kinetix:bulk-batch:v1')!).rows[0].awaitingOpen).toBe(true);
-    expect(runner.finishNow('a')).toBe(true);
     await vi.waitFor(() => expect(phases(runner).a).toBe('done'));
-    expect(calls).toEqual([['a', false], ['a', true]]);
+    expect(calls).toEqual(['a']);
+    expect(runner.snapshot()[0]!.awaitingOpen).toBeFalsy();
   });
 
   it('a record the guard reset is re-queued to rebuild from its own files (cache hits: straight to finishing)', async () => {
