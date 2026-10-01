@@ -31,7 +31,7 @@ export type BatchPhase =
   | 'paused' | 'failed' | 'cancelled' | 'skipped';
 
 /** Persisted progress. Retry resumes here; a content re-key starts over. */
-export type BulkCheckpoint = 'staged' | 'transcript-cached' | 'aligned' | 'built';
+export type BulkCheckpoint = 'staged' | 'transcript-cached' | 'aligned' | 'built' | 'ready';
 
 export interface BatchRow {
   id: string;
@@ -76,6 +76,7 @@ export function stagesToRun(
     case 'transcript-cached': return ['align', 'build'];
     case 'aligned': return ['build'];
     case 'built': return [];
+    case 'ready': return [];
   }
 }
 
@@ -154,9 +155,22 @@ export class BulkBatchRunner {
     const todo = this.rows.filter(r => r.phase === 'queued' || r.phase === 'cloud');
     if (todo.length > 0) this.deps.enqueue(todo.map(r => ({ id: r.id, name: r.name, checkpoint: r.checkpoint, contentKey: r.contentKey })));
     // A timeline that was mid-finish when the app stopped is finished again.
-    for (const r of this.rows) if (r.phase === 'finishing') r.phase = 'cloud-done';
+    // Background finish does not flip the editor, so a deferred awaitingOpen
+    // row is finished on resume rather than waiting for a screen change.
+    for (const r of this.rows) {
+      if (r.phase === 'finishing') r.phase = 'cloud-done';
+      if (r.awaitingOpen) { r.awaitingOpen = false; r.message = undefined; }
+    }
     this.commit();
     this.pumpFinish();
+  }
+
+  /** Persist a stage boundary so a crash resumes here. */
+  noteCheckpoint(id: string, checkpoint: BulkCheckpoint): void {
+    const row = this.rows.find(r => r.id === id);
+    if (!row || row.checkpoint === checkpoint) return;
+    row.checkpoint = checkpoint;
+    this.commit();
   }
 
   private forgetMissing(): void {
@@ -250,12 +264,13 @@ export class BulkBatchRunner {
     }
   }
 
-  // Rows finish ONE AT A TIME on one promise chain — never stacked. A row the
-  // operator deferred (busy in the editor) waits for its own Open.
+  // Rows finish ONE AT A TIME on one promise chain — never stacked. Finish
+  // runs in the background as soon as the finalizer is wired: no editor, no
+  // drawer, no screen flip.
   private pumpFinish(): void {
-    if (!this.finalize || this.finishEnabled <= 0) return;
+    if (!this.finalize) return;
     for (const row of this.rows) {
-      if (row.phase !== 'cloud-done' || row.awaitingOpen || this.finishing.has(row.id)) continue;
+      if (row.phase !== 'cloud-done' || this.finishing.has(row.id)) continue;
       this.finishing.add(row.id);
       this.chain = this.chain.then(() => this.finishOne(row.id, false));
     }
@@ -291,8 +306,7 @@ export class BulkBatchRunner {
       const row = this.rows.find(r => r.id === id);
       if (!row || row.phase !== 'cloud-done') return;
       // Window closed since this was queued: leave it for next time.
-      if ((!userInitiated && this.finishEnabled <= 0) || !this.finalize) return;
-      if (!userInitiated && row.awaitingOpen) return;
+      if (!this.finalize) return;
       if (!this.deps.exists(id)) { this.forget([id]); return; }
       this.set(id, 'finishing');
       let result: FinishResult;
@@ -309,7 +323,7 @@ export class BulkBatchRunner {
       this.set(id, result.ok ? 'done' : 'finish-failed', result.ok ? undefined : result.message);
       if (result.ok) {
         const row = this.rows.find(r => r.id === id);
-        if (row) row.checkpoint = 'built';
+        if (row) row.checkpoint = 'ready';
         this.commit();
       }
     } finally {
