@@ -945,6 +945,8 @@ where
         bytes_moved += dir_size(&to);
     }
 
+    crate::project_tombstones::copy_to(current, new_root)?;
+
     // Phase 2: atomically switch authority to the fully verified copy.
     // Failure leaves every source untouched.
     commit_pointer()?;
@@ -956,6 +958,9 @@ where
     // Phase 3: cleanup only. A crash here is recoverable because the pointer
     // already names the complete new copy; failures are returned as warnings.
     let mut cleanup_warnings = Vec::new();
+    if let Err(error) = crate::project_tombstones::remove_file_at(current) {
+        cleanup_warnings.push(error);
+    }
     for name in &moved {
         let (_, get_dir) = MANAGED_RELOCATION_SUBTREES
             .iter()
@@ -2372,5 +2377,38 @@ mod tests {
         assert_eq!(crate::media_vault::media_vault_list(&a).unwrap().len(), 2);
         fs::remove_dir_all(&a).ok();
         fs::remove_dir_all(&b).ok();
+    }
+
+    #[test]
+    fn relocating_to_a_d_drive_shaped_root_moves_tombstones_and_keeps_vault_readable() {
+        crate::atomic_stage::TEST_SKIP_FSYNC.store(true, std::sync::atomic::Ordering::Relaxed);
+        let current = tmpdir("C-Users-kinetix");
+        let new_root = tmpdir("D-DATA-Kinetix-Storage");
+        crate::project_tombstones::add_ids(&current, &["dead-row".into()]).unwrap();
+        let entry = crate::media_vault::media_vault_import_bytes(
+            &current,
+            "live-row",
+            b"real-vault-bytes",
+            "clip.png",
+            "image/png",
+        )
+        .unwrap();
+
+        relocate_managed_subtrees_with(&current, &new_root, || Ok(()), |_, _, _| Ok(())).unwrap();
+
+        assert!(
+            !crate::project_tombstones::tombstone_file(&current).exists(),
+            "tombstones must not stay on the old root"
+        );
+        assert!(crate::project_tombstones::is_tombstoned(&new_root, "dead-row"));
+        let listed = crate::media_vault::media_vault_list(&new_root).unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].content_hash, entry.content_hash);
+        assert_eq!(
+            fs::read(crate::media_vault::blob_path_for_test(&new_root, &entry.content_hash)).unwrap(),
+            b"real-vault-bytes"
+        );
+        fs::remove_dir_all(&current).ok();
+        fs::remove_dir_all(&new_root).ok();
     }
 }

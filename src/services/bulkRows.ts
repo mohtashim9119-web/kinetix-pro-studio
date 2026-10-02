@@ -39,6 +39,7 @@ import { deleteStagedFile, putStagedFile } from './stagedFilesStore';
 import { computeAudioHash } from './spine';
 import { BUILD_TIMELINE_COPY, missingSpineSlots, type BuildTimelineSlots } from './buildTimelineGate';
 import { rowIncompleteReason } from './bulkContext';
+import { voiceoverReadSkipFromError } from './voiceoverReadCause';
 import { BULK_DRAFTS_KEY as DRAFTS_KEY, type BatchRowSummary } from './bulkBatch';
 import { timedIngest } from './ingestTiming';
 
@@ -592,7 +593,7 @@ export class BulkRowStore {
           durationSec = await this.deps.probeDuration(vo, hash);
         }
       } catch (err) {
-        skips[id] = err instanceof Error ? err.message : 'Couldn’t read the voiceover.';
+        skips[id] = voiceoverReadSkipFromError(err);
         continue;
       }
       let sceneText = '';

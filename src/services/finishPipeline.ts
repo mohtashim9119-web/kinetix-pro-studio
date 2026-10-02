@@ -43,7 +43,8 @@ import {
 } from './timingProvenance';
 import { appendSyncLogEntries, mintSyncLogId } from './syncLog';
 import type { BulkCheckpoint } from './bulkBatch';
-import { SYNC_PAUSED_MESSAGE } from './applySyncAbort';
+import { SYNC_PAUSED_MESSAGE, VOICEOVER_DURATION_ABORT_PREFIX } from './applySyncAbort';
+import { classifyVoiceoverReadCause, voiceoverReadSkipReason } from './voiceoverReadCause';
 
 export const STAGED_FOR_ANOTHER_PROJECT_MESSAGE =
   'The staged files belong to a different project, so nothing was built. Reopen this project and try again.';
@@ -240,11 +241,11 @@ export async function runBuildTimeline(input: FinishPipelineInput): Promise<Fini
     try {
       audioDuration = await input.probeDuration(voiceover);
     } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      const kind = classifyVoiceoverReadCause(detail);
       return {
         ok: false,
-        message: `Couldn't read the voiceover's duration — sync aborted. Try re-adding the audio file. (cause: ${
-          err instanceof Error ? err.message : String(err)
-        })`,
+        message: `${VOICEOVER_DURATION_ABORT_PREFIX} (${kind}) — ${voiceoverReadSkipReason(kind, detail)}`,
       };
     }
   }

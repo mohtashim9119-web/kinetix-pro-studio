@@ -370,6 +370,7 @@ import {
   SYNC_PAUSED_MESSAGE,
   type ApplySyncResult,
 } from './services/applySyncAbort';
+import { voiceoverReadSkipFromError } from './services/voiceoverReadCause';
 import { ensureStagedSnapshotReady } from './services/stagedSyncRetry';
 import { armRecoveryBannerFromPersistedProject } from './services/recoveryBannerVisibility';
 import { useFocusTrap } from './hooks/useFocusTrap';
@@ -3752,7 +3753,7 @@ export default function App() {
         // already moved past while the probe was running.
         if (pendingVoiceoverRef.current?.asset.id !== asset.id) return;
         console.error('[voiceover] duration probe failed:', err);
-        showToast("Couldn't read that audio file — try a different file or format.");
+        showToast(voiceoverReadSkipFromError(err));
         return;
       }
       // Entry-ordering recheck: the probe's resolution order isn't tied to

@@ -9,6 +9,7 @@
 import { MAX_AUDIO_SEC, tooLongMessage } from './cloudAudioLimit';
 import { CLOUD_USD_PER_WORKER_SEC } from './cloudQueueJob';
 import { formatUsd } from './syncQueue';
+import { classifyVoiceoverReadCause, voiceoverReadSkipReason } from './voiceoverReadCause';
 
 const MEASURED_TRANSCRIBE_RTF = 33;
 
@@ -33,10 +34,15 @@ export function estimateCloudUsd(durationSec: number): number {
 }
 
 export function bulkPreflight(input: BulkPreflightInput): BulkPreflight {
-  if (input.audioError) return { ok: false, reason: input.audioError };
+  if (input.audioError) {
+    const kind = classifyVoiceoverReadCause(input.audioError);
+    return { ok: false, reason: voiceoverReadSkipReason(kind, input.audioError) };
+  }
   if (input.parseError) return { ok: false, reason: input.parseError };
   const durationSec = input.durationSec ?? 0;
-  if (!(durationSec > 0)) return { ok: false, reason: 'Couldn’t read the voiceover — check it is an audio file.' };
+  if (!(durationSec > 0)) {
+    return { ok: false, reason: voiceoverReadSkipReason('decode-failed') };
+  }
   if (durationSec > MAX_AUDIO_SEC) return { ok: false, reason: tooLongMessage(durationSec) };
   const sceneCount = countScenes(input.sceneText ?? '');
   if (sceneCount < 1) return { ok: false, reason: 'The scene doc has no scenes — fix the file before spending cloud GPU.' };

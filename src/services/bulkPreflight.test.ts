@@ -9,8 +9,19 @@ import { bulkPreflight } from './bulkPreflight';
 describe('P10 pre-flight', () => {
   it('rejects a bad file before any cloud call', () => {
     expect(bulkPreflight({ sceneText: '', durationSec: 30 }).ok).toBe(false);
-    expect(bulkPreflight({ sceneText: 'Scene one', durationSec: 0 }).ok).toBe(false);
-    expect(bulkPreflight({ sceneText: 'Scene one', audioError: 'not audio' }).ok).toBe(false);
+    const audioErr = bulkPreflight({ sceneText: 'Scene one', audioError: 'not audio' });
+    expect(audioErr.ok).toBe(false);
+    if (!audioErr.ok) expect(audioErr.reason).toMatch(/^decode-failed:/);
+    const unread = bulkPreflight({ sceneText: 'Scene one', durationSec: 0 });
+    expect(unread.ok).toBe(false);
+    if (!unread.ok) expect(unread.reason).toMatch(/^decode-failed:/);
+    const sidecar = bulkPreflight({
+      sceneText: 'Scene one',
+      durationSec: 30,
+      audioError: 'sidecar: resolved exe outside allowed install/dev roots',
+    });
+    expect(sidecar.ok).toBe(false);
+    if (!sidecar.ok) expect(sidecar.reason).toMatch(/^sidecar-blocked:/);
     const bad = bulkPreflight({ sceneText: '', durationSec: 90 });
     expect(bad.ok).toBe(false);
     if (!bad.ok) expect(bad.reason).toMatch(/scene/i);
