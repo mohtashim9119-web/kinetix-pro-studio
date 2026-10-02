@@ -22,6 +22,8 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
+vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(async () => []) }));
+
 const readMirror = vi.fn();
 vi.mock('./projectMirror', () => ({
   readMirror: (...a: unknown[]) => readMirror(...a),

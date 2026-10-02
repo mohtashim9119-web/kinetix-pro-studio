@@ -16,6 +16,8 @@ vi.mock('../services/projectStore', () => ({
   loadAllMetas: () => mockLoadAllMetas(),
   loadProject: (id: string) => mockLoadProject(id),
   deleteProjectData: (id: string) => mockDeleteProjectData(id),
+  commitTombstones: async () => undefined,
+  deletedProjectIds: () => new Set(['p1']),
 }));
 
 vi.mock('../services/stagedFilesStore', () => ({
@@ -83,8 +85,15 @@ async function selectAndDelete(id: string): Promise<void> {
   await act(async () => { deleteBtn!.click(); });
   const confirmBtn = container.querySelector<HTMLButtonElement>('.kxd-dialog-confirm');
   await act(async () => { confirmBtn!.click(); });
-  // Let the async handleBulkDelete's awaits settle.
-  await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+  // Let the async handleBulkDelete's awaits settle (tombstones + records, then background cleanup).
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+  });
 }
 
 beforeEach(() => {

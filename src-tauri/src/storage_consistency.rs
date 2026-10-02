@@ -185,7 +185,9 @@ pub fn scan_consistency_with_pending(
     pending_ids: &[String],
 ) -> Result<ConsistencyReport, String> {
     let dashboard: HashSet<&str> = dashboard_ids.iter().map(String::as_str).collect();
-    let deleted: HashSet<&str> = deleted_ids.iter().map(String::as_str).collect();
+    let mut deleted_owned: HashSet<String> = deleted_ids.iter().cloned().collect();
+    deleted_owned.extend(crate::project_tombstones::load_ids(root));
+    let deleted: HashSet<&str> = deleted_owned.iter().map(String::as_str).collect();
     let pending: HashSet<&str> = pending_ids.iter().map(String::as_str).collect();
 
     let store_dir = projects_dir(root);

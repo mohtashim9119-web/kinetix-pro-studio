@@ -1,8 +1,8 @@
 import React, { useEffect, useLayoutEffect, useState, useRef, useCallback, useSyncExternalStore } from 'react';
 import { Plus, Trash2, Search, Check, Loader2, Settings, ChevronDown, Play, Image as ImageIcon } from 'lucide-react';
 import type { ProjectMeta } from '../types';
-import { loadAllMetas } from '../services/projectStore';
-import { deleteProjectEverywhere } from '../services/projectDelete';
+import { loadAllMetas, commitTombstones } from '../services/projectStore';
+import { cleanupDeletedProjectAssets, deleteProjectRecords } from '../services/projectDelete';
 import { isTauri } from '../services/tauriFfmpeg';
 import { readSyncEngineHost, onSyncEngineHostChange, type SyncEngineHost } from '../services/syncEngineHost';
 import { bulkBatchRunner, queueProjectsForCloudSync } from '../services/bulkSyncQueue';
@@ -262,19 +262,24 @@ export function ProjectDashboard({
   async function handleBulkDelete(): Promise<void> {
     const ids = Array.from(selectedIds);
     setShowBulkConfirm(false);
+    await commitTombstones(ids);
+    await deleteProjectRecords(ids);
     setMetas(prev => prev.filter(m => !ids.includes(m.id)));
     setSelectedIds(new Set());
     bulkBatchRunner(parseProjectData).forget(ids);
     onProjectsDeleted?.(ids);
-    const cleanupFailures: string[] = [];
-    for (const id of ids) cleanupFailures.push(...await deleteProjectEverywhere(id));
-    if (cleanupFailures.length > 0) {
-      onAssetCleanupFailed?.(
-        `${cleanupFailures.length} deleted project${cleanupFailures.length === 1 ? '' : 's'} could not be fully ` +
-          `cleaned up on disk — the project${cleanupFailures.length === 1 ? ' is' : 's are'} gone, but some ` +
-          `asset bytes may remain. (${cleanupFailures.join('; ')})`,
-      );
-    }
+    void (async () => {
+      const cleanupFailures: string[] = [];
+      const batches = await Promise.all(ids.map(id => cleanupDeletedProjectAssets(id)));
+      for (const f of batches) cleanupFailures.push(...f);
+      if (cleanupFailures.length > 0) {
+        onAssetCleanupFailed?.(
+          `${cleanupFailures.length} deleted project${cleanupFailures.length === 1 ? '' : 's'} could not be fully ` +
+            `cleaned up on disk — the project${cleanupFailures.length === 1 ? ' is' : 's are'} gone, but some ` +
+            `asset bytes may remain. (${cleanupFailures.join('; ')})`,
+        );
+      }
+    })();
   }
 
   return (

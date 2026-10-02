@@ -42,6 +42,8 @@
  * count stays exactly 1:1 by construction.
  */
 
+import { deletedProjectIds } from './projectTombstones';
+
 const DB_NAME = 'kinetix-staged';
 const DB_VERSION = 1;
 const STORE = 'staged-v1';
@@ -90,6 +92,7 @@ function openStagedDB(): Promise<IDBDatabase> {
 /** Writes (or replaces) one slot. A replace overwrites the same compound key,
  *  so a singleton slot structurally cannot leave a previous row behind. */
 export async function putStagedFile(row: StoredStagedFile): Promise<void> {
+  if (deletedProjectIds().has(row.projectId)) return;
   const db = await openStagedDB();
   try {
     await new Promise<void>((resolve, reject) => {
@@ -105,6 +108,7 @@ export async function putStagedFile(row: StoredStagedFile): Promise<void> {
 }
 
 export async function getStagedFilesForProject(projectId: string): Promise<StoredStagedFile[]> {
+  if (deletedProjectIds().has(projectId)) return [];
   const db = await openStagedDB();
   try {
     return await new Promise<StoredStagedFile[]>((resolve, reject) => {

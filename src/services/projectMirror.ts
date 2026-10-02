@@ -27,6 +27,7 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import { isTauri } from './tauriFfmpeg';
+import { deletedProjectIds } from './projectTombstones';
 
 /** Raw shape returned by `project_mirror_read_all`. */
 export interface MirrorSnapshot {
@@ -62,6 +63,7 @@ export function writeMirroredProject(
   registry?: string,
 ): Promise<void> {
   if (!isTauri()) return Promise.resolve();
+  if (deletedProjectIds().has(id)) return Promise.resolve();
   return inOrder(async () => {
     try {
       await invoke('project_mirror_write_project', { id, contents, registry: registry ?? null });

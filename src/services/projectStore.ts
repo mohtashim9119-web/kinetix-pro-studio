@@ -2,6 +2,14 @@ import type { Asset, Project, ProjectMeta, VideoSegment } from '../types';
 import { writeMirroredProject, deleteMirroredProject, readMirror } from './projectMirror';
 import { osStoreRead, osStoreWrite, osStoreDelete } from './projectStoreClient';
 import { isTauri } from './tauriFfmpeg';
+import {
+  commitTombstones,
+  deletedProjectIds,
+  hydrateTombstonesFromNative,
+  __resetTombstonesForTests,
+} from './projectTombstones';
+
+export { commitTombstones, deletedProjectIds, hydrateTombstonesFromNative };
 import { backfillSegmentIds } from './segmentId';
 import { filterKnownSyncLogEntries } from './syncLog';
 import { migrateLegacyTimingProvenance } from './timingProvenance';
@@ -240,6 +248,7 @@ export function reportAssetResolutionFailure(id: string, message: string, rawLen
 /** Test-only reset so one spec's poisoned id cannot leak into the next. */
 export function __resetStoreGuardsForTests(): void {
   loadFailures.clear();
+  __resetTombstonesForTests();
 }
 
 /** What Guards 1 and 1b need from the currently stored project, read once. */
@@ -504,6 +513,7 @@ export async function saveProject(project: Project, opts: SaveOptions = {}): Pro
  * stored value is never modified, deleted, or rewritten by this function.
  */
 export async function loadProjectDetailed(id: string): Promise<LoadOutcome | null> {
+  if (deletedProjectIds().has(id)) return null;
   let raw: string | null;
   try {
     raw = isTauri() ? await osStoreRead(id) : localStorage.getItem(projectKey(id));
@@ -636,7 +646,9 @@ export function loadAllMetas(): ProjectMeta[] {
     const raw = localStorage.getItem(REGISTRY_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw) as ProjectMeta[];
-    return Array.isArray(parsed) ? parsed : [];
+    if (!Array.isArray(parsed)) return [];
+    const dead = deletedProjectIds();
+    return parsed.filter(m => m?.id && !dead.has(m.id));
   } catch {
     return [];
   }
@@ -648,6 +660,7 @@ export function loadAllMetas(): ProjectMeta[] {
  * segmentCount) independently of a full saveProject() call.
  */
 export function upsertProjectMeta(meta: ProjectMeta): void {
+  if (deletedProjectIds().has(meta.id)) return;
   try {
     const metas = loadAllMetas();
     const idx = metas.findIndex(m => m.id === meta.id);
@@ -663,37 +676,9 @@ export function upsertProjectMeta(meta: ProjectMeta): void {
   }
 }
 
-/**
- * Ids the operator deleted. Persisted (bounded), so neither a late save nor
- * boot-time mirror adoption can bring one back — the ordering fix in
- * `projectMirror.ts` prevents the race, this is the backstop for any stale
- * mirror copy that still exists.
- */
-const TOMBSTONE_KEY = 'kinetix:deleted-projects:v1';
-const TOMBSTONE_CAP = 500;
-const deletedThisSession = new Set<string>();
-
-export function deletedProjectIds(): Set<string> {
-  const ids = new Set<string>(deletedThisSession);
-  try {
-    const raw = localStorage.getItem(TOMBSTONE_KEY);
-    const parsed = raw ? JSON.parse(raw) : [];
-    if (Array.isArray(parsed)) for (const id of parsed) if (typeof id === 'string') ids.add(id);
-  } catch { /* unreadable list: the session set still applies */ }
-  return ids;
-}
-
-function rememberDeleted(id: string): void {
-  deletedThisSession.add(id);
-  try {
-    const list = [...deletedProjectIds()].slice(-TOMBSTONE_CAP);
-    localStorage.setItem(TOMBSTONE_KEY, JSON.stringify(list));
-  } catch { /* quota: the session set still applies */ }
-}
-
 /** Removes a project's stored record and its registry entry. */
 export async function deleteProjectData(id: string): Promise<void> {
-  rememberDeleted(id);
+  await commitTombstones([id]);
   const remove = isTauri() ? osStoreDelete(id) : Promise.resolve(localStorage.removeItem(projectKey(id)));
   await remove.catch(err => console.error(`[kinetix] Failed to delete stored project ${id}:`, err));
   clearLoadFailure(id);
@@ -763,6 +748,7 @@ export async function adoptMirroredProjects(): Promise<AdoptionReport> {
     failed: [],
   };
 
+  await hydrateTombstonesFromNative();
   const snapshot = await readMirror();
   if (!snapshot) return report;
   report.mirrorAvailable = true;
@@ -906,6 +892,10 @@ export async function migrateLocalStorageProjectsToOsStore(): Promise<StorageMig
     // `kinetix:project:<id>:v1` — id is a crypto.randomUUID(), never contains ':'.
     const id = key.slice(PROJECT_KEY_PREFIX.length, key.length - PROJECT_KEY_SUFFIX.length);
     if (!id) continue;
+    if (deletedProjectIds().has(id)) {
+      localStorage.removeItem(key);
+      continue;
+    }
 
     try {
       if ((await osStoreRead(id)) !== null) {
