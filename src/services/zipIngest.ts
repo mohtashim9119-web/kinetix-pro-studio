@@ -49,7 +49,7 @@
 // decompressed-entry loop zip alone has).
 // ---------------------------------------------------------------------------
 
-import { detectMediaType, ingestOneMediaFile, makeOfflineReconnectSink, finishIngestBatch, mapPool, type IngestProgressFn, type MediaIngestCounts, type OfflineReconnect } from './mediaIngest';
+import { detectMediaType, ingestOneMediaFile, makeOfflineReconnectSink, finishIngestBatch, type IngestProgressFn, type MediaIngestCounts, type OfflineReconnect } from './mediaIngest';
 import { isMacOSMetadataPath } from './macosMetadata';
 import { timedIngest } from './ingestTiming';
 import type { Asset } from '../types';
@@ -137,7 +137,9 @@ export async function walkZipMediaEntries(
   // Metadata filtered BEFORE the entry-count cap: a Finder zip carries one
   // `__MACOSX/._` twin per real file, so counting them would halve the
   // effective limit for every Mac user.
-  const entries = Object.values(content.files).filter(f => !f.dir && !isMacOSMetadataPath(f.name));
+  const entries = Object.keys(content.files)
+    .map(k => content.files[k]!)
+    .filter(f => !f.dir && !isMacOSMetadataPath(f.name));
 
   if (entries.length > ZIP_MAX_ENTRIES) {
     throw new ZipTooLargeError(
@@ -233,7 +235,7 @@ export async function ingestZip(
   let done = 0;
   const total = batch.length;
   onProgress?.({ done, total, label: total === 0 ? 'Importing zip…' : `Importing 0 of ${total}…` });
-  await mapPool(batch, 4, async ({ name, blob, type }) => {
+  for (const { name, blob, type } of batch) {
     const asset = await ingestOneMediaFile(projectId, name, blob, type, seenHashes, counts, duplicateNames, offline);
     done += 1;
     onProgress?.({ done, total, label: `Importing ${done} of ${total}…` });
@@ -241,7 +243,7 @@ export async function ingestZip(
       assets.push(asset);
       if (asset.type === 'audio' && audioAssetId === undefined) audioAssetId = asset.id;
     }
-  });
+  }
   counts.failed += walk.unsafeRejected;
   counts.unsupportedSkipped += walk.unsupportedSkipped + walk.nestedZipNames.length;
   await finishIngestBatch();

@@ -28,7 +28,10 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-SERVICE_SCHEMA = 1
+SERVICE_SCHEMA = 2
+# Engine cache identity stays era-1 so a jobs-API bump does not invalidate
+# transcripts/alignments already paid for.
+CACHE_KEY_SCHEMA = 1
 
 # ---------------------------------------------------------------------------
 # Engine identity. Every value here is folded into cache keys and returned
@@ -288,11 +291,11 @@ def pack_revision(language: str, digests: dict[str, str]) -> str:
 
 
 def transcript_cache_key(audio_hash: str, language: str) -> str:
-    return sha256_hex(f"transcribe|{SERVICE_SCHEMA}|{audio_hash}|{language}|{TRANSCRIBE_ENGINE_REV}")
+    return sha256_hex(f"transcribe|{CACHE_KEY_SCHEMA}|{audio_hash}|{language}|{TRANSCRIBE_ENGINE_REV}")
 
 
 def alignment_cache_key(audio_hash: str, plan_hash: str, language: str, pack_rev: str) -> str:
-    return sha256_hex(f"align|{SERVICE_SCHEMA}|{audio_hash}|{plan_hash}|{language}|{pack_rev}|{ALIGN_ENGINE_REV}")
+    return sha256_hex(f"align|{CACHE_KEY_SCHEMA}|{audio_hash}|{plan_hash}|{language}|{pack_rev}|{ALIGN_ENGINE_REV}")
 
 
 def audio_path(root: str, audio_hash: str) -> str:
@@ -572,10 +575,10 @@ def reusable_inflight(job: dict[str, Any] | None, member: str) -> bool:
 # hold just means a normal spawn).
 # ---------------------------------------------------------------------------
 
-# P11: this is the orphan / crash-natural floor (Modal GPU scaledown), not a
-# dead-man wait for the client to poll. A last job (hold=false) waits 0; a
-# chained next job is handed off as soon as it is posted. Do not widen this.
-HOLD_FOR_PLAN_SEC = 2.0
+# P11: orphan / crash floor PLUS the measured in-flight stage gap (client
+# poll used to add ~1.5s). Finish/handoff/RELEASE still wait 0. Last row
+# hold=false. Kill keeps the record. The window only bridges stage gaps.
+HOLD_FOR_PLAN_SEC = 8.0
 
 
 def hold_wait_budget(*, hold: bool) -> float:
@@ -660,13 +663,9 @@ def can_hold_for(holder: dict[str, Any] | None, member: str) -> bool:
         holder is not None
         and holder.get("member") == member
         and holder.get("stage") in STAGES
-        and (
-            holder.get("status") == "failed"
-            or (
-                bool(holder.get("hold"))
-                and holder.get("status") in ("queued", "running", "done")
-            )
-        )
+        and holder.get("status") != "failed"
+        and bool(holder.get("hold"))
+        and holder.get("status") in ("queued", "running", "done")
     )
 
 

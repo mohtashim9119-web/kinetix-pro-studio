@@ -62,7 +62,7 @@ export interface QueueJob {
 
 export interface QueueEngine {
   /** Monotonic total of billable GPU seconds worked so far. */
-  workerSec(): number;
+  workerSec(scope?: { rowId?: string }): number;
   /** USD per worked second (a rate-card estimate). */
   usdPerSec: number;
   /** The receipt sentence for a cancelled item. `started`: it was running. */
@@ -70,7 +70,7 @@ export interface QueueEngine {
   /** After a running item's cancel: wait for the gateway's answer. */
   settleCancel?(): Promise<void>;
   /** Operator Cancel of the live gateway job (DELETE). Lifecycle abort must not. */
-  killLive?(): Promise<void> | void;
+  killLive?(owners?: { projectId?: string; rowId?: string }): Promise<void> | void;
   /** The batch drained or the chain broke: let go of anything carried. */
   onDrain(carry: unknown): void;
 }
@@ -182,7 +182,7 @@ export class SyncQueue {
     }
     this.cancelRequested.add(id);
     this.controllers.get(id)?.abort();
-    void this.engine.killLive?.();
+    void this.engine.killLive?.({ rowId: id });
     item.phase = 'Stopping…';
     this.emit();
   }
@@ -204,14 +204,13 @@ export class SyncQueue {
     if (this.pumping) return;
     this.pumping = true;
     if (!this.batch) this.batch = { startedAt: Date.now(), workerSec: 0, estimatedUsd: 0 };
-    const batchStartSec = this.engine.workerSec();
     this.emit();
     try {
       for (;;) {
         const item = this.items.find(i => i.status === 'queued');
         if (!item) break;
         await this.runOne(item);
-        this.batch.workerSec = round(this.engine.workerSec() - batchStartSec);
+        this.batch.workerSec = round(this.items.reduce((sum, i) => sum + i.workerSec, 0));
         this.batch.estimatedUsd = round(this.batch.workerSec * this.engine.usdPerSec, 6);
       }
     } finally {
@@ -231,7 +230,7 @@ export class SyncQueue {
     item.status = 'running';
     item.startedAt = Date.now();
     item.phase = 'Starting…';
-    const before = this.engine.workerSec();
+    const before = this.engine.workerSec({ rowId: item.id });
     const behind = this.items.filter(i => i.status === 'queued');
     // The next job's inputs load while this one runs (no idle GPU gap).
     const next = behind[0] ? this.jobs.get(behind[0].id) : undefined;
@@ -256,7 +255,7 @@ export class SyncQueue {
         ? { status: 'skipped', detail: 'cancelled' }
         : { status: 'failed', detail: err instanceof Error ? err.message : String(err) };
     }
-    item.workerSec = round(this.engine.workerSec() - before);
+    item.workerSec = round(this.engine.workerSec({ rowId: item.id }) - before);
     item.finishedAt = Date.now();
     item.phase = undefined;
     this.controllers.delete(item.id);

@@ -177,7 +177,9 @@ describe('server-owned cloud jobs', () => {
     expect(postFinishHeldSec({ holdOpen: false, waitedSec: 30 })).toBe(0);
     expect(postFinishHeldSec({ holdOpen: true, released: true, waitedSec: 30 })).toBe(0);
     expect(postFinishHeldSec({ holdOpen: true, handedOff: true, waitedSec: 0.2 })).toBe(0);
-    expect(postFinishHeldSec({ holdOpen: true, waitedSec: 30 })).toBe(2);
+    expect(postFinishHeldSec({ holdOpen: true, waitedSec: 30 })).toBe(8);
+    expect(postFinishHeldSec({ holdOpen: true, handedOff: true, waitedSec: 8 })).toBe(0);
+    expect(postFinishHeldSec({ holdOpen: true, waitedSec: 8 })).toBe(8);
     gw.kill(job.jobId);
     expect(gw.jobs.get(job.jobId)?.status).toBe('done');
     expect(gw.jobs.get(job.jobId)?.workerSec).toBe(3);

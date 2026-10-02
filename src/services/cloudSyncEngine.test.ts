@@ -456,3 +456,102 @@ describe('P9 align detach vs kill', () => {
     expect(cmds).not.toContain('cloud_release_job');
   });
 });
+
+describe('shipfix — chaining, jobs registry, cost, findings', () => {
+  it('STAGE_GAP_WARN_MS is below the 8s hold window (window/2)', async () => {
+    const { STAGE_GAP_WARN_MS, HOLD_FOR_PLAN_SEC_CLIENT, noteStageGap, __resetStageGapsForTests } = await import('./cloudSyncEngine');
+    __resetStageGapsForTests();
+    expect(HOLD_FOR_PLAN_SEC_CLIENT).toBe(8);
+    expect(STAGE_GAP_WARN_MS).toBe(4_000);
+    expect(noteStageGap('h', 0, 4_001).warned).toBe(true);
+    expect(noteStageGap('h', 0, 3_000).warned).toBe(false);
+  });
+
+  it('hot-path align after a held transcribe skips the pre-submit job-list call', async () => {
+    const mod = await import('./cloudSyncEngine');
+    mod.__resetHeldTranscriptionsForTests();
+    mod.rememberHeldTranscriptionForTests(HASH, 'jt-hot');
+    const cmds: string[] = [];
+    const t0 = Date.now();
+    let listAt = 0;
+    let runAt = 0;
+    mockInvoke.mockImplementation(async (cmd: string) => {
+      cmds.push(cmd);
+      if (cmd === 'cloud_list_jobs') {
+        listAt = Date.now() - t0;
+        await new Promise(r => setTimeout(r, 80));
+        return [];
+      }
+      if (cmd === 'cloud_cache_lookup') return { cached: false, audioPresent: true, audioDurationSec: 10 };
+      if (cmd === 'cloud_run_job') {
+        runAt = Date.now() - t0;
+        return {
+          jobId: 'ja', stage: 'align', status: 'done', cached: false, workerSec: 1, error: null, handedOff: true,
+          result: { words: [], nFallbackChunks: 0, provenance: { engine: 'fa-cloud', model: 'm', modelVersion: '1', language: 'en' } },
+        };
+      }
+      return true;
+    });
+    const out = await mod.alignViaCloud({
+      voiceoverBlob: new Blob([new Uint8Array([1])]),
+      audioHash: HASH,
+      chunks: [{ startSec: 0, endSec: 1, text: 'hi' }],
+      language: 'en',
+      projectId: 'p-hot',
+      rowId: 'p-hot',
+    });
+    expect(out.status).toBe('ok');
+    expect(cmds.filter(c => c === 'cloud_list_jobs')).toHaveLength(0);
+    expect(cmds).toContain('cloud_run_job');
+    expect(runAt).toBeLessThan(80);
+  });
+
+  it('editor Cancel kills only the editor target job; a bulk row job is untouched', async () => {
+    const mod = await import('./cloudSyncEngine');
+    mod.__resetLiveCloudJobsForTests();
+    const killed: string[] = [];
+    mockInvoke.mockImplementation(async (cmd: string, args: unknown) => {
+      if (cmd === 'cloud_kill_job') {
+        killed.push((args as { jobId: string }).jobId);
+        return { jobId: (args as { jobId: string }).jobId, stage: 'transcribe', status: 'cancelled', workerSec: 1 };
+      }
+      throw new Error(cmd);
+    });
+    mod.bindLiveCloudJob('editor-job', { projectId: 'editor' });
+    mod.bindLiveCloudJob('row-job', { rowId: 'row-1' });
+    await mod.killLiveCloudJob({ projectId: 'editor' });
+    expect(killed).toEqual(['editor-job']);
+    expect(mod.liveCloudJobId({ rowId: 'row-1' })).toBe('row-job');
+  });
+
+  it('a pause attaches only to its own row job', async () => {
+    const mod = await import('./cloudSyncEngine');
+    mod.__resetLiveCloudJobsForTests();
+    mod.bindLiveCloudJob('row-a', { rowId: 'a' });
+    mod.bindLiveCloudJob('row-b', { rowId: 'b' });
+    expect(mod.liveCloudJobId({ rowId: 'a' })).toBe('row-a');
+    expect(mod.liveCloudJobId({ rowId: 'b' })).toBe('row-b');
+    expect(mod.liveCloudJobId({ rowId: 'a' })).not.toBe(mod.liveCloudJobId({ rowId: 'b' }));
+  });
+
+  it('row cost uses per-job seconds, excluding a concurrent editor job', async () => {
+    const mod = await import('./cloudSyncEngine');
+    mod.__resetCloudWorkerSecForTests();
+    mod.noteCloudJobWorkerSec('editor', 40);
+    mod.noteCloudJobWorkerSec('row', 12);
+    expect(mod.cloudWorkerSecForJobs(['row'])).toBe(12);
+    expect(mod.cloudWorkerSecForJobs(['row', 'editor'])).toBe(52);
+    expect(mod.cloudWorkerSecTotal()).toBe(52);
+  });
+
+  it('Stop-all on an old server surfaces a typed finding, not a silent no-op', async () => {
+    const mod = await import('./cloudSyncEngine');
+    mockInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'cloud_list_jobs') throw { kind: 'protocol', detail: 'command cloud_list_jobs not found' };
+      throw new Error(cmd);
+    });
+    await mod.killAllMemberCloudJobs();
+    const findings = mod.takeCloudClientFindings();
+    expect(findings.some(f => /not supported/i.test(f.display))).toBe(true);
+  });
+});

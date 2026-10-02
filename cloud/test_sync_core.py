@@ -242,20 +242,44 @@ def test_only_this_members_held_transcription_can_take_an_alignment():
     # U7: a held alignment can hand its container to the next queued job.
     assert core.can_hold_for(dict(held, stage="align"), "operator")
     assert not core.can_hold_for(dict(held, stage="bogus"), "operator")
-    # A just-failed job still holds the container for an immediate retry
-    # (no HOLD wait, no second boot). Cancelled jobs do not.
-    assert core.can_hold_for(dict(held, status="failed"), "operator")
-    assert core.can_hold_for(dict(held, status="failed", hold=False), "operator")
+    # A failed job is never a hold target (queued-forever hazard). Cancelled neither.
+    assert not core.can_hold_for(dict(held, status="failed"), "operator")
+    assert not core.can_hold_for(dict(held, status="failed", hold=False), "operator")
     assert not core.can_hold_for(dict(held, status="cancelled"), "operator")
     assert not core.can_hold_for(None, "operator")
 
 
 def test_hold_is_bounded_and_short():
-    # P11: the hold window is the orphan/crash floor (Modal GPU scaledown),
-    # not a 30s dead-man. A last job (hold=false) waits 0.
-    assert core.HOLD_FOR_PLAN_SEC == 2.0
+    # P11: the hold window bridges in-flight stage gaps (measured ~1.5s poll +
+    # plan), not a 30s dead-man. A last job (hold=false) waits 0.
+    assert core.HOLD_FOR_PLAN_SEC == 8.0
     assert core.hold_wait_budget(hold=False) == 0.0
-    assert core.hold_wait_budget(hold=True) == 2.0
+    assert core.hold_wait_budget(hold=True) == 8.0
+
+
+def test_handoff_gap_inside_window_does_not_second_boot():
+    # Measured client gap used to include a 1.5s poll tick (~5s total). That
+    # missed a 2s window and paid a second boot. The window must cover it.
+    measured_gap_sec = 5.0
+    assert measured_gap_sec < core.HOLD_FOR_PLAN_SEC
+    assert core.gpu_boot_allowed(lookup=False, handed_off=True, live_containers=0) is False
+    assert core.gpu_boot_allowed(lookup=False, handed_off=False, live_containers=1) is False
+
+
+def test_gap_beyond_window_never_pays_a_second_boot_while_holder_live():
+    assert core.GPU_MAX_CONTAINERS == 1
+    assert core.gpu_boot_allowed(lookup=False, handed_off=False, live_containers=1) is False
+
+
+def test_finished_job_post_finish_held_is_zero_with_wide_window():
+    assert core.post_finish_held_sec(hold=True, handed_off=True, released=False, waited_sec=8) == 0.0
+    assert core.post_finish_held_sec(hold=True, handed_off=False, released=True, waited_sec=8) == 0.0
+    assert core.post_finish_held_sec(hold=False, handed_off=False, released=False, waited_sec=8) == 0.0
+
+
+def test_orphan_cap_equals_hold_window_never_more():
+    assert core.post_finish_held_sec(hold=True, handed_off=False, released=False, waited_sec=30) == core.HOLD_FOR_PLAN_SEC
+    assert core.post_finish_held_sec(hold=True, handed_off=False, released=False, waited_sec=core.HOLD_FOR_PLAN_SEC) == core.HOLD_FOR_PLAN_SEC
 
 
 def test_a_lookup_never_boots_and_a_held_container_blocks_a_second():
@@ -530,7 +554,7 @@ def test_p11_finished_job_holds_zero_after_finish():
     assert core.post_finish_held_sec(hold=False, handed_off=False, released=False, waited_sec=30.0) == 0.0
     # An orphaned holder (no queued work, client gone) sits the scaledown
     # floor, never a 30s dead-man.
-    assert core.post_finish_held_sec(hold=True, handed_off=False, released=False, waited_sec=30.0) == 2.0
+    assert core.post_finish_held_sec(hold=True, handed_off=False, released=False, waited_sec=30.0) == core.HOLD_FOR_PLAN_SEC
 
 
 def test_p11_last_row_releases_without_a_timeout_wait():

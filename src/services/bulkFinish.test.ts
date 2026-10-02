@@ -169,10 +169,11 @@ describe('row 2 finish — active', () => {
     expect(result.ok).toBe(true);
   });
 
-  it('warns only when transcribe-done to align-submit exceeds 10s', () => {
+  it('warns when transcribe-done to align-submit exceeds half the hold window', () => {
     __resetStageGapsForTests();
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    expect(noteStageGap('hash', 0, 4_000).warned).toBe(false);
+    expect(STAGE_GAP_WARN_MS).toBe(4_000);
+    expect(noteStageGap('hash', 0, 3_000).warned).toBe(false);
     expect(noteStageGap('hash', 0, STAGE_GAP_WARN_MS + 50).warned).toBe(true);
     expect(warn).toHaveBeenCalled();
     warn.mockRestore();
@@ -202,5 +203,28 @@ describe('v1.2.2 — finishing never fights the operator', () => {
     });
     expect(result).toEqual({ ok: true });
     expect(switchProject).not.toHaveBeenCalled();
+  });
+});
+
+describe('adopt path — peek result is reused (no second lookup)', () => {
+  it('runStageCacheFirst after peekCloudTranscript does not call lookup again', async () => {
+    const { peekCloudTranscript } = await import('./bulkContext');
+    const { runStageCacheFirst, __resetCloudAudioInFlightForTests } = await import('./cloudSyncEngine');
+    __resetCloudAudioInFlightForTests();
+    let lookups = 0;
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd === 'cloud_cache_lookup') {
+        lookups += 1;
+        return { cached: true, result: { tokens: TOKENS, provenance: {}, createdAt: 1, detectedLanguage: 'en' } };
+      }
+      throw new Error(cmd);
+    });
+    expect(await peekCloudTranscript('hash', 'en')).toBe(true);
+    const run = await runStageCacheFirst(
+      { stage: 'transcribe', audioHash: 'hash', language: 'en' },
+      async () => new Blob(),
+    );
+    expect(run.cached).toBe(true);
+    expect(lookups).toBe(1);
   });
 });

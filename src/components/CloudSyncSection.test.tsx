@@ -28,7 +28,7 @@ vi.mock('../services/cloudGateway', async (importOriginal) => {
 import { CloudSyncSection } from './CloudSyncSection';
 import { readSyncEngineHost, writeSyncEngineHost } from '../services/syncEngineHost';
 
-const PING = { member: 'operator', schema: 1, engines: { transcribe: 't', align: 'a' }, limits: { maxAudioSec: 3600, maxUploadBytes: 1 }, latencyMs: 312 };
+const PING = { member: 'operator', schema: 2, engines: { transcribe: 't', align: 'a' }, limits: { maxAudioSec: 3600, maxUploadBytes: 1 }, latencyMs: 312 };
 
 function typeInto(input: HTMLInputElement, value: string): void {
   const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;

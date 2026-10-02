@@ -94,6 +94,7 @@ export function postFinishHeldSec(job: {
   handedOff?: boolean;
   waitedSec?: number;
 }): number {
+  const windowSec = 8;
   if (!job.holdOpen || job.released || job.handedOff) return 0;
-  return Math.min(Math.max(job.waitedSec ?? 2, 0), 2);
+  return Math.min(Math.max(job.waitedSec ?? windowSec, 0), windowSec);
 }

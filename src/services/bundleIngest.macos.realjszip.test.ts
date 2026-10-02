@@ -115,6 +115,15 @@ describe('BUG 1 — macOS metadata never claims a slot or reaches the vault', ()
     expect(result.counts).toEqual({ imported: 2, deduped: 0, unsupportedSkipped: 0, failed: 0 });
   });
 
+  it('zip entry order is preserved through the off-thread walk (deterministic)', async () => {
+    const names = Array.from({ length: 12 }, (_, i) => `clip_${String(i).padStart(2, '0')}.jpg`);
+    const zip = new JSZip();
+    for (const n of names) zip.file(n, new Uint8Array([names.indexOf(n)]));
+    const bytes = await zip.generateAsync({ type: 'uint8array' });
+    const result = await ingestZip('proj-1', new File([bytes], 'ordered.zip'));
+    expect(result.assets.map(a => a.name)).toEqual(names);
+  });
+
   it('same-name-different-bytes still both import, same bytes still dedupe, with the filter in place', async () => {
     const zip = new File([await zipBytes([
       ['a/._clip.jpg', APPLE_DOUBLE],
