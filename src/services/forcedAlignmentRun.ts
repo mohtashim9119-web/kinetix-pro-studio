@@ -52,7 +52,7 @@ import { MatchCancelledError } from './hirschbergMatchClient';
 import { faWordSpansToTranscriptTokens, type FaEvent, type FaInfeasibleChunk } from './faBoundaryTypes';
 import type { FaLanguageCode } from './faTextNormalize';
 import type { Asset, TranscriptToken, VideoSegment } from '../types';
-import { alignViaCloud, cloudPauseReason } from './cloudSyncEngine';
+import { alignViaCloud, cloudPauseReason, hasHeldTranscription } from './cloudSyncEngine';
 import { currentClientFaQuery, makeClientFaCache, noteClientFaStamp, planHashOf, readClientFaCache } from './clientFaCache';
 import { describeCloudError } from './cloudGateway';
 import type { SyncEngineHost } from './syncEngineHost';
@@ -615,7 +615,7 @@ async function runCloudFaAttempt(
   const cachedWords = bound
     ? readClientFaCache(bound.cache, { audioHash, scriptHash: bound.scriptHash, engineKey: bound.engineKey, planHash })
     : null;
-  const outcome = cachedWords
+  const outcome = cachedWords && !hasHeldTranscription(audioHash)
     ? {
         status: 'ok' as const,
         words: cachedWords,

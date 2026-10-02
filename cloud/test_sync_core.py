@@ -322,6 +322,38 @@ class _PutIfAbsent(dict):
         return True
 
 
+def test_last_stage_with_hold_job_id_claims_holder_held_zero():
+    """The last align of the last row (hold=false) still names the live
+    transcribe as holdJobId and must attach — not spawn — so held=0."""
+    d = _PutIfAbsent()
+    holder = dict(
+        core.new_job("t-last", "operator", "transcribe", AUDIO, "en", "k" * 64, 10.0, 1.0),
+        hold=True, status="done",
+    )
+    hold, hold_job_id = core.chain_fields({"holdJobId": "t-last", "stage": "align"})
+    assert hold is False and hold_job_id == "t-last"
+    assert core.claim_handoff(d, holder=holder, member="operator", new_job_id="a-last") is True
+    assert d[core.handoff_key("t-last")] == "a-last"
+    gap_sec = 0.4
+    assert gap_sec < 1.5
+    assert core.post_finish_held_sec(hold=True, handed_off=True, released=False, waited_sec=gap_sec) == 0.0
+    assert core.hold_wait_budget(hold=False) == 0.0
+
+
+def test_handoff_overwrites_none_tombstone_so_last_stage_still_attaches():
+    d = _PutIfAbsent()
+    key = core.handoff_key("t1")
+    d[key] = None
+    holder = dict(
+        core.new_job("t1", "operator", "transcribe", AUDIO, "en", "k" * 64, 10.0, 1.0),
+        hold=True, status="done",
+    )
+    assert core.decide_handoff_put(None, "a1") == "put"
+    assert core.decide_handoff_retry(None, "a1") == "overwrite"
+    assert core.claim_handoff(d, holder=holder, member="operator", new_job_id="a1") is True
+    assert d[key] == "a1"
+
+
 def test_cancel_before_start_is_free_and_blocks_the_start():
     d = _PutIfAbsent()
     key = core.start_key("j1")

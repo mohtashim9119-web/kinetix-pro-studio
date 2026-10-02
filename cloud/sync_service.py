@@ -318,7 +318,7 @@ class SyncWorker:
                 break
             if time.time() - held_from >= core.hold_wait_budget(hold=True):
                 break
-            time.sleep(0.25)
+            time.sleep(0.05)
         if target is None and not released and not jobs.put(key, core.HANDOFF_CLOSED, skip_if_exists=True):
             # Lost the race to a hand-off that landed as the hold expired.
             target = core.handoff_target(jobs.get(key))
@@ -370,6 +370,8 @@ class SyncWorker:
         latest.update(
             status=outcome, finishedAt=now, workerSec=round(now - began, 3), error=error, taskId=job.get("taskId"),
         )
+        if job.get("hold"):
+            latest["hold"] = True
         _write_meter(core.meter_line(latest, outcome, now - began, now))
         cache_vol.commit()
         jobs.put(job_id, latest)
@@ -567,9 +569,11 @@ def gateway() -> Any:
             cache_key = core.alignment_cache_key(
                 audio_hash, core.chunk_plan_hash(chunks), language, core.pack_revision(language, pack_digests())
             )
+        hold, hold_job_id = core.chain_fields(body)
         return {
             "stage": stage, "audioHash": audio_hash, "language": language,
             "chunks": chunks, "cacheKey": cache_key, "meta": meta, "duration": duration,
+            "hold": hold, "holdJobId": hold_job_id,
         }
 
     def read_result_bytes(stage: str, cache_key: str) -> bytes | None:
@@ -611,22 +615,56 @@ def gateway() -> Any:
         req = await resolve(request)
         stage, audio_hash, language = req["stage"], req["audioHash"], req["language"]
         chunks, cache_key, meta, duration = req["chunks"], req["cacheKey"], req["meta"], req["duration"]
+        hold, hold_job_id = req["hold"], req["holdJobId"]
+        body_owners = await request.json()
 
         job_id = uuid.uuid4().hex
         now = time.time()
         job = core.new_job(job_id, member, stage, audio_hash, language, cache_key, duration, now)
-        body_early = await request.json()
         core.apply_owner_fields(
             job,
-            core.validate_owner_id(body_early.get("projectId"), field="projectId"),
-            core.validate_owner_id(body_early.get("rowId"), field="rowId"),
+            core.validate_owner_id(body_owners.get("projectId"), field="projectId"),
+            core.validate_owner_id(body_owners.get("rowId"), field="rowId"),
         )
+        if hold:
+            job["hold"] = True
+
+        async def attach_if_held() -> bool:
+            if not hold_job_id:
+                return False
+            holder = await jobs.get.aio(hold_job_id)
+            if not core.can_hold_for(holder, member) or holder is None:
+                return False
+            key = core.handoff_key(hold_job_id)
+            existing = await jobs.get.aio(key)
+            action = core.decide_handoff_put(existing, job_id)
+            attached = False
+            if action == "ok":
+                attached = True
+            elif action == "put":
+                attached = bool(await jobs.put.aio(key, job_id, skip_if_exists=True))
+                if not attached:
+                    retry = core.decide_handoff_retry(await jobs.get.aio(key), job_id)
+                    if retry == "ok":
+                        attached = True
+                    elif retry == "overwrite":
+                        await jobs.put.aio(key, job_id)
+                        attached = True
+            if not attached:
+                return False
+            holder_call = await jobs.get.aio(f"call:{hold_job_id}")
+            job["handedOff"] = True
+            await jobs.put.aio(job_id, job)
+            if holder_call:
+                await jobs.put.aio(f"call:{job_id}", holder_call)
+            return True
 
         if os.path.isfile(core.result_path(CACHE_ROOT, stage, cache_key)):
             # Result-cache hit: no GPU, no charge — metered at zero seconds
             # so the billing report shows the hit rather than hiding it.
             job.update(status="done", cached=True, startedAt=now, finishedAt=now, workerSec=0.0)
             await jobs.put.aio(job_id, job)
+            await attach_if_held()
             await index_owner(job)
             async with vol_lock:
                 await touch_audio(audio_hash)
@@ -642,8 +680,8 @@ def gateway() -> Any:
         if core.reusable_inflight(existing, member):
             core.apply_owner_fields(
                 existing,
-                core.validate_owner_id(body_early.get("projectId"), field="projectId"),
-                core.validate_owner_id(body_early.get("rowId"), field="rowId"),
+                core.validate_owner_id(body_owners.get("projectId"), field="projectId"),
+                core.validate_owner_id(body_owners.get("rowId"), field="rowId"),
             )
             await jobs.put.aio(existing["jobId"], existing)
             await index_owner(existing)
@@ -654,29 +692,13 @@ def gateway() -> Any:
 
         if chunks is not None:
             job["chunks"] = chunks
-        # Wave 3 U4.5 — a transcription may ask its container to wait for the
-        # alignment (one boot per sync); an alignment may name that held job.
-        if body_early.get("hold") is True:
-            job["hold"] = True
-        # U7: any stage may be handed to a held job (a queue chains).
-        hold_job_id = body_early.get("holdJobId")
         await jobs.put.aio(job_id, job)
         await jobs.put.aio(inflight, job_id)
         await index_owner(job)
-        if isinstance(hold_job_id, str) and hold_job_id:
-            holder = await jobs.get.aio(hold_job_id)
-            if core.can_hold_for(holder, member) and await jobs.put.aio(
-                core.handoff_key(hold_job_id), job_id, skip_if_exists=True
-            ):
-                # The held container runs it: no spawn, no second boot. Its
-                # FunctionCall is the holder's, so crash detection still works.
-                holder_call = await jobs.get.aio(f"call:{hold_job_id}")
-                job["handedOff"] = True
-                await jobs.put.aio(job_id, job)
-                if holder_call:
-                    await jobs.put.aio(f"call:{job_id}", holder_call)
-                return await view_job(job)
-            # Released, closed, or not holdable: an ordinary spawn below.
+        if await attach_if_held():
+            # The held container runs it: no spawn, no second boot. Its
+            # FunctionCall is the holder's, so crash detection still works.
+            return await view_job(job)
         call = await SyncWorker().run.spawn.aio(job_id)
         # Stored under its own key: the worker rewrites the job record as it
         # runs, and a second put of the whole record here could race it.

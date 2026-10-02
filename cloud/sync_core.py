@@ -669,6 +669,65 @@ def can_hold_for(holder: dict[str, Any] | None, member: str) -> bool:
     )
 
 
+def chain_fields(body: dict[str, Any]) -> tuple[bool, str | None]:
+    """Hold flags from one JSON parse — the last stage of the last row still
+    names `holdJobId` even when `hold` is false (nothing sits behind it)."""
+    hold = body.get("hold") is True
+    raw = body.get("holdJobId")
+    hold_job_id = raw if isinstance(raw, str) and raw else None
+    return hold, hold_job_id
+
+
+def decide_handoff_put(existing: Any, new_job_id: str) -> str:
+    """How to claim `handoff:<holder>` for `new_job_id`.
+
+    `put` — skip_if_exists write (empty key). `overwrite` — key is a None
+    tombstone (some Dict GET of a missing key stores None; skip_if_exists
+    then refuses). `ok` — already ours. `spawn` — closed/released/other job.
+    """
+    if existing == new_job_id:
+        return "ok"
+    if existing in (HANDOFF_CLOSED, HANDOFF_RELEASE):
+        return "spawn"
+    if handoff_target(existing):
+        return "spawn"
+    if existing is None:
+        return "put"
+    return "spawn"
+
+
+def decide_handoff_retry(existing_after_skip_fail: Any, new_job_id: str) -> str:
+    if existing_after_skip_fail == new_job_id:
+        return "ok"
+    if existing_after_skip_fail is None:
+        return "overwrite"
+    return "spawn"
+
+
+def claim_handoff(store: Any, *, holder: dict[str, Any] | None, member: str, new_job_id: str) -> bool:
+    """Last-stage and intermediate handoffs share this claim. Returns True
+    when the new job is attached to the live holder (no spawn)."""
+    if not can_hold_for(holder, member) or holder is None:
+        return False
+    key = handoff_key(holder["jobId"])
+    existing = store.get(key)
+    action = decide_handoff_put(existing, new_job_id)
+    if action == "ok":
+        return True
+    if action == "spawn":
+        return False
+    put = getattr(store, "put")
+    if put(key, new_job_id, skip_if_exists=True):
+        return True
+    retry = decide_handoff_retry(store.get(key), new_job_id)
+    if retry == "ok":
+        return True
+    if retry == "overwrite":
+        put(key, new_job_id, skip_if_exists=False)
+        return True
+    return False
+
+
 BATCH_GAP_SEC = 120.0
 
 
