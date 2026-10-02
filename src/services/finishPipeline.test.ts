@@ -19,6 +19,7 @@ import {
   type FinishStages,
   type FinishPipelineInput,
 } from './finishPipeline';
+import { VOICEOVER_DURATION_ABORT_PREFIX } from './applySyncAbort';
 import { BulkBatchRunner, stagesToRun } from './bulkBatch';
 import { SyncQueue, type QueueEngine } from './syncQueue';
 
@@ -154,6 +155,24 @@ describe('v1.2.2 owner-id check lives on the extracted pipeline', () => {
     expect(saved).toEqual([]);
     expect(stagedOwnerMismatch('B', 'A', stagedFor('B').staged)).toBe(true);
     expect(stagedOwnerMismatch('B', 'B', stagedFor('B').staged)).toBe(false);
+  });
+});
+
+describe('voiceover probe failures keep a typed cause', () => {
+  it('sidecar-blocked is named in the abort, not relabeled as a corrupt file', async () => {
+    const result = await runBuildTimeline(baseInput('row', {
+      persistVoiceover: async (_pid, file) => ({
+        id: 'vo-row', name: file.name, url: 'blob:test', type: 'audio', file, addedAt: 1, duration: 0,
+      } as Asset),
+      probeDuration: async () => {
+        throw new Error('sidecar: resolved exe outside allowed install/dev roots');
+      },
+    }));
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.message.startsWith(VOICEOVER_DURATION_ABORT_PREFIX)).toBe(true);
+    expect(result.message).toContain('sidecar-blocked');
+    expect(result.message).not.toMatch(/Try re-adding the audio file/);
   });
 });
 

@@ -154,6 +154,24 @@ describe('BulkRowStore — draft rows, files, and creation only at Build Timelin
     expect(out.skips[ids[1]!]).toBe('Add a voiceover to build the timeline');
   });
 
+  it('a sidecar-blocked duration probe is skipped as sidecar-blocked, not a catch-all unread file', async () => {
+    const { deps } = fakeDeps({
+      cloudActive: () => false,
+      probeDuration: async () => {
+        throw new Error('sidecar: resolved exe outside allowed install/dev roots');
+      },
+    });
+    const store = new BulkRowStore(deps);
+    store.init(1);
+    const id = store.snapshot()[0]!.projectId;
+    await store.addFiles(id, four());
+    store.setTypedName(id, 'Blocked');
+    const out = await store.buildReady();
+    expect(out.created).toEqual([]);
+    expect(out.skips[id]).toMatch(/^sidecar-blocked:/);
+    expect(out.skips[id]).not.toMatch(/Couldn.t read the voiceover/);
+  });
+
   it('init makes N EMPTY drafts: nothing is created or registered anywhere', async () => {
     const { deps, created } = fakeDeps();
     const store = new BulkRowStore(deps);

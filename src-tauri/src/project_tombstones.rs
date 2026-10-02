@@ -105,4 +105,63 @@ mod tests {
         assert!(ids.contains("a") && ids.contains("b"));
         let _ = fs::remove_dir_all(&dir);
     }
+
+    #[test]
+    fn relocate_moves_tombstones_off_the_old_root() {
+        let old = tmp("tomb-old");
+        let new = tmp("D-DATA-Kinetix-Storage");
+        add_ids(&old, &["dead-1".into()]).unwrap();
+        add_ids(&new, &["dead-2".into()]).unwrap();
+        assert!(relocate_to(&old, &new).unwrap());
+        assert!(!tombstone_file(&old).exists(), "must not leave tombstones on the old root");
+        assert!(is_tombstoned(&new, "dead-1"));
+        assert!(is_tombstoned(&new, "dead-2"));
+        let _ = fs::remove_dir_all(&old);
+        let _ = fs::remove_dir_all(&new);
+    }
+
+    #[test]
+    fn d_drive_style_path_joins_the_tombstone_filename() {
+        let root = PathBuf::from(r"D:\DATA\Kinetix Storage");
+        assert_eq!(
+            tombstone_file(&root),
+            PathBuf::from(r"D:\DATA\Kinetix Storage").join("deleted-projects.json")
+        );
+    }
+}
+
+/// Merge tombstones onto `to_root`. Does not delete the source — call
+/// [`remove_file_at`] after the storage-root pointer has switched.
+pub fn copy_to(from_root: &Path, to_root: &Path) -> Result<bool, String> {
+    let from = tombstone_file(from_root);
+    if !from.is_file() {
+        return Ok(false);
+    }
+    let _gate = lock_gate();
+    fs::create_dir_all(to_root).map_err(|e| format!("tombstones relocate mkdir: {e}"))?;
+    let mut set = load_ids(to_root);
+    set.extend(load_ids(from_root));
+    let list: Vec<String> = set.into_iter().collect();
+    let payload = serde_json::to_vec(&list).map_err(|e| format!("tombstones encode: {e}"))?;
+    crate::atomic_stage::write_bytes_atomic(&tombstone_file(to_root), &payload)?;
+    Ok(true)
+}
+
+pub fn remove_file_at(root: &Path) -> Result<(), String> {
+    let path = tombstone_file(root);
+    match fs::remove_file(&path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(format!("tombstones remove old root copy: {e}")),
+    }
+}
+
+/// Copy then delete — tests and any one-shot move. Production relocation
+/// splits copy/delete around the pointer commit.
+pub fn relocate_to(from_root: &Path, to_root: &Path) -> Result<bool, String> {
+    let copied = copy_to(from_root, to_root)?;
+    if copied {
+        remove_file_at(from_root)?;
+    }
+    Ok(copied)
 }

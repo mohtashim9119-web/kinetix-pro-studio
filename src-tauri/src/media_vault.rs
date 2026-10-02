@@ -704,7 +704,7 @@ fn ffmpeg_thumbnail_args<'a>(input: &'a str, output: &'a str, seconds: &'a str) 
 /// on disk — a vault blob has no file extension, but ffmpeg's demuxer probes
 /// file content, not the extension, for `-i`) into `output` as a small JPEG.
 /// Same sidecar-invocation shape as `ffmpeg.rs`'s `ffmpeg_probe_fps`
-/// (`app.shell().sidecar("ffmpeg")`, one-shot `.output()`, no cancellation —
+/// (`crate::sidecar::sidecar_command`, one-shot `.output()`, no cancellation —
 /// this is a fast, non-interactive extraction, not an export-length run).
 async fn ffmpeg_extract_thumbnail(
     app: &tauri::AppHandle,

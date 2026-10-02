@@ -6,10 +6,12 @@
 //! `StartingBinary found current_exe() that contains a symlink on a
 //! non-allowed platform: /var`.
 //!
-//! Security intent kept: canonicalization must succeed, and both the exe
-//! and the sidecar must resolve under an allowed install/dev root. A
-//! sibling `ffmpeg-*` that canonicalizes to somewhere else (e.g. `/etc`)
-//! is still refused.
+//! Security intent kept: canonicalization must succeed, and the sidecar
+//! must resolve inside the current exe's own parent directory (the install
+//! dir — any drive, any path) or a known cargo/dev root. A sibling
+//! `ffmpeg-*` that canonicalizes to somewhere else (e.g. `/etc`, `%TEMP%`)
+//! is still refused. Hardcoded `/Applications` / `C:\Program Files` lists
+//! are not used: they reject a legitimate custom Windows install.
 
 use std::path::{Path, PathBuf};
 use tauri_plugin_shell::process::Command;
@@ -85,58 +87,116 @@ fn sidecar_file_name(name: &str, triple: &str) -> String {
     }
 }
 
-/// Default roots a canonical exe / sidecar may live under.
-pub(crate) fn default_allowed_roots() -> Vec<PathBuf> {
+/// Cargo/dev roots only. Production installs are allowed via the exe's own
+/// parent, not a hardcoded Program Files / Applications list.
+pub(crate) fn default_dev_roots() -> Vec<PathBuf> {
     let mut roots = Vec::new();
     if let Ok(manifest) = std::fs::canonicalize(env!("CARGO_MANIFEST_DIR")) {
         if let Some(repo) = manifest.parent() {
             roots.push(repo.to_path_buf());
         }
-        roots.push(manifest);
-    }
-    #[cfg(target_os = "macos")]
-    {
-        roots.push(PathBuf::from("/Applications"));
-        roots.push(PathBuf::from("/private/var/folders"));
-        roots.push(PathBuf::from("/Users"));
-    }
-    #[cfg(target_os = "linux")]
-    {
-        roots.push(PathBuf::from("/usr"));
-        roots.push(PathBuf::from("/opt"));
-        roots.push(PathBuf::from("/home"));
-        roots.push(PathBuf::from("/tmp"));
-    }
-    #[cfg(windows)]
-    {
-        roots.push(PathBuf::from(r"C:\Program Files"));
-        roots.push(PathBuf::from(r"C:\Program Files (x86)"));
-        if let Ok(local) = std::env::var("LOCALAPPDATA") {
-            roots.push(PathBuf::from(local));
-        }
+        roots.push(manifest.clone());
+        roots.push(manifest.join("binaries"));
     }
     roots
 }
 
-pub(crate) fn path_under_allowed_roots(canonical: &Path, roots: &[PathBuf]) -> bool {
-    roots.iter().any(|root| canonical.starts_with(root))
+pub(crate) fn normalize_injected_path(raw: &str, windows: bool) -> String {
+    if !windows {
+        return raw.replace('\\', "/");
+    }
+    let mut t = raw.replace('/', "\\");
+    let prefix_unc = "\\\\?\\UNC\\";
+    let prefix_dev = "\\\\?\\";
+    if t.len() >= prefix_unc.len() && t[..prefix_unc.len()].eq_ignore_ascii_case(prefix_unc) {
+        t = format!("\\\\{}", &t[prefix_unc.len()..]);
+    } else if t.len() >= prefix_dev.len() && t[..prefix_dev.len()].eq_ignore_ascii_case(prefix_dev) {
+        t = t[prefix_dev.len()..].to_string();
+    }
+    t.to_ascii_lowercase()
 }
 
-/// Canonicalize first; then require the resolved path under `allowed_roots`.
-pub(crate) fn canonicalize_exe(exe: &Path, allowed_roots: &[PathBuf]) -> Result<PathBuf, String> {
-    let canonical = std::fs::canonicalize(exe).map_err(|e| {
+pub(crate) fn injected_parent(path: &str, windows: bool) -> Option<String> {
+    let n = normalize_injected_path(path, windows);
+    if windows {
+        let trimmed = n.trim_end_matches('\\');
+        let (parent, _) = trimmed.rsplit_once('\\')?;
+        if parent.ends_with(':') {
+            Some(format!("{parent}\\"))
+        } else {
+            Some(parent.to_string())
+        }
+    } else {
+        let trimmed = n.trim_end_matches('/');
+        let (parent, _) = trimmed.rsplit_once('/')?;
+        Some(if parent.is_empty() { "/".to_string() } else { parent.to_string() })
+    }
+}
+
+pub(crate) fn injected_is_under(path: &str, root: &str, windows: bool) -> bool {
+    let p = normalize_injected_path(path, windows);
+    let r = normalize_injected_path(root, windows);
+    if windows {
+        let r = r.trim_end_matches('\\');
+        let p = p.trim_end_matches('\\');
+        p == r || p.starts_with(&format!("{r}\\"))
+    } else {
+        let r = r.trim_end_matches('/');
+        let p = p.trim_end_matches('/');
+        p == r || p.starts_with(&format!("{r}/"))
+    }
+}
+
+/// Sidecar is allowed iff it sits under the exe's own parent or a listed
+/// extra/dev root. Path strings are fixtures — no filesystem.
+pub(crate) fn injected_guard_allows(
+    exe: &str,
+    sidecar: &str,
+    extra_roots: &[&str],
+    windows: bool,
+) -> bool {
+    let Some(install_dir) = injected_parent(exe, windows) else {
+        return false;
+    };
+    let mut roots: Vec<String> = vec![install_dir];
+    roots.extend(extra_roots.iter().map(|r| r.to_string()));
+    roots
+        .iter()
+        .any(|root| injected_is_under(sidecar, root, windows))
+}
+
+pub(crate) fn path_under_allowed_roots(canonical: &Path, roots: &[PathBuf]) -> bool {
+    #[cfg(windows)]
+    {
+        let c = canonical.to_string_lossy();
+        roots
+            .iter()
+            .any(|root| injected_is_under(&c, &root.to_string_lossy(), true))
+    }
+    #[cfg(not(windows))]
+    {
+        roots.iter().any(|root| canonical.starts_with(root))
+    }
+}
+
+/// Canonicalize the running exe. Install location is not filtered here —
+/// the sidecar check uses the exe's parent as the install root.
+pub(crate) fn canonicalize_exe(exe: &Path) -> Result<PathBuf, String> {
+    std::fs::canonicalize(exe).map_err(|e| {
         format!(
             "sidecar: canonicalize current_exe {} failed: {e}",
             exe.display()
         )
-    })?;
-    if !path_under_allowed_roots(&canonical, allowed_roots) {
-        return Err(format!(
-            "sidecar: resolved exe {} is outside allowed install/dev roots",
-            canonical.display()
-        ));
+    })
+}
+
+fn allowed_roots_for_canonical_exe(canonical_exe: &Path, extra_roots: &[PathBuf]) -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    if let Some(parent) = canonical_exe.parent() {
+        roots.push(parent.to_path_buf());
     }
-    Ok(canonical)
+    roots.extend(extra_roots.iter().cloned());
+    roots
 }
 
 fn exe_search_dirs(canonical_exe: &Path) -> Vec<PathBuf> {
@@ -173,9 +233,10 @@ fn sidecar_candidates(canonical_exe: &Path, name: &str, triple: &str) -> Vec<Pat
 pub(crate) fn resolve_sidecar_from(
     exe: &Path,
     name: &str,
-    allowed_roots: &[PathBuf],
+    extra_roots: &[PathBuf],
 ) -> Result<PathBuf, String> {
-    let canonical_exe = canonicalize_exe(exe, allowed_roots)?;
+    let canonical_exe = canonicalize_exe(exe)?;
+    let allowed_roots = allowed_roots_for_canonical_exe(&canonical_exe, extra_roots);
     let triple = host_triple();
     let mut last_err = format!("sidecar '{name}' not found next to {}", canonical_exe.display());
     for candidate in sidecar_candidates(&canonical_exe, name, triple) {
@@ -184,7 +245,7 @@ pub(crate) fn resolve_sidecar_from(
         }
         match std::fs::canonicalize(&candidate) {
             Ok(resolved) => {
-                if !path_under_allowed_roots(&resolved, allowed_roots) {
+                if !path_under_allowed_roots(&resolved, &allowed_roots) {
                     last_err = format!(
                         "sidecar: {} resolves to {} outside allowed install/dev roots",
                         candidate.display(),
@@ -207,7 +268,7 @@ pub(crate) fn resolve_sidecar_from(
 
 pub(crate) fn resolve_sidecar(name: &str) -> Result<PathBuf, String> {
     let exe = std::env::current_exe().map_err(|e| format!("sidecar: current_exe: {e}"))?;
-    resolve_sidecar_from(&exe, name, &default_allowed_roots())
+    resolve_sidecar_from(&exe, name, &default_dev_roots())
 }
 
 /// Plugin `Command` via `.command(path)` — never `.sidecar()`, which goes
@@ -281,7 +342,7 @@ mod tests {
             .unwrap_or_else(|e| panic!("canonicalized lookup must succeed: {e}"));
         assert_eq!(resolved, std::fs::canonicalize(&sidecar).unwrap());
         assert_eq!(
-            canonicalize_exe(&linked_exe, &allowed).unwrap(),
+            canonicalize_exe(&linked_exe).unwrap(),
             std::fs::canonicalize(&real_exe).unwrap()
         );
         let _ = fs::remove_dir_all(root);
@@ -300,7 +361,7 @@ mod tests {
     #[test]
     fn rejects_when_canonicalize_fails() {
         let missing = unique_dir().join("no-such-exe");
-        let err = canonicalize_exe(&missing, &default_allowed_roots()).unwrap_err();
+        let err = canonicalize_exe(&missing).unwrap_err();
         assert!(err.contains("canonicalize"), "{err}");
         let _ = fs::remove_dir_all(missing.parent().unwrap());
     }
@@ -327,5 +388,96 @@ mod tests {
         );
         let _ = fs::remove_dir_all(root);
         let _ = fs::remove_dir_all(outside);
+    }
+
+    #[test]
+    fn f1_custom_windows_install_next_to_ffmpeg_must_be_allowed() {
+        let exe = r"\\?\D:\DATA\Kinetix Installed\app.exe";
+        let sidecar = r"\\?\D:\DATA\Kinetix Installed\ffmpeg-x86_64-pc-windows-msvc.exe";
+        assert!(
+            injected_guard_allows(exe, sidecar, &[], true),
+            "installer puts ffmpeg beside app.exe on any drive"
+        );
+    }
+
+    #[test]
+    fn f1_windows_device_prefix_mixed_slashes_drive_case_and_unc_normalize() {
+        let cases: &[(&str, &str)] = &[
+            (
+                r"\\?\D:\DATA\Kinetix Installed\app.exe",
+                r"\\?\D:\DATA\Kinetix Installed\ffmpeg.exe",
+            ),
+            (
+                r"D:/DATA/Kinetix Installed/app.exe",
+                r"D:\DATA\Kinetix Installed\ffmpeg.exe",
+            ),
+            (
+                r"d:\DATA\Kinetix Installed\app.exe",
+                r"D:\DATA\Kinetix Installed\ffmpeg.exe",
+            ),
+            (
+                r"\\?\UNC\fileserver\share\Kinetix\app.exe",
+                r"\\fileserver\share\Kinetix\ffmpeg.exe",
+            ),
+        ];
+        for (exe, sidecar) in cases {
+            assert!(
+                injected_guard_allows(exe, sidecar, &[], true),
+                "normalize must accept {exe} + sibling"
+            );
+        }
+    }
+
+    #[test]
+    fn f1_macos_applications_sibling_is_accepted() {
+        let exe = "/Applications/Kinetix Pro Studio.app/Contents/MacOS/app";
+        let sidecar =
+            "/Applications/Kinetix Pro Studio.app/Contents/MacOS/ffmpeg-aarch64-apple-darwin";
+        assert!(injected_guard_allows(exe, sidecar, &[], false));
+    }
+
+    #[test]
+    fn f1_sidecar_planted_outside_install_dir_is_refused() {
+        let exe = r"\\?\D:\DATA\Kinetix Installed\app.exe";
+        let planted = r"C:\Windows\Temp\ffmpeg.exe";
+        assert!(!injected_guard_allows(exe, planted, &[], true));
+    }
+
+    #[test]
+    fn f1_dev_root_extra_still_allows_a_cargo_binaries_sidecar() {
+        assert!(injected_guard_allows(
+            r"C:\src\target\debug\app.exe",
+            r"C:\src\src-tauri\binaries\ffmpeg.exe",
+            &[r"C:\src\src-tauri\binaries"],
+            true,
+        ));
+    }
+
+    #[test]
+    fn production_sidecar_lookups_share_sidecar_command() {
+        let files = [
+            ("ffmpeg.rs", include_str!("ffmpeg.rs")),
+            ("whisper.rs", include_str!("whisper.rs")),
+            ("media_vault.rs", include_str!("media_vault.rs")),
+            ("cloud_gateway.rs", include_str!("cloud_gateway.rs")),
+        ];
+        for (name, src) in files {
+            let prod = src
+                .lines()
+                .filter(|line| {
+                    let t = line.trim_start();
+                    !t.starts_with("//") && !t.starts_with("///") && !t.starts_with("//!")
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            assert!(
+                !prod.contains(".sidecar("),
+                "{name} must not call plugin .sidecar()"
+            );
+            assert!(
+                prod.contains("crate::sidecar::sidecar_command"),
+                "{name} must look up ffmpeg/whisper through sidecar_command"
+            );
+        }
     }
 }
