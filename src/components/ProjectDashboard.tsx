@@ -260,21 +260,13 @@ export function ProjectDashboard({
 
   async function handleBulkDelete(): Promise<void> {
     const ids = Array.from(selectedIds);
-    // WS3 item H — native asset cleanup failures, collected across the whole
-    // batch and surfaced ONCE at the end (not fire-and-forget, not silent —
-    // "we just spent a round learning what swallowed filesystem errors
-    // cost"). The project record is still deleted either way: a project
-    // whose native cleanup failed is still gone from the grid, but its
-    // bytes may remain on disk, which the user is now told rather than
-    // never finding out.
-    const cleanupFailures: string[] = [];
-    for (const id of ids) cleanupFailures.push(...await deleteProjectEverywhere(id));
-    // A deleted project leaves the persistent bulk batch too.
+    setShowBulkConfirm(false);
+    setMetas(prev => prev.filter(m => !ids.includes(m.id)));
+    setSelectedIds(new Set());
     bulkBatchRunner(parseProjectData).forget(ids);
     onProjectsDeleted?.(ids);
-    setMetas(prev => prev.filter(m => !selectedIds.has(m.id)));
-    setSelectedIds(new Set());
-    setShowBulkConfirm(false);
+    const cleanupFailures: string[] = [];
+    for (const id of ids) cleanupFailures.push(...await deleteProjectEverywhere(id));
     if (cleanupFailures.length > 0) {
       onAssetCleanupFailed?.(
         `${cleanupFailures.length} deleted project${cleanupFailures.length === 1 ? '' : 's'} could not be fully ` +

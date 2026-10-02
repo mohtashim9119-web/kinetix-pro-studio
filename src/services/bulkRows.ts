@@ -113,24 +113,22 @@ export const defaultBulkRowDeps = async (makeBlankProject: () => Project): Promi
     import('./projectStore'), import('./cloudSyncEngine'), import('./tauriFfmpeg'), import('./syncEngineHost'),
     import('./assetStore'), import('./mediaVaultClient'), import('./stagedFilesStore'), import('./bulkContext'),
   ]);
-  const unreference = async (projectId: string, list: Asset[]): Promise<void> => {
-    const hashes = new Set(list.map(a => a.contentHash).filter((h): h is string => !!h));
-    await Promise.all([...hashes].map(h => vault.mediaVaultUnreference(h, projectId).catch(() => undefined)));
-  };
   return {
     loadStaged: loadStagedFromStore,
     writeStaged: writeStagedDiff,
     createProject: info => ctx.createBulkProject(info, {
       makeBlankProject, save: p => store.saveProject(p), upsertMeta: store.upsertProjectMeta,
     }),
-    purge: async (projectId, bundleAssets) => {
+    purge: async (projectId, _bundleAssets) => {
       await staged.deleteAllStagedForProject(projectId).catch(() => undefined);
       await assets.deleteAllAssets(projectId).catch(() => undefined);
-      await unreference(projectId, bundleAssets);
+      await vault.mediaVaultUnreferenceProject(projectId).catch(() => undefined);
     },
     removeBundleAsset: async (projectId, asset) => {
       await assets.deleteAsset(projectId, asset.id).catch(() => undefined);
-      await unreference(projectId, [asset]);
+      if (asset.contentHash) {
+        await vault.mediaVaultUnreference(asset.contentHash, projectId).catch(() => undefined);
+      }
     },
     hashAudio: computeAudioHash,
     probeDuration: (file, hash) => memoizedDuration(file, hash, tauri.probeAudioDuration),

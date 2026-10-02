@@ -147,7 +147,20 @@ pub(crate) fn load_registry_no_heal(root: &Path) -> Result<MediaVaultRegistry, S
     }
 }
 
+#[cfg(test)]
+fn saves_by_root() -> std::sync::MutexGuard<'static, HashMap<PathBuf, u64>> {
+    static SAVES_BY_ROOT: std::sync::OnceLock<Mutex<HashMap<PathBuf, u64>>> = std::sync::OnceLock::new();
+    SAVES_BY_ROOT
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+}
+
 fn save_registry(root: &Path, registry: &MediaVaultRegistry) -> Result<(), String> {
+    #[cfg(test)]
+    {
+        *saves_by_root().entry(root.to_path_buf()).or_insert(0) += 1;
+    }
     let json = serialize_registry(registry)?;
     write_bytes_atomic(&registry_path(root), &json)?;
     // Verified copy of what was just saved — rung (c) of the recovery ladder.
@@ -210,6 +223,89 @@ impl Drop for RegistryGuard {
 /// would land a mutation in the abandoned root — a silently lost update. The
 /// gate refuses it instead (loud; the caller retries against the new root).
 static RETIRED_ROOTS: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+
+/// Deferred import: each file fsyncs its `.part` immediately; rename +
+/// registry write wait for `commit_deferred_imports` so one import batch is
+/// one gate acquisition and one registry fsync.
+struct DeferredImport {
+    root: PathBuf,
+    tmp: Option<PathBuf>,
+    dest: PathBuf,
+    content_hash: String,
+    project_id: String,
+    display_name: String,
+    mime_type: String,
+    size_bytes: u64,
+}
+
+fn deferred_imports() -> &'static Mutex<Vec<DeferredImport>> {
+    static Q: std::sync::OnceLock<Mutex<Vec<DeferredImport>>> = std::sync::OnceLock::new();
+    Q.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+fn queue_deferred_import(item: DeferredImport) {
+    deferred_imports()
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .push(item);
+}
+
+/// Rename every fsynced part for `root`, then one registry mutation.
+fn commit_deferred_imports(root: &Path) -> Result<usize, String> {
+    let mine: Vec<DeferredImport> = {
+        let mut q = deferred_imports().lock().unwrap_or_else(|p| p.into_inner());
+        let mut mine = Vec::new();
+        let mut rest = Vec::new();
+        for item in q.drain(..) {
+            if item.root == root {
+                mine.push(item);
+            } else {
+                rest.push(item);
+            }
+        }
+        *q = rest;
+        mine
+    };
+    if mine.is_empty() {
+        return Ok(0);
+    }
+    for item in &mine {
+        if let Some(tmp) = &item.tmp {
+            if tmp.exists() {
+                fs::rename(tmp, &item.dest).map_err(|e| {
+                    let _ = fs::remove_file(tmp);
+                    format!("media-vault: promote part -> blob: {e}")
+                })?;
+            }
+        }
+    }
+    let n = mine.len();
+    with_registry_mut(root, |registry| {
+        for item in &mine {
+            let bp = blob_path(root, &item.content_hash);
+            if !bp.exists() {
+                return Err(format!(
+                    "media-vault: blob {} missing at batch commit",
+                    item.content_hash
+                ));
+            }
+            let entry = registry.entries.entry(item.content_hash.clone()).or_insert_with(|| {
+                MediaVaultEntry {
+                    content_hash: item.content_hash.clone(),
+                    display_name: item.display_name.clone(),
+                    mime_type: item.mime_type.clone(),
+                    size_bytes: item.size_bytes,
+                    added_at_ms: now_millis(),
+                    referenced_by_project_ids: Vec::new(),
+                }
+            });
+            if !entry.referenced_by_project_ids.iter().any(|p| p == &item.project_id) {
+                entry.referenced_by_project_ids.push(item.project_id.clone());
+            }
+        }
+        Ok((n, true))
+    })
+}
 
 fn canonical(root: &Path) -> PathBuf {
     fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf())
@@ -400,8 +496,9 @@ pub fn media_vault_import_bytes(
     media_vault_import_bytes_ex(root, project_id, bytes, display_name, mime_type, true)
 }
 
-/// `sync_dir` false: blob part is still fsynced before rename; the caller
-/// must `media_vault_fsync_dir` once after the batch.
+/// `sync_dir` false: each blob's `.part` is fsynced immediately, then
+/// `media_vault_fsync_dir` promotes every part, commits the registry once,
+/// and fsyncs the directory once.
 pub fn media_vault_import_bytes_ex(
     root: &Path,
     project_id: &str,
@@ -411,12 +508,42 @@ pub fn media_vault_import_bytes_ex(
     sync_dir: bool,
 ) -> Result<MediaVaultEntry, String> {
     ensure_root_live(root)?;
-    let content_hash = write_blob_if_absent(root, bytes, sync_dir)?;
-    commit_registry_entry(root, &content_hash, bytes, project_id, display_name, mime_type)
+    if sync_dir {
+        let content_hash = write_blob_if_absent(root, bytes, true)?;
+        return commit_registry_entry(root, &content_hash, bytes, project_id, display_name, mime_type);
+    }
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    let content_hash = hex_digest(&hasher.finish());
+    let bp = blob_path(root, &content_hash);
+    let tmp = if bp.exists() {
+        None
+    } else {
+        Some(crate::atomic_stage::write_fsynced_part(&bp, bytes)?)
+    };
+    queue_deferred_import(DeferredImport {
+        root: root.to_path_buf(),
+        tmp,
+        dest: bp,
+        content_hash: content_hash.clone(),
+        project_id: project_id.to_string(),
+        display_name: display_name.to_string(),
+        mime_type: mime_type.to_string(),
+        size_bytes: bytes.len() as u64,
+    });
+    Ok(MediaVaultEntry {
+        content_hash,
+        display_name: display_name.to_string(),
+        mime_type: mime_type.to_string(),
+        size_bytes: bytes.len() as u64,
+        added_at_ms: now_millis(),
+        referenced_by_project_ids: vec![project_id.to_string()],
+    })
 }
 
-/// One directory fsync of the vault after a deferred-dir-sync import batch.
+/// Promote deferred blob parts, one registry fsync, then one directory fsync.
 pub fn media_vault_fsync_dir(root: &Path) -> Result<(), String> {
+    commit_deferred_imports(root)?;
     crate::atomic_stage::fsync_dir(&media_vault_dir(root))
 }
 
@@ -579,13 +706,10 @@ async fn ffmpeg_extract_thumbnail(
     input: &Path,
     output: &Path,
 ) -> Result<(), String> {
-    use tauri_plugin_shell::ShellExt;
     let input_str = input.to_str().ok_or("media_vault: input path is not valid UTF-8")?;
     let output_str = output.to_str().ok_or("media_vault: output path is not valid UTF-8")?;
     let seconds = THUMBNAIL_AT_SECONDS.to_string();
-    let result = app
-        .shell()
-        .sidecar("ffmpeg")
+    let result = crate::sidecar::sidecar_command(app, "ffmpeg")
         .map_err(|e| format!("ffmpeg sidecar lookup: {e}"))?
         .args(ffmpeg_thumbnail_args(input_str, output_str, &seconds))
         .output()
@@ -1406,8 +1530,11 @@ mod registry_race_tests {
     use std::sync::{Arc, Barrier};
 
     fn vault_root(tag: &str) -> PathBuf {
-        // Interleaving, not durability, is under test — see TEST_SKIP_FSYNC.
-        crate::atomic_stage::TEST_SKIP_FSYNC.store(true, std::sync::atomic::Ordering::Relaxed);
+        scratch(tag, true)
+    }
+
+    fn scratch(tag: &str, skip_fsync: bool) -> PathBuf {
+        crate::atomic_stage::TEST_SKIP_FSYNC.store(skip_fsync, std::sync::atomic::Ordering::Relaxed);
         let d = std::env::temp_dir().join(format!(
             "kinetix-registry-race-{tag}-{}-{}",
             std::process::id(),
@@ -1415,6 +1542,10 @@ mod registry_race_tests {
         ));
         fs::create_dir_all(&d).unwrap();
         d
+    }
+
+    fn saves_for(root: &Path) -> u64 {
+        *saves_by_root().get(root).unwrap_or(&0)
     }
 
     const THREADS: usize = 8;
@@ -1719,6 +1850,173 @@ mod registry_race_tests {
         // ...and so does the next import.
         media_vault_import_bytes(&root, "proj-2", b"next", "b.png", "image/png").unwrap();
         assert_eq!(media_vault_list(&root).unwrap().len(), 2);
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn deferred_import_does_not_touch_registry_until_flush() {
+        crate::atomic_stage::TEST_SKIP_FSYNC.store(true, std::sync::atomic::Ordering::Relaxed);
+        let root = scratch("defer-reg", true);
+        for i in 0..12 {
+            media_vault_import_bytes_ex(
+                &root,
+                "proj",
+                format!("payload-{i}").as_bytes(),
+                &format!("{i}.png"),
+                "image/png",
+                false,
+            )
+            .unwrap();
+        }
+        assert_eq!(
+            saves_for(&root),
+            0,
+            "per-file import used to fsync registry.json once per file"
+        );
+        assert!(
+            load_registry(&root).unwrap().entries.is_empty(),
+            "crash before flush must leave no registry trace"
+        );
+        media_vault_fsync_dir(&root).unwrap();
+        assert_eq!(saves_for(&root), 1);
+        assert_eq!(load_registry(&root).unwrap().entries.len(), 12);
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn deferred_import_crash_before_rename_leaves_part_not_blob() {
+        crate::atomic_stage::TEST_SKIP_FSYNC.store(true, std::sync::atomic::Ordering::Relaxed);
+        let root = scratch("defer-crash", true);
+        let entry = media_vault_import_bytes_ex(&root, "proj", b"only-in-part", "a.bin", "application/octet-stream", false)
+            .unwrap();
+        let dest = blob_path(&root, &entry.content_hash);
+        assert!(!dest.exists(), "rename is deferred until flush");
+        let parts: Vec<_> = fs::read_dir(media_vault_dir(&root))
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().contains(".part"))
+            .collect();
+        assert_eq!(parts.len(), 1, "the fsynced part is the incomplete write");
+        media_vault_fsync_dir(&root).unwrap();
+        assert!(dest.exists());
+        assert_eq!(fs::read(&dest).unwrap(), b"only-in-part");
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn concurrent_deferred_parts_then_one_flush() {
+        crate::atomic_stage::TEST_SKIP_FSYNC.store(true, std::sync::atomic::Ordering::Relaxed);
+        let root = scratch("defer-conc", true);
+        std::thread::scope(|s| {
+            for i in 0..8 {
+                let root = &root;
+                s.spawn(move || {
+                    media_vault_import_bytes_ex(
+                        root,
+                        "proj",
+                        format!("conc-{i}-bytes").as_bytes(),
+                        &format!("{i}.bin"),
+                        "application/octet-stream",
+                        false,
+                    )
+                    .unwrap();
+                });
+            }
+        });
+        media_vault_fsync_dir(&root).unwrap();
+        assert_eq!(saves_for(&root), 1);
+        assert_eq!(load_registry(&root).unwrap().entries.len(), 8);
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn real_disk_per_file_registry_fsync_vs_batched_flush() {
+        crate::atomic_stage::TEST_SKIP_FSYNC.store(false, std::sync::atomic::Ordering::Relaxed);
+        let files = 8usize;
+        let body: Vec<u8> = (0..64 * 1024).map(|i| (i % 251) as u8).collect();
+
+        let per_root = scratch("real-per", false);
+        let per = std::time::Instant::now();
+        for i in 0..files {
+            let mut b = body.clone();
+            b[0] = i as u8;
+            media_vault_import_bytes(&per_root, "proj", &b, &format!("{i}.bin"), "application/octet-stream")
+                .unwrap();
+        }
+        let per_ms = per.elapsed().as_secs_f64() * 1000.0;
+        let per_saves = saves_for(&per_root);
+
+        let batch_root = scratch("real-batch", false);
+        let batch = std::time::Instant::now();
+        for i in 0..files {
+            let mut b = body.clone();
+            b[0] = i as u8;
+            media_vault_import_bytes_ex(
+                &batch_root,
+                "proj",
+                &b,
+                &format!("{i}.bin"),
+                "application/octet-stream",
+                false,
+            )
+            .unwrap();
+        }
+        media_vault_fsync_dir(&batch_root).unwrap();
+        let batch_ms = batch.elapsed().as_secs_f64() * 1000.0;
+        let batch_saves = saves_for(&batch_root);
+
+        println!(
+            "real_disk_import: {files} × 64KiB  per-file {per_ms:.1} ms ({per_saves} registry fsyncs)  batched {batch_ms:.1} ms ({batch_saves} registry fsyncs)"
+        );
+        assert_eq!(per_saves, files as u64);
+        assert_eq!(batch_saves, 1);
+        assert_eq!(load_registry(&batch_root).unwrap().entries.len(), files);
+        fs::remove_dir_all(&per_root).ok();
+        fs::remove_dir_all(&batch_root).ok();
+    }
+
+    #[test]
+    fn fifty_asset_unreference_is_one_registry_save_under_budget() {
+        crate::atomic_stage::TEST_SKIP_FSYNC.store(false, std::sync::atomic::Ordering::Relaxed);
+        let root = scratch("del-50", false);
+        for i in 0..50 {
+            media_vault_import_bytes(&root, "gone", &[i as u8; 16], &format!("{i}.bin"), "application/octet-stream")
+                .unwrap();
+        }
+        let before = saves_for(&root);
+        let t = std::time::Instant::now();
+        let dropped = unreference_project_everywhere(&root, "gone").unwrap();
+        let ms = t.elapsed().as_secs_f64() * 1000.0;
+        println!("fifty_asset_delete: dropped {dropped} refs in {ms:.1} ms, registry saves {}", saves_for(&root) - before);
+        assert_eq!(dropped, 50);
+        assert_eq!(saves_for(&root) - before, 1);
+        assert!(
+            ms < 2500.0,
+            "one gated registry fsync for 50 refs must stay under 2.5s on a real disk, got {ms:.1} ms"
+        );
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn sequential_per_hash_unreference_is_the_hang_n_saves() {
+        crate::atomic_stage::TEST_SKIP_FSYNC.store(true, std::sync::atomic::Ordering::Relaxed);
+        let root = scratch("del-n", true);
+        let hashes: Vec<_> = (0..20)
+            .map(|i| {
+                media_vault_import_bytes(&root, "gone", &[i as u8; 8], &format!("{i}.bin"), "application/octet-stream")
+                    .unwrap()
+                    .content_hash
+            })
+            .collect();
+        let before = saves_for(&root);
+        for h in &hashes {
+            unreference_project(&root, h, "gone").unwrap();
+        }
+        assert_eq!(
+            saves_for(&root) - before,
+            20,
+            "the beachball path: one registry fsync per asset"
+        );
         fs::remove_dir_all(&root).ok();
     }
 }

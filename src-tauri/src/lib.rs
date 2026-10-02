@@ -39,6 +39,7 @@ mod safe_delete;
 // module) and no runtime behavior changed.
 pub mod sha256;
 mod atomic_stage;
+mod sidecar;
 // Wave 3 U1 — the only module that talks to the cloud sync gateway.
 mod cloud_gateway;
 mod storage_root;

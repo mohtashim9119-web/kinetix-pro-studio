@@ -133,44 +133,31 @@ describe('ProjectDashboard bulk delete — native asset cleanup', () => {
 });
 
 describe('ProjectDashboard bulk delete — media-vault unreference wiring (G6 Step 6)', () => {
-  it('unreferences every distinct contentHash the deleted project\'s assets carried', async () => {
-    mockLoadProject.mockResolvedValue({
-      project: {
-        assets: [
-          { id: 'a1', contentHash: 'hash-1' },
-          { id: 'a2', contentHash: 'hash-2' },
-          // A second asset sharing hash-1 (a twin) must not cause a duplicate
-          // unreference call — one call per DISTINCT hash.
-          { id: 'a3', contentHash: 'hash-1' },
-        ],
-      },
-      savedAt: 0,
-    });
-    await mount();
-    await selectAndDelete('p1');
-
-    expect(mockMediaVaultUnreference).toHaveBeenCalledTimes(2);
-    expect(mockMediaVaultUnreference).toHaveBeenCalledWith('hash-1', 'p1');
-    expect(mockMediaVaultUnreference).toHaveBeenCalledWith('hash-2', 'p1');
-  });
-
-  it('skips unreference entirely for assets with no contentHash (legacy non-vault assets)', async () => {
-    mockLoadProject.mockResolvedValue({
-      project: { assets: [{ id: 'a1' }, { id: 'a2', contentHash: undefined }] },
-      savedAt: 0,
-    });
+  it('drops every vault ref for the project in one call, not one IPC per contentHash', async () => {
     await mount();
     await selectAndDelete('p1');
 
     expect(mockMediaVaultUnreference).not.toHaveBeenCalled();
+    expect(mockMediaVaultUnreferenceProject).toHaveBeenCalledTimes(1);
+    expect(mockMediaVaultUnreferenceProject).toHaveBeenCalledWith('p1');
+    expect(mockLoadProject).not.toHaveBeenCalled();
   });
 
-  it('a project whose record fails to load still deletes cleanly — no contentHashes to unreference', async () => {
+  it('still unreferences the vault when the project record would have had no hashes', async () => {
+    await mount();
+    await selectAndDelete('p1');
+
+    expect(mockMediaVaultUnreference).not.toHaveBeenCalled();
+    expect(mockMediaVaultUnreferenceProject).toHaveBeenCalledWith('p1');
+  });
+
+  it('a project whose record fails to load still deletes cleanly', async () => {
     mockLoadProject.mockRejectedValue(new Error('corrupt project record'));
     await mount();
     await expect(selectAndDelete('p1')).resolves.toBeUndefined();
 
     expect(mockMediaVaultUnreference).not.toHaveBeenCalled();
     expect(mockDeleteProjectData).toHaveBeenCalledWith('p1');
+    expect(mockMediaVaultUnreferenceProject).toHaveBeenCalledWith('p1');
   });
 });

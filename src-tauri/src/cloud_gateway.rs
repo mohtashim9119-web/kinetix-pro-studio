@@ -41,7 +41,6 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use tauri::ipc::Channel;
 use tauri::Manager;
-use tauri_plugin_shell::ShellExt;
 
 /// The deployed gateway. `KINETIX_GATEWAY_URL` overrides it (dev/staging only).
 pub(crate) const DEFAULT_GATEWAY_URL: &str = "https://thekingsmanco99--kinetix-sync.modal.run";
@@ -736,9 +735,7 @@ pub async fn cloud_encode_opus(app: tauri::AppHandle, audio_hash: String) -> Res
         return Err(CloudError::Io { detail: "no staged audio for this hash; stage it first".to_string() });
     }
     let tmp = dir.join(format!("{audio_hash}.{}.part", uuid::Uuid::new_v4()));
-    let out = app
-        .shell()
-        .sidecar("ffmpeg")
+    let out = crate::sidecar::sidecar_command(&app, "ffmpeg")
         .map_err(|e| CloudError::Encode { detail: format!("ffmpeg sidecar lookup: {e}") })?
         .args(opus_encode_args(&src, &tmp))
         .output()

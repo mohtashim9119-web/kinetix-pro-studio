@@ -107,10 +107,9 @@ pub(crate) fn write_bytes_atomic(dest: &Path, bytes: &[u8]) -> Result<(), String
     write_bytes_atomic_ex(dest, bytes, true)
 }
 
-/// Same two-phase part+rename as `write_bytes_atomic`. `sync_dir` false skips
-/// the parent-directory fsync so a caller can fsync the directory once after a
-/// batch of renames (still crash-safe: each part is fsynced before rename).
-pub(crate) fn write_bytes_atomic_ex(dest: &Path, bytes: &[u8], sync_dir: bool) -> Result<(), String> {
+/// Write and fsync a unique sibling `.part`. Does **not** rename — the
+/// caller batches renames then one directory fsync.
+pub(crate) fn write_fsynced_part(dest: &Path, bytes: &[u8]) -> Result<PathBuf, String> {
     if let Some(parent) = dest.parent() {
         fs::create_dir_all(parent).map_err(|e| format!("atomic_stage: create parent: {e}"))?;
     }
@@ -127,6 +126,14 @@ pub(crate) fn write_bytes_atomic_ex(dest: &Path, bytes: &[u8], sync_dir: bool) -
         let _ = fs::remove_file(&tmp);
         return Err(e);
     }
+    Ok(tmp)
+}
+
+/// Same two-phase part+rename as `write_bytes_atomic`. `sync_dir` false skips
+/// the parent-directory fsync so a caller can fsync the directory once after a
+/// batch of renames (still crash-safe: each part is fsynced before rename).
+pub(crate) fn write_bytes_atomic_ex(dest: &Path, bytes: &[u8], sync_dir: bool) -> Result<(), String> {
+    let tmp = write_fsynced_part(dest, bytes)?;
     fs::rename(&tmp, dest).map_err(|e| {
         let _ = fs::remove_file(&tmp);
         format!("atomic_stage: rename part -> dest: {e}")

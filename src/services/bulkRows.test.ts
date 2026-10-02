@@ -22,7 +22,12 @@ import JSZip from 'jszip';
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(), Channel: class {} }));
 const mockPutAsset = vi.fn();
 vi.mock('./assetStore', () => ({ putAsset: (...a: unknown[]) => mockPutAsset(...a), deleteAsset: vi.fn() }));
-vi.mock('./mediaVaultClient', () => ({ mediaVaultImportBytes: vi.fn().mockResolvedValue(null), mediaVaultFsyncDir: vi.fn().mockResolvedValue(undefined) }));
+vi.mock('./mediaVaultClient', () => ({
+  mediaVaultImportBytes: vi.fn().mockResolvedValue(null),
+  mediaVaultFsyncDir: vi.fn().mockResolvedValue(undefined),
+  mediaVaultUnreference: vi.fn().mockResolvedValue(undefined),
+  mediaVaultUnreferenceProject: vi.fn().mockResolvedValue(undefined),
+}));
 vi.mock('./tauriFfmpeg', () => ({ probeVideoFps: vi.fn(), probeAudioDuration: vi.fn(), isTauri: () => true }));
 
 import { invoke } from '@tauri-apps/api/core';

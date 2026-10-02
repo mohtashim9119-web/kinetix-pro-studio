@@ -629,10 +629,11 @@ export function BulkProjectsModal({
   // (once created) the project they belong to.
   const [confirmDelete, setConfirmDelete] = useState<BulkRowState | null>(null);
   const deleteRow = async (row: BulkRowState): Promise<void> => {
+    setConfirmDelete(null);
     if (row.built) {
-      const failures = await deleteProject(row.projectId);
       runner.removeRow(row.projectId);
       store?.forgetRow(row.projectId);
+      const failures = await deleteProject(row.projectId);
       onProjectsDeleted?.([row.projectId], failures);
     } else {
       await store?.discardRow(row.projectId);
