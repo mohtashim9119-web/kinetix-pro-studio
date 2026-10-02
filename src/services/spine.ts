@@ -49,9 +49,9 @@ function toHex(digest: ArrayBuffer): string {
  * runs in the browser's native crypto backend, not in JS.
  */
 export async function computeAudioHash(file: File): Promise<string> {
-  const bytes = await file.arrayBuffer();
-  const digest = await crypto.subtle.digest('SHA-256', bytes);
-  return toHex(digest);
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const { sha256HexOffthread } = await import('./ingestOffthread');
+  return sha256HexOffthread(bytes);
 }
 
 /** SHA-256 of a UTF-8 string, hex-encoded. */

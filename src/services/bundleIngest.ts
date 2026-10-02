@@ -44,10 +44,11 @@
 // in `nestedZipsSkipped` (one grouped finding), bounding the work.
 // ---------------------------------------------------------------------------
 
-import { detectMediaType, ingestOneMediaFile, makeOfflineReconnectSink, type MediaIngestCounts, type OfflineReconnect } from './mediaIngest';
+import { detectMediaType, ingestOneMediaFile, makeOfflineReconnectSink, finishIngestBatch, mapPool, type MediaIngestCounts, type OfflineReconnect } from './mediaIngest';
 import { stripRtfIfNeeded, detectTextFileRole } from './textUtils';
 import { ZIP_MAX_ENTRIES, ZIP_MAX_ENTRY_BYTES, ZIP_MAX_TOTAL_BYTES, ZipTooLargeError, walkZipMediaEntries } from './zipIngest';
 import { isMacOSMetadataPath } from './macosMetadata';
+import { timedIngest } from './ingestTiming';
 import type { Asset } from '../types';
 
 export interface BundleIngestSuccess {
@@ -105,7 +106,7 @@ export async function classifyAndIngestBundleZip(
 
   let content: Awaited<ReturnType<InstanceType<typeof JSZipModule>['loadAsync']>>;
   try {
-    content = await new JSZipModule().loadAsync(zipFile);
+    content = await timedIngest('bundle:loadAsync', () => new JSZipModule().loadAsync(zipFile), zipFile.size);
   } catch (err) {
     console.error('[bundleIngest] Failed to open zip:', err);
     return { kind: 'failure', message: `"${zipFile.name}" could not be read — the archive appears corrupt.` };
@@ -118,78 +119,89 @@ export async function classifyAndIngestBundleZip(
 
   // ---- Pass 1: classify. No persistence happens in this pass. ----
   const textEntries: ClassifiedTextEntry[] = [];
-  const audioEntries: { name: string; blob: Blob }[] = [];
-  const mediaEntries: { name: string; blob: Blob; type: Asset['type'] }[] = [];
+  const audioNames: { entry: (typeof entries)[number]; name: string }[] = [];
+  const mediaNames: { entry: (typeof entries)[number]; name: string; type: Asset['type'] }[] = [];
+  const innerZips: { entry: (typeof entries)[number]; name: string }[] = [];
   let unsupportedSkipped = 0;
   let unsafeRejected = 0;
   const nestedZipsSkipped: string[] = [];
-  let totalBytes = 0;
 
   for (const entry of entries) {
-    // Same traversal check as `zipIngest.ts` — see that file's own doc
-    // comment for why the MISMATCH (not mere presence) is the real signal.
     if (entry.unsafeOriginalName !== undefined && entry.unsafeOriginalName !== entry.name) {
       console.warn('[bundleIngest] rejected unsafe (traversal) zip entry:', entry.unsafeOriginalName);
       unsafeRejected += 1;
       continue;
     }
-
     const filename = entry.name;
     const name = filename.split('/').pop() || filename;
     const ext = name.split('.').pop()?.toLowerCase() ?? '';
-
     if (ext === 'txt' || ext === 'rtf') {
       const raw = await entry.async('string');
       const stripped = stripRtfIfNeeded(raw);
       textEntries.push({ name, text: stripped, role: detectTextFileRole(stripped) });
       continue;
     }
-
-    const isInnerZip = ext === 'zip';
-    const type = isInnerZip ? undefined : detectMediaType(name);
-    if (!isInnerZip && type === undefined) {
+    if (ext === 'zip') {
+      innerZips.push({ entry, name });
+      continue;
+    }
+    const type = detectMediaType(name);
+    if (type === undefined) {
       unsupportedSkipped += 1;
       continue;
     }
+    if (type === 'audio') audioNames.push({ entry, name });
+    else mediaNames.push({ entry, name, type });
+  }
 
+  const isBundleAttempt = textEntries.length > 0 || audioNames.length > 0;
+  if (!isBundleAttempt) {
+    return { kind: 'not-a-bundle' };
+  }
+
+  const audioEntries: { name: string; blob: Blob }[] = [];
+  const mediaEntries: { name: string; blob: Blob; type: Asset['type'] }[] = [];
+  let totalBytes = 0;
+
+  const takeBlob = async (entry: (typeof entries)[number], name: string): Promise<Blob | { fail: BundleZipOutcome }> => {
     const blob = await entry.async('blob');
     totalBytes += blob.size;
     if (blob.size > ZIP_MAX_ENTRY_BYTES) {
-      return { kind: 'failure', message: `"${name}" is larger than the ${ZIP_MAX_ENTRY_BYTES}-byte per-file limit — nothing in this bundle was imported.` };
+      return { fail: { kind: 'failure', message: `"${name}" is larger than the ${ZIP_MAX_ENTRY_BYTES}-byte per-file limit — nothing in this bundle was imported.` } };
     }
     if (totalBytes > ZIP_MAX_TOTAL_BYTES) {
-      return { kind: 'failure', message: `"${zipFile.name}"'s total size exceeds the ${ZIP_MAX_TOTAL_BYTES}-byte limit — nothing in this bundle was imported.` };
+      return { fail: { kind: 'failure', message: `"${zipFile.name}"'s total size exceeds the ${ZIP_MAX_TOTAL_BYTES}-byte limit — nothing in this bundle was imported.` } };
     }
+    return blob;
+  };
 
-    if (isInnerZip) {
-      // Inner zip = media. Its audio is media too, never a voiceover
-      // candidate — only a top-level bundle entry can fill the slot.
-      try {
-        const walk = await walkZipMediaEntries(JSZipModule, blob, async (innerName, innerBlob, innerType) => {
-          mediaEntries.push({ name: innerName, blob: innerBlob, type: innerType });
-        });
-        unsupportedSkipped += walk.unsupportedSkipped;
-        unsafeRejected += walk.unsafeRejected;
-        nestedZipsSkipped.push(...walk.nestedZipNames.map(n => `${name}/${n}`));
-      } catch (err) {
-        if (err instanceof ZipTooLargeError) {
-          return { kind: 'failure', message: `"${name}" inside "${zipFile.name}": ${err.message} Nothing in this bundle was imported.` };
-        }
-        console.error('[bundleIngest] Failed to open inner zip:', name, err);
-        return { kind: 'failure', message: `"${name}" inside "${zipFile.name}" could not be read — the archive appears corrupt. Nothing in this bundle was imported.` };
-      }
-    } else if (type === 'audio') {
-      audioEntries.push({ name, blob });
-    } else {
-      mediaEntries.push({ name, blob, type: type! });
-    }
+  for (const a of audioNames) {
+    const blob = await takeBlob(a.entry, a.name);
+    if (!(blob instanceof Blob)) return blob.fail;
+    audioEntries.push({ name: a.name, blob });
   }
-
-  // A zip with no script/scene-doc/voiceover marker is a plain media zip —
-  // not this module's concern. `ingestZip` handles it unchanged.
-  const isBundleAttempt = textEntries.length > 0 || audioEntries.length > 0;
-  if (!isBundleAttempt) {
-    return { kind: 'not-a-bundle' };
+  for (const m of mediaNames) {
+    const blob = await takeBlob(m.entry, m.name);
+    if (!(blob instanceof Blob)) return blob.fail;
+    mediaEntries.push({ name: m.name, blob, type: m.type });
+  }
+  for (const z of innerZips) {
+    const blob = await takeBlob(z.entry, z.name);
+    if (!(blob instanceof Blob)) return blob.fail;
+    try {
+      const walk = await walkZipMediaEntries(JSZipModule, blob, async (innerName, innerBlob, innerType) => {
+        mediaEntries.push({ name: innerName, blob: innerBlob, type: innerType });
+      });
+      unsupportedSkipped += walk.unsupportedSkipped;
+      unsafeRejected += walk.unsafeRejected;
+      nestedZipsSkipped.push(...walk.nestedZipNames.map(n => `${z.name}/${n}`));
+    } catch (err) {
+      if (err instanceof ZipTooLargeError) {
+        return { kind: 'failure', message: `"${z.name}" inside "${zipFile.name}": ${err.message} Nothing in this bundle was imported.` };
+      }
+      console.error('[bundleIngest] Failed to open inner zip:', z.name, err);
+      return { kind: 'failure', message: `"${z.name}" inside "${zipFile.name}" could not be read — the archive appears corrupt. Nothing in this bundle was imported.` };
+    }
   }
 
   // Script vs scene disambiguation — same order DropZonePanel's own
@@ -233,10 +245,11 @@ export async function classifyAndIngestBundleZip(
   const duplicateNames: string[] = [];
   const mediaAssets: Asset[] = [];
   const offline = makeOfflineReconnectSink(offlineHashes);
-  for (const m of mediaEntries) {
+  await mapPool(mediaEntries, 4, async m => {
     const asset = await ingestOneMediaFile(projectId, m.name, m.blob, m.type, seenHashes, counts, duplicateNames, offline);
     if (asset) mediaAssets.push(asset);
-  }
+  });
+  await finishIngestBatch();
 
   return {
     kind: 'success',

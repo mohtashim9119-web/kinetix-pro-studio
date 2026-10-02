@@ -400,3 +400,59 @@ describe('cloudProgressPercent', () => {
     expect(mid).toBeLessThan(95);
   });
 });
+
+describe('P9 align detach vs kill', () => {
+  it('killing the client mid-align polls the live job on relaunch and does not DELETE', async () => {
+    const { alignViaCloud } = await import('./cloudSyncEngine');
+    const cmds: string[] = [];
+    mockInvoke.mockImplementation(async (cmd: string) => {
+      cmds.push(cmd);
+      if (cmd === 'cloud_list_jobs') {
+        return [{ jobId: 'ja', stage: 'align', status: 'running', projectId: 'p1', rowId: 'p1', taskId: 'ta-1' }];
+      }
+      if (cmd === 'cloud_poll_job') {
+        return {
+          jobId: 'ja', stage: 'align', status: 'done', cached: false, workerSec: 3, error: null,
+          result: { words: [], nFallbackChunks: 0, provenance: { engine: 'fa-cloud', model: 'm', modelVersion: '1', language: 'en' } },
+        };
+      }
+      if (cmd === 'cloud_cache_lookup') return { cached: false, audioPresent: true, audioDurationSec: 10 };
+      throw new Error(cmd);
+    });
+    const out = await alignViaCloud({
+      voiceoverBlob: new Blob([new Uint8Array([1])]),
+      audioHash: HASH,
+      chunks: [{ startSec: 0, endSec: 1, text: 'hi' }],
+      language: 'en',
+      projectId: 'p1',
+      rowId: 'p1',
+    });
+    expect(out.status).toBe('ok');
+    expect(cmds).toContain('cloud_poll_job');
+    expect(cmds).not.toContain('cloud_run_job');
+    expect(cmds).not.toContain('cloud_kill_job');
+  });
+
+  it('an aborted align poller DETACHES and must not release or kill the GPU job', async () => {
+    const { alignViaCloud } = await import('./cloudSyncEngine');
+    const cmds: string[] = [];
+    mockInvoke.mockImplementation(async (cmd: string) => {
+      cmds.push(cmd);
+      if (cmd === 'cloud_cache_lookup') return { cached: false, audioPresent: true, audioDurationSec: 10 };
+      if (cmd === 'cloud_run_job') throw { kind: 'cancelled' };
+      if (cmd === 'cloud_list_jobs') return [];
+      return true;
+    });
+    const out = await alignViaCloud({
+      voiceoverBlob: new Blob([new Uint8Array([1])]),
+      audioHash: HASH,
+      chunks: [{ startSec: 0, endSec: 1, text: 'hi' }],
+      language: 'en',
+      projectId: 'p1',
+      rowId: 'p1',
+    });
+    expect(out.status).toBe('cancelled');
+    expect(cmds).not.toContain('cloud_kill_job');
+    expect(cmds).not.toContain('cloud_release_job');
+  });
+});

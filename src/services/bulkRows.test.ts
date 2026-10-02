@@ -22,7 +22,12 @@ import JSZip from 'jszip';
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(), Channel: class {} }));
 const mockPutAsset = vi.fn();
 vi.mock('./assetStore', () => ({ putAsset: (...a: unknown[]) => mockPutAsset(...a), deleteAsset: vi.fn() }));
-vi.mock('./mediaVaultClient', () => ({ mediaVaultImportBytes: vi.fn().mockResolvedValue(null) }));
+vi.mock('./mediaVaultClient', () => ({
+  mediaVaultImportBytes: vi.fn().mockResolvedValue(null),
+  mediaVaultFsyncDir: vi.fn().mockResolvedValue(undefined),
+  mediaVaultUnreference: vi.fn().mockResolvedValue(undefined),
+  mediaVaultUnreferenceProject: vi.fn().mockResolvedValue(undefined),
+}));
 vi.mock('./tauriFfmpeg', () => ({ probeVideoFps: vi.fn(), probeAudioDuration: vi.fn(), isTauri: () => true }));
 
 import { invoke } from '@tauri-apps/api/core';
@@ -279,6 +284,23 @@ describe('BulkRowStore — draft rows, files, and creation only at Build Timelin
     expect(second.snapshot().map(r => [r.projectId, r.typedName])).toEqual([[b, 'Half'], [c, '']]);
     expect(second.snapshot()[0]!.files.map(f => f.name)).toEqual(['script.txt']);
     expect(second.snapshot()[0]!.slots.script).toBe(true);
+  });
+
+  it('a voiceover add returns before encode/upload finishes; the row is not stuck Adding', async () => {
+    let encodeDone = false;
+    const { deps } = fakeDeps({
+      hashAudio: async () => 'h',
+      probeDuration: async () => 1,
+      stageAudio: async () => { await new Promise(r => setTimeout(r, 250)); encodeDone = true; },
+    });
+    const store = new BulkRowStore(deps);
+    store.init(1);
+    const t0 = performance.now();
+    await store.addFiles(store.snapshot()[0]!.projectId, [new File(['a'], 'v.wav')]);
+    expect(performance.now() - t0).toBeLessThan(80);
+    expect(encodeDone).toBe(false);
+    expect(store.snapshot()[0]!.busy).toBe(false);
+    await vi.waitFor(() => expect(encodeDone).toBe(true));
   });
 
   it('local engine: the voiceover is staged in the row but nothing is encoded or uploaded', async () => {

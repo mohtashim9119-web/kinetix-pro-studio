@@ -38,6 +38,7 @@ vi.mock('./assetStore', () => ({
 const mockMediaVaultImportBytes = vi.fn();
 vi.mock('./mediaVaultClient', () => ({
   mediaVaultImportBytes: (...args: unknown[]) => mockMediaVaultImportBytes(...args),
+  mediaVaultFsyncDir: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock('./tauriFfmpeg', () => ({ probeVideoFps: vi.fn() }));

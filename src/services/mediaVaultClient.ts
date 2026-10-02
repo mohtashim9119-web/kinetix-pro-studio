@@ -64,8 +64,15 @@ export async function mediaVaultImportBytes(
       'project-id': projectId,
       'display-name-b64': toBase64Utf8(displayName),
       'mime-type': mimeType,
+      'defer-dir-sync': '1',
     },
   });
+}
+
+/** One vault-directory fsync after a deferred-dir-sync import batch. */
+export async function mediaVaultFsyncDir(): Promise<void> {
+  if (!isTauri()) return;
+  await invoke<void>('media_vault_fsync_dir_cmd');
 }
 
 /** G6 Step 4 — every vault entry, for the Media block. `[]` outside Tauri. */

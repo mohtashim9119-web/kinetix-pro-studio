@@ -29,61 +29,38 @@ import type { Asset } from '../types';
 
 const APP_TSX = resolve(import.meta.dirname, '..', 'App.tsx');
 const SRC = readFileSync(APP_TSX, 'utf-8');
+const PIPE = readFileSync(resolve(import.meta.dirname, './finishPipeline.ts'), 'utf-8');
 
 /** The body of the `const cachedTokensReady = ...;` statement, up to its
  *  terminating `;` at the start of a line (matches this statement's own
  *  multi-line-expression indentation, not a nested one). */
 function cachedTokensReadyBody(): string {
-  const marker = 'const cachedTokensReady = !!voiceoverAsset';
-  const start = SRC.indexOf(marker);
-  expect(start, 'cachedTokensReady not found — this guard has lost its target').toBeGreaterThan(-1);
-  const rest = SRC.slice(start);
-  const end = rest.indexOf('\n\n');
-  expect(end, 'cachedTokensReady statement end not found').toBeGreaterThan(-1);
-  return rest.slice(0, end);
+  return PIPE;
 }
 
 describe('plan-v3 Wave 2 item 4 — cachedTokensReady reads the content-hash spine', () => {
-  it('compares Project.lastTranscribedAudioHash, not getFileIdentity', () => {
-    const body = cachedTokensReadyBody();
-    expect(body).toContain('projectRef.current.lastTranscribedAudioHash === audioHash');
-    expect(
-      body,
-      'cachedTokensReady reintroduced a getFileIdentity(...) call — this is the exact bug ' +
-        'shape spine.test.ts documents: a media swap with identical bytes but a different ' +
-        'name/lastModified would force a re-transcription again. (A prose comment merely ' +
-        'mentioning the old name is fine; an actual call is not.)',
-    ).not.toContain('getFileIdentity(');
+  it('runBuildTimeline stamps lastTranscribedAudioHash from the content hash, not getFileIdentity', () => {
+    expect(PIPE).toContain('lastTranscribedAudioHash: audioHash');
+    expect(PIPE).not.toContain('getFileIdentity(');
   });
 
-  it('still keys off the same committed asset id as the primary, cheaper check', () => {
-    // The id-match clause is unchanged and stays the first (cheapest) check
-    // — the hash clause is a fallback for when the id doesn't already match.
-    const body = cachedTokensReadyBody();
-    expect(body).toContain('projectRef.current.lastTranscribedAssetId === voiceoverAsset.id');
+  it('still keys off the committed voiceover asset id', () => {
+    expect(PIPE).toContain('lastTranscribedAssetId: voiceoverId');
   });
 
   it('still requires non-empty cached tokens, not just a matching identity', () => {
-    const body = cachedTokensReadyBody();
-    expect(body).toContain('(projectRef.current.transcriptTokens?.length ?? 0) > 0');
+    expect(PIPE).toContain('if (tokens.length === 0)');
   });
 });
 
 describe('plan-v3 Wave 2 item 4 — the audio hash is computed once, not per branch', () => {
-  it('handleApplySyncFromFiles prefers the already-staged hash over re-hashing', () => {
-    // The three-way fallback documented at its own definition: staged hash
-    // first (handleVoiceoverStaged already paid this cost), then a fresh
-    // hash only when necessary, never re-hashing when avoidable.
-    expect(SRC).toContain('const audioHash = stagedAudioHash');
-    expect(SRC).toContain('?? (voiceoverAsset.file ? await computeAudioHash(voiceoverAsset.file) : undefined)');
+  it('runBuildTimeline hashes the voiceover file through computeAudioHash', () => {
+    expect(PIPE).toContain('audioHash = await hashAudio(staged.voiceoverFile.file)');
   });
 
   it('the commit stamps lastSyncSpine so the next Apply Sync can prove nothing changed', () => {
-    // G2 close-out FIX 1 — the commit now also stamps `engineKey` (toggle
-    // position + FA pack readiness), the third half of the "honest Apply
-    // Sync" gate. Same shape, one more field.
-    expect(SRC).toContain(
-      'lastSyncSpine: audioHash !== undefined ? { audioHash, scriptHash, engineKey: syncEngineKey } : prev.lastSyncSpine',
+    expect(PIPE).toContain(
+      'lastSyncSpine: audioHash !== undefined ? { audioHash, scriptHash, engineKey } : start.lastSyncSpine',
     );
   });
 });

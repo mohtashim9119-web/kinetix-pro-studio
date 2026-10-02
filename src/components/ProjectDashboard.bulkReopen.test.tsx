@@ -21,6 +21,9 @@ vi.mock('../services/syncEngineHost', async importActual => ({
   ...(await importActual<typeof import('../services/syncEngineHost')>()),
   readSyncEngineHost: () => 'cloud',
 }));
+vi.mock('../services/cloudSyncEngine', () => ({
+  killAllMemberCloudJobs: async () => {},
+}));
 
 let batchRows: { id: string; name: string; phase: string }[] = [];
 let groupsFor: unknown;

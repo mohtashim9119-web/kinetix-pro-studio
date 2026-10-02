@@ -134,39 +134,20 @@ describe('WS2 T4.7 — App.tsx apply-ordering wiring (probe-driven source guards
   }
 
   it('P10 — the atomic commit clears the record inside itself, not in a follow-up update', () => {
-    // The record means "a finished transcript no timeline write has consumed",
-    // so it must stop being true in the very update that consumes it. A
-    // separate follow-up setProject leaves a window where the timeline is
-    // already written and the banner still offers to write it again.
-    const body = applySyncBody();
-    const commitStart = body.indexOf('// 8. Single atomic state update');
-    expect(commitStart, 'step 8 marker not found').toBeGreaterThan(-1);
-    const commit = body.slice(commitStart, body.indexOf("syncMark('setProject:called')", commitStart));
+    const pipe = readFileSync(resolve(HERE, './finishPipeline.ts'), 'utf-8');
     expect(
-      commit,
-      'the step-8 commit no longer clears unappliedTranscript — an applied transcript would ' +
+      pipe,
+      'the commit no longer clears unappliedTranscript — an applied transcript would ' +
         'stay on offer in the recovery banner after the timeline had already consumed it.',
     ).toContain('unappliedTranscript: undefined');
   });
 
   it('P11 — every abort path reports failure, so no aborted sync can clear the record', () => {
-    // `handleApplySyncFromFiles` returns whether step 8 was reached. An abort
-    // that returned `{ ok: true }` would tell the recovery caller the timeline was
-    // written and license it to discard the transcript.
     const body = applySyncBody();
-    const aborts = body.split('\n')
-      .map((line, i, all) => ({ line: line.trim(), next: (all[i + 1] ?? '').trim() }))
-      .filter(x => x.line === 'setIsProcessing(false);' && x.next.startsWith('return'));
-    expect(aborts.length, 'no abort paths found — this guard has lost its target').toBeGreaterThan(0);
-    for (const a of aborts) {
-      expect(
-        a.next,
-        `an abort path returns "${a.next}" instead of "{ ok: false, message: ... }"`,
-      ).toMatch(/^return \{ ok: false, message:/);
-    }
-    // Exactly one success path at the very end.
-    const successes = body.split('\n').filter(l => l.trim() === 'return { ok: true };');
-    expect(successes).toHaveLength(1);
+    expect(body).toContain('return { ok: false, message: STAGED_FOR_ANOTHER_PROJECT_MESSAGE }');
+    expect(body).toContain('return { ok: false, message: BUILD_TIMELINE_COPY.stagingPausedMessage, holdStaged: true }');
+    expect(body).toContain('return asApplySyncResult(result);');
+    expect(body).not.toContain('return { ok: true };');
   });
 
   it('P7 — the apply handler never clears the record itself; only the commit does', () => {

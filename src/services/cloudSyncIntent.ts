@@ -52,6 +52,8 @@ export interface SyncIntentInputs {
   /** The SAME segment preparation Apply Sync runs (parse, character-weight
    *  anchors), injected so this module never reads app state. */
   prepareSegments: () => Promise<VideoSegment[]>;
+  projectId?: string;
+  rowId?: string;
 }
 
 export type SyncIntentOutcome =
@@ -85,6 +87,7 @@ export async function runCloudSyncIntent(
       inputs.audioHash,
       false,
       'cloud',
+      { projectId: inputs.projectId, rowId: inputs.rowId },
     );
     if (faRun.status === 'cancelled') return { status: 'cancelled' };
     if (faRun.status === 'paused') {

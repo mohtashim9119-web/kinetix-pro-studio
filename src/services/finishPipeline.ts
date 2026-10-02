@@ -31,6 +31,10 @@ import { lookupBatchTranscript } from './bulkFinish';
 import { runForcedAlignmentForSync } from './forcedAlignmentRun';
 import { resolveFaLanguage } from './faGate';
 import { computeSyncEngineKey, resolveSyncEngine } from './faPreflight';
+import { saveFaPause, type FaPauseRecord } from './faSyncPauseStore';
+import { insertSkippedScenePlaceholders, stampEstimatedWordTimings } from './skippedScenePlaceholders';
+import { applyFaRuleStage } from './buildTimelineFaRules';
+import { matchEffectsAndLocks, buildLockNotRestoredLogEntries } from './buildTimelineFinalize';
 import {
   stampCloudProvenance,
   stampFaProvenance,
@@ -120,16 +124,40 @@ export interface FinishPipelineInput {
   save?: (project: Project) => Promise<void>;
   now?: () => number;
   signal?: AbortSignal;
+  onProgress?: (message: string) => void;
   lookupTranscript?: typeof lookupBatchTranscript;
   runFa?: typeof runForcedAlignmentForSync;
   alignFromCache?: typeof alignSegmentsFromCachedTranscript;
   hashScript?: typeof computeScriptHash;
   hashAudio?: typeof computeAudioHash;
+  /** After a successful save: drop the outgoing voiceover's bytes (Item A). */
+  releaseSupersededVoiceover?: (asset: Asset) => void;
+}
+
+export const BULK_PAUSED_MESSAGE = 'Paused — open the project to answer';
+
+export type BuildTimelinePause = {
+  kind: 'fa-dialog' | 'cloud-stage' | 'staging-wait';
+  record?: FaPauseRecord;
+};
+
+/** Editor-only post-commit checker: alignments/tokens/silences from this run. */
+export interface FinishBoundaryCheck {
+  alignments: SegmentAlignment[];
+  tokens: TranscriptToken[];
+  silences: AlignFromCacheResult['silences'];
+  syncRunId: string;
+  at: number;
 }
 
 export type FinishPipelineResult =
-  | { ok: true; project: Project }
-  | { ok: false; message: string; holdStaged?: boolean };
+  | {
+    ok: true;
+    project: Project;
+    boundaryCheck: FinishBoundaryCheck;
+    supersededVoiceover?: Asset;
+  }
+  | { ok: false; message: string; holdStaged?: boolean; pause?: BuildTimelinePause };
 
 export function asApplySyncResult(result: FinishPipelineResult): ApplySyncResult {
   return result.ok ? { ok: true } : { ok: false, message: result.message, holdStaged: result.holdStaged };
@@ -143,7 +171,7 @@ export function stagedOwnerMismatch(projectId: string, stagedOwnerId: string | n
   return stagedOwnerId !== null && stagedOwnerId !== projectId && !isStagedEmpty(staged);
 }
 
-export async function runFinishPipeline(input: FinishPipelineInput): Promise<FinishPipelineResult> {
+export async function runBuildTimeline(input: FinishPipelineInput): Promise<FinishPipelineResult> {
   const { project: start, staged, stages } = input;
   const onCheckpoint = input.onCheckpoint ?? (() => undefined);
   const now = input.now ?? Date.now;
@@ -153,18 +181,24 @@ export async function runFinishPipeline(input: FinishPipelineInput): Promise<Fin
   const hashScript = input.hashScript ?? computeScriptHash;
   const hashAudio = input.hashAudio ?? computeAudioHash;
 
+  const emptyCheck: FinishBoundaryCheck = {
+    alignments: [], tokens: [], silences: [], syncRunId: '', at: 0,
+  };
+
   if (input.checkpoint === 'ready' && start.lastSyncSpine && start.segments.length > 0) {
-    return { ok: true, project: start };
+    return { ok: true, project: start, boundaryCheck: emptyCheck };
   }
   if (input.checkpoint === 'built' && start.lastSyncSpine && start.segments.length > 0) {
     onCheckpoint('ready');
     if (input.save) await input.save(start);
-    return { ok: true, project: start };
+    return { ok: true, project: start, boundaryCheck: emptyCheck };
   }
 
   if (stagedOwnerMismatch(start.id, input.stagedOwnerId, staged)) {
     return { ok: false, message: STAGED_FOR_ANOTHER_PROJECT_MESSAGE };
   }
+  const progress = input.onProgress ?? (() => undefined);
+  progress('Reading files…');
   onCheckpoint('staged');
 
   const scriptText = staged.scriptFile
@@ -215,6 +249,7 @@ export async function runFinishPipeline(input: FinishPipelineInput): Promise<Fin
     }
   }
 
+  progress('Planning scenes…');
   const parsed = await stages.parseProjectData(
     scriptText, sceneText, allAssets, audioDuration, start.segments, start.defaultTextOverlay ?? false,
   );
@@ -234,6 +269,7 @@ export async function runFinishPipeline(input: FinishPipelineInput): Promise<Fin
   if (tokens.length === 0) {
     return { ok: false, message: 'No speech was found in the audio. No timeline will be created.' };
   }
+  progress('Aligning…');
 
   const engineHost = 'cloud' as const;
   const engineResolution = await resolveSyncEngine({ ...start, language: transcriptLanguage }, engineHost);
@@ -253,7 +289,25 @@ export async function runFinishPipeline(input: FinishPipelineInput): Promise<Fin
     engineResolution.host,
   );
   if (faRun.status === 'cancelled') return { ok: false, message: 'Sync cancelled.' };
-  if (faRun.status === 'paused') return { ok: false, message: SYNC_PAUSED_MESSAGE, holdStaged: true };
+  if (faRun.status === 'paused') {
+    const pauseRecord: FaPauseRecord = {
+      projectId: start.id,
+      syncRunId,
+      reason: faRun.reason,
+      detail: faRun.detail,
+      timestamp: stampAt,
+      host: engineResolution.host,
+      audioHash,
+    };
+    saveFaPause(pauseRecord);
+    void import('./cloudJobReattach').then(m => m.postLivePause(pauseRecord)).catch(() => undefined);
+    return {
+      ok: false,
+      message: SYNC_PAUSED_MESSAGE,
+      holdStaged: true,
+      pause: { kind: 'fa-dialog', record: pauseRecord },
+    };
+  }
 
   const faCompleted = faRun.status === 'ok'
     || (faRun.status === 'degraded' && faRun.reason === 'ctc-infeasible-chunk');
@@ -274,12 +328,50 @@ export async function runFinishPipeline(input: FinishPipelineInput): Promise<Fin
   const gate = stages.evaluateCoverageGate(aligned.segments, aligned.coverage, tokens.length);
   if (gate.aborted) return { ok: false, message: gate.message };
 
+  progress('Placing boundaries…');
   const { kept, keptAlignments, skipped } = stages.filterToCoveredSegments(aligned.segments, aligned.coverage);
   const snapTokens = aligned.tokens;
   let finalTimed = snapTokens.length > 0
     ? snapCoveredBoundaries(kept, keptAlignments, snapTokens, aligned.silences, audioDuration)
     : stages.retileCoveredSegments(kept, audioDuration);
   finalTimed = headExtendFirstSegment(finalTimed);
+
+  const skippedIndices = new Set(skipped.map(s => s.segmentIndex));
+  let ruleLog: SyncLogEntry[] = [];
+  let faWordTimings = faCompleted ? faTokens : undefined;
+  if (faCompleted && faTokens) {
+    const rules = applyFaRuleStage({
+      anchorTimed,
+      finalTimed,
+      keptAlignments,
+      preFilterSegments: aligned.segments,
+      skippedIndices,
+      coverage: aligned.coverage,
+      rawTranscriptTokens: tokens,
+      faTokens,
+      snapTokens,
+      silences: aligned.silences,
+      audioDuration,
+      language: start.language,
+      syncRunId,
+      at: stampAt,
+    });
+    finalTimed = rules.segments;
+    ruleLog = rules.logEntries;
+    if (faWordTimings) {
+      // Placeholders already inserted inside the FA rule stage.
+    }
+  } else {
+    const insertion = insertSkippedScenePlaceholders(
+      finalTimed, keptAlignments, aligned.segments, skippedIndices, aligned.coverage, snapTokens, audioDuration,
+    );
+    finalTimed = insertion.segments;
+    if (faWordTimings && insertion.placeholders.length > 0) {
+      faWordTimings = stampEstimatedWordTimings(faWordTimings, insertion.placeholders, aligned.coverage, snapTokens);
+    }
+  }
+  const locked = matchEffectsAndLocks(finalTimed, allAssets, start.segments, audioDuration);
+  finalTimed = locked.segments;
 
   const stampLang = faLanguage ?? transcriptLanguage;
   const cachedTranscription = start.timingProvenance?.transcription;
@@ -311,7 +403,7 @@ export async function runFinishPipeline(input: FinishPipelineInput): Promise<Fin
     transcriptTokens: tokens,
     lastTranscribedAudioHash: audioHash,
     lastTranscribedAssetId: voiceoverId,
-    faWordTimings: faCompleted ? faTokens : undefined,
+    faWordTimings,
     timingProvenance,
     lastSyncSpine: audioHash !== undefined ? { audioHash, scriptHash, engineKey } : start.lastSyncSpine,
     unappliedTranscript: undefined,
@@ -327,7 +419,7 @@ export async function runFinishPipeline(input: FinishPipelineInput): Promise<Fin
     };
   next = appendSyncLogEntries(
     next,
-    [...runLog.entries, ...(input.extraLogEntries?.(syncRunId, stampAt) ?? [])],
+    [...ruleLog, ...runLog.entries, ...buildLockNotRestoredLogEntries(syncRunId, locked.droppedLocks, stampAt), ...(input.extraLogEntries?.(syncRunId, stampAt) ?? [])],
     {
       syncRunId,
       timestamp: stampAt,
@@ -340,8 +432,24 @@ export async function runFinishPipeline(input: FinishPipelineInput): Promise<Fin
     },
   );
 
+  progress('Saving…');
   if (input.save) await input.save(next);
+  const supersededVoiceover = staged.voiceoverFile && start.voiceoverId && start.voiceoverId !== voiceoverId
+    ? start.assets.find(a => a.id === start.voiceoverId)
+    : undefined;
+  if (supersededVoiceover) input.releaseSupersededVoiceover?.(supersededVoiceover);
   onCheckpoint('built');
   onCheckpoint('ready');
-  return { ok: true, project: next };
+  return {
+    ok: true,
+    project: next,
+    boundaryCheck: {
+      alignments: keptAlignments,
+      tokens: snapTokens,
+      silences: aligned.silences,
+      syncRunId,
+      at: stampAt,
+    },
+    ...(supersededVoiceover ? { supersededVoiceover } : {}),
+  };
 }

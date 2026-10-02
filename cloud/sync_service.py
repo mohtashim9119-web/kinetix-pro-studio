@@ -48,7 +48,7 @@ APP_NAME = "kinetix-sync"
 # done. TUNABLE — revisit with week-one usage data. Logged operator note: 60
 # (~$0.01/session) would cover the tweak-script-then-resync pattern if the
 # re-waits annoy the team.
-GPU_SCALEDOWN_WINDOW_SEC = 2
+GPU_SCALEDOWN_WINDOW_SEC = int(core.HOLD_FOR_PLAN_SEC)
 
 # The gateway is a small CPU container; staying up between a job's polls
 # costs fractions of a cent and saves a CPU cold start on every poll.
@@ -307,19 +307,28 @@ class SyncWorker:
         key = core.handoff_key(job["jobId"])
         held_from = time.time()
         target: str | None = None
-        while time.time() - held_from < core.HOLD_FOR_PLAN_SEC:
+        released = False
+        while True:
             value = jobs.get(key)
             if value == core.HANDOFF_RELEASE:
+                released = True
                 break
             target = core.handoff_target(value)
             if target:
                 break
+            if time.time() - held_from >= core.hold_wait_budget(hold=True):
+                break
             time.sleep(0.25)
-        if target is None and not jobs.put(key, core.HANDOFF_CLOSED, skip_if_exists=True):
+        if target is None and not released and not jobs.put(key, core.HANDOFF_CLOSED, skip_if_exists=True):
             # Lost the race to a hand-off that landed as the hold expired.
             target = core.handoff_target(jobs.get(key))
         now = time.time()
-        _write_meter(core.meter_line(dict(job, jobId=f"{job['jobId']}-hold"), "held", now - held_from, now))
+        waited = now - held_from
+        billed = core.post_finish_held_sec(
+            hold=True, handed_off=bool(target), released=released, waited_sec=waited,
+        )
+        if billed > 0:
+            _write_meter(core.meter_line(dict(job, jobId=f"{job['jobId']}-hold"), "held", billed, now))
         cache_vol.commit()
         return target
 
@@ -459,6 +468,23 @@ def gateway() -> Any:
         cancelled = await jobs.get.aio(core.cancelled_key(job_id))
         return cancelled if cancelled is not None else job
 
+    async def view_job(job: dict[str, Any]) -> dict[str, Any]:
+        handoff = await jobs.get.aio(core.handoff_key(job["jobId"]))
+        return core.public_job(job, hold_open=core.hold_is_open(job, handoff))
+
+    async def index_owner(job: dict[str, Any]) -> None:
+        member = job["member"]
+        member_key = core.member_index_key(member)
+        existing_member = await jobs.get.aio(member_key)
+        await jobs.put.aio(member_key, core.owner_ids_append(existing_member, job["jobId"], cap=256))
+        for kind, field in (("project", "projectId"), ("row", "rowId")):
+            owner_id = job.get(field)
+            if not owner_id:
+                continue
+            key = core.owner_index_key(member, kind, owner_id)
+            existing = await jobs.get.aio(key)
+            await jobs.put.aio(key, core.owner_ids_append(existing, job["jobId"]))
+
     @web.get("/v1/ping")
     async def ping(request: Request) -> dict[str, Any]:
         member = member_of(request)
@@ -589,17 +615,24 @@ def gateway() -> Any:
         job_id = uuid.uuid4().hex
         now = time.time()
         job = core.new_job(job_id, member, stage, audio_hash, language, cache_key, duration, now)
+        body_early = await request.json()
+        core.apply_owner_fields(
+            job,
+            core.validate_owner_id(body_early.get("projectId"), field="projectId"),
+            core.validate_owner_id(body_early.get("rowId"), field="rowId"),
+        )
 
         if os.path.isfile(core.result_path(CACHE_ROOT, stage, cache_key)):
             # Result-cache hit: no GPU, no charge — metered at zero seconds
             # so the billing report shows the hit rather than hiding it.
             job.update(status="done", cached=True, startedAt=now, finishedAt=now, workerSec=0.0)
             await jobs.put.aio(job_id, job)
+            await index_owner(job)
             async with vol_lock:
                 await touch_audio(audio_hash)
                 _write_meter(core.meter_line(job, "cache-hit", 0.0, now))
                 await cache_vol.commit.aio()
-            return core.public_job(job)
+            return await view_job(job)
 
         # Wave 3 U4 — a retry of a request whose job is still queued/running
         # (the client lost a poll, not the job) re-attaches to that job.
@@ -607,22 +640,29 @@ def gateway() -> Any:
         existing_id = await jobs.get.aio(inflight)
         existing = await jobs.get.aio(existing_id) if existing_id else None
         if core.reusable_inflight(existing, member):
-            return core.public_job(existing)
+            core.apply_owner_fields(
+                existing,
+                core.validate_owner_id(body_early.get("projectId"), field="projectId"),
+                core.validate_owner_id(body_early.get("rowId"), field="rowId"),
+            )
+            await jobs.put.aio(existing["jobId"], existing)
+            await index_owner(existing)
+            return await view_job(existing)
 
         if meta is None:
             raise GatewayError(409, "audio-missing", "upload the audio for this hash before submitting")
 
-        body = await request.json()
         if chunks is not None:
             job["chunks"] = chunks
         # Wave 3 U4.5 — a transcription may ask its container to wait for the
         # alignment (one boot per sync); an alignment may name that held job.
-        if body.get("hold") is True:
+        if body_early.get("hold") is True:
             job["hold"] = True
         # U7: any stage may be handed to a held job (a queue chains).
-        hold_job_id = body.get("holdJobId")
+        hold_job_id = body_early.get("holdJobId")
         await jobs.put.aio(job_id, job)
         await jobs.put.aio(inflight, job_id)
+        await index_owner(job)
         if isinstance(hold_job_id, str) and hold_job_id:
             holder = await jobs.get.aio(hold_job_id)
             if core.can_hold_for(holder, member) and await jobs.put.aio(
@@ -635,7 +675,7 @@ def gateway() -> Any:
                 await jobs.put.aio(job_id, job)
                 if holder_call:
                     await jobs.put.aio(f"call:{job_id}", holder_call)
-                return core.public_job(job)
+                return await view_job(job)
             # Released, closed, or not holdable: an ordinary spawn below.
         call = await SyncWorker().run.spawn.aio(job_id)
         # Stored under its own key: the worker rewrites the job record as it
@@ -644,7 +684,7 @@ def gateway() -> Any:
         async with vol_lock:
             await touch_audio(audio_hash)
             await cache_vol.commit.aio()
-        return core.public_job(job)
+        return await view_job(job)
 
     @web.post("/v1/jobs/{job_id}/release")
     async def release(job_id: str, request: Request) -> dict[str, Any]:
@@ -683,7 +723,7 @@ def gateway() -> Any:
                     async with vol_lock:
                         _write_meter(core.meter_line(job, "failed", now - started, now))
                         await cache_vol.commit.aio()
-        out = core.public_job(job)
+        out = await view_job(job)
         if job["status"] == "done":
             await reload()
             result = _read_json(core.result_path(CACHE_ROOT, job["stage"], job["cacheKey"]))
@@ -697,7 +737,10 @@ def gateway() -> Any:
         member = member_of(request)
         job = await owned_job(job_id, member)
         if job["status"] in core.TERMINAL_STATUSES:
-            return core.public_job(job)
+            # P11: kill = RELEASE the GPU. The finished record + billing +
+            # result stay so reattach/history still work.
+            await jobs.put.aio(core.handoff_key(job_id), core.HANDOFF_RELEASE, skip_if_exists=True)
+            return await view_job(job)
         # Wave 3 U5 — one atomic claim decides "started?" (see core.start_key).
         # Un-started work is never charged. A started job is charged from the
         # second its billing began — container boot for a container's first
@@ -723,7 +766,61 @@ def gateway() -> Any:
         async with vol_lock:
             _write_meter(core.meter_line(job, "cancelled", spent, now))
             await cache_vol.commit.aio()
-        return core.public_job(job)
+        return await view_job(job)
+
+    @web.get("/v1/jobs")
+    async def list_jobs(request: Request) -> dict[str, Any]:
+        """Jobs for this member matching projectId and/or rowId. Pure GET."""
+        member = member_of(request)
+        project_id = core.validate_owner_id(request.query_params.get("projectId"), field="projectId")
+        row_id = core.validate_owner_id(request.query_params.get("rowId"), field="rowId")
+        ids: list[str] = []
+        if not project_id and not row_id:
+            ids.extend(await jobs.get.aio(core.member_index_key(member)) or [])
+        if project_id:
+            ids.extend(await jobs.get.aio(core.owner_index_key(member, "project", project_id)) or [])
+        if row_id:
+            ids.extend(await jobs.get.aio(core.owner_index_key(member, "row", row_id)) or [])
+        seen: set[str] = set()
+        out: list[dict[str, Any]] = []
+        for jid in ids:
+            if not isinstance(jid, str) or jid in seen:
+                continue
+            seen.add(jid)
+            job = await jobs.get.aio(jid)
+            if job is None or job.get("member") != member:
+                continue
+            cancelled = await jobs.get.aio(core.cancelled_key(jid))
+            out.append(await view_job(cancelled if cancelled is not None else job))
+        return {"jobs": out}
+
+    @web.post("/v1/jobs/{job_id}/pause")
+    async def pause_job(job_id: str, request: Request) -> dict[str, Any]:
+        member = member_of(request)
+        job = await owned_job(job_id, member)
+        try:
+            body = await request.json()
+        except ValueError:
+            raise GatewayError(400, "bad-json", "request body must be JSON")
+        updated = core.attach_pause(job, body if isinstance(body, dict) else {})
+        await jobs.put.aio(job_id, updated)
+        return await view_job(updated)
+
+    @web.post("/v1/jobs/{job_id}/answer")
+    async def answer_job(job_id: str, request: Request) -> dict[str, Any]:
+        member = member_of(request)
+        job = await owned_job(job_id, member)
+        try:
+            body = await request.json()
+        except ValueError:
+            raise GatewayError(400, "bad-json", "request body must be JSON")
+        pause_id = body.get("id") if isinstance(body, dict) else None
+        choice = body.get("answer") if isinstance(body, dict) else None
+        if not isinstance(pause_id, str) or not isinstance(choice, str):
+            raise GatewayError(400, "bad-answer", "id and answer are required strings")
+        updated = core.answer_pause(job, pause_id, choice)
+        await jobs.put.aio(job_id, updated)
+        return await view_job(updated)
 
     return web
 

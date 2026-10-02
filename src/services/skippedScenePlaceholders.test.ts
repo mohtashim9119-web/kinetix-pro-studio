@@ -421,34 +421,23 @@ describe('G2 close-out FIX 4 — Whisper-arm parity: skipped scenes get the same
 // the only way to pin the WIRING decision itself: that the call exists in an
 // `else` branch of the FA-only `if (faTokens)` guard, not only inside it.
 // ---------------------------------------------------------------------------
-describe('G2 close-out FIX 4 — App.tsx actually calls insertSkippedScenePlaceholders on the Whisper arm', () => {
-  const APP_TSX = resolve(import.meta.dirname, '..', 'App.tsx');
-  const SRC = readFileSync(APP_TSX, 'utf-8');
+describe('G2 close-out FIX 4 — runBuildTimeline actually calls insertSkippedScenePlaceholders on the Whisper arm', () => {
+  const SRC = readFileSync(resolve(import.meta.dirname, './finishPipeline.ts'), 'utf-8');
 
   it('the FA-only guard has an else branch, not just the FA-arm call', () => {
-    const faArmMarker = 'if (faTokens) {';
-    const faArmStart = SRC.indexOf(faArmMarker);
-    expect(faArmStart, 'if (faTokens) guard not found — this test has lost its target').toBeGreaterThan(-1);
-    // The else branch must exist and must itself call insertSkippedScenePlaceholders
-    // — two calls total in this stage (one per arm), not one.
-    const occurrences = SRC.split('insertSkippedScenePlaceholders(').length - 1;
-    expect(
-      occurrences,
-      'insertSkippedScenePlaceholders must be called exactly twice in App.tsx: once inside ' +
-        'if (faTokens) for the FA arm, once in its else branch for the Whisper arm. A count of 1 ' +
-        'means FIX 4\'s whisper-arm wiring regressed back to FA-only.',
-    ).toBe(2);
-    expect(SRC).toContain('} else {\n        // G2 close-out FIX 4');
+    expect(SRC).toContain('if (faCompleted && faTokens)');
+    expect(SRC).toContain('insertSkippedScenePlaceholders(');
+    expect(SRC).toMatch(/if \(faCompleted && faTokens\) \{[\s\S]*\} else \{\s*const insertion = insertSkippedScenePlaceholders/);
   });
 
-  it('the Whisper-arm branch uses the SAME inputs (skipped/keptAlignments/coverageAfterR10/transcriptTokens) as the FA arm', () => {
-    const marker = '// G2 close-out FIX 4 — WHISPER-ARM PARITY';
-    const start = SRC.indexOf(marker);
-    expect(start).toBeGreaterThan(-1);
-    const body = SRC.slice(start, start + 1500);
-    expect(body).toContain('finalTimedSegments, keptAlignments, aligned.segments,');
-    expect(body).toContain('new Set(skipped.map(r => r.segmentIndex)), coverageAfterR10, transcriptTokens, audioDuration,');
-    expect(body).toContain('finalTimedSegments = placeholderInsertion.segments;');
-    expect(body).toContain('skippedScenePlaceholders = placeholderInsertion.placeholders;');
+  it('the Whisper-arm branch uses the same kept/skipped/coverage/tokens inputs as the FA arm', () => {
+    const elseAt = SRC.indexOf('} else {\n    const insertion = insertSkippedScenePlaceholders(');
+    expect(elseAt).toBeGreaterThan(-1);
+    const body = SRC.slice(elseAt, elseAt + 600);
+    expect(body).toContain('keptAlignments');
+    expect(body).toContain('aligned.segments');
+    expect(body).toContain('skippedIndices');
+    expect(body).toContain('aligned.coverage');
+    expect(body).toContain('snapTokens');
   });
 });

@@ -78,6 +78,6 @@ describe('Media block — offline hashes reach the ingest doors (Unit 4)', () =>
     const input = container.querySelector<HTMLInputElement>('input[type="file"][multiple][accept]')!;
     Object.defineProperty(input, 'files', { value: [new File([new Uint8Array([1])], 'off.png')], configurable: true });
     await act(async () => { input.dispatchEvent(new Event('change', { bubbles: true })); });
-    expect(ingestLooseFiles).toHaveBeenCalledWith('p1', expect.any(Array), ['h-ok', 'h-off'], ['h-off']);
+    expect(ingestLooseFiles).toHaveBeenCalledWith('p1', expect.any(Array), ['h-ok', 'h-off'], ['h-off'], expect.any(Function));
   });
 });

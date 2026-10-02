@@ -549,11 +549,13 @@ export const MediaBlock = forwardRef<MediaBlockHandle, MediaBlockProps>(function
     const loose = files.filter(f => !isZip(f));
     const zips = files.filter(isZip);
     if (loose.length > 0) {
-      await runIngest('files', `Importing ${loose.length} file${loose.length === 1 ? '' : 's'}…`, () => ingestLooseFiles(projectId, loose, existingHashes, offlineHashes));
+      await runIngest('files', `Importing ${loose.length} file${loose.length === 1 ? '' : 's'}…`, () =>
+        ingestLooseFiles(projectId, loose, existingHashes, offlineHashes, p => setBusyLabel(p.label)));
     }
     if (zips.length > 0 && routeZips && onZipsChosen) { onZipsChosen(zips); return; }
     for (const zip of zips) {
-      await runIngest('zip', 'Importing zip…', () => ingestZip(projectId, zip, existingHashes, offlineHashes));
+      await runIngest('zip', 'Importing zip…', () =>
+        ingestZip(projectId, zip, existingHashes, offlineHashes, p => setBusyLabel(p.label)));
     }
   }, [projectId, runIngest, existingHashes, offlineHashes, onZipsChosen]);
 
@@ -565,7 +567,8 @@ export const MediaBlock = forwardRef<MediaBlockHandle, MediaBlockProps>(function
   const handleFolderChosen = useCallback((fileList: FileList | null) => {
     if (!fileList || fileList.length === 0) return;
     const files = Array.from(fileList);
-    void runIngest('folder', `Importing folder (${files.length} file${files.length === 1 ? '' : 's'})…`, () => ingestLooseFiles(projectId, files, existingHashes, offlineHashes));
+    void runIngest('folder', `Importing folder (${files.length} file${files.length === 1 ? '' : 's'})…`, () =>
+      ingestLooseFiles(projectId, files, existingHashes, offlineHashes, p => setBusyLabel(p.label)));
   }, [projectId, runIngest, existingHashes, offlineHashes]);
 
   // Wave 3 U9 — drops on the Files tab (and bundle-less zips) enter through

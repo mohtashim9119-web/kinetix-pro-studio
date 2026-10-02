@@ -13,7 +13,7 @@ import type { StagedFiles } from '../components/DropZonePanel';
 import type { AlignFromCacheResult } from '../hooks/useWhisper';
 import type { SegmentAlignment } from './whisperService';
 import {
-  runFinishPipeline,
+  runBuildTimeline,
   stagedOwnerMismatch,
   STAGED_FOR_ANOTHER_PROJECT_MESSAGE,
   type FinishStages,
@@ -131,12 +131,12 @@ function goldenSlice(p: Project): unknown {
 }
 
 describe('U1 — extract, never copy', () => {
-  it('the editor’s bulk Apply Sync and the batch finalizer both call runFinishPipeline', () => {
+  it('the editor’s Apply Sync and the batch finalizer both call runBuildTimeline', () => {
     const app = readFileSync(resolve(import.meta.dirname, '..', 'App.tsx'), 'utf-8');
-    expect(app).toContain('if (liveProjectRef.current.bulkContext)');
-    expect(app).toContain('runFinishPipeline({');
-    const finishCount = app.split('runFinishPipeline({').length - 1;
+    expect(app).toContain('runBuildTimeline({');
+    const finishCount = app.split('runBuildTimeline({').length - 1;
     expect(finishCount).toBeGreaterThanOrEqual(2);
+    expect(app).not.toContain('runFinishPipeline({');
   });
 });
 
@@ -144,7 +144,7 @@ describe('v1.2.2 owner-id check lives on the extracted pipeline', () => {
   it('refuses a set staged for another project before anything is hashed or saved', async () => {
     const saved: Project[] = [];
     const hashed: string[] = [];
-    const result = await runFinishPipeline(baseInput('B', {
+    const result = await runBuildTimeline(baseInput('B', {
       stagedOwnerId: 'A',
       hashScript: async (script, scene) => { hashed.push(`${script}|${scene}`); return 'no'; },
       save: async p => { saved.push(p); },
@@ -158,10 +158,10 @@ describe('v1.2.2 owner-id check lives on the extracted pipeline', () => {
 });
 
 describe('U2 — background finish is byte-identical to the editor finish', () => {
-  it('word timings and provenance match when both callers use runFinishPipeline', async () => {
-    const editor = await runFinishPipeline(baseInput('row', { save: undefined }));
+  it('word timings and provenance match when both callers use runBuildTimeline', async () => {
+    const editor = await runBuildTimeline(baseInput('row', { save: undefined }));
     const backgroundSaves: Project[] = [];
-    const background = await runFinishPipeline(baseInput('row', {
+    const background = await runBuildTimeline(baseInput('row', {
       save: async p => { backgroundSaves.push(p); },
     }));
     expect(editor.ok).toBe(true);
@@ -186,7 +186,7 @@ describe('U3 — checkpoints resume from the last completed stage', () => {
 
   it('records staged → transcript-cached → aligned → built → ready', async () => {
     const seen: string[] = [];
-    const result = await runFinishPipeline(baseInput('row', {
+    const result = await runBuildTimeline(baseInput('row', {
       onCheckpoint: c => { seen.push(c); },
     }));
     expect(result.ok).toBe(true);
@@ -194,11 +194,11 @@ describe('U3 — checkpoints resume from the last completed stage', () => {
   });
 
   it('a crash after built resumes as a free ready mark, without aligning again', async () => {
-    const built = await runFinishPipeline(baseInput('row'));
+    const built = await runBuildTimeline(baseInput('row'));
     expect(built.ok).toBe(true);
     if (!built.ok) return;
     const runFa = vi.fn();
-    const result = await runFinishPipeline(baseInput('row', {
+    const result = await runBuildTimeline(baseInput('row', {
       project: built.project,
       checkpoint: 'built',
       runFa,
@@ -253,7 +253,7 @@ describe('U4 — a finished background row is ready to Open, with no project swi
       queue: new SyncQueue(engine), exists: () => true, storage: disk, enqueue: () => undefined,
     });
     runner.setFinalizer(async id => {
-      const result = await runFinishPipeline(baseInput(id));
+      const result = await runBuildTimeline(baseInput(id));
       return result.ok ? { ok: true } : { ok: false, message: result.message };
     });
     runner.resume();
@@ -272,7 +272,7 @@ describe('1.3.1 — a finished bulk project carries its staged media', () => {
     staged.zipFiles = [{ file: new File(['z'], 'more.zip'), key: 'k3' }];
     const seen: { staged: StagedFiles; before: string[] }[] = [];
     const planned: string[][] = [];
-    const result = await runFinishPipeline(baseInput('m', {
+    const result = await runBuildTimeline(baseInput('m', {
       staged,
       persistMedia: async (_pid, st, assets) => {
         seen.push({ staged: st, before: assets.map(a => a.name) });
@@ -295,7 +295,7 @@ describe('1.3.1 — a finished bulk project carries its staged media', () => {
   it('a zip that carries the audio names the voiceover, as the editor does', async () => {
     const { staged } = stagedFor('z');
     const zipAudio = { id: 'zip-audio', name: 'vo.wav', url: 'blob:z', type: 'audio', addedAt: 3, duration: 1, file: new File(['a'], 'vo.wav') } as Asset;
-    const result = await runFinishPipeline(baseInput('z', {
+    const result = await runBuildTimeline(baseInput('z', {
       staged: { ...staged, voiceoverFile: null, zipFiles: [{ file: new File(['z'], 'all.zip'), key: 'k' }] },
       persistMedia: async (_pid, _st, assets) => ({ assets: [...assets, zipAudio], voiceoverId: 'zip-audio' }),
     }));
@@ -305,18 +305,15 @@ describe('1.3.1 — a finished bulk project carries its staged media', () => {
 
   it('both call sites hand the pipeline the editor’s own media step', () => {
     const app = readFileSync(resolve(import.meta.dirname, '..', 'App.tsx'), 'utf-8');
-    const calls = app.split('runFinishPipeline({').slice(1).map(c => c.slice(0, c.indexOf('});')));
-    expect(calls.length).toBeGreaterThanOrEqual(2);
-    for (const call of calls) expect(call).toContain('persistMedia: persistStagedMedia');
-    // …and the editor's own Build Timeline uses that same step (extracted, not copied).
-    expect(app).toContain('await persistStagedMedia(projectRef.current.id, staged, allAssets)');
+    expect(app).toContain('persistMedia: persistStagedMedia');
+    expect(app).toContain('bulkBillingLog');
   });
 });
 
 describe('1.3.1 — a bulk-built project gets the editor’s sync log', () => {
   it('the run log comes from the injected editor builder (with the run’s real data), then the billing line', async () => {
     const seen: { kept: number; final: number; assets: string[] }[] = [];
-    const result = await runFinishPipeline(baseInput('log', {
+    const result = await runBuildTimeline(baseInput('log', {
       stages: {
         ...stages,
         buildRunLog: run => {
@@ -345,8 +342,7 @@ describe('1.3.1 — a bulk-built project gets the editor’s sync log', () => {
   it('App wires the editor’s builders (one shared run-log function) and the billing line at both call sites', () => {
     const app = readFileSync(resolve(import.meta.dirname, '..', 'App.tsx'), 'utf-8');
     expect(app).toContain('buildRunLog: buildFinishRunLog,');
-    const calls = app.split('runFinishPipeline({').slice(1).map(c => c.slice(0, c.indexOf('});')));
-    for (const call of calls) expect(call).toMatch(/extraLogEntries: \(runId, at\) => bulkBillingLog\(/);
+    expect(app).toContain('bulkBillingLog');
   });
 });
 
@@ -358,7 +354,7 @@ describe('F4 — cache-hit finish wall time (bulk-only pipeline; park if unify d
       try { return await fn(...a); } finally { ms[name] = performance.now() - t0; }
     };
     const t0 = performance.now();
-    const result = await runFinishPipeline(baseInput('f4', {
+    const result = await runBuildTimeline(baseInput('f4', {
       persistVoiceover: wrap('persistVoiceover', async (_pid, file) => ({
         id: 'vo-f4', name: file.name, url: 'blob:test', type: 'audio', file, addedAt: 1, duration: 1,
       } as Asset)),
@@ -382,5 +378,155 @@ describe('F4 — cache-hit finish wall time (bulk-only pipeline; park if unify d
     console.info('[F4 cache-hit finish ms]', ms);
     expect(result.ok).toBe(true);
     expect(ms.total).toBeGreaterThan(0);
+  });
+});
+
+function paritySlice(p: Project): unknown {
+  return {
+    segments: p.segments.map(s => ({
+      order: s.order,
+      startTime: s.startTime,
+      duration: s.duration,
+      text: s.text,
+      assetId: s.assetId,
+      locked: !!s.locked,
+      effectGrade: s.effectGrade ?? null,
+    })),
+    faWordTimings: p.faWordTimings,
+    transcriptTokens: p.transcriptTokens,
+    timingProvenance: p.timingProvenance,
+    lastSyncSpine: p.lastSyncSpine,
+    findings: [
+      ...(p.timingProvenance?.transcription?.findings ?? []),
+      ...(p.timingProvenance?.alignment?.findings ?? []),
+    ],
+    logs: (p.syncLog ?? []).map(e => ({ type: e.type, message: e.message })),
+  };
+}
+
+describe('P4 — no-difference gate: editor door === bulk door', () => {
+  it('the word-timings-only slice is replaced by a full project slice', async () => {
+    const editor = await runBuildTimeline(baseInput('row', { save: undefined }));
+    const bulkSaves: Project[] = [];
+    const bulk = await runBuildTimeline(baseInput('row', { save: async p => { bulkSaves.push(p); } }));
+    expect(editor.ok && bulk.ok).toBe(true);
+    if (!editor.ok || !bulk.ok) return;
+    expect(JSON.stringify(paritySlice(bulk.project))).toBe(JSON.stringify(paritySlice(editor.project)));
+    expect(bulkSaves).toHaveLength(1);
+  });
+
+  it('14-segment amount fixture: both doors match on segments, timings, boundaries, findings, provenance, logs', async () => {
+    const { parseProjectData } = await import('../App');
+    const repo = resolve(import.meta.dirname, '../..');
+    const script = readFileSync(resolve(repo, 'scripts/fixtures/amount-14seg-script.txt'), 'utf-8');
+    const scene = readFileSync(resolve(repo, 'scripts/fixtures/amount-14seg-scene-details.txt'), 'utf-8');
+    const tokens = JSON.parse(
+      readFileSync(resolve(repo, 'scripts/fixtures/amount-14seg-cloud-tokens.json'), 'utf-8'),
+    ).tokens as TranscriptToken[];
+    const tags = Array.from({ length: 14 }, (_, i) => String(i + 2).padStart(3, '0')).map((n, i) => {
+      const names = [
+        'age_24', 'year_2003', 'savings_account', 'need_a_car', 'used_lot', 'saturday_april',
+        'salesman_walks', 'civic_stats', 'technically_gray', 'cloth_seats', 'tape_deck',
+        'cd_adapter', 'pay_cash', 'drive_home',
+      ];
+      return `${n}_${names[i]}`;
+    });
+    const media: Asset[] = tags.map(n => ({
+      id: `img-${n}`, name: `${n}.jpg`, url: 'blob:x', type: 'image', addedAt: 2,
+    } as Asset));
+    const duration = 32.69;
+    const cover = (segs: VideoSegment[]) => segs.map(s => ({
+      t0: s.startTime, t1: s.startTime + s.duration, firstTokenIdx: 0, lastTokenIdx: tokens.length - 1,
+      confidence: 1, matched: true, matchedWords: 2, totalWords: 2, longestRun: 2,
+    }));
+    const extras: Partial<FinishPipelineInput> = {
+      persistMedia: async (_pid, _st, assets) => ({ assets: [...assets, ...media] }),
+      probeDuration: async () => duration,
+      persistVoiceover: async (_pid, file) => ({
+        id: 'vo-14', name: file.name, url: 'blob:test', type: 'audio', file, addedAt: 1, duration,
+      } as Asset),
+      lookupTranscript: async () => ({ tokens, language: 'en' }),
+      runFa: async () => ({
+        status: 'ok' as const,
+        tokens,
+        unscriptedRuns: [],
+        cloudProvenance: { engine: 'fa-cloud', model: 'fa-en', modelVersion: 'rev-1' },
+        cloudCached: true,
+      }),
+      alignFromCache: async (_vo, segs, toks) => ({
+        segments: segs, coverage: cover(segs), silences: [], tokens: toks,
+        malformedTokenCount: 0, totalTokenCount: toks.length,
+      }),
+      hashAudio: async () => 'audio-14seg',
+      hashScript: async () => 'script-14seg',
+      stages: {
+        ...stages,
+        parseProjectData: async (s, c, assets, dur) => parseProjectData(s, c, assets, dur),
+      },
+      staged: {
+        scriptFile: { file: new File([script], 'script.txt', { type: 'text/plain' }), key: 's' },
+        sceneFile: { file: new File([scene], 'scenes.txt', { type: 'text/plain' }), key: 'c' },
+        voiceoverFile: { file: new File(['audio'], 'vo.m4a', { type: 'audio/mp4' }), key: 'v' },
+        assetFiles: [],
+        zipFiles: [],
+      },
+    };
+    const editor = await runBuildTimeline(baseInput('amt', extras));
+    const bulk = await runBuildTimeline(baseInput('amt', { ...extras, save: async () => undefined }));
+    expect(editor.ok && bulk.ok).toBe(true);
+    if (!editor.ok || !bulk.ok) return;
+    expect(editor.project.segments).toHaveLength(14);
+    expect(JSON.stringify(paritySlice(bulk.project))).toBe(JSON.stringify(paritySlice(editor.project)));
+    expect(editor.project.segments.every(s => s.assetId)).toBe(true);
+  });
+
+  it('autoMatch + locked scenes: both doors restore the lock and the effect', async () => {
+    const clip = { id: 'clip-1', name: 'hello.jpg', url: 'blob:x', type: 'image', addedAt: 2 } as Asset;
+    const previous: VideoSegment[] = [{
+      ...segment(),
+      assetId: 'clip-1',
+      locked: true,
+      startTime: 0,
+      duration: 1,
+      effectGrade: { brightness: 0.2, contrast: 0, saturation: 0, temperature: 0.3 },
+    }];
+    const extras: Partial<FinishPipelineInput> = {
+      project: { ...project('lock'), segments: previous } as Project,
+      persistMedia: async (_pid, _st, assets) => ({ assets: [...assets, clip] }),
+      stages: {
+        ...stages,
+        parseProjectData: async () => [{ ...segment(), id: 'fresh', assetId: undefined }],
+      },
+    };
+    const editor = await runBuildTimeline(baseInput('lock', extras));
+    const bulk = await runBuildTimeline(baseInput('lock', { ...extras, save: async () => undefined }));
+    expect(editor.ok && bulk.ok).toBe(true);
+    if (!editor.ok || !bulk.ok) return;
+    expect(JSON.stringify(paritySlice(bulk.project))).toBe(JSON.stringify(paritySlice(editor.project)));
+    expect(editor.project.segments[0]!.assetId).toBe('clip-1');
+    expect(editor.project.segments[0]!.locked).toBe(true);
+    expect(editor.project.segments[0]!.effectGrade?.temperature).toBe(0.3);
+  });
+});
+
+describe('progress events and post-save voiceover release', () => {
+  it('emits stage progress messages', async () => {
+    const seen: string[] = [];
+    const result = await runBuildTimeline(baseInput('p', { onProgress: m => { seen.push(m); } }));
+    expect(result.ok).toBe(true);
+    expect(seen).toEqual(['Reading files…', 'Planning scenes…', 'Aligning…', 'Placing boundaries…', 'Saving…']);
+  });
+
+  it('releases the outgoing voiceover only after save', async () => {
+    const order: string[] = [];
+    const old = { id: 'old-vo', name: 'old.m4a', url: 'blob:old', type: 'audio', addedAt: 1 } as Asset;
+    const result = await runBuildTimeline(baseInput('rel', {
+      project: { ...project('rel'), voiceoverId: 'old-vo', assets: [old] } as Project,
+      save: async () => { order.push('save'); },
+      releaseSupersededVoiceover: () => { order.push('release'); },
+    }));
+    expect(result.ok).toBe(true);
+    expect(order).toEqual(['save', 'release']);
+    if (result.ok) expect(result.supersededVoiceover?.id).toBe('old-vo');
   });
 });

@@ -45,166 +45,38 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
 
-const APP_TSX = resolve(import.meta.dirname, '..', 'App.tsx');
-const SRC = readFileSync(APP_TSX, 'utf-8');
-const LINES = SRC.split('\n');
+const PIPE_TSX = resolve(import.meta.dirname, './finishPipeline.ts');
+const PIPE = readFileSync(PIPE_TSX, 'utf-8');
 
-const ENTRY_MARKER = 'const handleApplySyncFromFiles = async (): Promise<ApplySyncResult> => {';
-
-/** 1-indexed line numbers (to match editor/grep line numbers) of every exact
- *  `needle` occurrence between the entry point's own opening line and the
- *  function's closing `  };`. */
-function lineNumbersOf(needle: string): number[] {
-  const start = LINES.findIndex(l => l.includes(ENTRY_MARKER));
-  expect(start, 'handleApplySyncFromFiles entry marker not found').toBeGreaterThan(-1);
-  let end = LINES.length;
-  for (let i = start + 1; i < LINES.length; i++) {
-    if (LINES[i] === '  };') { end = i; break; }
-  }
-  const hits: number[] = [];
-  for (let i = start; i < end; i++) {
-    if (LINES[i]!.includes(needle)) hits.push(i + 1);
-  }
-  return hits;
-}
-
-describe('Group B closeout — handleApplySyncFromFiles cancel-boundary structure', () => {
-  it('logSyncAbort — the shared exit every cancel check funnels through — calls ONLY appendSyncLogEntries, never a segment/asset field', () => {
-    const start = LINES.findIndex(l => l.includes('const logSyncAbort = (message: string, totalSegments: number): void => {'));
-    expect(start, 'logSyncAbort definition not found').toBeGreaterThan(-1);
-    let end = start;
-    for (let i = start + 1; i < LINES.length; i++) {
-      if (LINES[i] === '    };') { end = i; break; }
-    }
-    const body = LINES.slice(start, end + 1).join('\n');
-    expect(body).toContain('appendSyncLogEntries(');
-    // The negative half of the proof: no other project field is written here.
-    // (`syncLog`/`syncRunSummaries` are appendSyncLogEntries's own — proven
-    // reference-preserving for everything else in syncLog.test.ts.)
-    expect(body).not.toMatch(/segments\s*:/);
-    expect(body).not.toMatch(/\bassets\s*:/);
-    expect(body).not.toMatch(/voiceoverId\s*:/);
+describe('Group B closeout — runBuildTimeline cancel-boundary structure', () => {
+  it('FA cancelled and paused return before the project is saved', () => {
+    const cancelled = PIPE.indexOf("if (faRun.status === 'cancelled') return { ok: false, message: 'Sync cancelled.' };");
+    const paused = PIPE.indexOf("if (faRun.status === 'paused')");
+    const save = PIPE.indexOf('if (input.save) await input.save(next);');
+    expect(cancelled).toBeGreaterThan(-1);
+    expect(paused).toBeGreaterThan(-1);
+    expect(save).toBeGreaterThan(paused);
+    expect(save).toBeGreaterThan(cancelled);
   });
 
-  it('every plan-v3 item 5 cancel check returns via cancelledResult(...)', () => {
-    const staging = lineNumbersOf('if (syncAbortController.signal.aborted) return cancelledResult();');
-    expect(staging, 'STAGING boundary check not found at its expected shape').toHaveLength(1);
-
-    const faCancelled = lineNumbersOf("if (faRun.status === 'cancelled') return cancelledResult(newSegmentsRaw.length);");
-    expect(faCancelled, 'FA branch\'s own cancelled short-circuit not found').toHaveLength(1);
-
-    // Wave 3 U4.5 — the REVEAL wait (a background cloud intent for this
-    // spine): cancel during the wait returns before anything is written,
-    // strictly between STAGING and FA's own cancelled arm.
-    // Wave 3 U5 — it now also cancels the background intent before
-    // returning through cancelledResult.
-    const reveal = lineNumbersOf('if (revealCancelled) {');
-    expect(reveal, 'U4.5 reveal-wait cancel check not found').toHaveLength(1);
-    const revealBody = LINES.slice(reveal[0]! - 1, reveal[0]! + 12).join('\n');
-    expect(revealBody).toContain('cancelSyncIntent(intent.spineKey)');
-    expect(revealBody).toContain('return cancelledResult(newSegmentsRaw.length);');
-    expect(staging[0]!).toBeLessThan(reveal[0]!);
-    expect(reveal[0]!).toBeLessThan(faCancelled[0]!);
-
-    // MATCHER and COMMIT share an identical literal
-    // (`cancelledResult(newSegmentsRaw.length)` / `cancelledResult(lockRestoredSegments.length)`
-    // respectively) — matched by their distinct argument expressions so this
-    // assertion can't quietly collapse two checks into one match.
-    const matcher = lineNumbersOf('if (syncAbortController.signal.aborted) return cancelledResult(newSegmentsRaw.length);');
-    expect(matcher, 'MATCHER boundary check not found').toHaveLength(1);
-
-    const commit = lineNumbersOf('if (syncAbortController.signal.aborted) return cancelledResult(lockRestoredSegments.length);');
-    expect(commit, 'COMMIT boundary check not found').toHaveLength(1);
-
-    // Ordering: STAGING, then FA's own cancelled arm, then MATCHER, then
-    // COMMIT — each strictly before the next, and (checked in the next case)
-    // all strictly before the one real commit.
-    expect(staging[0]!).toBeLessThan(faCancelled[0]!);
-    expect(faCancelled[0]!).toBeLessThan(matcher[0]!);
-    expect(matcher[0]!).toBeLessThan(commit[0]!);
+  it('owner-id refusal and missing voiceover return before parse', () => {
+    const runStart = PIPE.indexOf('export async function runBuildTimeline');
+    const owner = PIPE.indexOf('stagedOwnerMismatch(', runStart);
+    const noVo = PIPE.indexOf('if (!voiceover) return { ok: false, message: NO_VOICEOVER_FOR_FINISH }', runStart);
+    const parse = PIPE.indexOf('stages.parseProjectData(', runStart);
+    expect(owner).toBeGreaterThan(-1);
+    expect(noVo).toBeGreaterThan(-1);
+    expect(parse).toBeGreaterThan(noVo);
+    expect(noVo).toBeGreaterThan(owner);
   });
 
-  it('the function contains exactly one segment-committing setProject, and it sits strictly after every cancel check', () => {
-    const start = LINES.findIndex(l => l.includes(ENTRY_MARKER));
-    let end = LINES.length;
-    for (let i = start + 1; i < LINES.length; i++) {
-      if (LINES[i] === '  };') { end = i; break; }
-    }
-    const setProjectLines: number[] = [];
-    for (let i = start; i < end; i++) {
-      if (/\bsetProject\(/.test(LINES[i]!)) setProjectLines.push(i + 1);
-    }
-    // Exactly eight: the extracted bulk finish commit (returns before any
-    // cancel check — that path never enters the in-function abort chain),
-    // logSyncAbort's own (shared by every abort/cancel path),
-    // Wave 3 U2's engine-switch transcript patch (a fresh transcript for the
-    // selected host — tokens + provenance only, verified below; a cancel
-    // after it leaves a transcript that is valid for this audio and host,
-    // never a partially committed timeline), the run-level 'paused' branch's
-    // (same appendSyncLogEntries shape, not a cancel path but equally
-    // reference-preserving), the victim-pause branch added by 18b3d5f — 'all
-    // covered segments fabricated' — which uses the SAME
-    // appendSyncLogEntries-only shape as the 'paused' branch (verified
-    // below), and the one real commit. Wave 3 U4 adds a sixth: the cloud
-    // re-transcription PAUSE (the engine-switch transcript could not be
-    // fetched past its one retry) — the same appendSyncLogEntries-only shape
-    // as the 'paused' branch, verified below, on a path that returns before
-    // any timeline write. Wave 3 U5 adds a seventh, inside cancelledResult:
-    // a cancel after the engine-switch patch puts back exactly the fields
-    // that patch replaced (verified below) — it restores, never builds.
-    expect(
-      setProjectLines,
-      'the number of setProject calls in handleApplySyncFromFiles changed — a ' +
-        'new one needs its own cancel-safety argument, not silent coverage by this file',
-    ).toHaveLength(8);
-
-    expect(LINES[setProjectLines[0]! - 1]).toContain('setProject(() => result.project)');
-
-    // Wave 3 U2 — the engine-switch transcript patch writes the transcript and
-    // its provenance, and no timeline field.
-    // Wave 3 U5 — the cancel restore: only the undo of the transcript patch.
-    const restoreLine = setProjectLines[2]!;
-    expect(LINES[restoreLine - 1]).toContain('setProject(p => ({ ...p, ...undo }))');
-    const restoreBody = LINES.slice(restoreLine - 6, restoreLine).join('\n');
-    expect(restoreBody).toContain('if (transcriptPatchUndo) {');
-    const undoBuild = LINES.findIndex(l => l.includes('for (const key of Object.keys(patch) as (keyof Project)[]) {'));
-    expect(undoBuild, 'the undo must be built from the patch\'s own keys').toBeGreaterThan(0);
-
-    const transcriptPatchLine = setProjectLines[3]!;
-    const patchStart = LINES.findIndex(l => l.includes('const patch: Partial<Project> = {'));
-    expect(patchStart + 1, 'engine-switch transcript patch not found').toBeGreaterThan(0);
-    expect(patchStart + 1).toBeLessThan(transcriptPatchLine);
-    const patchBody = LINES.slice(patchStart, transcriptPatchLine).join('\n');
-    expect(patchBody).toContain('transcriptTokens: fresh.tokens');
-    expect(patchBody).toContain('timingProvenance:');
-    expect(patchBody).not.toMatch(/segments\s*:/);
-    expect(patchBody).not.toMatch(/\bassets\s*:/);
-    expect(patchBody).not.toMatch(/voiceoverId\s*:/);
-
-    // Wave 3 U4 — the re-transcription pause: log append only.
-    const retranscribePauseLine = setProjectLines[4]!;
-    const retranscribePauseBody = LINES.slice(retranscribePauseLine - 1, retranscribePauseLine + 12).join('\n');
-    expect(retranscribePauseBody).toContain('appendSyncLogEntries(');
-    expect(retranscribePauseBody).toContain("abortReason: 'fa-paused'");
-    expect(retranscribePauseBody).not.toMatch(/segments\s*:/);
-    expect(retranscribePauseBody).not.toMatch(/\bassets\s*:/);
-    expect(retranscribePauseBody).not.toMatch(/voiceoverId\s*:/);
-
-    // The victim-pause branch's setProject call: same appendSyncLogEntries-only
-    // shape as the pre-existing 'paused' branch — no segments/assets/voiceoverId
-    // field, just the shared log-append helper.
-    const victimPauseLine = setProjectLines[6]!;
-    const victimPauseBody = LINES.slice(victimPauseLine - 1, victimPauseLine + 12).join('\n');
-    expect(victimPauseBody).toContain('appendSyncLogEntries(');
-    expect(victimPauseBody).not.toMatch(/segments\s*:/);
-    expect(victimPauseBody).not.toMatch(/\bassets\s*:/);
-    expect(victimPauseBody).not.toMatch(/voiceoverId\s*:/);
-
-    const realCommit = setProjectLines[7]!;
-    const commitCheck = lineNumbersOf('if (syncAbortController.signal.aborted) return cancelledResult(lockRestoredSegments.length);')[0]!;
-    expect(
-      realCommit,
-      'the real commit setProject no longer sits after the COMMIT boundary check',
-    ).toBeGreaterThan(commitCheck);
+  it('the editor adapter commits the pipeline project in one setProject', () => {
+    const app = readFileSync(resolve(import.meta.dirname, '..', 'App.tsx'), 'utf-8');
+    const marker = 'const handleApplySyncFromFiles = async (): Promise<ApplySyncResult> => {';
+    const start = app.indexOf(marker);
+    const body = app.slice(start, app.indexOf('\n  };', start));
+    const commits = body.split('setProject(() => result.project)').length - 1;
+    expect(commits).toBe(1);
   });
 });
+

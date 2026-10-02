@@ -41,7 +41,6 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use tauri::ipc::Channel;
 use tauri::Manager;
-use tauri_plugin_shell::ShellExt;
 
 /// The deployed gateway. `KINETIX_GATEWAY_URL` overrides it (dev/staging only).
 pub(crate) const DEFAULT_GATEWAY_URL: &str = "https://thekingsmanco99--kinetix-sync.modal.run";
@@ -194,6 +193,11 @@ pub struct JobRequest {
     /// Wave 3 U4.5 — the held job to hand this to (U7: either stage).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hold_job_id: Option<String>,
+    /// Server-owned jobs: the client stamps these so a later process can reattach.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub row_id: Option<String>,
 }
 
 /// `POST /v1/cache/lookup` (`sync_core.lookup_reply`).
@@ -240,6 +244,16 @@ pub struct JobView {
     /// transcribe, `{words, nChunks, nFallbackChunks, provenance}` for align.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub result: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub row_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pause: Option<serde_json::Value>,
+    #[serde(default)]
+    pub awaiting_answer: bool,
+    #[serde(default)]
+    pub hold_open: bool,
 }
 
 impl JobView {
@@ -429,9 +443,39 @@ impl GatewayClient {
         self.send_json(self.request(reqwest::Method::DELETE, &format!("/v1/jobs/{job_id}"), REQUEST_TIMEOUT)).await
     }
 
-    /// Submit, then poll to a terminal state. `cancel` is checked between
-    /// polls; when it trips, the job is cancelled on the gateway (so a job
-    /// still waiting for a GPU is never charged) and `Cancelled` returned.
+    pub async fn list_jobs(&self, project_id: Option<&str>, row_id: Option<&str>) -> Result<Vec<JobView>, CloudError> {
+        let mut q: Vec<String> = Vec::new();
+        if let Some(p) = project_id.filter(|s| !s.is_empty()) {
+            q.push(format!("projectId={p}"));
+        }
+        if let Some(r) = row_id.filter(|s| !s.is_empty()) {
+            q.push(format!("rowId={r}"));
+        }
+        let path = if q.is_empty() { "/v1/jobs".to_string() } else { format!("/v1/jobs?{}", q.join("&")) };
+        #[derive(Deserialize)]
+        struct Reply {
+            jobs: Vec<JobView>,
+        }
+        let reply: Reply = self.send_json(self.request(reqwest::Method::GET, &path, REQUEST_TIMEOUT)).await?;
+        Ok(reply.jobs)
+    }
+
+    pub async fn pause_job(&self, job_id: &str, pause: &serde_json::Value) -> Result<JobView, CloudError> {
+        self.send_json(self.request(reqwest::Method::POST, &format!("/v1/jobs/{job_id}/pause"), REQUEST_TIMEOUT).json(pause)).await
+    }
+
+    pub async fn answer_job(&self, job_id: &str, pause_id: &str, answer: &str) -> Result<JobView, CloudError> {
+        self.send_json(
+            self.request(reqwest::Method::POST, &format!("/v1/jobs/{job_id}/answer"), REQUEST_TIMEOUT)
+                .json(&serde_json::json!({ "id": pause_id, "answer": answer })),
+        )
+        .await
+    }
+
+    /// Submit, then poll to a terminal state. `cancel` detaches the poller
+    /// WITHOUT DELETE: the GPU job is owned by the server. Operator Cancel
+    /// is `cloud_kill_job` (DELETE). The 25-minute wall still cancels a poller
+    /// that stayed attached that long.
     pub async fn run_job(
         &self,
         job: &JobRequest,
@@ -444,6 +488,32 @@ impl GatewayClient {
         }
         let mut view = self.submit(job).await?;
         emit(CloudJobEvent::Submitted { job_id: view.job_id.clone(), cached: view.cached });
+        self.wait_terminal(view, cancel, emit, started).await
+    }
+
+    /// Reattach: GET until terminal. Same detach-on-cancel contract as `run_job`.
+    pub async fn poll_job(
+        &self,
+        job_id: &str,
+        cancel: &AtomicBool,
+        emit: &(dyn Fn(CloudJobEvent) + Send + Sync),
+    ) -> Result<JobView, CloudError> {
+        let started = Instant::now();
+        if cancel.load(Ordering::SeqCst) {
+            return Err(CloudError::Cancelled);
+        }
+        let view = self.job(job_id).await?;
+        emit(CloudJobEvent::Submitted { job_id: view.job_id.clone(), cached: view.cached });
+        self.wait_terminal(view, cancel, emit, started).await
+    }
+
+    async fn wait_terminal(
+        &self,
+        mut view: JobView,
+        cancel: &AtomicBool,
+        emit: &(dyn Fn(CloudJobEvent) + Send + Sync),
+        started: Instant,
+    ) -> Result<JobView, CloudError> {
         loop {
             if view.is_terminal() {
                 break;
@@ -451,8 +521,7 @@ impl GatewayClient {
             let wait_until = Instant::now() + POLL_INTERVAL;
             while Instant::now() < wait_until {
                 if cancel.load(Ordering::SeqCst) {
-                    let reply = self.cancel(&view.job_id).await;
-                    emit(cancel_receipt(&view.job_id, reply));
+                    // Detach. Do not DELETE — the server owns the run.
                     return Err(CloudError::Cancelled);
                 }
                 tokio::time::sleep(CANCEL_CHECK_SLICE).await;
@@ -472,8 +541,6 @@ impl GatewayClient {
         }
         match view.status.as_str() {
             "done" => {
-                // A cache hit answers `done` from the submit, without a result
-                // body; one GET fetches it.
                 if view.result.is_none() {
                     view = self.job(&view.job_id).await?;
                 }
@@ -736,9 +803,7 @@ pub async fn cloud_encode_opus(app: tauri::AppHandle, audio_hash: String) -> Res
         return Err(CloudError::Io { detail: "no staged audio for this hash; stage it first".to_string() });
     }
     let tmp = dir.join(format!("{audio_hash}.{}.part", uuid::Uuid::new_v4()));
-    let out = app
-        .shell()
-        .sidecar("ffmpeg")
+    let out = crate::sidecar::sidecar_command(&app, "ffmpeg")
         .map_err(|e| CloudError::Encode { detail: format!("ffmpeg sidecar lookup: {e}") })?
         .args(opus_encode_args(&src, &tmp))
         .output()
@@ -819,6 +884,66 @@ pub async fn cloud_run_job(
     client.run_job(&job, &flag, &emit).await
 }
 
+#[tauri::command]
+pub async fn cloud_poll_job(
+    app: tauri::AppHandle,
+    run_id: String,
+    job_id: String,
+    on_event: Channel<CloudJobEvent>,
+) -> Result<JobView, CloudError> {
+    let client = client_for(&app)?;
+    let flag = Arc::new(AtomicBool::new(false));
+    {
+        let mut map = runs().lock().map_err(|_| CloudError::io("run registry", "poisoned"))?;
+        if map.contains_key(&run_id) {
+            return Err(CloudError::Protocol { detail: format!("run {run_id} is already in flight") });
+        }
+        map.insert(run_id.clone(), flag.clone());
+    }
+    let _guard = RunGuard(run_id);
+    let emit = move |event: CloudJobEvent| {
+        let _ = on_event.send(event);
+    };
+    client.poll_job(&job_id, &flag, &emit).await
+}
+
+#[tauri::command]
+pub async fn cloud_list_jobs(
+    app: tauri::AppHandle,
+    project_id: Option<String>,
+    row_id: Option<String>,
+) -> Result<Vec<JobView>, CloudError> {
+    client_for(&app)?.list_jobs(project_id.as_deref(), row_id.as_deref()).await
+}
+
+#[tauri::command]
+pub async fn cloud_pause_job(
+    app: tauri::AppHandle,
+    job_id: String,
+    pause: serde_json::Value,
+) -> Result<JobView, CloudError> {
+    client_for(&app)?.pause_job(&job_id, &pause).await
+}
+
+#[tauri::command]
+pub async fn cloud_answer_job(
+    app: tauri::AppHandle,
+    job_id: String,
+    pause_id: String,
+    answer: String,
+) -> Result<JobView, CloudError> {
+    client_for(&app)?.answer_job(&job_id, &pause_id, &answer).await
+}
+
+/// Operator Cancel: DELETE the gateway job. App lifecycle must never call this.
+#[tauri::command]
+pub async fn cloud_kill_job(app: tauri::AppHandle, job_id: String) -> Result<JobView, CloudError> {
+    if job_id.is_empty() || !job_id.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(CloudError::Protocol { detail: "jobId must be hex".to_string() });
+    }
+    client_for(&app)?.cancel(&job_id).await
+}
+
 /// Wave 3 U4.5 — release a held transcription's container (coverage
 /// mismatch, incomplete spine, alignment already cached). Idempotent.
 #[tauri::command]
@@ -872,6 +997,11 @@ mod tests {
             task_id: None,
             handed_off: false,
             result: None,
+            project_id: None,
+            row_id: None,
+            pause: None,
+            awaiting_answer: false,
+            hold_open: false,
         }
     }
 
@@ -934,13 +1064,15 @@ mod tests {
             chunks: Some(vec![ChunkInput { start_sec: 0.0, end_sec: 1.5, text: "hi".into() }]),
             hold: None,
             hold_job_id: None,
+            project_id: None,
+            row_id: None,
         };
         let v = serde_json::to_value(&req).unwrap();
         assert_eq!(v["audioHash"], "a".repeat(64));
         assert_eq!(v["chunks"][0]["startSec"], 0.0);
         let transcribe = JobRequest {
             stage: "transcribe".into(), audio_hash: "a".repeat(64), language: "auto".into(), chunks: None,
-            hold: None, hold_job_id: None,
+            hold: None, hold_job_id: None, project_id: None, row_id: None,
         };
         let plain = serde_json::to_value(&transcribe).unwrap();
         assert!(plain.get("chunks").is_none() && plain.get("hold").is_none() && plain.get("holdJobId").is_none());
@@ -1087,14 +1219,14 @@ mod tests {
             // gzip-negotiated, with the full result in hand.
             let t0 = Instant::now();
             let hit = api
-                .lookup(&JobRequest { stage: "transcribe".into(), audio_hash: audio_hash.clone(), language: "en".into(), chunks: None, hold: None, hold_job_id: None })
+                .lookup(&JobRequest { stage: "transcribe".into(), audio_hash: audio_hash.clone(), language: "en".into(), chunks: None, hold: None, hold_job_id: None, project_id: None, row_id: None })
                 .await
                 .expect("lookup");
             assert!(hit.cached);
             assert_eq!(hit.result.as_ref().unwrap()["tokens"].as_array().unwrap().len(), 3960);
             println!("lookup transcribe: cached={} {}ms", hit.cached, t0.elapsed().as_millis());
             let unknown = api
-                .lookup(&JobRequest { stage: "transcribe".into(), audio_hash: "d".repeat(64), language: "en".into(), chunks: None, hold: None, hold_job_id: None })
+                .lookup(&JobRequest { stage: "transcribe".into(), audio_hash: "d".repeat(64), language: "en".into(), chunks: None, hold: None, hold_job_id: None, project_id: None, row_id: None })
                 .await
                 .expect("lookup miss");
             assert_eq!(unknown, CacheLookup { cached: false, result: None, audio_present: false, audio_duration_sec: None });
@@ -1104,7 +1236,7 @@ mod tests {
             let events = Mutex::new(Vec::new());
             let emit = |e: CloudJobEvent| events.lock().unwrap().push(e);
             let transcript = api
-                .run_job(&JobRequest { stage: "transcribe".into(), audio_hash: audio_hash.clone(), language: "en".into(), chunks: None, hold: None, hold_job_id: None }, &never, &emit)
+                .run_job(&JobRequest { stage: "transcribe".into(), audio_hash: audio_hash.clone(), language: "en".into(), chunks: None, hold: None, hold_job_id: None, project_id: None, row_id: None }, &never, &emit)
                 .await
                 .expect("transcribe cache hit");
             assert!(transcript.cached);
@@ -1125,7 +1257,7 @@ mod tests {
                 })
                 .collect();
             let aligned = api
-                .run_job(&JobRequest { stage: "align".into(), audio_hash: audio_hash.clone(), language: "en".into(), chunks: Some(chunks), hold: None, hold_job_id: None }, &never, &emit)
+                .run_job(&JobRequest { stage: "align".into(), audio_hash: audio_hash.clone(), language: "en".into(), chunks: Some(chunks), hold: None, hold_job_id: None, project_id: None, row_id: None }, &never, &emit)
                 .await
                 .expect("align cache hit");
             let n_words = aligned.result.as_ref().unwrap()["words"].as_array().unwrap().len();
@@ -1142,6 +1274,8 @@ mod tests {
                         chunks: Some(vec![ChunkInput { start_sec: 0.0, end_sec: 1.0, text: "x".into() }]),
                         hold: None,
                         hold_job_id: None,
+                        project_id: None,
+                        row_id: None,
                     },
                     &never,
                     &emit,
@@ -1153,7 +1287,7 @@ mod tests {
             // A pre-tripped cancel never submits.
             let tripped = AtomicBool::new(true);
             let r = api
-                .run_job(&JobRequest { stage: "transcribe".into(), audio_hash, language: "en".into(), chunks: None, hold: None, hold_job_id: None }, &tripped, &emit)
+                .run_job(&JobRequest { stage: "transcribe".into(), audio_hash, language: "en".into(), chunks: None, hold: None, hold_job_id: None, project_id: None, row_id: None }, &tripped, &emit)
                 .await;
             assert_eq!(r.unwrap_err(), CloudError::Cancelled);
             println!("events: {:?}", events.lock().unwrap());

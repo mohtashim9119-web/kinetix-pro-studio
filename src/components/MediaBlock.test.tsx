@@ -387,7 +387,7 @@ describe('MediaBlock', () => {
     setInputFiles(fileInput, [file]);
     await act(async () => { fileInput.dispatchEvent(new Event('change', { bubbles: true })); });
 
-    expect(mockIngestLooseFiles).toHaveBeenCalledWith('p1', [file], [], []); // 4th: offline hashes (Unit 4) — none offline here
+    expect(mockIngestLooseFiles).toHaveBeenCalledWith('p1', [file], [], [], expect.any(Function));
     expect(onIngestComplete).toHaveBeenCalledWith({
       assets: [asset], audioAssetId: undefined,
       counts: { imported: 1, deduped: 0, unsupportedSkipped: 0, failed: 0 },
@@ -488,7 +488,7 @@ describe('MediaBlock', () => {
     setInputFiles(fileInput, [file]);
     await act(async () => { fileInput.dispatchEvent(new Event('change', { bubbles: true })); });
 
-    expect(mockIngestLooseFiles).toHaveBeenCalledWith('p1', [file], ['hash-a', 'hash-b'], []);
+    expect(mockIngestLooseFiles).toHaveBeenCalledWith('p1', [file], ['hash-a', 'hash-b'], [], expect.any(Function));
   });
 
   it('passes the project\'s existing asset content hashes to ingestZip too', async () => {
@@ -513,7 +513,7 @@ describe('MediaBlock', () => {
     setInputFiles(zipInput, [file]);
     await act(async () => { zipInput.dispatchEvent(new Event('change', { bubbles: true })); });
 
-    expect(mockIngestZip).toHaveBeenCalledWith('p1', file, ['hash-a'], []);
+    expect(mockIngestZip).toHaveBeenCalledWith('p1', file, ['hash-a'], [], expect.any(Function));
   });
 
   it('a rejected zip ingest reports its message via onIngestError, never throws uncaught', async () => {

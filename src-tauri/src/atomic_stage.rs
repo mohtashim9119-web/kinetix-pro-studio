@@ -104,6 +104,12 @@ fn sync_parent_dir(_dest: &Path) -> Result<(), String> {
 /// the same `dest` each get their own temp file, so the last rename wins with
 /// that writer's COMPLETE bytes — never a mix.
 pub(crate) fn write_bytes_atomic(dest: &Path, bytes: &[u8]) -> Result<(), String> {
+    write_bytes_atomic_ex(dest, bytes, true)
+}
+
+/// Write and fsync a unique sibling `.part`. Does **not** rename — the
+/// caller batches renames then one directory fsync.
+pub(crate) fn write_fsynced_part(dest: &Path, bytes: &[u8]) -> Result<PathBuf, String> {
     if let Some(parent) = dest.parent() {
         fs::create_dir_all(parent).map_err(|e| format!("atomic_stage: create parent: {e}"))?;
     }
@@ -120,14 +126,40 @@ pub(crate) fn write_bytes_atomic(dest: &Path, bytes: &[u8]) -> Result<(), String
         let _ = fs::remove_file(&tmp);
         return Err(e);
     }
+    Ok(tmp)
+}
+
+/// Same two-phase part+rename as `write_bytes_atomic`. `sync_dir` false skips
+/// the parent-directory fsync so a caller can fsync the directory once after a
+/// batch of renames (still crash-safe: each part is fsynced before rename).
+pub(crate) fn write_bytes_atomic_ex(dest: &Path, bytes: &[u8], sync_dir: bool) -> Result<(), String> {
+    let tmp = write_fsynced_part(dest, bytes)?;
     fs::rename(&tmp, dest).map_err(|e| {
         let _ = fs::remove_file(&tmp);
         format!("atomic_stage: rename part -> dest: {e}")
     })?;
-    if durable() {
+    if durable() && sync_dir {
         sync_parent_dir(dest)?;
     }
     Ok(())
+}
+
+/// Durability of the directory entries after a deferred-dir-sync batch.
+pub(crate) fn fsync_dir(dir: &Path) -> Result<(), String> {
+    if !durable() {
+        return Ok(());
+    }
+    #[cfg(unix)]
+    {
+        fs::File::open(dir)
+            .and_then(|d| d.sync_all())
+            .map_err(|e| format!("atomic_stage: fsync dir {}: {e}", dir.display()))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = dir;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -244,6 +276,83 @@ mod tests {
         assert!(write_bytes_atomic(&blocker.join("x.bin"), b"data").is_err());
         let names: Vec<_> = fs::read_dir(&dir).unwrap().filter_map(|e| e.ok()).map(|e| e.file_name()).collect();
         assert_eq!(names.len(), 1, "{names:?}");
+        remove_dir(&dir);
+    }
+
+    /// S1 — wall times for per-file `write_bytes_atomic` vs batched part-fsync
+    /// then one dir-fsync. Gated: a plain `cargo test` returns immediately.
+    /// `IMPORT_FSYNC_MEASURE=1 cargo test --release import_fsync_measure -- --nocapture`
+    #[test]
+    fn import_fsync_measure() {
+        if std::env::var("IMPORT_FSYNC_MEASURE").ok().as_deref() != Some("1") {
+            return;
+        }
+        use std::io::Write;
+        use std::time::Instant;
+
+        let files = 20usize;
+        let bytes_each = 5 * 1024 * 1024;
+        let body: Vec<u8> = (0..bytes_each).map(|i| (i % 251) as u8).collect();
+
+        let per_dir = unique_dir();
+        let per = Instant::now();
+        for i in 0..files {
+            write_bytes_atomic(&per_dir.join(format!("per-{i}.bin")), &body).unwrap();
+        }
+        let per_ms = per.elapsed().as_secs_f64() * 1000.0;
+
+        let batch_dir = unique_dir();
+        let batch = Instant::now();
+        let mut parts = Vec::new();
+        for i in 0..files {
+            let dest = batch_dir.join(format!("batch-{i}.bin"));
+            let tmp = dest.with_extension("part");
+            {
+                let mut f = fs::File::create(&tmp).unwrap();
+                f.write_all(&body).unwrap();
+                f.sync_all().unwrap();
+            }
+            parts.push((tmp, dest));
+        }
+        let after_writes = batch.elapsed().as_secs_f64() * 1000.0;
+        for (tmp, dest) in &parts {
+            fs::rename(tmp, dest).unwrap();
+        }
+        {
+            let d = fs::File::open(&batch_dir).unwrap();
+            d.sync_all().unwrap();
+        }
+        let batch_ms = batch.elapsed().as_secs_f64() * 1000.0;
+
+        println!(
+            "import_fsync_measure: {files} files × {:.1} MiB",
+            bytes_each as f64 / (1024.0 * 1024.0)
+        );
+        println!(
+            "  per-file write_bytes_atomic (part fsync + rename + dir fsync): {:.1} ms ({:.1} ms/file)",
+            per_ms,
+            per_ms / files as f64
+        );
+        println!(
+            "  batched (all part fsyncs, then all renames, then ONE dir fsync): {:.1} ms (writes+file-fsync {:.1} ms)",
+            batch_ms, after_writes
+        );
+        println!("  delta (per-file − batched): {:.1} ms", per_ms - batch_ms);
+
+        remove_dir(&per_dir);
+        remove_dir(&batch_dir);
+    }
+
+    #[test]
+    fn deferred_dir_sync_still_leaves_complete_files_then_one_dir_fsync() {
+        let dir = unique_dir();
+        for i in 0..3 {
+            write_bytes_atomic_ex(&dir.join(format!("{i}.bin")), format!("complete-{i}").as_bytes(), false).unwrap();
+        }
+        fsync_dir(&dir).unwrap();
+        for i in 0..3 {
+            assert_eq!(fs::read(dir.join(format!("{i}.bin"))).unwrap(), format!("complete-{i}").as_bytes());
+        }
         remove_dir(&dir);
     }
 }

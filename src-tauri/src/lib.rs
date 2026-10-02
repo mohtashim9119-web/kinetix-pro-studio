@@ -39,6 +39,7 @@ mod safe_delete;
 // module) and no runtime behavior changed.
 pub mod sha256;
 mod atomic_stage;
+mod sidecar;
 // Wave 3 U1 — the only module that talks to the cloud sync gateway.
 mod cloud_gateway;
 mod storage_root;
@@ -680,6 +681,11 @@ pub fn run() {
             cloud_gateway::cloud_cache_lookup,
             cloud_gateway::cloud_release_job,
             cloud_gateway::cloud_run_job,
+            cloud_gateway::cloud_poll_job,
+            cloud_gateway::cloud_list_jobs,
+            cloud_gateway::cloud_pause_job,
+            cloud_gateway::cloud_answer_job,
+            cloud_gateway::cloud_kill_job,
             cloud_gateway::cloud_cancel_run,
             project_mirror::project_mirror_read_all,
             project_mirror::project_mirror_write_project,
@@ -703,6 +709,7 @@ pub fn run() {
             asset_store::asset_store_delete,
             asset_store::asset_store_delete_project,
             media_vault::media_vault_import,
+            media_vault::media_vault_fsync_dir_cmd,
             media_vault::media_vault_list_entries,
             media_vault::media_vault_read_blob,
             media_vault::media_vault_generate_thumbnail,

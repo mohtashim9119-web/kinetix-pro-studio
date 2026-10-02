@@ -69,6 +69,8 @@ export interface QueueEngine {
   cancelReceipt(item: Readonly<QueueItem>, started: boolean): string;
   /** After a running item's cancel: wait for the gateway's answer. */
   settleCancel?(): Promise<void>;
+  /** Operator Cancel of the live gateway job (DELETE). Lifecycle abort must not. */
+  killLive?(): Promise<void> | void;
   /** The batch drained or the chain broke: let go of anything carried. */
   onDrain(carry: unknown): void;
 }
@@ -137,7 +139,7 @@ export class SyncQueue {
 
   /** Adds jobs to the batch (starting one if idle). A job whose id is already
    *  queued or running is not added twice. Returns how many were added. */
-  enqueue(newJobs: readonly QueueJob[]): number {
+  enqueue(newJobs: readonly QueueJob[], opts?: { next?: boolean }): number {
     // A finished batch is history once new work arrives.
     if (!this.pumping && this.items.every(i => TERMINAL.has(i.status))) {
       this.items = [];
@@ -149,9 +151,17 @@ export class SyncQueue {
       const live = this.items.find(i => i.id === job.id && !TERMINAL.has(i.status));
       if (live) continue;
       this.jobs.set(job.id, job);
-      this.items.push({ id: job.id, label: job.label, status: 'queued', position: this.items.length + 1, workerSec: 0 });
+      const item: QueueItem = { id: job.id, label: job.label, status: 'queued', position: this.items.length + 1, workerSec: 0 };
+      if (opts?.next) {
+        const idx = this.items.findIndex(i => i.status === 'queued');
+        if (idx === -1) this.items.push(item);
+        else this.items.splice(idx, 0, item);
+      } else {
+        this.items.push(item);
+      }
       added++;
     }
+    this.items.forEach((it, i) => { it.position = i + 1; });
     if (added > 0) {
       this.emit();
       void this.pump();
@@ -172,6 +182,7 @@ export class SyncQueue {
     }
     this.cancelRequested.add(id);
     this.controllers.get(id)?.abort();
+    void this.engine.killLive?.();
     item.phase = 'Stopping…';
     this.emit();
   }

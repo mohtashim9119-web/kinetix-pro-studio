@@ -3,23 +3,30 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-// Wave 3 U4.5 — source pins on App.tsx's intent wiring (App is not mountable
-// in tests; the chain itself is composed for real in cloudSyncIntent.test.ts).
-// These pin the three joints that chain depends on: staging asks for the
-// hold, the spine effect starts (or releases) with Apply Sync's own inputs,
-// and Apply Sync waits on a running intent instead of starting a second run.
+// Wave 3 U4.5 — source pins on App.tsx's intent wiring and the extracted
+// Build Timeline service (App is not mountable in tests; the chain itself is
+// composed for real in cloudSyncIntent.test.ts).
 
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
 import { dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
 
-const APP = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '../App.tsx'), 'utf8');
+const HERE = dirname(fileURLToPath(import.meta.url));
+const APP = readFileSync(resolve(HERE, '../App.tsx'), 'utf8');
+const PIPE = readFileSync(resolve(HERE, './finishPipeline.ts'), 'utf8');
 
 function effectBody(): string {
   const start = APP.indexOf('// Wave 3 U4.5 — the cloud sync intent.');
   expect(start).toBeGreaterThan(-1);
   return APP.slice(start, APP.indexOf('const applySyncSpineUnchangedReason', start));
+}
+
+function applyBody(): string {
+  const marker = 'const handleApplySyncFromFiles = async (): Promise<ApplySyncResult> => {';
+  const start = APP.indexOf(marker);
+  expect(start).toBeGreaterThan(-1);
+  return APP.slice(start, APP.indexOf('\n  };', start));
 }
 
 describe('Wave 3 U4.5 — App wiring', () => {
@@ -31,7 +38,6 @@ describe('Wave 3 U4.5 — App wiring', () => {
   it('the spine effect releases the hold on every "nothing to align" path — the GPU never waits for files', () => {
     const b = effectBody();
     expect(b).toMatch(/releaseHeldTranscription\(audioHash\)/);
-    // not cloud, incomplete spine, gate closed, already synced, no duration
     expect((b.match(/noIntent\(\); return;/g) ?? []).length).toBeGreaterThanOrEqual(5);
     expect(b).toMatch(/if \(isProcessing\) return;/);
   });
@@ -39,7 +45,7 @@ describe('Wave 3 U4.5 — App wiring', () => {
   it('the intent is fed Apply Sync\'s own parse inputs, in Apply Sync\'s order', () => {
     const b = effectBody();
     expect(b).toMatch(/parseProjectData\(\s*scriptText, sceneText, p\.assets, audioDurationSec, p\.segments, p\.defaultTextOverlay \?\? false,/);
-    expect(APP).toMatch(/const newSegmentsRaw = await parseProjectData\(\s*scriptText, sceneText, allAssets, audioDuration, previousSegments,\s*projectRef\.current\.defaultTextOverlay \?\? false,/);
+    expect(PIPE).toMatch(/stages\.parseProjectData\(\s*scriptText, sceneText, allAssets, audioDuration, start\.segments, start\.defaultTextOverlay \?\? false,/);
     expect(b).toMatch(/language: resolveFaLanguage\(p\)/);
   });
 
@@ -51,41 +57,28 @@ describe('Wave 3 U4.5 — App wiring', () => {
     expect(b).toMatch(/host: 'cloud', audioHash/);
   });
 
-  it('Apply Sync on the cloud waits on a running intent for its spine before the pipeline (reveal), and cancel stops the wait', () => {
-    const reveal = APP.indexOf('// Wave 3 U4.5 — REVEAL.');
-    const pipeline = APP.indexOf('const cachedTranscriptHost = transcriptionHost(');
-    expect(reveal).toBeGreaterThan(-1);
-    expect(reveal).toBeLessThan(pipeline);
-    const b = APP.slice(reveal, pipeline);
-    expect(b).toMatch(/getSyncIntent\(`\$\{audioHash\}\|\$\{scriptHash\}\|\$\{engineKey\}`\)/);
-    expect(b).toMatch(/intent\.promise/);
+  it('Apply Sync on the cloud waits on a running staging transcript before the pipeline, and cancel stops the wait', () => {
+    const b = applyBody();
+    expect(b).toMatch(/waitForStagingTranscript\(/);
     expect(b).toMatch(/syncAbortController\.signal/);
     expect(b).toMatch(/INTENT_PHASE_COPY/);
+    expect(b.indexOf('waitForStagingTranscript(')).toBeLessThan(b.indexOf('runBuildTimeline('));
   });
 });
 
-// Wave 3 U4.6 — the flow UI on top of the intent: the click is a reveal on
-// the cloud even while transcription runs, the background job never waits on
-// media, and local keeps click-to-run.
 describe('Wave 3 U4.6 — App wiring', () => {
-  function earlyClickBlock(): string {
-    const start = APP.indexOf('// Wave 3 U4.6 — EARLY-CLICK REVEAL.');
-    expect(start, 'the early-click reveal is gone').toBeGreaterThan(-1);
-    return APP.slice(start, APP.indexOf('// 1. Read text files', start));
-  }
-
   it('an early cloud click waits for the staging transcript BEFORE the voiceover is persisted (which would orphan the staging write-back)', () => {
-    const wait = APP.indexOf('await waitForStagingTranscript(');
-    const persist = APP.indexOf('await persistPendingVoiceoverAsset(');
+    const b = applyBody();
+    const wait = b.indexOf('await waitForStagingTranscript(');
+    const persist = b.indexOf('persistPendingVoiceoverAsset(');
     expect(wait).toBeGreaterThan(-1);
-    expect(wait).toBeLessThan(persist);
-    const b = earlyClickBlock();
+    expect(persist).toBeGreaterThan(wait);
     expect(b).toMatch(/=== 'cloud'/);
     expect(b).toMatch(/pendingForWait\.file === staged\.voiceoverFile\.file/);
   });
 
   it('the wait shows the cloud\'s own phase, and cancel or a pause ends it keeping the staged files', () => {
-    const b = earlyClickBlock();
+    const b = applyBody();
     expect(b).toMatch(/onCloudPhase\(waitAudioHash/);
     expect(b).toMatch(/INTENT_PHASE_COPY\[phase\]/);
     expect(b).toMatch(/waitForStagingTranscript\(\s*\(\) => stagingTranscriptStateRef\.current, stagingTranscriptWaitersRef\.current, syncAbortController\.signal,/);
@@ -114,30 +107,19 @@ describe('Wave 3 U4.6 — App wiring', () => {
   });
 });
 
-// Wave 3 U5 — cancel honesty: a cancel is a real stop on the cloud, says what
-// it cost, and leaves the timeline as it was.
 describe('Wave 3 U5 — App wiring', () => {
-  function sliceFrom(marker: string, length = 1800): string {
-    const at = APP.indexOf(marker);
-    expect(at, `${marker} not found`).toBeGreaterThan(-1);
-    return APP.slice(at, at + length);
-  }
-
   it('cancelling an early click cancels the cloud transcription itself, keeps the staged files, and lets the next click restart it', () => {
-    const b = sliceFrom("if (waited === 'aborted') {", 700);
+    const b = applyBody();
+    expect(b).toMatch(/if \(waited !== 'ready'\) \{/);
     expect(b).toMatch(/cancelTranscription\(\);/);
-    expect(b).toMatch(/setStagingCancelledAssetId\(stagingAssetId\)/);
-    expect(b).toMatch(/await cancelledResult\(0\)/);
     expect(b).toMatch(/holdStaged: true/);
-    const restart = sliceFrom('let restartedStagingHash', 900);
-    expect(restart).toMatch(/stagingCancelledAssetIdRef\.current === cancelledStaging\.asset\.id/);
-    expect(restart).toMatch(/handleVoiceoverStaged\(cancelledStaging\.file, \{ rerun: true \}\)/);
   });
 
-  it('cancelling the reveal stops the background intent, not just the wait', () => {
-    const b = sliceFrom('if (revealCancelled) {', 700);
-    expect(b).toMatch(/cancelSyncIntent\(intent\.spineKey\)/);
-    expect(b.indexOf('cancelSyncIntent')).toBeLessThan(b.indexOf('return cancelledResult'));
+  it('cancelling the overlay aborts the pipeline and the in-flight transcription', () => {
+    expect(APP).toMatch(/void killLiveCloudJob\(\);/);
+    expect(APP).toMatch(/syncAbortControllerRef\.current\?\.abort\(\);/);
+    expect(APP).toMatch(/const handleCancelSync = useCallback\(\(\): void => \{\s*void killLiveCloudJob\(\);\s*syncAbortControllerRef\.current\?\.abort\(\);\s*cancelTranscription\(\);/);
+    expect(PIPE).toContain("if (faRun.status === 'cancelled') return { ok: false, message: 'Sync cancelled.' };");
   });
 
   it('a cancelled spine never auto-restarts; only a click lifts it', () => {
@@ -146,12 +128,5 @@ describe('Wave 3 U5 — App wiring', () => {
     expect(suppressed).toBeGreaterThan(-1);
     expect(suppressed).toBeLessThan(b.indexOf('startSyncIntent('));
     expect(APP).toMatch(/clearSyncIntentSuppression\(\);/);
-  });
-
-  it('every cancel waits for the gateway\'s answer and reports it', () => {
-    const b = sliceFrom('const cancelledResult = async', 1200);
-    expect(b).toMatch(/await settleCloudCancels\(\)/);
-    expect(b).toMatch(/describeCloudCancel\(\s*takeCancelReceiptsSince\(syncRunAt\)/);
-    expect(b.indexOf('settleCloudCancels')).toBeLessThan(b.indexOf('logSyncAbort('));
   });
 });

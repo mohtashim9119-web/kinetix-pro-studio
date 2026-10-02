@@ -25,10 +25,12 @@ import {
 } from '../services/bulkBatch';
 import { BulkGroupHeader } from './BulkProgress';
 import { bulkFooterLine, cloudCostLine, type CloudQueueDeps } from '../services/cloudQueueJob';
+import { bulkStageChecklist } from '../services/bulkStageChecklist';
 import { collectDroppedFiles } from '../services/droppedFiles';
 import { missingSpineSlots } from '../services/buildTimelineGate';
 import { type QueueItem, type SyncQueue } from '../services/syncQueue';
 import { readSyncEngineHost } from '../services/syncEngineHost';
+import { killAllMemberCloudJobs } from '../services/cloudSyncEngine';
 import { Z } from './overlayLayers';
 import { ConfirmDialog } from './ConfirmDialog';
 import { deleteProjectEverywhere } from '../services/projectDelete';
@@ -94,10 +96,11 @@ interface RowProps {
   onOpen: () => void;
   /** Built on the cloud but not finished yet: Open finishes it, into the editor. */
   onFinish: () => void;
+  onRebuild: () => void;
   onRetry: () => void;
 }
 
-function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFile, onReplaceFile, onReplaceAll, onReplaceMedia, onRemoveMedia, onClearFiles, onRemoveRow, onCancel, onOpen, onFinish, onRetry }: RowProps): React.ReactElement {
+function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFile, onReplaceFile, onReplaceAll, onReplaceMedia, onRemoveMedia, onClearFiles, onRemoveRow, onCancel, onOpen, onFinish, onRebuild, onRetry }: RowProps): React.ReactElement {
   const filesRef = useRef<HTMLInputElement>(null);
   const folderRef = useRef<HTMLInputElement>(null);
   const replaceRef = useRef<HTMLInputElement>(null);
@@ -125,29 +128,35 @@ function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFi
     : phase === 'done' ? 'Ready'
     : phase === 'finish-failed' ? BULK_COPY.finishFailed(record.message ?? '')
     : phase === 'paused' ? `Paused — ${record.message ?? 'open the project to answer'}`
-    : phase === 'failed' ? `Failed — ${record.message ?? ''}`
-    : phase === 'cancelled' ? 'Cancelled'
+    : phase === 'failed' ? (record.message ? `Failed — Retry — ${record.message}` : 'Failed — Retry')
+    : phase === 'cancelled' ? 'Cancelled — Retry'
     : BULK_COPY.skipped(record.message ?? '')
     : skippedReason ? BULK_COPY.skipped(skippedReason) : '';
   const audioText = BULK_COPY.audio[row.audio.state] + (row.audio.detail ? ` (${row.audio.detail})` : '');
   // The quiet line: what the queue says, else the reason a row was left out,
   // else what the voiceover prep is doing, else how to fill the row.
   const quiet = status || audioText || (empty ? BULK_COPY.rowDrop : '');
-  const dim = phase === 'skipped' || phase === 'cancelled' || (!record && !!skippedReason);
-  // The cost line: live from the queue, else what the record kept (a restart).
-  const workerSec = Math.max(item?.workerSec ?? 0, record?.workerSec ?? 0);
+  const dim = phase === 'skipped' || (!record && !!skippedReason);
+  // Finished attempts are summed on the record; a live unfinished item adds on.
+  const liveSec = item && item.finishedAt === undefined ? item.workerSec : 0;
+  const workerSec = (record?.workerSec ?? 0) + liveSec;
   const cost = record && workerSec > 0 ? cloudCostLine(workerSec) : '';
+  const stages = record ? bulkStageChecklist({
+    checkpoint: record.checkpoint,
+    phase: record.phase,
+    queuePhase: item?.phase,
+  }) : [];
   // The row's messages, one line at a time: its status first, then the cancel
   // receipt and any problem notes (a broken bundle, skipped files).
   const messages: { text: string; warn: boolean }[] = [
-    ...(row.busy ? [{ text: 'Adding…', warn: false }] : [{ text: `${quiet}${cost ? ` · ${cost}` : ''}`, warn: false }]),
+    ...(row.busy ? [{ text: row.progress || 'Adding…', warn: false }] : [{ text: `${quiet}${cost ? ` · ${cost}` : ''}`, warn: false }]),
     ...(item?.receipt ? [{ text: item.receipt, warn: true }] : []),
     ...row.notes.map(n => ({ text: n, warn: true })),
   ].filter(m => m.text.trim() !== '');
   const shown = messages.length === 0 ? 0 : Math.min(msgIdx, messages.length - 1);
   const current = messages[shown] ?? { text: '', warn: false };
   const openable = row.built || !!record;
-  const failedish = phase === 'failed' || phase === 'finish-failed' || phase === 'paused';
+  const failedish = phase === 'failed' || phase === 'finish-failed' || phase === 'paused' || phase === 'cancelled';
   return (
     <li
       data-testid={`bulk-row-${row.projectId}`}
@@ -191,6 +200,18 @@ function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFi
           <ExternalLink size={13} />
           {BULK_COPY.openShort}
         </button>
+        {phase === 'done' && (
+          <button
+            type="button"
+            data-testid={`bulk-rebuild-${row.projectId}`}
+            title={BULK_COPY.rebuild}
+            onClick={onRebuild}
+            className={ROW_BTN}
+          >
+            <RefreshCw size={13} />
+            {BULK_COPY.rebuild}
+          </button>
+        )}
         <div className="relative flex-shrink-0">
           <button
             type="button"
@@ -251,11 +272,20 @@ function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFi
               </span>
             ))}
           </div>
-          {record?.checkpoint && (
+          {record && stages.length > 0 && (
             <p className="px-3 pb-2 flex flex-wrap gap-1" data-testid={`bulk-stages-${row.projectId}`}>
-              {(['staged', 'transcript-cached', 'aligned', 'built'] as const).map(stage => (
-                <span key={stage} className={`${CHIP} ${record.checkpoint === stage ? 'bg-[var(--kx-accent-soft)] text-[var(--kx-accent-2)]' : 'bg-[var(--kx-surface-2)] text-[var(--kx-faint)]'}`}>
-                  {stage}
+              {stages.map(stage => (
+                <span
+                  key={stage.id}
+                  data-testid={`bulk-stage-${row.projectId}-${stage.id}`}
+                  data-tone={stage.tone}
+                  className={`${CHIP} ${
+                    stage.tone === 'active' ? 'bg-[var(--kx-accent-soft)] text-[var(--kx-accent-2)]'
+                    : stage.tone === 'done' ? 'bg-[var(--kx-ready-soft)] text-[var(--kx-ready)]'
+                    : 'bg-[var(--kx-surface-2)] text-[var(--kx-faint)]'
+                  }`}
+                >
+                  {stage.label}
                 </span>
               ))}
             </p>
@@ -406,7 +436,14 @@ function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFi
           >
             <p className="whitespace-pre-wrap break-words">{quiet || current.text}</p>
             {cost ? <p className="mt-1 text-[var(--kx-muted)]">{cost}</p> : null}
-            {record?.phase ? <p className="mt-1 text-[11px] text-[var(--kx-faint)]">{record.phase}{record.checkpoint ? ` · ${record.checkpoint}` : ''}</p> : null}
+            {record?.billingAttempts && record.billingAttempts.length > 1 ? (
+              <ul className="mt-1 text-[11px] text-[var(--kx-faint)]" data-testid={`bulk-cost-attempts-${row.projectId}`}>
+                {record.billingAttempts.map((a, i) => (
+                  <li key={`${a.at}-${i}`}>{`Attempt ${i + 1}: ${cloudCostLine(a.workerSec)}`}</li>
+                ))}
+              </ul>
+            ) : null}
+            {record?.phase ? <p className="mt-1 text-[11px] text-[var(--kx-faint)]">{status || record.phase}</p> : null}
           </div>
         )}
         {failedish && (
@@ -580,9 +617,10 @@ export function BulkProjectsModal({
       onRemoveMedia={() => void store?.removeMedia(row.projectId)}
       onClearFiles={() => void store?.clearFiles(row.projectId)}
       onRemoveRow={() => setConfirmDelete(row)}
-      onCancel={() => queue.cancel(row.projectId)}
+      onCancel={() => runner.cancel(row.projectId)}
       onOpen={() => open(row.projectId)}
       onFinish={() => finishRow(row.projectId)}
+      onRebuild={() => { runner.rebuildFromCache(row.projectId); }}
       onRetry={() => runner.retry(row.projectId)}
     />
   );
@@ -615,10 +653,11 @@ export function BulkProjectsModal({
   // (once created) the project they belong to.
   const [confirmDelete, setConfirmDelete] = useState<BulkRowState | null>(null);
   const deleteRow = async (row: BulkRowState): Promise<void> => {
+    setConfirmDelete(null);
     if (row.built) {
-      const failures = await deleteProject(row.projectId);
       runner.removeRow(row.projectId);
       store?.forgetRow(row.projectId);
+      const failures = await deleteProject(row.projectId);
       onProjectsDeleted?.([row.projectId], failures);
     } else {
       await store?.discardRow(row.projectId);
@@ -655,15 +694,27 @@ export function BulkProjectsModal({
               <span aria-hidden="true" className="h-4 w-1 rounded-full bg-[var(--kx-accent)]" />
               {BULK_COPY.modalTitle}
             </h2>
-            <button
-              type="button"
-              aria-label={BULK_COPY.close}
-              data-testid="bulk-close"
+            <div className="flex items-center gap-2">
+              {records.some(r => r.phase === 'queued' || r.phase === 'cloud') && (
+                <button
+                  type="button"
+                  data-testid="bulk-stop-all"
+                  onClick={() => { void runner.stopAllCloudWork(() => killAllMemberCloudJobs()); }}
+                  className="flex-shrink-0 h-8 px-3 rounded-lg border border-[var(--kx-line-2)] text-[11px] font-semibold text-[var(--kx-text)] hover:text-white hover:bg-[var(--kx-hover)] transition-colors"
+                >
+                  {BULK_COPY.stopAll}
+                </button>
+              )}
+              <button
+                type="button"
+                aria-label={BULK_COPY.close}
+                data-testid="bulk-close"
               onClick={close}
               className="w-8 h-8 flex items-center justify-center rounded-lg text-[var(--kx-muted)] hover:text-white hover:bg-[var(--kx-hover)] transition-colors focus:outline-none focus:ring-2 focus:ring-[var(--kx-accent-line)]"
             >
               <X size={16} />
             </button>
+            </div>
           </div>
           <div className="mt-5">
             <span data-testid="bulk-create-heading" className={LABEL}>{BULK_COPY.newGroup}</span>
@@ -720,6 +771,16 @@ export function BulkProjectsModal({
                   onToggle={() => runner.setCollapsed(group.id, !group.collapsed)}
                   onRename={name => runner.renameGroup(group.id, name)}
                 >
+                  {group.rowIds.some(id => { const p = recordById.get(id)?.phase; return p === 'queued' || p === 'cloud'; }) && (
+                    <button
+                      type="button"
+                      data-testid={`bulk-cancel-group-${group.id}`}
+                      onClick={() => runner.cancelGroup(group.id)}
+                      className="flex-shrink-0 text-[11px] text-gray-400 hover:text-white transition-colors"
+                    >
+                      {BULK_COPY.cancelAll}
+                    </button>
+                  )}
                   {group.rowIds.some(id => { const p = recordById.get(id)?.phase; return p !== undefined && isBatchRowFinal(p); }) && (
                     <button
                       type="button"

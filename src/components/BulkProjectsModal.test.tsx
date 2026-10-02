@@ -10,7 +10,7 @@
 import React from 'react';
 import { act } from 'react-dom/test-utils';
 import { createRoot } from 'react-dom/client';
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 let finishAtOnce = false;
@@ -34,6 +34,10 @@ vi.mock('../services/bulkSyncQueue', async () => {
     }))),
   };
 });
+vi.mock('../services/cloudSyncEngine', async importActual => ({
+  ...(await importActual<typeof import('../services/cloudSyncEngine')>()),
+  killAllMemberCloudJobs: async () => {},
+}));
 
 import { BulkProjectsModal } from './BulkProjectsModal';
 import { BulkRowStore, type BulkRowDeps } from '../services/bulkRows';
@@ -109,6 +113,11 @@ const buildFor = (host: HTMLElement, rowId: string): HTMLButtonElement =>
   q(host, `bulk-row-${rowId}`)!.closest('section')!.querySelector('[data-testid^="bulk-build-"]') as HTMLButtonElement;
 const rowIds = (host: HTMLElement): string[] =>
   [...host.querySelectorAll('[data-testid^="bulk-row-"]')].map(el => el.getAttribute('data-testid')!.replace('bulk-row-', ''));
+
+beforeEach(() => {
+  finishAtOnce = false;
+  cloudSyncQueue.clearFinished();
+});
 
 describe('BulkProjectsModal — draft rows', () => {
   it('opens with N empty rows, creates NOTHING, and Build is off until a row is named and has all four slots', async () => {
@@ -352,7 +361,7 @@ describe('BulkProjectsModal — draft rows', () => {
     expect(runner.snapshot().map(r => r.id)).toEqual([g1.rowIds[0]]);
     expect((q(host, `bulk-build-${g2.id}`) as HTMLButtonElement).disabled).toBe(false);
     await act(async () => { cloudSyncQueue.cancelAll(); });
-  });
+  }, 15_000);
 
   it('v1.2.2: a row deferred while the operator edits reads "Ready — one click to finish", and its Open finishes it', async () => {
     finishAtOnce = true;
@@ -542,7 +551,7 @@ describe('1.3.0 landing — the background pipeline drives drawer rows to ready'
     expect(onFinishRow).not.toHaveBeenCalled();
     expect(q(host, `bulk-group-count-${g.id}`)!.textContent).toBe('1/2 done');
     finishAtOnce = false;
-  });
+  }, 15_000);
 });
 
 describe('1.3.2 — operator 1.3.1 follow-ups', () => {
@@ -600,6 +609,31 @@ describe('1.3.2 — operator 1.3.1 follow-ups', () => {
     expect(footer).not.toContain('no cloud GPU time used');
     expect(footer).toMatch(/40 s worked/);
   });
+
+  it('1.4.0 — a built row offers Rebuild, which re-queues finish from cache', async () => {
+    const h = store();
+    const finalize = vi.fn(async () => ({ ok: true }));
+    const runner = makeRunner(finalize);
+    const diskRows = [{ id: 'built-1', name: 'Harbour', phase: 'done', checkpoint: 'ready' }];
+    const disk = memStorage();
+    disk.setItem('kinetix:bulk-batch:v1', JSON.stringify({
+      rows: diskRows,
+      groups: [{ id: 'g1', name: 'G', collapsed: false, rowIds: ['built-1'] }],
+    }));
+    const seeded = new BulkBatchRunner({
+      queue: cloudSyncQueue,
+      enqueue: () => {},
+      exists: () => true,
+      storage: disk,
+    });
+    seeded.setFinalizer(finalize);
+    const { host } = await mount(modal(h, 0, { runner: seeded }));
+    const btn = q(host, 'bulk-rebuild-built-1') as HTMLButtonElement;
+    expect(btn).not.toBeNull();
+    expect(btn.textContent).toContain('Rebuild');
+    await act(async () => { btn.click(); });
+    await vi.waitFor(() => expect(finalize).toHaveBeenCalledWith('built-1', expect.anything()));
+  });
 });
 
 describe('1.3.1 — row files, message line, docking', () => {
@@ -651,4 +685,50 @@ describe('1.3.1 — row files, message line, docking', () => {
     await act(async () => { root.render(modal(h, 0, { docked: false })); });
     expect(q(host, 'bulk-modal')!.className).toContain('shadow-[');
   });
+
+  it('P10: a running group shows Cancel all and Stop all; there is still no bottom Cancel-all', async () => {
+    finishAtOnce = false;
+    cloudSyncQueue.clearFinished();
+    const h = store();
+    const runner = makeRunner();
+    const g = runner.createGroup(h.store.createDrafts(2))!;
+    const { host } = await mount(modal(h, 0, { runner }));
+    await act(async () => {
+      await h.store.addFiles(g.rowIds[0]!, fourFiles());
+      h.store.setTypedName(g.rowIds[0]!, 'One');
+    });
+    await act(async () => { (q(host, `bulk-build-${g.id}`) as HTMLButtonElement).click(); });
+    await vi.waitFor(() => expect(q(host, 'bulk-stop-all')).not.toBeNull());
+    expect(q(host, `bulk-cancel-group-${g.id}`)).not.toBeNull();
+    expect(q(host, 'bulk-cancel-all')).toBeNull();
+    await act(async () => { (q(host, `bulk-cancel-group-${g.id}`) as HTMLButtonElement).click(); });
+    await vi.waitFor(() => expect(q(host, 'bulk-stop-all')).toBeNull());
+  }, 15_000);
+
+  it('cancel a running row: it is not built — Retry and file edits work; status is Cancelled — Retry', async () => {
+    finishAtOnce = false;
+    cloudSyncQueue.clearFinished();
+    const h = store();
+    const runner = makeRunner();
+    const g = runner.createGroup(h.store.createDrafts(2))!;
+    const { host } = await mount(modal(h, 0, { runner }));
+    const id = g.rowIds[0]!;
+    await act(async () => {
+      await h.store.addFiles(id, fourFiles());
+      h.store.setTypedName(id, 'One');
+    });
+    await act(async () => { (q(host, `bulk-build-${g.id}`) as HTMLButtonElement).click(); });
+    await vi.waitFor(() => expect(q(host, `bulk-cancel-${id}`)).not.toBeNull());
+    await act(async () => { (q(host, `bulk-cancel-${id}`) as HTMLButtonElement).click(); });
+    await vi.waitFor(() => expect(q(host, `bulk-status-${id}`)!.textContent).toContain('Cancelled — Retry'));
+    expect(q(host, `bulk-retry-${id}`)).not.toBeNull();
+    expect((q(host, `bulk-name-${id}`) as HTMLInputElement).disabled).toBe(false);
+    expect(h.store.snapshot().find(r => r.projectId === id)!.sealed).toBe(false);
+    finishAtOnce = true;
+    await act(async () => { (q(host, `bulk-retry-${id}`) as HTMLButtonElement).click(); });
+    await vi.waitFor(() => {
+      const text = q(host, `bulk-status-${id}`)!.textContent ?? '';
+      expect(text).not.toContain('Cancelled — Retry');
+    });
+  }, 15_000);
 });

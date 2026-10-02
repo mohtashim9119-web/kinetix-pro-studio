@@ -9,12 +9,12 @@
 // Each step is independent and bounded: one that throws or hangs must never
 // keep the project record alive (that was how deleted projects came back).
 
-import { loadProject, deleteProjectData } from './projectStore';
+import { deleteProjectData } from './projectStore';
 import { deleteAllStagedForProject } from './stagedFilesStore';
 import { deleteAllAssets } from './assetStore';
 import { deleteProjectAssetsNativeStrict } from './nativeAssetStore';
 import { deleteAllWaveforms } from './waveformStore';
-import { mediaVaultUnreference, mediaVaultUnreferenceProject } from './mediaVaultClient';
+import { mediaVaultUnreferenceProject } from './mediaVaultClient';
 
 /** Deletes one project everywhere. Returns the steps that failed (`id: label: why`). */
 export async function deleteProjectEverywhere(id: string, timeoutMs = 10_000): Promise<string[]> {
@@ -31,21 +31,16 @@ export async function deleteProjectEverywhere(id: string, timeoutMs = 10_000): P
       console.error(`[projectDelete] ${label} FAILED for deleted project ${id}:`, message);
     }
   };
-  // G6 Step 6 — read the project's assets BEFORE any deletion, so the
-  // media-vault reference it holds on each contentHash can be dropped.
-  const loaded = await loadProject(id).catch(() => null);
-  const contentHashes = new Set(
-    (loaded?.project.assets ?? []).map(a => a.contentHash).filter((h): h is string => !!h),
-  );
-  // The record and registry entry FIRST: this is what "deleted" means to the user.
+  // Record first so the grid can drop the card without waiting on vault I/O.
   await step('project record removal', () => deleteProjectData(id));
-  await step('asset cleanup', () => deleteAllAssets(id));
-  await step('waveform cleanup', () => deleteAllWaveforms(id));
-  // WS2-50 — a deleted project's staged slots go with it.
-  await step('staged files cleanup', () => deleteAllStagedForProject(id));
-  await step('native asset cleanup', () => deleteProjectAssetsNativeStrict(id));
-  await step('media vault cleanup', () => Promise.all(Array.from(contentHashes, hash => mediaVaultUnreference(hash, id))));
-  // Then everything else the vault still credits to this id (refs the record never listed).
-  await step('media vault cleanup (all refs)', () => mediaVaultUnreferenceProject(id));
+  // One vault registry mutation (unreference every hash this id holds) — never
+  // N per-asset IPC writes. IndexedDB + native cleanup run beside it.
+  await Promise.all([
+    step('asset cleanup', () => deleteAllAssets(id)),
+    step('waveform cleanup', () => deleteAllWaveforms(id)),
+    step('staged files cleanup', () => deleteAllStagedForProject(id)),
+    step('native asset cleanup', () => deleteProjectAssetsNativeStrict(id)),
+    step('media vault cleanup', () => mediaVaultUnreferenceProject(id)),
+  ]);
   return failures;
 }

@@ -7,7 +7,6 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
-use tauri_plugin_shell::ShellExt;
 use uuid::Uuid;
 
 use crate::disk_space::{
@@ -1861,9 +1860,7 @@ pub async fn ffmpeg_exec(
     ensure_resume_prepared(&state, &session_id, "ffmpeg_exec")?;
     let cwd = session_dir(&app, &session_id)?;
 
-    let (mut rx, child) = app
-        .shell()
-        .sidecar("ffmpeg")
+    let (mut rx, child) = crate::sidecar::sidecar_command(&app, "ffmpeg")
         .map_err(|e| format!("ffmpeg sidecar error: {e}"))?
         .args(&args)
         .current_dir(&cwd)
@@ -2397,9 +2394,7 @@ pub(crate) async fn ffmpeg_probe_duration_secs(
     app: &tauri::AppHandle,
     input: &std::path::Path,
 ) -> Result<f64, String> {
-    let output = app
-        .shell()
-        .sidecar("ffmpeg")
+    let output = crate::sidecar::sidecar_command(app, "ffmpeg")
         .map_err(|e| format!("ffmpeg sidecar lookup: {e}"))?
         .args(["-hide_banner", "-i", input.to_str().unwrap_or("")])
         .output()
@@ -2465,9 +2460,7 @@ fn parse_ffmpeg_fps(stderr: &str) -> Option<f64> {
 /// ffmpeg exits non-zero in this mode but prints the video stream's frame rate
 /// to stderr, which we parse. Mirrors `ffmpeg_probe_duration_secs`.
 async fn ffmpeg_probe_fps(app: &tauri::AppHandle, input: &std::path::Path) -> Result<f64, String> {
-    let output = app
-        .shell()
-        .sidecar("ffmpeg")
+    let output = crate::sidecar::sidecar_command(app, "ffmpeg")
         .map_err(|e| format!("ffmpeg sidecar lookup: {e}"))?
         .args(["-hide_banner", "-i", input.to_str().unwrap_or("")])
         .output()

@@ -7,7 +7,6 @@ use std::time::{Duration, Instant};
 use tauri::ipc::Channel;
 use tauri::Manager;
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
-use tauri_plugin_shell::ShellExt;
 use uuid::Uuid;
 
 use crate::safe_delete::delete_app_staging_dir;
@@ -869,9 +868,7 @@ pub(crate) async fn transcode_to_wav(
     input: &std::path::Path,
     output: &std::path::Path,
 ) -> Result<(), String> {
-    let out = app
-        .shell()
-        .sidecar("ffmpeg")
+    let out = crate::sidecar::sidecar_command(app, "ffmpeg")
         .map_err(|e| format!("ffmpeg sidecar lookup: {e}"))?
         .args([
             "-hide_banner",
@@ -1098,9 +1095,7 @@ pub async fn whisper_transcribe(
     //     project, at a cost of ~25-33% wall-clock. Documented as a finding
     //     for a future phase to weigh; do not enable it casually — it mints
     //     a new transcript era (K9) and needs its own verification pass.
-    let (mut rx, child) = app
-        .shell()
-        .sidecar("whisper")
+    let (mut rx, child) = crate::sidecar::sidecar_command(&app, "whisper")
         .map_err(|e| format!("sidecar lookup: {e}"))?
         .args([
             "-m",  model.to_str().unwrap_or(""),

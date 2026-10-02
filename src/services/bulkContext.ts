@@ -55,6 +55,7 @@ export const BULK_COPY = {
   buildNeeds: 'Fill every slot of at least one project to build',
   cancelRow: 'Cancel',
   cancelAll: 'Cancel all',
+  stopAll: 'Stop all',
   open: 'Open project',
   openShort: 'Open',
   openWhenReady: 'Opens once the timeline is built',
@@ -103,6 +104,7 @@ export const BULK_COPY = {
   ready: (name: string): string => `${name} ready`,
   /** The project's sync log entry for its bulk cloud work. */
   billingLog: (cost: string): string => `Cloud billing (bulk build): ${cost}.`,
+  rebuild: 'Rebuild',
   collapseGroup: (name: string): string => `Collapse ${name}`,
   expandGroup: (name: string): string => `Expand ${name}`,
 } as const;
