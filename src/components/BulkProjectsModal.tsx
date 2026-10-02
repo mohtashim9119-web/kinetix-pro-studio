@@ -140,7 +140,7 @@ function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFi
   // The row's messages, one line at a time: its status first, then the cancel
   // receipt and any problem notes (a broken bundle, skipped files).
   const messages: { text: string; warn: boolean }[] = [
-    ...(row.busy ? [{ text: 'Adding…', warn: false }] : [{ text: `${quiet}${cost ? ` · ${cost}` : ''}`, warn: false }]),
+    ...(row.busy ? [{ text: row.progress || 'Adding…', warn: false }] : [{ text: `${quiet}${cost ? ` · ${cost}` : ''}`, warn: false }]),
     ...(item?.receipt ? [{ text: item.receipt, warn: true }] : []),
     ...row.notes.map(n => ({ text: n, warn: true })),
   ].filter(m => m.text.trim() !== '');

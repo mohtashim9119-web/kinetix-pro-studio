@@ -16,6 +16,7 @@ vi.mock('./assetStore', () => ({
 const mockMediaVaultImportBytes = vi.fn();
 vi.mock('./mediaVaultClient', () => ({
   mediaVaultImportBytes: (...args: unknown[]) => mockMediaVaultImportBytes(...args),
+  mediaVaultFsyncDir: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock('./tauriFfmpeg', () => ({ probeVideoFps: vi.fn() }));
@@ -179,5 +180,20 @@ describe('ingestLooseFiles — the Media block\'s "add loose files / add folder"
     expect(second.assets).toHaveLength(1);
     expect(second.counts).toEqual({ imported: 1, deduped: 0, unsupportedSkipped: 0, failed: 0 });
     expect(second.duplicateNames).toEqual([]);
+  });
+});
+
+describe('ingestLooseFiles — live progress', () => {
+  it('reports n of m as each file finishes', async () => {
+    const labels: string[] = [];
+    await ingestLooseFiles(
+      PROJECT_ID,
+      [new File([new Uint8Array([1])], 'a.jpg'), new File([new Uint8Array([2])], 'b.jpg')],
+      [],
+      undefined,
+      p => labels.push(p.label),
+    );
+    expect(labels[0]).toMatch(/Importing 0 of 2/);
+    expect(labels).toContain('Importing 2 of 2…');
   });
 });

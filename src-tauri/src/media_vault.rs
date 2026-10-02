@@ -331,14 +331,14 @@ fn with_registry_mut<T>(
 /// also what makes resuming after a phase-1-only crash free: the next import
 /// of the same content finds the blob already there and moves straight to
 /// phase 2.
-fn write_blob_if_absent(root: &Path, bytes: &[u8]) -> Result<String, String> {
+fn write_blob_if_absent(root: &Path, bytes: &[u8], sync_dir: bool) -> Result<String, String> {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
     let content_hash = hex_digest(&hasher.finish());
 
     let bp = blob_path(root, &content_hash);
     if !bp.exists() {
-        write_bytes_atomic(&bp, bytes)?;
+        crate::atomic_stage::write_bytes_atomic_ex(&bp, bytes, sync_dir)?;
     }
     Ok(content_hash)
 }
@@ -397,9 +397,27 @@ pub fn media_vault_import_bytes(
     display_name: &str,
     mime_type: &str,
 ) -> Result<MediaVaultEntry, String> {
+    media_vault_import_bytes_ex(root, project_id, bytes, display_name, mime_type, true)
+}
+
+/// `sync_dir` false: blob part is still fsynced before rename; the caller
+/// must `media_vault_fsync_dir` once after the batch.
+pub fn media_vault_import_bytes_ex(
+    root: &Path,
+    project_id: &str,
+    bytes: &[u8],
+    display_name: &str,
+    mime_type: &str,
+    sync_dir: bool,
+) -> Result<MediaVaultEntry, String> {
     ensure_root_live(root)?;
-    let content_hash = write_blob_if_absent(root, bytes)?;
+    let content_hash = write_blob_if_absent(root, bytes, sync_dir)?;
     commit_registry_entry(root, &content_hash, bytes, project_id, display_name, mime_type)
+}
+
+/// One directory fsync of the vault after a deferred-dir-sync import batch.
+pub fn media_vault_fsync_dir(root: &Path) -> Result<(), String> {
+    crate::atomic_stage::fsync_dir(&media_vault_dir(root))
 }
 
 /// Read-only listing for the Media block UI (Step 4) and the storage-hygiene
@@ -471,7 +489,17 @@ pub fn media_vault_import(
     let mime_type = header("mime-type")?;
 
     let root = resolve_storage_root(&app)?;
-    media_vault_import_bytes(&root, &project_id, bytes, &display_name, &mime_type)
+    let defer = headers
+        .get("defer-dir-sync")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s == "1")
+        .unwrap_or(false);
+    media_vault_import_bytes_ex(&root, &project_id, bytes, &display_name, &mime_type, !defer)
+}
+
+#[tauri::command]
+pub fn media_vault_fsync_dir_cmd(app: tauri::AppHandle) -> Result<(), String> {
+    media_vault_fsync_dir(&resolve_storage_root(&app)?)
 }
 
 /// G6 Step 4 — the Media block's listing IPC surface. Thin wrapper: all the
@@ -1044,7 +1072,7 @@ mod tests {
         let root = tmpdir("crash-window");
 
         // Phase 1 only — the "crash" happens here, before phase 2 ever runs.
-        let content_hash = write_blob_if_absent(&root, b"orphaned by a kill").unwrap();
+        let content_hash = write_blob_if_absent(&root, b"orphaned by a kill", true).unwrap();
         assert!(blob_path(&root, &content_hash).exists(), "phase 1 itself must still be durable");
 
         // "Next boot": the registry was never touched, so nothing shows an

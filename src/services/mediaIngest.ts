@@ -14,9 +14,10 @@
  */
 
 import { putAsset, deleteAsset } from './assetStore';
-import { mediaVaultImportBytes } from './mediaVaultClient';
+import { mediaVaultImportBytes, mediaVaultFsyncDir } from './mediaVaultClient';
 import { probeVideoFps } from './tauriFfmpeg';
 import { isMacOSMetadataPath } from './macosMetadata';
+import { timedIngest } from './ingestTiming';
 import type { Asset } from '../types';
 
 const MEDIA_VIDEO_EXT = /\.(mp4|webm|mov|m4v)$/i;
@@ -34,8 +35,8 @@ export function detectMediaType(filename: string): Asset['type'] | undefined {
 }
 
 export async function sha256Hex(bytes: Uint8Array): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', bytes);
-  return Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, '0')).join('');
+  const { sha256HexOffthread } = await import('./ingestOffthread');
+  return timedIngest('hash:sha256', () => sha256HexOffthread(bytes), bytes.byteLength);
 }
 
 /** Duplicated from App.tsx's own `getMediaDuration` — see `zipIngest.ts`'s
@@ -109,7 +110,7 @@ export async function ingestOneMediaFile(
   duplicateNames?: string[],
   offline?: OfflineReconnectSink,
 ): Promise<Asset | null> {
-  const bytes = new Uint8Array(await blob.arrayBuffer());
+  const bytes = new Uint8Array(await timedIngest('read:arrayBuffer', () => blob.arrayBuffer(), blob.size));
   const contentHash = await sha256Hex(bytes);
   // Unit 4 — checked BEFORE the dedup below: an offline asset's hash IS in
   // `seenHashes` (every project hash is), which is exactly why a re-upload
@@ -121,7 +122,7 @@ export async function ingestOneMediaFile(
     try {
       // The vault may never have held these bytes (a pre-vault asset) —
       // this re-upload is its chance to.
-      await mediaVaultImportBytes(projectId, bytes, name, mimeType);
+      await timedIngest('vault:import', () => mediaVaultImportBytes(projectId, bytes, name, mimeType), bytes.byteLength);
     } catch (err) {
       console.error('[mediaIngest] Failed to write a reconnecting file to the media vault, skipping:', name, err);
       counts.failed += 1;
@@ -140,14 +141,14 @@ export async function ingestOneMediaFile(
   const id = crypto.randomUUID();
   const mimeType = blob.type || 'application/octet-stream';
   try {
-    await putAsset(projectId, id, blob, { name, mimeType });
+    await timedIngest('idb:putAsset', () => putAsset(projectId, id, blob, { name, mimeType }), blob.size);
   } catch (err) {
     console.error('[mediaIngest] Failed to persist to IndexedDB, skipping:', name, err);
     counts.failed += 1;
     return null;
   }
   try {
-    await mediaVaultImportBytes(projectId, bytes, name, mimeType);
+    await timedIngest('vault:import', () => mediaVaultImportBytes(projectId, bytes, name, mimeType), bytes.byteLength);
   } catch (err) {
     console.error('[mediaIngest] Failed to write to media vault, skipping:', name, err);
     await deleteAsset(projectId, id).catch(() => {});
@@ -164,6 +165,30 @@ export async function ingestOneMediaFile(
   // lazy backfill (`backfillAssetContentHashes.ts`) at all — only assets
   // imported BEFORE this field existed do.
   return { id, name, url, type, file: new File([blob], name), nativeFps, duration, addedAt: Date.now(), contentHash };
+}
+
+export type IngestProgress = { done: number; total: number; label: string };
+export type IngestProgressFn = (p: IngestProgress) => void;
+
+export async function mapPool<T, R>(
+  items: readonly T[],
+  limit: number,
+  fn: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let next = 0;
+  const workers = Array.from({ length: Math.min(Math.max(1, limit), items.length || 1) }, async () => {
+    while (next < items.length) {
+      const i = next++;
+      out[i] = await fn(items[i]!, i);
+    }
+  });
+  await Promise.all(workers);
+  return out;
+}
+
+export async function finishIngestBatch(): Promise<void> {
+  await timedIngest('vault:dirFsync', () => mediaVaultFsyncDir());
 }
 
 export interface LooseFilesIngestResult {
@@ -197,6 +222,7 @@ export async function ingestLooseFiles(
   files: File[],
   existingHashes: Iterable<string> = [],
   offlineHashes?: Iterable<string>,
+  onProgress?: IngestProgressFn,
 ): Promise<LooseFilesIngestResult> {
   const counts: MediaIngestCounts = { imported: 0, deduped: 0, unsupportedSkipped: 0, failed: 0 };
   const offline = makeOfflineReconnectSink(offlineHashes);
@@ -205,21 +231,30 @@ export async function ingestLooseFiles(
   const seenHashes = new Set<string>(existingHashes);
   const duplicateNames: string[] = [];
 
+  const jobs: { file: File; type: Asset['type'] }[] = [];
   for (const file of files) {
-    // A folder picked on a Mac (or on an exFAT/network volume) carries
-    // `.DS_Store` and `._` twins — noise, dropped silently, never counted.
     if (isMacOSMetadataPath(file.webkitRelativePath || file.name)) continue;
     const type = detectMediaType(file.name);
     if (type === undefined) {
       counts.unsupportedSkipped += 1;
       continue;
     }
+    jobs.push({ file, type });
+  }
+
+  let done = 0;
+  const total = jobs.length;
+  onProgress?.({ done, total, label: total === 0 ? 'Importing…' : `Importing 0 of ${total}…` });
+  await mapPool(jobs, 4, async ({ file, type }) => {
     const asset = await ingestOneMediaFile(projectId, file.name, file, type, seenHashes, counts, duplicateNames, offline);
+    done += 1;
+    onProgress?.({ done, total, label: `Importing ${done} of ${total}…` });
     if (asset) {
       assets.push(asset);
       if (asset.type === 'audio' && audioAssetId === undefined) audioAssetId = asset.id;
     }
-  }
+  });
+  await finishIngestBatch();
 
   return { assets, audioAssetId, counts, duplicateNames, ...(offline ? { reconnected: offline.found } : {}) };
 }

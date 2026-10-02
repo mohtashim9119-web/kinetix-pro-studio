@@ -703,6 +703,7 @@ pub fn run() {
             asset_store::asset_store_delete,
             asset_store::asset_store_delete_project,
             media_vault::media_vault_import,
+            media_vault::media_vault_fsync_dir_cmd,
             media_vault::media_vault_list_entries,
             media_vault::media_vault_read_blob,
             media_vault::media_vault_generate_thumbnail,

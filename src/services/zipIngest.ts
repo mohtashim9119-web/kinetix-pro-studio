@@ -49,8 +49,9 @@
 // decompressed-entry loop zip alone has).
 // ---------------------------------------------------------------------------
 
-import { detectMediaType, ingestOneMediaFile, makeOfflineReconnectSink, type MediaIngestCounts, type OfflineReconnect } from './mediaIngest';
+import { detectMediaType, ingestOneMediaFile, makeOfflineReconnectSink, finishIngestBatch, mapPool, type IngestProgressFn, type MediaIngestCounts, type OfflineReconnect } from './mediaIngest';
 import { isMacOSMetadataPath } from './macosMetadata';
+import { timedIngest } from './ingestTiming';
 import type { Asset } from '../types';
 
 /** Typed failure for "oversized total" — distinguishable from a generic
@@ -120,8 +121,19 @@ export async function walkZipMediaEntries(
   zipSource: Blob,
   onMedia: (name: string, blob: Blob, type: Asset['type']) => Promise<void>,
 ): Promise<ZipMediaWalkResult> {
+  const { hasIngestWorker, walkZipInWorker } = await import('./ingestOffthread');
+  if (hasIngestWorker()) {
+    try {
+      return await timedIngest('zip:workerWalk', () => walkZipInWorker(zipSource, onMedia), zipSource.size);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (message.includes('limit')) throw new ZipTooLargeError(message);
+      throw err;
+    }
+  }
+
   const result: ZipMediaWalkResult = { unsupportedSkipped: 0, unsafeRejected: 0, nestedZipNames: [] };
-  const content = await new JSZipModule().loadAsync(zipSource);
+  const content = await timedIngest('zip:loadAsync', () => new JSZipModule().loadAsync(zipSource), zipSource.size);
   // Metadata filtered BEFORE the entry-count cap: a Finder zip carries one
   // `__MACOSX/._` twin per real file, so counting them would halve the
   // effective limit for every Mac user.
@@ -159,7 +171,7 @@ export async function walkZipMediaEntries(
       continue;
     }
 
-    const blob = await fileData.async('blob');
+    const blob = await timedIngest('zip:extractEntry', () => fileData.async('blob'));
     totalBytes += blob.size;
     if (blob.size > ZIP_MAX_ENTRY_BYTES) {
       throw new ZipTooLargeError(`"${name}" is larger than the ${ZIP_MAX_ENTRY_BYTES}-byte per-file limit.`);
@@ -194,6 +206,7 @@ export async function ingestZip(
   zipFile: File,
   existingHashes: Iterable<string> = [],
   offlineHashes?: Iterable<string>,
+  onProgress?: IngestProgressFn,
 ): Promise<ZipIngestResult> {
   const counts: ZipIngestCounts = { imported: 0, deduped: 0, unsupportedSkipped: 0, failed: 0 };
   const offline = makeOfflineReconnectSink(offlineHashes);
@@ -212,18 +225,26 @@ export async function ingestZip(
     return { assets, audioAssetId, counts, duplicateNames, ...reconnectedField() };
   }
 
+  onProgress?.({ done: 0, total: 0, label: 'Reading zip…' });
+  const batch: { name: string; blob: Blob; type: Asset['type'] }[] = [];
   const walk = await walkZipMediaEntries(JSZipModule, zipFile, async (name, blob, type) => {
+    batch.push({ name, blob, type });
+  });
+  let done = 0;
+  const total = batch.length;
+  onProgress?.({ done, total, label: total === 0 ? 'Importing zip…' : `Importing 0 of ${total}…` });
+  await mapPool(batch, 4, async ({ name, blob, type }) => {
     const asset = await ingestOneMediaFile(projectId, name, blob, type, seenHashes, counts, duplicateNames, offline);
+    done += 1;
+    onProgress?.({ done, total, label: `Importing ${done} of ${total}…` });
     if (asset) {
       assets.push(asset);
       if (asset.type === 'audio' && audioAssetId === undefined) audioAssetId = asset.id;
     }
   });
   counts.failed += walk.unsafeRejected;
-  // A plain media zip never unpacks a zip inside it (only a bundle's own
-  // top-level zips are opened — see `bundleIngest.ts`) — unchanged
-  // pre-G5 behavior: an inner zip is an unsupported entry.
   counts.unsupportedSkipped += walk.unsupportedSkipped + walk.nestedZipNames.length;
+  await finishIngestBatch();
 
   return { assets, audioAssetId, counts, duplicateNames, ...reconnectedField() };
 }

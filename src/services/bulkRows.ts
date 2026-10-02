@@ -40,6 +40,7 @@ import { computeAudioHash } from './spine';
 import { BUILD_TIMELINE_COPY, missingSpineSlots, type BuildTimelineSlots } from './buildTimelineGate';
 import { rowIncompleteReason } from './bulkContext';
 import { BULK_DRAFTS_KEY as DRAFTS_KEY, type BatchRowSummary } from './bulkBatch';
+import { timedIngest } from './ingestTiming';
 
 export type BulkAudioState = 'none' | 'preparing' | 'ready' | 'failed' | 'local';
 
@@ -62,6 +63,8 @@ export interface BulkRowState {
   /** What the last drop did, in plain words (skipped files, bundle problems). */
   notes: string[];
   busy: boolean;
+  /** Live n-of-m while `busy` (never a frozen "Adding…"). */
+  progress: string;
   /** The project has been created and handed to the batch. */
   built: boolean;
   /** The timeline finished successfully: files are then read-only. */
@@ -140,9 +143,11 @@ export const defaultBulkRowDeps = async (makeBlankProject: () => Project): Promi
 
 /** Persists `next` over `prev` with the editor's own reconcile plan. */
 export async function writeStagedDiff(projectId: string, prev: StagedFiles, next: StagedFiles): Promise<void> {
-  const plan = planStagedReconcile(prev, next, ALL_PERSISTED_SLOTS);
-  for (const entry of plan.write) await putStagedFile(await toStoredRow(projectId, entry));
-  for (const key of plan.remove) await deleteStagedFile(projectId, key);
+  await timedIngest('staged:save', async () => {
+    const plan = planStagedReconcile(prev, next, ALL_PERSISTED_SLOTS);
+    for (const entry of plan.write) await putStagedFile(await toStoredRow(projectId, entry));
+    for (const key of plan.remove) await deleteStagedFile(projectId, key);
+  });
 }
 
 export interface DropOutcome {
@@ -182,7 +187,7 @@ export async function classifyRowDrop(
     if (isMacOSMetadataPath(file.webkitRelativePath || file.name)) continue;
     const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
     if (ext === 'zip') {
-      const outcome = await deps.ingestBundle(projectId, file, existingHashes);
+      const outcome = await timedIngest('add:ingestBundle', () => deps.ingestBundle(projectId, file, existingHashes), file.size);
       if (outcome.kind === 'not-a-bundle') zips.push(file);
       else if (outcome.kind === 'failure') notes.push(outcome.message);
       else {
@@ -306,7 +311,7 @@ export class BulkRowStore {
 
   private blankRow(id: string): BulkRowState {
     return {
-      projectId: id, typedName: '', mediaCount: 0, files: [], notes: [], busy: false, built: false, sealed: false,
+      projectId: id, typedName: '', mediaCount: 0, files: [], notes: [], busy: false, progress: '', built: false, sealed: false,
       slots: { script: false, scene: false, voiceover: false, media: false },
       audio: { state: 'none' },
     };
@@ -421,11 +426,13 @@ export class BulkRowStore {
   async addFiles(id: string, files: readonly File[]): Promise<void> {
     const row = this.rows.get(id);
     if (!row || row.sealed || files.length === 0) return;
-    this.patch(id, { busy: true, notes: [] });
+    this.patch(id, { busy: true, notes: [], progress: files.length === 1 ? 'Adding 1 file…' : `Adding 0 of ${files.length}…` });
     try {
-      const prev = (await this.deps.loadStaged(id)) ?? EMPTY_STAGED;
+      const prev = await timedIngest('add:loadStaged', async () => (await this.deps.loadStaged(id)) ?? EMPTY_STAGED);
       const have = this.bundle.get(id) ?? [];
-      const drop = await classifyRowDrop(id, prev, files, this.deps, have.map(a => a.contentHash).filter((h): h is string => !!h));
+      const drop = await timedIngest('add:classify', () =>
+        classifyRowDrop(id, prev, files, this.deps, have.map(a => a.contentHash).filter((h): h is string => !!h)),
+      );
       // A bundle's media is already in the vault; it is attached to the
       // project when (if) the project is created.
       if (drop.bundleMedia.length > 0) this.bundle.set(id, [...have, ...drop.bundleMedia]);
@@ -433,11 +440,12 @@ export class BulkRowStore {
       this.refresh(id, drop.next, {
         notes: drop.notes,
         busy: false,
+        progress: '',
         audio: drop.voiceover ? { state: this.deps.cloudActive() ? 'preparing' : 'local' } : this.rows.get(id)!.audio,
       });
       if (drop.voiceover && this.deps.cloudActive()) void this.prepareAudio(id, drop.voiceover);
     } catch (err) {
-      this.patch(id, { busy: false, notes: [`Couldn’t add those files: ${err instanceof Error ? err.message : String(err)}`] });
+      this.patch(id, { busy: false, progress: '', notes: [`Couldn’t add those files: ${err instanceof Error ? err.message : String(err)}`] });
     }
   }
 
@@ -590,9 +598,9 @@ export class BulkRowStore {
     this.audioToken.set(id, token);
     const current = (): boolean => this.audioToken.get(id) === token;
     try {
-      const hash = await this.deps.hashAudio(file);
-      const duration = await this.deps.probeDuration(file, hash);
-      await this.deps.stageAudio(file, hash, duration);
+      const hash = await timedIngest('voiceover:hash', () => this.deps.hashAudio(file), file.size);
+      const duration = await timedIngest('voiceover:probe', () => this.deps.probeDuration(file, hash));
+      await timedIngest('voiceover:encodeUpload', () => this.deps.stageAudio(file, hash, duration), file.size);
       if (current()) this.patch(id, { audio: { state: 'ready' } });
     } catch (err) {
       const detail = err instanceof Error ? err.message
