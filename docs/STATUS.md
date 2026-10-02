@@ -252,7 +252,7 @@ Gates on the branch before the merge: `tsc` clean; `npm test` 5034 passed / 78 s
 
 **Also landed:** Rebuild on a done bulk row re-runs the shared service (cache hits, ~$0). Cached-row finish wall time is the same pipeline as the editor (see F4 measurement in `finishPipeline.test.ts`). Window title and manifests read 1.4.0.
 
-Gates: `tsc` clean; `npm test` 5046 passed / 78 skipped (baseline 5034); `cargo test` 556; `cargo test --features fa-inference` 643; `vite build` OK; pytest cloud: pytest not installed on this machine (unit files under `cloud/test_*.py` unchanged); chunkPlanM4 14/14 + golden replay 6/6 included in `npm test`. Cached-row finish (F4, injected cache-hit seams): persistVoiceover 0.11ms, persistMedia 0.09ms, parse 0.12ms, lookup 0.06ms, runFa 0.11ms, alignFromCache 0.23ms, **total 29ms**. Import freeze was JSZip `loadAsync` 1.3–1.7s for 100MiB plus serial SHA-256; per-file dir-fsync ~45ms/file.
+Gates: `tsc` clean; `npm test` 5046 passed / 78 skipped (baseline 5034); `cargo test` 556; `cargo test --features fa-inference` 643; `vite build` OK; `pytest cloud` 53; chunkPlanM4 14/14 + golden replay 6/6 included in `npm test`. Cached-row finish (F4, injected cache-hit seams): persistVoiceover 0.11ms, persistMedia 0.09ms, parse 0.12ms, lookup 0.06ms, runFa 0.11ms, alignFromCache 0.23ms, **total 29ms**. Import freeze was JSZip `loadAsync` 1.3–1.7s for 100MiB plus serial SHA-256; per-file dir-fsync ~45ms/file.
 
 ### Deferred Tasks
 - [DEFERRED · ASR ENGINE LIMITATION] Row 52 ("Llívia") — Whisper never transcribed isolated token; owner ruling 2026-09-03
