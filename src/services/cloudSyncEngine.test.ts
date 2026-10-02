@@ -506,6 +506,49 @@ describe('shipfix — chaining, jobs registry, cost, findings', () => {
     expect(runAt).toBeLessThan(80);
   });
 
+  it('last-row last-stage align still carries holdJobId, skips list, gap under 1.5s, handedOff', async () => {
+    const mod = await import('./cloudSyncEngine');
+    mod.__resetHeldTranscriptionsForTests();
+    mod.__resetStageGapsForTests();
+    mod.rememberHeldTranscriptionForTests(HASH, 'jt-last');
+    const cmds: string[] = [];
+    let holdJobId: string | undefined;
+    const t0 = Date.now();
+    let runAt = 0;
+    mockInvoke.mockImplementation(async (cmd: string, args: { job?: { holdJobId?: string } }) => {
+      cmds.push(cmd);
+      if (cmd === 'cloud_list_jobs') {
+        await new Promise(r => setTimeout(r, 80));
+        return [];
+      }
+      if (cmd === 'cloud_cache_lookup') return { cached: true, result: { words: [], nFallbackChunks: 0, provenance: { engine: 'fa-cloud', model: 'm', modelVersion: '1', language: 'en' } } };
+      if (cmd === 'cloud_run_job') {
+        runAt = Date.now() - t0;
+        holdJobId = args.job?.holdJobId;
+        return {
+          jobId: 'ja-last', stage: 'align', status: 'done', cached: true, workerSec: 0, error: null, handedOff: true,
+          result: { words: [], nFallbackChunks: 0, provenance: { engine: 'fa-cloud', model: 'm', modelVersion: '1', language: 'en' } },
+        };
+      }
+      return true;
+    });
+    const out = await mod.alignViaCloud({
+      voiceoverBlob: new Blob([new Uint8Array([1])]),
+      audioHash: HASH,
+      chunks: [{ startSec: 0, endSec: 1, text: 'hi' }],
+      language: 'en',
+      projectId: 'p-last',
+      rowId: 'p-last',
+    });
+    expect(out.status).toBe('ok');
+    if (out.status === 'ok') expect(out.handedOff).toBe(true);
+    expect(holdJobId).toBe('jt-last');
+    expect(cmds.filter(c => c === 'cloud_list_jobs')).toHaveLength(0);
+    expect(cmds).toContain('cloud_run_job');
+    expect(runAt).toBeLessThan(80);
+    expect(mod.recentStageGaps()[0]!.gapMs).toBeLessThan(1_500);
+  });
+
   it('editor Cancel kills only the editor target job; a bulk row job is untouched', async () => {
     const mod = await import('./cloudSyncEngine');
     mod.__resetLiveCloudJobsForTests();

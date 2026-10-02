@@ -423,7 +423,9 @@ async function attemptStageCacheFirst<R>(
   const overLong = checkAudioDuration(audioDurationSec);
   if (overLong) throw overLong;
   const lookup = await lookupCloudCache<R>(request);
-  if (lookup.cached) return { result: lookup.result, cached: true, uploaded: false, encoded: false, retried: false };
+  if (lookup.cached && !request.holdJobId) {
+    return { result: lookup.result, cached: true, uploaded: false, encoded: false, retried: false };
+  }
   if (signal?.aborted) throw cancelled;
 
   let uploaded = false;
@@ -434,7 +436,7 @@ async function attemptStageCacheFirst<R>(
     encoded ||= prep.encoded;
     if (signal?.aborted) throw cancelled;
   };
-  if (!lookup.audioPresent) await prepare();
+  if (!lookup.cached && !lookup.audioPresent) await prepare();
   let view;
   try {
     view = await runJobWithReceipt<R>(request, signal, onEvent);
@@ -663,7 +665,7 @@ export async function transcribeViaCloud(args: {
     onProgress(1);
     const hotHold = Boolean(args.holdJobId);
     if (!holdJobId) holdJobId = await heldJobIdForOwner(args.projectId, args.rowId);
-    if (!hotHold && (args.projectId || args.rowId)) {
+    if (!hotHold && !holdJobId && (args.projectId || args.rowId)) {
       try {
         const listed = await listCloudJobs({ projectId: args.projectId, rowId: args.rowId });
         const running = reattachPlan(listed).poll;
@@ -833,12 +835,12 @@ export async function alignViaCloud(args: {
   // Wave 3 U4.5 — hand this to the held transcription's container, if any.
   const pendingHold = heldTranscriptions.get(args.audioHash);
   if (pendingHold) noteStageGap(args.audioHash, pendingHold.at);
-  const hotHold = Boolean(pendingHold);
   let holdJobId = takeHeldTranscription(args.audioHash);
+  const hotHold = Boolean(pendingHold) || Boolean(holdJobId);
   if (!hotHold && !holdJobId) holdJobId = await heldJobIdForOwner(args.projectId, args.rowId);
   const holdNext = holdAfterAlign.delete(args.audioHash);
   try {
-    if (!hotHold && (args.projectId || args.rowId)) {
+    if (!hotHold && !holdJobId && (args.projectId || args.rowId)) {
       try {
         const listed = await listCloudJobs({ projectId: args.projectId, rowId: args.rowId });
         const running = reattachPlan(listed).poll;
@@ -889,7 +891,7 @@ export async function alignViaCloud(args: {
     );
     logStageRun('alignment', run);
     // Answered from the cache: the held container has nothing to do.
-    if (holdJobId && run.cached) void releaseCloudJob(holdJobId).catch(() => {});
+    if (holdJobId && run.cached && !run.handedOff) void releaseCloudJob(holdJobId).catch(() => {});
     if (holdNext && !run.cached && run.jobId) heldAligns.set(args.audioHash, { jobId: run.jobId, at: Date.now() });
     const result = run.result;
     return {

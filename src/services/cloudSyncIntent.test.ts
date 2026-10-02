@@ -140,12 +140,19 @@ describe('Wave 3 U4.5 — one boot: the intent aligns in the staging transcripti
     expect(gw.submits.find(s => s.stage === 'align')!.holdJobId).toBeUndefined();
   });
 
-  it('an alignment already cached releases the held container (nothing to compute)', async () => {
-    const gw = gateway({ alignLookup: { cached: true, result: { words: WORDS, nChunks: 1, nFallbackChunks: 0, provenance: PROVENANCE, createdAt: 1 } } });
+  it('an alignment already cached still submits with holdJobId so the last stage attaches (held=0)', async () => {
+    const gw = gateway({
+      alignLookup: { cached: true, result: { words: WORDS, nChunks: 1, nFallbackChunks: 0, provenance: PROVENANCE, createdAt: 1 } },
+      align: (job) => ({
+        jobId: 'c3d4', stage: 'align', status: 'done', cached: true, audioDurationSec: 1, workerSec: 0, error: null,
+        taskId: 'ta-1', handedOff: Boolean(job.holdJobId),
+        result: { words: WORDS, nChunks: 1, nFallbackChunks: 0, provenance: PROVENANCE, createdAt: 1 },
+      }),
+    });
     await stageHeld();
-    expect(await runCloudSyncIntent(inputs())).toEqual({ status: 'ready', handedOff: false, cached: true });
-    expect(gw.releases).toEqual(['a1b2']);
-    expect(gw.submits.filter(s => s.stage === 'align')).toHaveLength(0);
+    expect(await runCloudSyncIntent(inputs())).toEqual({ status: 'ready', handedOff: true, cached: true });
+    expect(gw.submits.find(s => s.stage === 'align')).toMatchObject({ holdJobId: 'a1b2' });
+    expect(gw.releases).toEqual([]);
   });
 });
 
