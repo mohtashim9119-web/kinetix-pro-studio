@@ -31,9 +31,9 @@ const workerScope = self as unknown as {
   postMessage: (message: unknown, transfer?: Transferable[]) => void;
 };
 
-workerScope.onmessage = (e: MessageEvent<{ id: number; kind: string; bytes?: ArrayBuffer; zip?: Blob }>) => {
+workerScope.onmessage = (e: MessageEvent<unknown>) => {
   void (async () => {
-    const { id, kind, bytes, zip } = e.data;
+    const { id, kind, bytes, zip } = e.data as { id: number; kind: string; bytes?: ArrayBuffer; zip?: Blob };
     try {
       if (kind === 'hash') {
         if (!bytes) throw new Error('hash: missing bytes');

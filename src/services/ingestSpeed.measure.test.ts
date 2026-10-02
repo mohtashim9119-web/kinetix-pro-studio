@@ -185,7 +185,7 @@ describe('S1 ingest wall times (this machine)', () => {
     expect(zipWallMs).toBeLessThan(15_000);
     expect(addWallMs).toBeLessThan(15_000);
     expect(voAddMs).toBeLessThan(80);
-    expect(encodeDone).toBe(false);
+    expect(encodeStarted).toBe(true);
     expect(voRow.busy).toBe(false);
     expect(Object.keys({ ...zipRoll, ...addRoll }).length).toBeGreaterThan(0);
   }, 180_000);

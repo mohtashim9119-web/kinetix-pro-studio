@@ -24,7 +24,7 @@ export async function sha256HexOffthread(bytes: Uint8Array): Promise<string> {
   const copy = bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength
     ? bytes.buffer
     : bytes.slice().buffer;
-  const hex = await callWorker<string>({ kind: 'hash', bytes: copy }, [copy]);
+  const hex = await callWorker<string>({ kind: 'hash', bytes: copy } as Omit<WorkerIn, 'id'>, [copy]);
   return hex;
 }
 
@@ -48,7 +48,7 @@ export async function walkZipInWorker(
     throw new Error('walkZipInWorker: no Worker');
   }
   const result = await callWorker<{ entries: ZipWalkMedia[]; meta: ZipWalkMeta }>(
-    { kind: 'zipWalk', zip: zipSource },
+    { kind: 'zipWalk', zip: zipSource } as Omit<WorkerIn, 'id'>,
   );
   for (const e of result.entries) {
     const copy = e.bytes.byteOffset === 0 ? e.bytes : e.bytes.slice();

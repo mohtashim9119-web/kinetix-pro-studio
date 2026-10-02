@@ -29,35 +29,26 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
 
-const LINES = readFileSync(resolve(import.meta.dirname, '..', 'App.tsx'), 'utf-8').split('\n');
-const ENTRY_MARKER = 'const handleApplySyncFromFiles = async (): Promise<ApplySyncResult> => {';
-
-function bodyRange(): { start: number; end: number } {
-  const start = LINES.findIndex(l => l.includes(ENTRY_MARKER));
-  expect(start, 'handleApplySyncFromFiles entry marker not found').toBeGreaterThan(-1);
-  let end = LINES.length;
-  for (let i = start + 1; i < LINES.length; i++) {
-    if (LINES[i] === '  };') { end = i; break; }
-  }
-  return { start, end };
-}
-
-function hits(re: RegExp): number[] {
-  const { start, end } = bodyRange();
-  const out: number[] = [];
-  for (let i = start; i < end; i++) if (re.test(LINES[i]!)) out.push(i + 1);
-  return out;
-}
+const PIPE = readFileSync(resolve(import.meta.dirname, './finishPipeline.ts'), 'utf-8');
 
 describe('Item A — Apply Sync defers the outgoing voiceover byte delete to after the commit', () => {
-  it('every delete of asset bytes / peaks sits after the one real commit', () => {
-    const commit = hits(/^\s+assets: allAssets,$/);
-    expect(commit, 'the commit\'s `assets: allAssets,` line was not found exactly once').toHaveLength(1);
+  it('runBuildTimeline never deletes bytes itself, and only releases after save', () => {
+    expect(PIPE).not.toMatch(/\b(deleteAsset|deleteAssetNative|deletePersistedWaveform)\(/);
+    const save = PIPE.indexOf('if (input.save) await input.save(next);');
+    const release = PIPE.indexOf('input.releaseSupersededVoiceover?.(supersededVoiceover)');
+    expect(save).toBeGreaterThan(-1);
+    expect(release).toBeGreaterThan(save);
+  });
 
-    const deletes = hits(/\b(deleteAsset|deleteAssetNative|deletePersistedWaveform)\(/);
-    expect(deletes.length, 'the outgoing-voiceover delete disappeared entirely').toBeGreaterThan(0);
-    for (const line of deletes) {
-      expect(line, `byte delete at App.tsx:${line} runs before the commit at App.tsx:${commit[0]}`).toBeGreaterThan(commit[0]!);
-    }
+  it('the editor adapter deletes the outgoing voiceover only through that post-save hook', () => {
+    const app = readFileSync(resolve(import.meta.dirname, '..', 'App.tsx'), 'utf-8');
+    expect(app).toContain('releaseSupersededVoiceover: asset => releaseOutgoingVoiceover(liveProjectRef.current.id, asset)');
+    expect(app).toContain('releaseSupersededVoiceover: asset => releaseOutgoingVoiceover(projectId, asset)');
+    const fnStart = app.indexOf('function releaseOutgoingVoiceover');
+    expect(fnStart).toBeGreaterThan(-1);
+    const fn = app.slice(fnStart, app.indexOf('\n}', fnStart));
+    expect(fn).toContain('deleteAsset(');
+    expect(fn).toContain('deleteAssetNative(');
+    expect(fn).toContain('deletePersistedWaveform(');
   });
 });

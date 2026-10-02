@@ -470,6 +470,14 @@ export class BulkBatchRunner {
     return true;
   }
 
+  /** An already-built row: re-run finish through the shared service (cache hits). */
+  rebuildFromCache(id: string): boolean {
+    const row = this.rows.find(r => r.id === id);
+    if (!row || row.phase !== 'done') return false;
+    this.requeueForRebuild(id, row.name, 'Rebuilding from cache');
+    return true;
+  }
+
   /** A record the bulk guard reset (`bulkRepair.ts`): rebuild it from its own
    *  files. Its cloud work is cached, so it goes straight to finishing. */
   requeueForRebuild(id: string, name: string, message: string): void {

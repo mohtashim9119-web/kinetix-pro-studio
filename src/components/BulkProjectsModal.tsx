@@ -94,10 +94,11 @@ interface RowProps {
   onOpen: () => void;
   /** Built on the cloud but not finished yet: Open finishes it, into the editor. */
   onFinish: () => void;
+  onRebuild: () => void;
   onRetry: () => void;
 }
 
-function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFile, onReplaceFile, onReplaceAll, onReplaceMedia, onRemoveMedia, onClearFiles, onRemoveRow, onCancel, onOpen, onFinish, onRetry }: RowProps): React.ReactElement {
+function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFile, onReplaceFile, onReplaceAll, onReplaceMedia, onRemoveMedia, onClearFiles, onRemoveRow, onCancel, onOpen, onFinish, onRebuild, onRetry }: RowProps): React.ReactElement {
   const filesRef = useRef<HTMLInputElement>(null);
   const folderRef = useRef<HTMLInputElement>(null);
   const replaceRef = useRef<HTMLInputElement>(null);
@@ -191,6 +192,18 @@ function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFi
           <ExternalLink size={13} />
           {BULK_COPY.openShort}
         </button>
+        {phase === 'done' && (
+          <button
+            type="button"
+            data-testid={`bulk-rebuild-${row.projectId}`}
+            title={BULK_COPY.rebuild}
+            onClick={onRebuild}
+            className={ROW_BTN}
+          >
+            <RefreshCw size={13} />
+            {BULK_COPY.rebuild}
+          </button>
+        )}
         <div className="relative flex-shrink-0">
           <button
             type="button"
@@ -583,6 +596,7 @@ export function BulkProjectsModal({
       onCancel={() => queue.cancel(row.projectId)}
       onOpen={() => open(row.projectId)}
       onFinish={() => finishRow(row.projectId)}
+      onRebuild={() => { runner.rebuildFromCache(row.projectId); }}
       onRetry={() => runner.retry(row.projectId)}
     />
   );

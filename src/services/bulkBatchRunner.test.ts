@@ -266,4 +266,19 @@ describe('v1.2.2 — interim finishing: sequential, deferrable, repairable', () 
     expect(done).toEqual(['b', 'gone-from-batch']);
     expect(started).toEqual([]); // no cloud work re-run
   });
+
+  it('rebuildFromCache re-runs a done row through finish (cache hits: no cloud job)', async () => {
+    const disk = memory();
+    disk.setItem('kinetix:bulk-batch:v1', JSON.stringify({ rows: [{ id: 'b', name: 'B', phase: 'done', checkpoint: 'ready' }] }));
+    const { runner, started } = boot(disk);
+    const done: string[] = [];
+    runner.setFinalizer(async id => { done.push(id); return { ok: true }; });
+    expect(runner.rebuildFromCache('missing')).toBe(false);
+    expect(runner.rebuildFromCache('b')).toBe(true);
+    expect(runner.snapshot()[0]).toMatchObject({ id: 'b', phase: 'cloud-done', checkpoint: 'aligned' });
+    runner.holdFinishOpen();
+    await vi.waitFor(() => expect(phases(runner).b).toBe('done'));
+    expect(done).toEqual(['b']);
+    expect(started).toEqual([]);
+  });
 });

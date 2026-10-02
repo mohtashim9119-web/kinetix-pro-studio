@@ -132,17 +132,12 @@ describe('WS2-50 — a single Apply Sync entry point', () => {
   });
 
   it('the empty-scene-doc abort is told which scene text it actually parsed', () => {
-    // The two-argument form is what separates "a real doc with no scene tags"
-    // from "no scene doc at all". Dropping the argument silently restores the
-    // misleading message, and a destructive probe (WS2-50 P12) confirmed the
-    // pure-function unit tests stay green when it is dropped — they exercise
-    // the predicate, never the call site.
-    const body = memberBody(APP_SRC, APPLY_MARKER);
+    const pipe = readFileSync(resolve(HERE, './finishPipeline.ts'), 'utf-8');
     expect(
-      body,
+      pipe,
       'the abort no longer passes the resolved scene text, so a project with no scene doc is ' +
         'told again to "add scene tags" to a document it does not have.',
-    ).toContain('emptySceneDocAbortMessage(newSegmentsRaw.length, sceneText)');
+    ).toContain('emptySceneDocAbortMessage(parsed.length, sceneText)');
   });
 
   it('the recovery banner invokes the entry point with no arguments', () => {

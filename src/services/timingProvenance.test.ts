@@ -179,13 +179,12 @@ describe('new-run stamps record the engine that actually ran', () => {
 
 describe('Apply Sync commit writes provenance in the same object as faWordTimings', () => {
   it('the atomic setProject literal includes timingProvenance next to faWordTimings', () => {
-    const app = readFileSync(resolve(import.meta.dirname, '..', 'App.tsx'), 'utf-8');
-    const commit = app.indexOf('// 8. Single atomic state update');
+    const pipe = readFileSync(resolve(import.meta.dirname, './finishPipeline.ts'), 'utf-8');
+    const commit = pipe.indexOf('let next: Project = {');
     expect(commit, 'atomic commit marker missing').toBeGreaterThan(-1);
-    const end = app.indexOf('}));', commit);
-    const body = app.slice(commit, end);
-    expect(body).toContain('faWordTimings:');
-    expect(body).toContain('timingProvenance:');
+    const body = pipe.slice(commit, pipe.indexOf('};', commit));
+    expect(body).toContain('faWordTimings,');
+    expect(body).toContain('timingProvenance,');
   });
 
   it('useWhisper writes transcription provenance in the same update as transcriptTokens', () => {

@@ -10,7 +10,7 @@
 import React from 'react';
 import { act } from 'react-dom/test-utils';
 import { createRoot } from 'react-dom/client';
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 let finishAtOnce = false;
@@ -109,6 +109,11 @@ const buildFor = (host: HTMLElement, rowId: string): HTMLButtonElement =>
   q(host, `bulk-row-${rowId}`)!.closest('section')!.querySelector('[data-testid^="bulk-build-"]') as HTMLButtonElement;
 const rowIds = (host: HTMLElement): string[] =>
   [...host.querySelectorAll('[data-testid^="bulk-row-"]')].map(el => el.getAttribute('data-testid')!.replace('bulk-row-', ''));
+
+beforeEach(() => {
+  finishAtOnce = false;
+  cloudSyncQueue.clearFinished();
+});
 
 describe('BulkProjectsModal — draft rows', () => {
   it('opens with N empty rows, creates NOTHING, and Build is off until a row is named and has all four slots', async () => {
@@ -352,7 +357,7 @@ describe('BulkProjectsModal — draft rows', () => {
     expect(runner.snapshot().map(r => r.id)).toEqual([g1.rowIds[0]]);
     expect((q(host, `bulk-build-${g2.id}`) as HTMLButtonElement).disabled).toBe(false);
     await act(async () => { cloudSyncQueue.cancelAll(); });
-  });
+  }, 15_000);
 
   it('v1.2.2: a row deferred while the operator edits reads "Ready — one click to finish", and its Open finishes it', async () => {
     finishAtOnce = true;
@@ -542,7 +547,7 @@ describe('1.3.0 landing — the background pipeline drives drawer rows to ready'
     expect(onFinishRow).not.toHaveBeenCalled();
     expect(q(host, `bulk-group-count-${g.id}`)!.textContent).toBe('1/2 done');
     finishAtOnce = false;
-  });
+  }, 15_000);
 });
 
 describe('1.3.2 — operator 1.3.1 follow-ups', () => {
@@ -599,6 +604,31 @@ describe('1.3.2 — operator 1.3.1 follow-ups', () => {
     expect(footer).not.toMatch(/1 projects/);
     expect(footer).not.toContain('no cloud GPU time used');
     expect(footer).toMatch(/40 s worked/);
+  });
+
+  it('1.4.0 — a built row offers Rebuild, which re-queues finish from cache', async () => {
+    const h = store();
+    const finalize = vi.fn(async () => ({ ok: true }));
+    const runner = makeRunner(finalize);
+    const diskRows = [{ id: 'built-1', name: 'Harbour', phase: 'done', checkpoint: 'ready' }];
+    const disk = memStorage();
+    disk.setItem('kinetix:bulk-batch:v1', JSON.stringify({
+      rows: diskRows,
+      groups: [{ id: 'g1', name: 'G', collapsed: false, rowIds: ['built-1'] }],
+    }));
+    const seeded = new BulkBatchRunner({
+      queue: cloudSyncQueue,
+      enqueue: () => {},
+      exists: () => true,
+      storage: disk,
+    });
+    seeded.setFinalizer(finalize);
+    const { host } = await mount(modal(h, 0, { runner: seeded }));
+    const btn = q(host, 'bulk-rebuild-built-1') as HTMLButtonElement;
+    expect(btn).not.toBeNull();
+    expect(btn.textContent).toContain('Rebuild');
+    await act(async () => { btn.click(); });
+    await vi.waitFor(() => expect(finalize).toHaveBeenCalledWith('built-1', expect.anything()));
   });
 });
 

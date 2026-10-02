@@ -72,44 +72,28 @@ describe('NO_VOICEOVER_MESSAGE — banner salvage path', () => {
 });
 
 describe('NO_VOICEOVER_MESSAGE — App.tsx wiring (source guards)', () => {
-  const APP_SRC = readFileSync(APP_TSX, 'utf-8');
-
-  function applySyncBody(): string {
-    const marker = 'const handleApplySyncFromFiles = async (): Promise<ApplySyncResult> => {';
-    const start = APP_SRC.indexOf(marker);
-    expect(start).toBeGreaterThan(-1);
-    const rest = APP_SRC.slice(start + marker.length);
-    const end = rest.indexOf('\n  };');
-    expect(end).toBeGreaterThan(-1);
-    return rest.slice(0, end);
-  }
+  const PIPE = readFileSync(resolve(import.meta.dirname, './finishPipeline.ts'), 'utf-8');
 
   it('aborts before parseProjectData when no voiceover asset resolves', () => {
-    const body = applySyncBody();
-    const voiceoverAbort = body.indexOf('return { ok: false, message: NO_VOICEOVER_MESSAGE }');
-    const parseCall = body.indexOf('parseProjectData(');
-    expect(voiceoverAbort, 'NO_VOICEOVER abort path missing').toBeGreaterThan(-1);
+    const voiceoverAbort = PIPE.indexOf('return { ok: false, message: NO_VOICEOVER_FOR_FINISH }');
+    const parseCall = PIPE.indexOf('stages.parseProjectData(');
+    expect(voiceoverAbort, 'NO_VOICEOVER abort path missing from runBuildTimeline').toBeGreaterThan(-1);
     expect(parseCall, 'parseProjectData call missing').toBeGreaterThan(-1);
     expect(voiceoverAbort).toBeLessThan(parseCall);
   });
 
-  it('panel abort uses logSyncAbort and does not reach the step-8 commit', () => {
-    const body = applySyncBody();
-    const voiceoverAbort = body.indexOf('logSyncAbort(NO_VOICEOVER_MESSAGE');
-    const commit = body.indexOf('// 8. Single atomic state update');
+  it('panel abort does not reach the segment commit', () => {
+    const voiceoverAbort = PIPE.indexOf('NO_VOICEOVER_FOR_FINISH');
+    const commit = PIPE.indexOf('segments: finalTimed');
     expect(voiceoverAbort).toBeGreaterThan(-1);
     expect(commit).toBeGreaterThan(voiceoverAbort);
-    expect(body.slice(voiceoverAbort, commit)).not.toContain('segments: committedSegments');
+    expect(PIPE.slice(voiceoverAbort, commit)).not.toContain('segments: committedSegments');
   });
 
   it('does not fall through to character-based timing without a voiceover', () => {
-    const body = applySyncBody();
-    const noVoiceoverGuard = body.indexOf('if (!voiceoverAsset)');
-    // The character-timing entry's text lives in syncLog.ts's
-    // buildCharacterTimingEntry (classification hardening); its CALL SITE is
-    // what marks the character-timing branch inside Apply Sync.
-    const charFallback = body.indexOf('buildCharacterTimingEntry(');
+    const noVoiceoverGuard = PIPE.indexOf('if (!voiceover)');
     expect(noVoiceoverGuard).toBeGreaterThan(-1);
-    expect(charFallback).toBeGreaterThan(noVoiceoverGuard);
+    expect(PIPE.indexOf('NO_VOICEOVER_FOR_FINISH')).toBeGreaterThan(-1);
+    expect(PIPE).not.toContain('buildCharacterTimingEntry(');
   });
 });
