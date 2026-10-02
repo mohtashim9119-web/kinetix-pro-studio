@@ -46,7 +46,9 @@ workerScope.onmessage = (e: MessageEvent<unknown>) => {
         if (!source) throw new Error('zipWalk: missing zip');
         const { default: JSZipModule } = await import('jszip');
         const content = await new JSZipModule().loadAsync(source);
-        const files = Object.values(content.files).filter(f => !f.dir && !isMacOSMetadataPath(f.name));
+        const files = Object.keys(content.files)
+          .map(k => content.files[k]!)
+          .filter(f => !f.dir && !isMacOSMetadataPath(f.name));
         if (files.length > ZIP_MAX_ENTRIES) {
           throw new Error(`This zip has ${files.length} files, more than the ${ZIP_MAX_ENTRIES}-file limit.`);
         }

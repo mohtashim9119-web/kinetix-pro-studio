@@ -24,9 +24,11 @@ vi.mock('./forcedAlignmentRun', async () => {
     runForcedAlignmentForSync: async (
       voiceover: { file: Blob }, _s: unknown, _t: unknown, _d: number, _l: unknown,
       signal: AbortSignal | undefined, audioHash: string,
+      _force: boolean, _host: string, owners?: { projectId?: string; rowId?: string },
     ) => {
       const out = await engine.alignViaCloud({
         voiceoverBlob: voiceover.file, audioHash, chunks: [{ startSec: 0, endSec: 1, text: 'x' }], language: 'en', signal,
+        projectId: owners?.projectId, rowId: owners?.rowId,
       });
       if (out.status === 'cancelled') return { status: 'cancelled' };
       if (out.status === 'failed') return { status: 'paused', reason: 'offline', detail: out.error.kind };
@@ -38,7 +40,7 @@ vi.mock('./forcedAlignmentRun', async () => {
 import { invoke } from '@tauri-apps/api/core';
 import { SyncQueue } from './syncQueue';
 import { cloudQueueEngine, createCloudProjectJob, type CloudQueueDeps } from './cloudQueueJob';
-import { __resetCloudAudioInFlightForTests, __setCloudRetryDelayForTests, stageCloudAudioOnly } from './cloudSyncEngine';
+import { __resetCloudAudioInFlightForTests, __resetCloudWorkerSecForTests, __resetLiveCloudJobsForTests, __setCloudRetryDelayForTests, stageCloudAudioOnly } from './cloudSyncEngine';
 import { __resetCancelReceiptsForTests } from './cloudCancelReceipts';
 import { computeAudioHash } from './spine';
 import type { StagedFiles } from '../components/DropZonePanel';
@@ -131,6 +133,8 @@ const settle = (q: SyncQueue) => vi.waitFor(() => expect(q.snapshot().running).t
 beforeEach(() => {
   mockInvoke.mockReset();
   __resetCloudAudioInFlightForTests();
+  __resetCloudWorkerSecForTests();
+  __resetLiveCloudJobsForTests();
   __resetCancelReceiptsForTests();
   __setCloudRetryDelayForTests(0);
   localStorage.clear();

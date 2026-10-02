@@ -16,7 +16,9 @@ vi.mock('@tauri-apps/api/core', () => ({
 }));
 
 import {
+  cloudPing,
   describeCloudError,
+  EXPECTED_SERVICE_SCHEMA,
   isCloudError,
   prepareCloudAudio,
   runCloudJob,
@@ -143,5 +145,17 @@ describe('CloudError', () => {
       .toContain('CUDA OOM on worker-7');
     expect(describeCloudError({ kind: 'server', status: 502, detail: 'bad gateway from modal' }))
       .toContain('bad gateway from modal');
+  });
+
+  it('schema-mismatch ping is a loud deploy-required refusal, never silent', async () => {
+    expect(EXPECTED_SERVICE_SCHEMA).toBe(2);
+    invokeMock.mockResolvedValue({ member: 'operator', schema: 1, engines: {}, limits: {}, latencyMs: 1 });
+    await expect(cloudPing()).rejects.toMatchObject({
+      kind: 'rejected',
+      code: 'schema-mismatch',
+      detail: 'Sync engine server outdated — deploy required',
+    });
+    invokeMock.mockResolvedValue({ member: 'operator', schema: 2, engines: {}, limits: {}, latencyMs: 1 });
+    await expect(cloudPing()).resolves.toMatchObject({ schema: 2, member: 'operator' });
   });
 });

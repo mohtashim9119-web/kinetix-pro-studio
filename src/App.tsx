@@ -4122,7 +4122,7 @@ export default function App() {
   // both funnel through this one function, so there is exactly one place
   // that decides what "cancel" means.
   const handleCancelSync = useCallback((): void => {
-    void killLiveCloudJob();
+    void killLiveCloudJob({ projectId: liveProjectRef.current.id });
     syncAbortControllerRef.current?.abort();
     cancelTranscription();
   }, [cancelTranscription]);

@@ -22,7 +22,7 @@
 import type { Project } from '../types';
 import { AUTO_DETECT, readNewProjectDefaults, NEW_PROJECT_TEXT_OVERLAY_DEFAULT_ON } from './appDefaults';
 import { FA_PROJECT_DEFAULT_ON, shouldPersistFaChoice } from './faGate';
-import { lookupCloudCache } from './cloudGateway';
+import { lookupCloudCache, rememberCloudLookupPeek } from './cloudGateway';
 import { cloudTranscribeLanguage } from './cloudSyncEngine';
 
 /** One "Create Group" makes one group of 2–30 rows (bulkBatch.ts). */
@@ -157,7 +157,9 @@ export function decideStagingStart(input: {
  *  no upload, no job, no meter line. Any failure is a miss (never a start). */
 export async function peekCloudTranscript(audioHash: string, language: string | undefined): Promise<boolean> {
   try {
-    const found = await lookupCloudCache({ stage: 'transcribe', audioHash, language: cloudTranscribeLanguage(language) });
+    const request = { stage: 'transcribe' as const, audioHash, language: cloudTranscribeLanguage(language) };
+    const found = await lookupCloudCache(request);
+    rememberCloudLookupPeek(request, found);
     return found.cached;
   } catch {
     return false;

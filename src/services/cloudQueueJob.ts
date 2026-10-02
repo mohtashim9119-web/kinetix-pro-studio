@@ -39,14 +39,16 @@ import {
   CloudStageError,
   adoptHeldContainer,
   cloudFailureReport,
+  cloudWorkerSecForTarget,
   cloudWorkerSecTotal,
   onCloudPhase,
   requestHoldAfterAlign,
   takeHeldAlign,
   transcribeForHost,
   killLiveCloudJob,
+  noteCloudClientFinding,
 } from './cloudSyncEngine';
-import { pauseCloudJob, releaseCloudJob } from './cloudGateway';
+import { pauseCloudJob, releaseCloudJob, toCloudError, describeCloudError } from './cloudGateway';
 import { describeCloudCancel, settleCloudCancels, takeCancelReceiptsSince } from './cloudCancelReceipts';
 import { saveFaPause, type FaPauseRecord } from './faSyncPauseStore';
 import { loadStagedFromStore } from './stagedFilesPersist';
@@ -80,14 +82,14 @@ export function bulkFooterLine(rows: readonly { workerSec?: number }[], queueLin
 }
 
 export const cloudQueueEngine: QueueEngine = {
-  workerSec: cloudWorkerSecTotal,
+  workerSec: (scope) => (scope?.rowId ? cloudWorkerSecForTarget({ rowId: scope.rowId }) : cloudWorkerSecTotal()),
   usdPerSec: CLOUD_USD_PER_WORKER_SEC,
   cancelReceipt(item, started) {
     if (!started) return 'It hadn’t started, so nothing was charged.';
     return describeCloudCancel(takeCancelReceiptsSince(item.startedAt ?? 0), { cloud: true });
   },
   settleCancel: () => settleCloudCancels(),
-  killLive: () => killLiveCloudJob(),
+  killLive: (owners) => killLiveCloudJob(owners),
   onDrain(carry) {
     if (typeof carry === 'string' && carry) void releaseCloudJob(carry).catch(() => undefined);
   },
@@ -277,7 +279,15 @@ export function createCloudProjectJob(
             stage: record.stage,
             timestamp,
             detail: record.detail,
-          }).catch(() => undefined);
+          }).catch((err: unknown) => {
+            const cloud = toCloudError(err);
+            noteCloudClientFinding({
+              code: 'pause-unsupported',
+              display: cloud.kind === 'protocol'
+                ? 'Pause is not supported on this sync server'
+                : describeCloudError(cloud),
+            });
+          });
         }
         const next = appendSyncLogEntries(
           project,

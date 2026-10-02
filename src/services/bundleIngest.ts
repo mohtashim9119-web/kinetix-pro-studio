@@ -112,7 +112,9 @@ export async function classifyAndIngestBundleZip(
     return { kind: 'failure', message: `"${zipFile.name}" could not be read — the archive appears corrupt.` };
   }
 
-  const entries = Object.values(content.files).filter(f => !f.dir && !isMacOSMetadataPath(f.name));
+  const entries = Object.keys(content.files)
+    .map(k => content.files[k]!)
+    .filter(f => !f.dir && !isMacOSMetadataPath(f.name));
   if (entries.length > ZIP_MAX_ENTRIES) {
     return { kind: 'failure', message: `"${zipFile.name}" has ${entries.length} files, more than the ${ZIP_MAX_ENTRIES}-file limit.` };
   }

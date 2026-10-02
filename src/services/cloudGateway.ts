@@ -74,7 +74,10 @@ export function describeCloudError(error: CloudError): string {
       return error.estimatedSec !== undefined
         ? error.detail
         : 'This audio is longer than the one-hour cloud limit. Split it or use Local.';
-    case 'rejected': return `The cloud sync server refused the request (${error.code}): ${error.detail}`;
+    case 'rejected':
+      return error.code === 'schema-mismatch'
+        ? error.detail
+        : `The cloud sync server refused the request (${error.code}): ${error.detail}`;
     case 'server': {
       const base = `The cloud sync server had an error (HTTP ${error.status}).`;
       return error.detail.trim() ? `${base} ${error.detail}` : base;
@@ -163,6 +166,28 @@ export type CloudCacheLookup<R> =
    *  stage needs no encode and no upload. */
   | { cached: false; audioPresent: boolean; audioDurationSec: number | null };
 
+function lookupPeekKey(request: CloudJobRequest): string {
+  return `${request.stage}|${request.audioHash}|${request.language}`;
+}
+
+let lookupPeek: { key: string; value: CloudCacheLookup<unknown> } | undefined;
+
+/** Stash a peek so the adopt path does not pay a second lookup. */
+export function rememberCloudLookupPeek(request: CloudJobRequest, value: CloudCacheLookup<unknown>): void {
+  lookupPeek = { key: lookupPeekKey(request), value };
+}
+
+/** Is this stage already computed on the gateway? One read: no job is
+ *  created, no GPU is touched, and no meter line is written. */
+export function lookupCloudCache<R>(request: CloudJobRequest): Promise<CloudCacheLookup<R>> {
+  if (lookupPeek && lookupPeek.key === lookupPeekKey(request)) {
+    const hit = lookupPeek.value as CloudCacheLookup<R>;
+    lookupPeek = undefined;
+    return Promise.resolve(hit);
+  }
+  return call('cloud_cache_lookup', { job: request });
+}
+
 export type CloudJobStatus = 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
 
 export interface CloudJobView<R> {
@@ -230,8 +255,20 @@ export function cloudKeyClear(): Promise<CloudKeyStatus> {
   return call('cloud_key_clear');
 }
 
+export const EXPECTED_SERVICE_SCHEMA = 2;
+
 export function cloudPing(): Promise<CloudPing> {
-  return call('cloud_ping');
+  return call<CloudPing>('cloud_ping').then(ping => {
+    if (ping.schema !== EXPECTED_SERVICE_SCHEMA) {
+      throw {
+        kind: 'rejected',
+        status: 0,
+        code: 'schema-mismatch',
+        detail: 'Sync engine server outdated — deploy required',
+      } satisfies CloudError;
+    }
+    return ping;
+  });
 }
 
 /**
@@ -264,12 +301,6 @@ export async function prepareCloudAudio(
   if (tooBig) throw tooBig;
   const upload = await call<CloudUpload>('cloud_upload_audio', { audioHash });
   return { ...upload, encoded };
-}
-
-/** Is this stage already computed on the gateway? One read: no job is
- *  created, no GPU is touched, and no meter line is written. */
-export function lookupCloudCache<R>(request: CloudJobRequest): Promise<CloudCacheLookup<R>> {
-  return call('cloud_cache_lookup', { job: request });
 }
 
 /** Wave 3 U4.5 — let a held transcription's container exit now (nothing to

@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { answerCloudJob, listCloudJobs, pauseCloudJob } from './cloudGateway';
-import { liveCloudJobId } from './cloudSyncEngine';
+import { answerCloudJob, listCloudJobs, pauseCloudJob, toCloudError, describeCloudError } from './cloudGateway';
+import { liveCloudJobId, noteCloudClientFinding } from './cloudSyncEngine';
 import { pauseDialogFromJobs, type CloudJobPause, type OwnedCloudJob } from './cloudJobOwnership';
 import { saveFaPause, clearFaPause, type FaPauseRecord } from './faSyncPauseStore';
 import { deletedProjectIds } from './projectTombstones';
@@ -61,7 +61,7 @@ export async function loadServerPauses(projectIds: readonly string[]): Promise<F
 }
 
 export async function postLivePause(record: FaPauseRecord): Promise<void> {
-  const jobId = liveCloudJobId();
+  const jobId = liveCloudJobId({ projectId: record.projectId, rowId: record.projectId });
   if (!jobId) return;
   try {
     await pauseCloudJob(jobId, {
@@ -76,7 +76,13 @@ export async function postLivePause(record: FaPauseRecord): Promise<void> {
       timestamp: record.timestamp,
       detail: record.detail,
     });
-  } catch { /* local record still holds */ }
+  } catch (err) {
+    const cloud = toCloudError(err);
+    noteCloudClientFinding({
+      code: cloud.kind === 'protocol' ? 'pause-unsupported' : cloud.kind,
+      display: cloud.kind === 'protocol' ? 'Pause is not supported on this sync server' : describeCloudError(cloud),
+    });
+  }
 }
 
 export async function answerServerPause(projectId: string, choice: string): Promise<void> {
@@ -84,7 +90,11 @@ export async function answerServerPause(projectId: string, choice: string): Prom
     const jobs = asOwned(await listCloudJobs({ projectId, rowId: projectId }));
     const job = [...jobs].reverse().find(j => j.awaitingAnswer && j.pause && j.pause.answer == null);
     if (job?.pause) await answerCloudJob(job.jobId, job.pause.id, choice);
-  } catch {
-    /* local clear still happens */
+  } catch (err) {
+    const cloud = toCloudError(err);
+    noteCloudClientFinding({
+      code: cloud.kind === 'protocol' ? 'pause-unsupported' : cloud.kind,
+      display: cloud.kind === 'protocol' ? 'Pause is not supported on this sync server' : describeCloudError(cloud),
+    });
   }
 }

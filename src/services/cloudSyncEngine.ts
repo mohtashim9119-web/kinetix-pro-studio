@@ -122,12 +122,22 @@ async function assetBlob(asset: Asset): Promise<Blob> {
   return asset.file ?? (await (await fetch(asset.url)).blob());
 }
 
-/** Wave 3 U7 — GPU seconds this window's cloud jobs have worked, summed at
- *  the one place a job's view arrives. The bulk queue reads it before/after
- *  each project to price the batch. */
+/** Wave 3 U7 — GPU seconds billed per job id; the bulk row reads its own jobs. */
+const jobWorkerSec = new Map<string, number>();
 let workerSecTotal = 0;
 export function cloudWorkerSecTotal(): number {
   return workerSecTotal;
+}
+export function noteCloudJobWorkerSec(jobId: string, sec: number): void {
+  jobWorkerSec.set(jobId, sec);
+  workerSecTotal = [...jobWorkerSec.values()].reduce((a, b) => a + b, 0);
+}
+export function cloudWorkerSecForJobs(jobIds: readonly string[]): number {
+  return jobIds.reduce((sum, id) => sum + (jobWorkerSec.get(id) ?? 0), 0);
+}
+export function __resetCloudWorkerSecForTests(): void {
+  jobWorkerSec.clear();
+  workerSecTotal = 0;
 }
 
 /** What one cache-first stage run actually did — for logs and the billing
@@ -163,8 +173,9 @@ export interface CloudStageRun<R> {
 // just spawns normally for a hold that already closed.
 // ---------------------------------------------------------------------------
 
-/** Mirrors `cloud/sync_core.py`'s HOLD_FOR_PLAN_SEC (orphan floor 2s), minus a margin. */
-export const HELD_TRANSCRIPTION_TTL_MS = 1_500;
+/** Mirrors `cloud/sync_core.py`'s HOLD_FOR_PLAN_SEC (8s stage-gap window). */
+export const HOLD_FOR_PLAN_SEC_CLIENT = 8;
+export const HELD_TRANSCRIPTION_TTL_MS = HOLD_FOR_PLAN_SEC_CLIENT * 1000;
 
 /**
  * The language key a cloud transcribe is stored under. Peek, adopt and the
@@ -175,7 +186,7 @@ export function cloudTranscribeLanguage(language: string | undefined): string {
 }
 
 /** Warn when the client sits this long between transcribe-done and align-submit. */
-export const STAGE_GAP_WARN_MS = 10_000;
+export const STAGE_GAP_WARN_MS = (HOLD_FOR_PLAN_SEC_CLIENT * 1000) / 2;
 
 export interface StageGap {
   audioHash: string;
@@ -191,7 +202,7 @@ export function noteStageGap(audioHash: string, transcribeDoneAt: number, alignS
   const gap = { audioHash, gapMs, warned };
   stageGaps.push(gap);
   if (warned) {
-    console.warn(`[cloud] ${gapMs}ms between transcribe done and align submit for ${audioHash.slice(0, 8)} — the hold window is 30s`);
+    console.warn(`[cloud] ${gapMs}ms between transcribe done and align submit for ${audioHash.slice(0, 8)} — the hold window is ${HOLD_FOR_PLAN_SEC_CLIENT}s`);
   }
   return gap;
 }
@@ -260,6 +271,10 @@ export function releaseHeldTranscription(audioHash: string): void {
 /** Test-only. */
 export function __resetHeldTranscriptionsForTests(): void {
   heldTranscriptions.clear();
+}
+
+export function rememberHeldTranscriptionForTests(audioHash: string, jobId: string): void {
+  rememberHeld(audioHash, jobId);
 }
 
 // ---------------------------------------------------------------------------
@@ -428,7 +443,12 @@ async function attemptStageCacheFirst<R>(
     await prepare();
     view = await runJobWithReceipt<R>(request, signal, onEvent);
   }
-  workerSecTotal += view.workerSec ?? 0;
+  if (view.jobId) {
+    bindLiveCloudJob(view.jobId, { projectId: request.projectId, rowId: request.rowId });
+    noteCloudJobWorkerSec(view.jobId, view.workerSec ?? 0);
+  } else {
+    workerSecTotal += view.workerSec ?? 0;
+  }
   return {
     result: view.result!, cached: view.cached, uploaded, encoded, retried: false,
     jobId: view.jobId, handedOff: view.handedOff === true, workerSec: view.workerSec ?? undefined,
@@ -445,7 +465,7 @@ function runJobWithReceipt<R>(
   const run = runCloudJob<R>(request, {
     signal,
     onEvent: event => {
-      if (event.type === 'submitted') liveJobId = event.jobId;
+      if (event.type === 'submitted') bindLiveCloudJob(event.jobId, { projectId: request.projectId, rowId: request.rowId });
       if (event.type === 'cancelled') {
         recordCancelReceipt({
           stage: request.stage,
@@ -472,14 +492,51 @@ function runJobWithReceipt<R>(
   return run;
 }
 
-let liveJobId: string | undefined;
+export type CloudJobTarget = { projectId?: string; rowId?: string };
 
-export function liveCloudJobId(): string | undefined {
-  return liveJobId;
+export type CloudClientFinding = { code: string; display: string };
+let clientFindings: CloudClientFinding[] = [];
+export function noteCloudClientFinding(finding: CloudClientFinding): void {
+  clientFindings.push(finding);
+}
+export function takeCloudClientFindings(): CloudClientFinding[] {
+  const out = clientFindings;
+  clientFindings = [];
+  return out;
 }
 
-export async function killLiveCloudJob(): Promise<void> {
-  const id = liveJobId;
+function targetKey(target?: CloudJobTarget): string {
+  if (target?.rowId) return `row:${target.rowId}`;
+  if (target?.projectId) return `project:${target.projectId}`;
+  return 'anon';
+}
+
+const liveJobs = new Map<string, string>();
+const jobsForTarget = new Map<string, string[]>();
+
+export function bindLiveCloudJob(jobId: string, target?: CloudJobTarget): void {
+  const key = targetKey(target);
+  liveJobs.set(key, jobId);
+  const list = jobsForTarget.get(key) ?? [];
+  if (!list.includes(jobId)) list.push(jobId);
+  jobsForTarget.set(key, list);
+}
+
+export function liveCloudJobId(target?: CloudJobTarget): string | undefined {
+  return liveJobs.get(targetKey(target));
+}
+
+export function cloudWorkerSecForTarget(target: CloudJobTarget): number {
+  return cloudWorkerSecForJobs(jobsForTarget.get(targetKey(target)) ?? []);
+}
+
+export function __resetLiveCloudJobsForTests(): void {
+  liveJobs.clear();
+  jobsForTarget.clear();
+}
+
+export async function killLiveCloudJob(target?: CloudJobTarget): Promise<void> {
+  const id = liveCloudJobId(target);
   if (!id) return;
   try {
     const view = await killCloudJob(id);
@@ -492,8 +549,9 @@ export async function killLiveCloudJob(): Promise<void> {
       estimatedUsd: view.estimatedUsd ?? 0,
       at: Date.now(),
     });
-  } catch {
-    /* U5 receipts already cover a DELETE that did not land */
+  } catch (err) {
+    const cloud = toCloudError(err);
+    noteCloudClientFinding({ code: cloud.kind, display: describeCloudError(cloud) });
   }
 }
 
@@ -502,12 +560,21 @@ export async function killAllMemberCloudJobs(): Promise<void> {
   let jobs: Awaited<ReturnType<typeof listCloudJobs>> = [];
   try {
     jobs = await listCloudJobs({});
-  } catch {
+  } catch (err) {
+    const cloud = toCloudError(err);
+    noteCloudClientFinding({
+      code: 'stop-all-unsupported',
+      display: 'Stop-all is not supported on this sync server',
+    });
+    void cloud;
     return;
   }
   await Promise.all(jobs.map(async j => {
     if (j.status === 'queued' || j.status === 'running' || j.holdOpen) {
-      try { await killCloudJob(j.jobId); } catch { /* already gone */ }
+      try { await killCloudJob(j.jobId); } catch (err) {
+        const cloud = toCloudError(err);
+        noteCloudClientFinding({ code: cloud.kind, display: describeCloudError(cloud) });
+      }
     }
   }));
 }
@@ -594,8 +661,9 @@ export async function transcribeViaCloud(args: {
   if (signal.aborted) throw abortError();
   try {
     onProgress(1);
+    const hotHold = Boolean(args.holdJobId);
     if (!holdJobId) holdJobId = await heldJobIdForOwner(args.projectId, args.rowId);
-    if (args.projectId || args.rowId) {
+    if (!hotHold && (args.projectId || args.rowId)) {
       try {
         const listed = await listCloudJobs({ projectId: args.projectId, rowId: args.rowId });
         const running = reattachPlan(listed).poll;
@@ -603,13 +671,14 @@ export async function transcribeViaCloud(args: {
           const view = await pollCloudJob<CloudTranscribeResult>(running.jobId, {
             signal,
             onEvent: e => {
-              if (e.type === 'submitted') liveJobId = e.jobId;
+              if (e.type === 'submitted') bindLiveCloudJob(e.jobId, { projectId: args.projectId, rowId: args.rowId });
               onProgress(cloudProgressPercent(e, durationSecs));
               const phase = phaseForEvent('transcribe', e);
               if (phase) reportPhase(audioHash, phase);
             },
           });
-          liveJobId = view.jobId;
+          bindLiveCloudJob(view.jobId, { projectId: args.projectId, rowId: args.rowId });
+          if (view.jobId) noteCloudJobWorkerSec(view.jobId, view.workerSec ?? 0);
           if (hold && !view.cached && view.jobId) rememberHeld(audioHash, view.jobId);
           const result = view.result!;
           const provenance = result.provenance as GatewayProvenance;
@@ -764,11 +833,12 @@ export async function alignViaCloud(args: {
   // Wave 3 U4.5 — hand this to the held transcription's container, if any.
   const pendingHold = heldTranscriptions.get(args.audioHash);
   if (pendingHold) noteStageGap(args.audioHash, pendingHold.at);
+  const hotHold = Boolean(pendingHold);
   let holdJobId = takeHeldTranscription(args.audioHash);
-  if (!holdJobId) holdJobId = await heldJobIdForOwner(args.projectId, args.rowId);
+  if (!hotHold && !holdJobId) holdJobId = await heldJobIdForOwner(args.projectId, args.rowId);
   const holdNext = holdAfterAlign.delete(args.audioHash);
   try {
-    if (args.projectId || args.rowId) {
+    if (!hotHold && (args.projectId || args.rowId)) {
       try {
         const listed = await listCloudJobs({ projectId: args.projectId, rowId: args.rowId });
         const running = reattachPlan(listed).poll;
@@ -776,12 +846,13 @@ export async function alignViaCloud(args: {
           const view = await pollCloudJob<CloudAlignResult>(running.jobId, {
             signal: args.signal,
             onEvent: e => {
-              if (e.type === 'submitted') liveJobId = e.jobId;
+              if (e.type === 'submitted') bindLiveCloudJob(e.jobId, { projectId: args.projectId, rowId: args.rowId });
               const phase = phaseForEvent('align', e);
               if (phase) reportPhase(args.audioHash, phase);
             },
           });
-          liveJobId = view.jobId;
+          bindLiveCloudJob(view.jobId, { projectId: args.projectId, rowId: args.rowId });
+          if (view.jobId) noteCloudJobWorkerSec(view.jobId, view.workerSec ?? 0);
           if (holdNext && !view.cached && view.jobId) heldAligns.set(args.audioHash, { jobId: view.jobId, at: Date.now() });
           const result = view.result!;
           return {
