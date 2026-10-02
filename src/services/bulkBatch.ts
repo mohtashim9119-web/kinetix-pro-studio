@@ -24,6 +24,7 @@
 //  - The batch is reachable from the dashboard until the operator clears it.
 // ---------------------------------------------------------------------------
 
+import { laterCheckpoint } from './bulkStageChecklist';
 import type { QueueItem, SyncQueue } from './syncQueue';
 
 export type BatchPhase =
@@ -47,6 +48,12 @@ export interface BatchRow {
   awaitingOpen?: boolean;
   /** Cloud worker-seconds this row used — its cost line survives a restart. */
   workerSec?: number;
+  /** Each billed attempt (fail + retry + finish). `workerSec` is their sum. */
+  billingAttempts?: { at: number; workerSec: number }[];
+  /** Last gateway job id for this row — reattach polls it after a crash. */
+  cloudJobId?: string;
+  /** Automatic failure retries used (at most one). Operator Retry resets it. */
+  autoRetries?: number;
   /** What the row held at Build Timeline (names and slots only, no bytes), so a
    *  built row still reads "17 files" with its four slots after a restart. */
   summary?: BatchRowSummary;
@@ -159,13 +166,23 @@ export const groupProgress = (group: BulkGroup, records: readonly BatchRow[]): B
 export const batchProgress = (groups: readonly BulkGroup[], records: readonly BatchRow[]): BulkProgress =>
   progressOf(groups.flatMap(g => g.rowIds), records);
 
+function recordQueueBilling(row: BatchRow, item: Readonly<QueueItem>): boolean {
+  if (!(item.workerSec > 0) || item.finishedAt === undefined) return false;
+  const attempts = row.billingAttempts ?? [];
+  if (attempts.some(a => a.at === item.finishedAt && a.workerSec === item.workerSec)) return false;
+  attempts.push({ at: item.finishedAt, workerSec: item.workerSec });
+  row.billingAttempts = attempts;
+  row.workerSec = attempts.reduce((sum, a) => sum + a.workerSec, 0);
+  return true;
+}
+
 const TERMINAL: ReadonlySet<BatchPhase> = new Set(['done', 'finish-failed', 'paused', 'failed', 'cancelled', 'skipped']);
 export const isBatchRowFinal = (p: BatchPhase): boolean => TERMINAL.has(p);
 
 export interface BatchRunnerDeps {
   queue: SyncQueue;
   /** Queues cloud jobs for these projects (`queueProjectsForCloudSync`). */
-  enqueue: (rows: { id: string; name: string; checkpoint?: BulkCheckpoint; contentKey?: string }[]) => void;
+  enqueue: (rows: { id: string; name: string; checkpoint?: BulkCheckpoint; contentKey?: string }[], opts?: { next?: boolean }) => void;
   /** Does this project still exist? A deleted one is dropped, not built. */
   exists: (id: string) => boolean;
   storage?: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
@@ -342,8 +359,17 @@ export class BulkBatchRunner {
   /** Persist a stage boundary so a crash resumes here. */
   noteCheckpoint(id: string, checkpoint: BulkCheckpoint): void {
     const row = this.rows.find(r => r.id === id);
-    if (!row || row.checkpoint === checkpoint) return;
-    row.checkpoint = checkpoint;
+    if (!row) return;
+    const next = laterCheckpoint(row.checkpoint, checkpoint);
+    if (next === row.checkpoint) return;
+    row.checkpoint = next;
+    this.commit();
+  }
+
+  noteCloudJob(id: string, jobId: string): void {
+    const row = this.rows.find(r => r.id === id);
+    if (!row || row.cloudJobId === jobId) return;
+    row.cloudJobId = jobId;
     this.commit();
   }
 
@@ -364,17 +390,50 @@ export class BulkBatchRunner {
   }
 
   /** Run this row again from its checkpoint. Content changes start over. */
-  retry(id: string, contentKey?: string): void {
+  retry(id: string, contentKey?: string, opts?: { auto?: boolean; next?: boolean }): void {
     const row = this.rows.find(r => r.id === id);
     if (!row) return;
-    if (row.phase !== 'failed' && row.phase !== 'finish-failed' && row.phase !== 'paused') return;
+    if (row.phase !== 'failed' && row.phase !== 'finish-failed' && row.phase !== 'paused' && row.phase !== 'cancelled' && !opts?.auto) return;
+    if (!opts?.auto) row.autoRetries = 0;
     if (contentKey !== undefined && row.contentKey !== undefined && contentKey !== row.contentKey) {
       row.checkpoint = undefined;
     }
     row.phase = 'queued';
     row.message = undefined;
     this.commit();
-    this.deps.enqueue([{ id: row.id, name: row.name, checkpoint: row.checkpoint, contentKey: row.contentKey }]);
+    this.deps.enqueue(
+      [{ id: row.id, name: row.name, checkpoint: row.checkpoint, contentKey: row.contentKey }],
+      opts?.next ? { next: true } : undefined,
+    );
+  }
+
+  /** Operator Cancel of one row: DELETE the live job, park Cancelled. Pauses stay. */
+  cancel(id: string): void {
+    const row = this.rows.find(r => r.id === id);
+    if (!row || row.phase === 'paused') return;
+    this.deps.queue.cancel(id);
+  }
+
+  /** Cancel every queued/running row in this group. Paused rows are left. */
+  cancelGroup(groupId: string): void {
+    const group = this.groupList.find(g => g.id === groupId);
+    if (!group) return;
+    for (const id of group.rowIds) this.cancel(id);
+  }
+
+  /** Panic: stop every queue item and kill every server job for this user. */
+  async stopAllCloudWork(killMemberJobs: () => Promise<void>): Promise<void> {
+    for (const row of this.rows) {
+      if (row.phase === 'paused') continue;
+      this.deps.queue.cancel(row.id);
+    }
+    await killMemberJobs();
+    for (const row of this.rows) {
+      if (row.phase === 'queued' || row.phase === 'cloud') {
+        row.phase = 'cancelled';
+      }
+    }
+    this.commit();
   }
 
   /** Stamp the content key a checkpoint belongs to (audio|script|engine). */
@@ -412,11 +471,23 @@ export class BulkBatchRunner {
 
   private onQueue(): void {
     let changed = false;
-    for (const item of this.deps.queue.snapshot().items) {
+    const items = this.deps.queue.snapshot().items;
+    const latest = new Map<string, (typeof items)[number]>();
+    for (const item of items) latest.set(item.id, item);
+    for (const item of items) {
       const row = this.rows.find(r => r.id === item.id);
-      // The cost line is kept on the record (it survives a restart).
-      if (row && item.workerSec > (row.workerSec ?? 0)) { row.workerSec = item.workerSec; changed = true; }
+      if (row) {
+        const billed = recordQueueBilling(row, item);
+        if (billed) changed = true;
+      }
       if (!row || isBatchRowFinal(row.phase) || row.phase === 'finishing') continue;
+      if (latest.get(item.id) !== item) continue;
+      if (item.status === 'failed' && (row.autoRetries ?? 0) < 1) {
+        row.autoRetries = 1;
+        this.retry(row.id, undefined, { auto: true, next: true });
+        changed = true;
+        continue;
+      }
       const next = this.mapQueue(item, row);
       const fromPhase: BulkCheckpoint | undefined =
         item.phase === 'Aligning on the cloud…' ? 'transcript-cached'
@@ -425,7 +496,7 @@ export class BulkBatchRunner {
       const checkpoint = next?.checkpoint ?? fromPhase;
       if ((next && (next.phase !== row.phase || next.message !== row.message)) || (checkpoint && checkpoint !== row.checkpoint)) {
         if (next) { row.phase = next.phase; row.message = next.message; }
-        if (checkpoint) row.checkpoint = checkpoint;
+        if (checkpoint) row.checkpoint = laterCheckpoint(row.checkpoint, checkpoint);
         changed = true;
       }
     }
@@ -438,6 +509,7 @@ export class BulkBatchRunner {
       case 'running': return { phase: 'cloud' };
       case 'done': return { phase: 'cloud-done', checkpoint: 'aligned' };
       case 'skipped':
+        if (item.detail === 'detached') return undefined;
         // "Already built" is a finished cloud state; anything else is a reason.
         return /already built/i.test(item.detail ?? '') ? { phase: 'cloud-done' } : { phase: 'skipped', message: item.detail };
       case 'paused': return { phase: 'paused', message: item.detail ?? item.reason };

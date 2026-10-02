@@ -17,12 +17,14 @@ export const cloudSyncQueue = new SyncQueue(cloudQueueEngine);
 export function queueProjectsForCloudSync(
   projects: readonly { id: string; name: string; checkpoint?: import('./bulkBatch').BulkCheckpoint; contentKey?: string }[],
   parseProjectData: CloudQueueDeps['parseProjectData'],
+  opts?: { next?: boolean },
 ): number {
   const deps: CloudQueueDeps = {
     ...defaultCloudQueueDeps(parseProjectData),
     noteContent: (id, key) => { runner?.noteContent(id, key); },
+    noteCloudJob: (id, jobId) => { runner?.noteCloudJob(id, jobId); },
   };
-  return cloudSyncQueue.enqueue(projects.map(p => createCloudProjectJob(p, deps)));
+  return cloudSyncQueue.enqueue(projects.map(p => createCloudProjectJob(p, deps)), opts);
 }
 
 // Wave 3 U7.8 — the persistent batch: survives closing the window, a reload,
@@ -38,7 +40,7 @@ export function bulkBatchRunner(parseProjectData?: CloudQueueDeps['parseProjectD
   if (parseProjectData) parseForResume = parseProjectData;
   runner ??= new BulkBatchRunner({
     queue: cloudSyncQueue,
-    enqueue: rows => { if (parseForResume) queueProjectsForCloudSync(rows, parseForResume); },
+    enqueue: (rows, opts) => { if (parseForResume) queueProjectsForCloudSync(rows, parseForResume, opts); },
     exists: id => loadAllMetas().some(m => m.id === id),
   });
   return runner;

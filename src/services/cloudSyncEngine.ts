@@ -46,6 +46,9 @@ import {
   prepareCloudAudio,
   releaseCloudJob,
   runCloudJob,
+  pollCloudJob,
+  listCloudJobs,
+  killCloudJob,
   toCloudError,
   describeCloudError,
   type CloudAlignResult,
@@ -62,6 +65,7 @@ import { stampCloudProvenance, stampWhisperProvenance, type GatewayProvenance } 
 import { transcribeWithProgress } from './whisperService';
 import { checkAudioDuration } from './cloudAudioLimit';
 import { recordCancelReceipt, trackStoppingRun } from './cloudCancelReceipts';
+import { reattachPlan } from './cloudJobOwnership';
 
 // ---------------------------------------------------------------------------
 // Audio preparation, single-flight by content hash.
@@ -159,8 +163,8 @@ export interface CloudStageRun<R> {
 // just spawns normally for a hold that already closed.
 // ---------------------------------------------------------------------------
 
-/** Mirrors `cloud/sync_core.py`'s HOLD_FOR_PLAN_SEC, minus a margin. */
-export const HELD_TRANSCRIPTION_TTL_MS = 25_000;
+/** Mirrors `cloud/sync_core.py`'s HOLD_FOR_PLAN_SEC (orphan floor 2s), minus a margin. */
+export const HELD_TRANSCRIPTION_TTL_MS = 1_500;
 
 /**
  * The language key a cloud transcribe is stored under. Peek, adopt and the
@@ -441,6 +445,7 @@ function runJobWithReceipt<R>(
   const run = runCloudJob<R>(request, {
     signal,
     onEvent: event => {
+      if (event.type === 'submitted') liveJobId = event.jobId;
       if (event.type === 'cancelled') {
         recordCancelReceipt({
           stage: request.stage,
@@ -460,11 +465,61 @@ function runJobWithReceipt<R>(
     const onAbort = (): void => trackStoppingRun(run);
     signal.addEventListener('abort', onAbort, { once: true });
     void run.then(
-      () => signal.removeEventListener('abort', onAbort),
-      () => signal.removeEventListener('abort', onAbort),
+      () => { signal.removeEventListener('abort', onAbort); },
+      () => { signal.removeEventListener('abort', onAbort); },
     );
   }
   return run;
+}
+
+let liveJobId: string | undefined;
+
+export function liveCloudJobId(): string | undefined {
+  return liveJobId;
+}
+
+export async function killLiveCloudJob(): Promise<void> {
+  const id = liveJobId;
+  if (!id) return;
+  try {
+    const view = await killCloudJob(id);
+    recordCancelReceipt({
+      stage: view.stage === 'align' ? 'align' : 'transcribe',
+      jobId: id,
+      confirmed: view.status === 'cancelled',
+      started: view.startedAt != null,
+      workerSec: view.workerSec ?? 0,
+      estimatedUsd: view.estimatedUsd ?? 0,
+      at: Date.now(),
+    });
+  } catch {
+    /* U5 receipts already cover a DELETE that did not land */
+  }
+}
+
+/** Panic Stop all: DELETE every live job for this member. Finished records stay. */
+export async function killAllMemberCloudJobs(): Promise<void> {
+  let jobs: Awaited<ReturnType<typeof listCloudJobs>> = [];
+  try {
+    jobs = await listCloudJobs({});
+  } catch {
+    return;
+  }
+  await Promise.all(jobs.map(async j => {
+    if (j.status === 'queued' || j.status === 'running' || j.holdOpen) {
+      try { await killCloudJob(j.jobId); } catch { /* already gone */ }
+    }
+  }));
+}
+
+async function heldJobIdForOwner(projectId?: string, rowId?: string): Promise<string | undefined> {
+  if (!projectId && !rowId) return undefined;
+  try {
+    const listed = await listCloudJobs({ projectId, rowId });
+    return reattachPlan(listed).holdJobId;
+  } catch {
+    return undefined;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -503,6 +558,8 @@ export interface HostTranscribeResult {
   handedOff?: boolean;
   /** Wave 3 U7 — cloud only: GPU seconds worked (absent on a cache hit). */
   workerSec?: number;
+  /** Gateway job this result came from — pause/reattach keys off it. */
+  jobId?: string;
 }
 
 /** A cloud failure surfaced through the staging path's existing Error
@@ -529,15 +586,52 @@ export async function transcribeViaCloud(args: {
   hold?: boolean;
   /** Wave 3 U7 — run in the container the previous queued project kept. */
   holdJobId?: string;
+  projectId?: string;
+  rowId?: string;
 }): Promise<HostTranscribeResult> {
-  const { asset, audioHash, durationSecs, language, onProgress, signal, hold, holdJobId } = args;
+  const { asset, audioHash, durationSecs, language, onProgress, signal, hold } = args;
+  let { holdJobId } = args;
   if (signal.aborted) throw abortError();
   try {
     onProgress(1);
+    if (!holdJobId) holdJobId = await heldJobIdForOwner(args.projectId, args.rowId);
+    if (args.projectId || args.rowId) {
+      try {
+        const listed = await listCloudJobs({ projectId: args.projectId, rowId: args.rowId });
+        const running = reattachPlan(listed).poll;
+        if (running && running.stage === 'transcribe' && (running.status === 'queued' || running.status === 'running')) {
+          const view = await pollCloudJob<CloudTranscribeResult>(running.jobId, {
+            signal,
+            onEvent: e => {
+              if (e.type === 'submitted') liveJobId = e.jobId;
+              onProgress(cloudProgressPercent(e, durationSecs));
+              const phase = phaseForEvent('transcribe', e);
+              if (phase) reportPhase(audioHash, phase);
+            },
+          });
+          liveJobId = view.jobId;
+          if (hold && !view.cached && view.jobId) rememberHeld(audioHash, view.jobId);
+          const result = view.result!;
+          const provenance = result.provenance as GatewayProvenance;
+          return {
+            tokens: result.tokens,
+            detectedLanguage: language === undefined ? (result.detectedLanguage ?? undefined) : undefined,
+            stamp: ({ language: lang, completedAt }) => stampCloudProvenance(provenance, { language: lang, completedAt }),
+            host: 'cloud',
+            cached: view.cached,
+            handedOff: view.handedOff === true,
+            workerSec: view.workerSec ?? undefined,
+            jobId: view.jobId,
+          };
+        }
+      } catch { /* list/poll failed: submit below (inflight reuse still applies) */ }
+    }
     const run = await runStageCacheFirst<CloudTranscribeResult>(
       {
         stage: 'transcribe', audioHash, language: cloudTranscribeLanguage(language),
         ...(hold ? { hold: true } : {}), ...(holdJobId ? { holdJobId } : {}),
+        ...(args.projectId ? { projectId: args.projectId } : {}),
+        ...(args.rowId ? { rowId: args.rowId } : {}),
       },
       () => assetBlob(asset),
       {
@@ -563,6 +657,7 @@ export async function transcribeViaCloud(args: {
       cached: run.cached,
       handedOff: run.handedOff === true,
       workerSec: run.workerSec,
+      jobId: run.jobId,
     };
   } catch (err) {
     if (err instanceof DOMException) throw err;
@@ -617,6 +712,8 @@ export async function transcribeForHost(args: {
   hold?: boolean;
   /** Wave 3 U7 — cloud only: the container the previous queued project kept. */
   holdJobId?: string;
+  projectId?: string;
+  rowId?: string;
 }): Promise<HostTranscribeResult> {
   if (args.host === 'cloud') {
     if (!args.audioHash) {
@@ -661,14 +758,44 @@ export async function alignViaCloud(args: {
   chunks: readonly CloudChunk[];
   language: string;
   signal?: AbortSignal;
+  projectId?: string;
+  rowId?: string;
 }): Promise<CloudAlignOutcome> {
   // Wave 3 U4.5 — hand this to the held transcription's container, if any.
   const pendingHold = heldTranscriptions.get(args.audioHash);
   if (pendingHold) noteStageGap(args.audioHash, pendingHold.at);
-  const holdJobId = takeHeldTranscription(args.audioHash);
-  // Wave 3 U7 — a queued project with another behind it keeps the container.
+  let holdJobId = takeHeldTranscription(args.audioHash);
+  if (!holdJobId) holdJobId = await heldJobIdForOwner(args.projectId, args.rowId);
   const holdNext = holdAfterAlign.delete(args.audioHash);
   try {
+    if (args.projectId || args.rowId) {
+      try {
+        const listed = await listCloudJobs({ projectId: args.projectId, rowId: args.rowId });
+        const running = reattachPlan(listed).poll;
+        if (running && running.stage === 'align' && (running.status === 'queued' || running.status === 'running')) {
+          const view = await pollCloudJob<CloudAlignResult>(running.jobId, {
+            signal: args.signal,
+            onEvent: e => {
+              if (e.type === 'submitted') liveJobId = e.jobId;
+              const phase = phaseForEvent('align', e);
+              if (phase) reportPhase(args.audioHash, phase);
+            },
+          });
+          liveJobId = view.jobId;
+          if (holdNext && !view.cached && view.jobId) heldAligns.set(args.audioHash, { jobId: view.jobId, at: Date.now() });
+          const result = view.result!;
+          return {
+            status: 'ok',
+            words: result.words,
+            nFallbackChunks: result.nFallbackChunks,
+            provenance: result.provenance as GatewayProvenance,
+            cached: view.cached,
+            handedOff: view.handedOff === true,
+            workerSec: view.workerSec ?? undefined,
+          };
+        }
+      } catch { /* list/poll failed: submit below */ }
+    }
     const run = await runStageCacheFirst<CloudAlignResult>(
       {
         stage: 'align',
@@ -677,6 +804,8 @@ export async function alignViaCloud(args: {
         chunks: args.chunks.map(c => ({ startSec: c.startSec, endSec: c.endSec, text: c.text })),
         ...(holdJobId ? { holdJobId } : {}),
         ...(holdNext ? { hold: true } : {}),
+        ...(args.projectId ? { projectId: args.projectId } : {}),
+        ...(args.rowId ? { rowId: args.rowId } : {}),
       },
       async () => args.voiceoverBlob,
       {
@@ -702,9 +831,9 @@ export async function alignViaCloud(args: {
       workerSec: run.workerSec,
     };
   } catch (err) {
-    if (holdJobId) void releaseCloudJob(holdJobId).catch(() => {});
     const error = toCloudError(err);
     if (error.kind === 'cancelled') return { status: 'cancelled' };
+    if (holdJobId) void releaseCloudJob(holdJobId).catch(() => {});
     return { status: 'failed', error };
   }
 }

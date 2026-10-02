@@ -34,6 +34,10 @@ vi.mock('../services/bulkSyncQueue', async () => {
     }))),
   };
 });
+vi.mock('../services/cloudSyncEngine', async importActual => ({
+  ...(await importActual<typeof import('../services/cloudSyncEngine')>()),
+  killAllMemberCloudJobs: async () => {},
+}));
 
 import { BulkProjectsModal } from './BulkProjectsModal';
 import { BulkRowStore, type BulkRowDeps } from '../services/bulkRows';
@@ -681,4 +685,50 @@ describe('1.3.1 — row files, message line, docking', () => {
     await act(async () => { root.render(modal(h, 0, { docked: false })); });
     expect(q(host, 'bulk-modal')!.className).toContain('shadow-[');
   });
+
+  it('P10: a running group shows Cancel all and Stop all; there is still no bottom Cancel-all', async () => {
+    finishAtOnce = false;
+    cloudSyncQueue.clearFinished();
+    const h = store();
+    const runner = makeRunner();
+    const g = runner.createGroup(h.store.createDrafts(2))!;
+    const { host } = await mount(modal(h, 0, { runner }));
+    await act(async () => {
+      await h.store.addFiles(g.rowIds[0]!, fourFiles());
+      h.store.setTypedName(g.rowIds[0]!, 'One');
+    });
+    await act(async () => { (q(host, `bulk-build-${g.id}`) as HTMLButtonElement).click(); });
+    await vi.waitFor(() => expect(q(host, 'bulk-stop-all')).not.toBeNull());
+    expect(q(host, `bulk-cancel-group-${g.id}`)).not.toBeNull();
+    expect(q(host, 'bulk-cancel-all')).toBeNull();
+    await act(async () => { (q(host, `bulk-cancel-group-${g.id}`) as HTMLButtonElement).click(); });
+    await vi.waitFor(() => expect(q(host, 'bulk-stop-all')).toBeNull());
+  }, 15_000);
+
+  it('cancel a running row: it is not built — Retry and file edits work; status is Cancelled — Retry', async () => {
+    finishAtOnce = false;
+    cloudSyncQueue.clearFinished();
+    const h = store();
+    const runner = makeRunner();
+    const g = runner.createGroup(h.store.createDrafts(2))!;
+    const { host } = await mount(modal(h, 0, { runner }));
+    const id = g.rowIds[0]!;
+    await act(async () => {
+      await h.store.addFiles(id, fourFiles());
+      h.store.setTypedName(id, 'One');
+    });
+    await act(async () => { (q(host, `bulk-build-${g.id}`) as HTMLButtonElement).click(); });
+    await vi.waitFor(() => expect(q(host, `bulk-cancel-${id}`)).not.toBeNull());
+    await act(async () => { (q(host, `bulk-cancel-${id}`) as HTMLButtonElement).click(); });
+    await vi.waitFor(() => expect(q(host, `bulk-status-${id}`)!.textContent).toContain('Cancelled — Retry'));
+    expect(q(host, `bulk-retry-${id}`)).not.toBeNull();
+    expect((q(host, `bulk-name-${id}`) as HTMLInputElement).disabled).toBe(false);
+    expect(h.store.snapshot().find(r => r.projectId === id)!.sealed).toBe(false);
+    finishAtOnce = true;
+    await act(async () => { (q(host, `bulk-retry-${id}`) as HTMLButtonElement).click(); });
+    await vi.waitFor(() => {
+      const text = q(host, `bulk-status-${id}`)!.textContent ?? '';
+      expect(text).not.toContain('Cancelled — Retry');
+    });
+  }, 15_000);
 });

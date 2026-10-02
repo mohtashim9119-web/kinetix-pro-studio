@@ -44,8 +44,9 @@ import {
   requestHoldAfterAlign,
   takeHeldAlign,
   transcribeForHost,
+  killLiveCloudJob,
 } from './cloudSyncEngine';
-import { releaseCloudJob } from './cloudGateway';
+import { pauseCloudJob, releaseCloudJob } from './cloudGateway';
 import { describeCloudCancel, settleCloudCancels, takeCancelReceiptsSince } from './cloudCancelReceipts';
 import { saveFaPause, type FaPauseRecord } from './faSyncPauseStore';
 import { loadStagedFromStore } from './stagedFilesPersist';
@@ -86,6 +87,7 @@ export const cloudQueueEngine: QueueEngine = {
     return describeCloudCancel(takeCancelReceiptsSince(item.startedAt ?? 0), { cloud: true });
   },
   settleCancel: () => settleCloudCancels(),
+  killLive: () => killLiveCloudJob(),
   onDrain(carry) {
     if (typeof carry === 'string' && carry) void releaseCloudJob(carry).catch(() => undefined);
   },
@@ -124,6 +126,8 @@ export interface CloudQueueDeps {
   probeDuration?: (file: File, audioHash: string) => Promise<number>;
   /** Persist a pause onto the project's sync log (bulk path). */
   saveProject?: (project: Project) => Promise<{ ok: boolean }>;
+  /** Stamp the live gateway job id so a crash can reattach. */
+  noteCloudJob?: (id: string, jobId: string) => void;
   /** Stamp the content key this run was planned against. */
   noteContent?: (id: string, contentKey: string) => void;
   /** App.tsx's `parseProjectData` — injected so this module never imports
@@ -253,12 +257,28 @@ export function createCloudProjectJob(
         return { status: 'skipped', detail: 'Already built on the cloud engine.' };
       }
 
+      let cloudJobId: string | undefined;
+
       const pause = (record: Omit<FaPauseRecord, 'projectId' | 'syncRunId' | 'timestamp' | 'host' | 'audioHash'>): QueueJobOutcome => {
         const syncRunId = mintSyncLogId();
         const timestamp = Date.now();
         saveFaPause({
           ...record, projectId: project.id, syncRunId, timestamp, host: 'cloud', audioHash,
         });
+        if (cloudJobId) {
+          void pauseCloudJob(cloudJobId, {
+            id: syncRunId,
+            kind: record.reason,
+            question: record.detail ?? record.reason,
+            options: ['retry', 'local', 'whisper', 'cancel'],
+            projectId: project.id,
+            host: 'cloud',
+            audioHash,
+            stage: record.stage,
+            timestamp,
+            detail: record.detail,
+          }).catch(() => undefined);
+        }
         const next = appendSyncLogEntries(
           project,
           [buildFaPausedEntry(syncRunId, record.reason, record.detail, timestamp)],
@@ -287,8 +307,13 @@ export function createCloudProjectJob(
             host: 'cloud', asset: voiceover, durationSecs: durationSec, language: project.language,
             onProgress: () => {}, signal: ctx.signal, audioHash,
             hold: resolution.gateOpen, holdJobId: token,
+            projectId: project.id, rowId: meta.id,
           });
           tokens = tr.tokens;
+          if (tr.jobId) {
+            cloudJobId = tr.jobId;
+            deps.noteCloudJob?.(meta.id, tr.jobId);
+          }
           if (token && !tr.handedOff) {
             // The kept container was not used (cache hit or the hold closed).
             // A cache hit hands it straight on to the alignment; otherwise let go.
@@ -297,12 +322,22 @@ export function createCloudProjectJob(
           }
           }
         } catch (err) {
-          letGo();
-          if (err instanceof DOMException && err.name === 'AbortError') throw err;
+          if (err instanceof DOMException && err.name === 'AbortError') {
+            if (ctx.signal.aborted) { letGo(); throw err; }
+            return { status: 'skipped', detail: 'detached' };
+          }
           if (err instanceof CloudStageError) {
             const report = cloudFailureReport(err.cloud);
-            return pause({ reason: report.pauseReason, detail: report.display, stage: 'transcribe' });
+            if (err.cloud.kind === 'auth' || err.cloud.kind === 'notConfigured') {
+              letGo();
+              return pause({ reason: report.pauseReason, detail: report.display, stage: 'transcribe' });
+            }
+            if (cloudJobId) ctx.carry.set(cloudJobId);
+            else letGo();
+            return { status: 'failed', detail: report.display };
           }
+          if (cloudJobId) ctx.carry.set(cloudJobId);
+          else letGo();
           return { status: 'failed', detail: err instanceof Error ? err.message : String(err) };
         }
 
@@ -314,6 +349,8 @@ export function createCloudProjectJob(
           spineKey: `${audioHash}|${scriptHash}|${resolution.key}`,
           voiceover, audioHash, audioDurationSec: durationSec, tokens,
           language: resolveFaLanguage(project),
+          projectId: project.id,
+          rowId: meta.id,
           prepareSegments: () => deps.parseProjectData(
             project.script, project.sceneDetails, project.assets, durationSec, project.segments, project.defaultTextOverlay ?? false,
           ),
@@ -325,7 +362,10 @@ export function createCloudProjectJob(
           return { status: 'done', detail: 'Ready — press Build Timeline to reveal it.' };
         }
         if (kept) void releaseCloudJob(kept).catch(() => undefined);
-        if (outcome.status === 'cancelled') throw new DOMException('Aborted', 'AbortError');
+        if (outcome.status === 'cancelled') {
+          if (ctx.signal.aborted) throw new DOMException('Aborted', 'AbortError');
+          return { status: 'skipped', detail: 'detached' };
+        }
         if (outcome.status === 'paused') return pause({ reason: outcome.faRun.reason, detail: outcome.faRun.detail });
         return { status: 'skipped', detail: outcome.reason };
       } finally {

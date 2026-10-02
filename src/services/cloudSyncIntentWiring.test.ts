@@ -116,8 +116,9 @@ describe('Wave 3 U5 — App wiring', () => {
   });
 
   it('cancelling the overlay aborts the pipeline and the in-flight transcription', () => {
+    expect(APP).toMatch(/void killLiveCloudJob\(\);/);
     expect(APP).toMatch(/syncAbortControllerRef\.current\?\.abort\(\);/);
-    expect(APP).toMatch(/const handleCancelSync = useCallback\(\(\): void => \{\s*syncAbortControllerRef\.current\?\.abort\(\);\s*cancelTranscription\(\);/);
+    expect(APP).toMatch(/const handleCancelSync = useCallback\(\(\): void => \{\s*void killLiveCloudJob\(\);\s*syncAbortControllerRef\.current\?\.abort\(\);\s*cancelTranscription\(\);/);
     expect(PIPE).toContain("if (faRun.status === 'cancelled') return { ok: false, message: 'Sync cancelled.' };");
   });
 

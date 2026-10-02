@@ -42,6 +42,10 @@ vi.mock('../services/mediaVaultClient', () => ({
   mediaVaultUnreference: (contentHash: string, projectId: string) => mockMediaVaultUnreference(contentHash, projectId),
   mediaVaultUnreferenceProject: (projectId: string) => mockMediaVaultUnreferenceProject(projectId),
 }));
+vi.mock('../services/cloudSyncEngine', async importActual => ({
+  ...(await importActual<typeof import('../services/cloudSyncEngine')>()),
+  killAllMemberCloudJobs: async () => {},
+}));
 
 // eslint-disable-next-line import/first
 import { ProjectDashboard } from './ProjectDashboard';

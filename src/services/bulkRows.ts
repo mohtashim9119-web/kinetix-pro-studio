@@ -67,6 +67,8 @@ export interface BulkRowState {
   progress: string;
   /** The project has been created and handed to the batch. */
   built: boolean;
+  /** Cheap local check: duration, scene count, estimated cost. */
+  preflight?: string;
   /** The timeline finished successfully: files are then read-only. */
   sealed: boolean;
 }
@@ -581,6 +583,28 @@ export class BulkRowStore {
       const missing = missingSpineSlots(r.slots).map(slot => BUILD_TIMELINE_COPY.slotNames[slot]);
       const why = rowIncompleteReason(r.typedName, missing);
       if (why) { skips[id] = why; continue; }
+      const staged = await this.deps.loadStaged(id);
+      let durationSec = 0;
+      try {
+        const vo = staged?.voiceoverFile?.file;
+        if (vo) {
+          const hash = await this.deps.hashAudio(vo);
+          durationSec = await this.deps.probeDuration(vo, hash);
+        }
+      } catch (err) {
+        skips[id] = err instanceof Error ? err.message : 'Couldn’t read the voiceover.';
+        continue;
+      }
+      let sceneText = '';
+      try { sceneText = staged?.sceneFile ? await staged.sceneFile.file.text() : ''; } catch { sceneText = ''; }
+      const { bulkPreflight } = await import('./bulkPreflight');
+      const pre = bulkPreflight({
+        durationSec,
+        sceneText,
+        audioError: r.audio.state === 'failed' ? r.audio.detail : undefined,
+      });
+      if (!pre.ok) { skips[id] = pre.reason; continue; }
+      this.patch(id, { preflight: pre.summary });
       const name = r.typedName.trim();
       const ok = await this.deps.createProject({ id, name, assets: this.bundle.get(id) ?? [] });
       if (!ok) { skips[id] = 'the project could not be saved'; continue; }

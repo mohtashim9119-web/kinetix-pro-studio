@@ -239,7 +239,7 @@ describe('Wave 3 U7 — three projects, one container', () => {
     expect(q.snapshot().items[0]!.status).toBe('done');
   });
 
-  it('F1: a worker-error pause carries the gateway\'s typed code and verbatim server message', async () => {
+  it('F1: a worker-error is a true failure (verbatim server message), not a pause', async () => {
     const SERVER = 'CUDA OOM on worker-7: device-side assert';
     mockInvoke.mockImplementation(async (cmd: string, args: { job?: Sent }) => {
       if (cmd === 'cloud_cache_lookup') return { cached: false, audioPresent: true, audioDurationSec: 60 };
@@ -261,12 +261,8 @@ describe('Wave 3 U7 — three projects, one container', () => {
     q.enqueue([createCloudProjectJob(p, d)]);
     await settle(q);
     const item = q.snapshot().items[0]!;
-    expect(item.status).toBe('paused');
-    expect(item.reason).toBe('inference-failed');
+    expect(item.status).toBe('failed');
     expect(item.detail).toContain(SERVER);
     expect(item.detail).toContain('worker-error');
-    const pause = readFaPause('A');
-    expect(pause?.detail).toContain(SERVER);
-    expect(saved.at(-1)?.syncLog?.some(e => (e.errorMessage ?? e.message).includes(SERVER))).toBe(true);
   });
 });

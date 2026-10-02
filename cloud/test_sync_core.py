@@ -242,17 +242,20 @@ def test_only_this_members_held_transcription_can_take_an_alignment():
     # U7: a held alignment can hand its container to the next queued job.
     assert core.can_hold_for(dict(held, stage="align"), "operator")
     assert not core.can_hold_for(dict(held, stage="bogus"), "operator")
-    for dead in ("failed", "cancelled"):
-        assert not core.can_hold_for(dict(held, status=dead), "operator")
+    # A just-failed job still holds the container for an immediate retry
+    # (no HOLD wait, no second boot). Cancelled jobs do not.
+    assert core.can_hold_for(dict(held, status="failed"), "operator")
+    assert core.can_hold_for(dict(held, status="failed", hold=False), "operator")
+    assert not core.can_hold_for(dict(held, status="cancelled"), "operator")
     assert not core.can_hold_for(None, "operator")
 
 
 def test_hold_is_bounded_and_short():
-    # Held for the client's planning seconds, never for files to arrive.
-    # Widening this is rejected: a second boot (~$0.014) costs more than
-    # sitting the window (~$0.006), and a wider window doubles idle on the
-    # syncs that already hand off in a few seconds.
-    assert core.HOLD_FOR_PLAN_SEC == 30.0
+    # P11: the hold window is the orphan/crash floor (Modal GPU scaledown),
+    # not a 30s dead-man. A last job (hold=false) waits 0.
+    assert core.HOLD_FOR_PLAN_SEC == 2.0
+    assert core.hold_wait_budget(hold=False) == 0.0
+    assert core.hold_wait_budget(hold=True) == 2.0
 
 
 def test_a_lookup_never_boots_and_a_held_container_blocks_a_second():
@@ -433,3 +436,122 @@ def test_batch_summary_shows_one_boot_for_a_chained_queue_and_splits_distant_run
     assert first["workerSec"] == 102
     assert first["estimatedUsd"] == pytest.approx(102 * core.USD_PER_WORKER_SEC, abs=1e-6)
     assert (second["projects"], second["boots"], second["bootResidueSec"]) == (2, 3, 12)
+
+
+# Server-owned jobs: client death is a detach, pause lives on the job.
+
+
+def test_client_disconnect_does_not_kill_the_job():
+    assert core.CLIENT_DISCONNECT_KILLS_JOB is False
+
+
+def test_kill_client_mid_run_server_job_still_completes():
+    """P5 (1): dropping the poller is not a DELETE. The job reaches done."""
+    job = core.new_job("j1", "operator", "transcribe", AUDIO, "en", "k" * 64, 10.0, 1.0)
+    job["status"] = "running"
+    job["taskId"] = "ta-1"
+    # Simulate: client process dies. No cancel key is written.
+    assert job.get("status") != "cancelled"
+    job.update(status="done", finishedAt=20.0, workerSec=8.0)
+    assert job["status"] == "done"
+    # While it was still running, a relaunch POST reuses it instead of spawning.
+    assert core.reusable_inflight(dict(job, status="running"), "operator") is True
+    assert core.reusable_inflight(job, "operator") is False
+
+
+def test_reattach_reuses_one_boot():
+    """P5 (2): relaunch polls the same task id — not a second spawn."""
+    first = core.new_job("j1", "operator", "transcribe", AUDIO, "en", "k" * 64, 10.0, 1.0)
+    first.update(status="running", taskId="ta-1", projectId="proj-a", rowId="row-a")
+    core.apply_owner_fields(first, "proj-a", "row-a")
+    key = core.owner_index_key("operator", "project", "proj-a")
+    assert key == "owner:operator:project:proj-a"
+    ids = core.owner_ids_append(None, "j1")
+    ids = core.owner_ids_append(ids, "j1")
+    assert ids == ["j1"]
+    assert first["taskId"] == "ta-1"
+    # A second spawn would mint a new task id. Reattach keeps ta-1.
+    assert {first["taskId"]} == {"ta-1"}
+
+
+def test_pause_survives_reload_and_is_answerable():
+    """P5 (3): pause is on the job, not the session."""
+    job = core.new_job("j1", "operator", "transcribe", AUDIO, "en", "k" * 64, 10.0, 1.0)
+    job = core.attach_pause(job, {
+        "id": "pause-1",
+        "kind": "hopeless-local-coverage",
+        "question": "The script and audio do not match.",
+        "options": ["retry", "local", "cancel"],
+        "projectId": "proj-a",
+    })
+    assert job["awaitingAnswer"] is True
+    assert core.pause_dialog_for_job(job)["id"] == "pause-1"
+    # Reload: the in-memory session is gone; the job record still has the ask.
+    reloaded = dict(job)
+    assert core.pause_dialog_for_job(reloaded)["question"].startswith("The script")
+    answered = core.answer_pause(reloaded, "pause-1", "retry")
+    assert answered["pause"]["answer"] == "retry"
+    assert answered["awaitingAnswer"] is False
+    assert core.pause_dialog_for_job(answered) is None
+
+
+def test_answered_then_succeeded_job_shows_no_dialog():
+    """P5 (4): stale-answer class — ghost dialog must not return."""
+    job = core.new_job("j1", "operator", "transcribe", AUDIO, "en", "k" * 64, 10.0, 1.0)
+    job = core.attach_pause(job, {
+        "id": "pause-1",
+        "kind": "offline",
+        "question": "Could not reach the cloud.",
+        "options": ["retry", "cancel"],
+    })
+    job = core.answer_pause(job, "pause-1", "retry")
+    job.update(status="done", workerSec=4.0)
+    assert core.pause_dialog_for_job(job) is None
+
+
+def test_hold_stays_open_when_client_vanishes_until_handoff_or_close():
+    job = dict(core.new_job("j1", "operator", "transcribe", AUDIO, "en", "k" * 64, 10.0, 1.0), hold=True, status="done")
+    assert core.hold_is_open(job, None) is True
+    assert core.hold_is_open(job, core.HANDOFF_CLOSED) is False
+    assert core.hold_is_open(job, core.HANDOFF_RELEASE) is False
+    assert core.hold_is_open(job, "align-job") is False
+    assert core.public_job(job, hold_open=True)["holdOpen"] is True
+    assert core.public_job(job)["projectId"] is None
+
+
+# --- P11: GPU release at finish (no 30s idle hold) -------------------------
+
+
+def test_p11_finished_job_holds_zero_after_finish():
+    # Success + release (or a hand-off to the next job) fixes cost at that
+    # instant: nothing is billed as idle after the work itself.
+    assert core.post_finish_held_sec(hold=True, handed_off=True, released=False, waited_sec=0.04) == 0.0
+    assert core.post_finish_held_sec(hold=True, handed_off=False, released=True, waited_sec=0.01) == 0.0
+    assert core.post_finish_held_sec(hold=False, handed_off=False, released=False, waited_sec=30.0) == 0.0
+    # An orphaned holder (no queued work, client gone) sits the scaledown
+    # floor, never a 30s dead-man.
+    assert core.post_finish_held_sec(hold=True, handed_off=False, released=False, waited_sec=30.0) == 2.0
+
+
+def test_p11_last_row_releases_without_a_timeout_wait():
+    assert core.hold_wait_budget(hold=False) == 0.0
+    lines = [
+        _line(100, "done", 8.0, audio="a" * 64),
+        _line(108, "done", 3.0, audio="a" * 64, stage="align"),
+    ]
+    assert core.held_after_finish(lines, job_id="j108") == 0.0
+    batch = core.batch_summaries(lines)[0]
+    assert batch["heldSec"] == 0.0
+
+
+def test_p11_kill_releases_gpu_and_keeps_the_finished_record():
+    job = dict(core.new_job("j1", "operator", "transcribe", AUDIO, "en", "k" * 64, 10.0, 1.0),
+               status="done", workerSec=4.0, hold=True)
+    d = _PutIfAbsent()
+    d.put(job["jobId"], job)
+    action = core.kill_gpu_keep_record(d, job["jobId"])
+    assert action == core.HANDOFF_RELEASE
+    assert d[job["jobId"]]["status"] == "done"
+    assert d[job["jobId"]]["workerSec"] == 4.0
+    assert d[core.handoff_key(job["jobId"])] == core.HANDOFF_RELEASE
+

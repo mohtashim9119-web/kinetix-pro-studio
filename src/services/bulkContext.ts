@@ -55,6 +55,7 @@ export const BULK_COPY = {
   buildNeeds: 'Fill every slot of at least one project to build',
   cancelRow: 'Cancel',
   cancelAll: 'Cancel all',
+  stopAll: 'Stop all',
   open: 'Open project',
   openShort: 'Open',
   openWhenReady: 'Opens once the timeline is built',

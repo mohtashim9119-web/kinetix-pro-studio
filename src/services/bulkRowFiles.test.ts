@@ -112,4 +112,18 @@ describe('bulk row files', () => {
     expect(names(store, 0)).toEqual(before);
     expect(await staged.get(id!)!.scriptFile!.file.text()).toBe('script a');
   });
+
+  it('a cancelled row is not sealed: replace/delete still work', async () => {
+    const { deps, staged } = fakeDeps();
+    const store = new BulkRowStore(deps);
+    const [id] = store.createDrafts(1);
+    await store.addFiles(id!, four('a'));
+    store.setTypedName(id!, 'Harbour');
+    await store.buildReady();
+    store.syncBuilt([{ id: id!, name: 'Harbour', phase: 'cancelled' }]);
+    expect(store.snapshot()[0]!.sealed).toBe(false);
+    await store.replaceFile(id!, 'script', new File(['new script'], 'script-new.txt'));
+    expect(names(store, 0)[0]).toBe('script-new.txt');
+    expect(await staged.get(id!)!.scriptFile!.file.text()).toBe('new script');
+  });
 });

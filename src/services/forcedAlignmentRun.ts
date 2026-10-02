@@ -308,6 +308,7 @@ export async function runForcedAlignmentForSync(
   // before any cloud FA is charged) and every outcome mapping below is
   // shared. Default `'local'` keeps every existing caller unchanged.
   host: SyncEngineHost = 'local',
+  owners?: { projectId?: string; rowId?: string },
 ): Promise<FaRunResult> {
   if (signal?.aborted) return { status: 'cancelled' };
 
@@ -352,6 +353,7 @@ export async function runForcedAlignmentForSync(
       voiceoverAsset, anchorTimedSegments, whisperTokens, audioDuration, language, signal, audioHash,
       coverage.band === 'marginal' ? coverage : undefined,
       host,
+      owners,
     );
   } catch (err) {
     // Anything reaching here is NOT one of the two invoke() calls (they have
@@ -386,6 +388,7 @@ async function runFaAttempt(
   // log a warn-only finding; nothing in this function branches on it.
   localCoverageWarning?: LocalCoverageResult,
   host: SyncEngineHost = 'local',
+  owners?: { projectId?: string; rowId?: string },
 ): Promise<FaRunResult> {
   const voiceoverBlob = voiceoverAsset.file ?? await (await fetch(voiceoverAsset.url)).blob();
 
@@ -449,7 +452,7 @@ async function runFaAttempt(
   if (host === 'cloud') {
     return runCloudFaAttempt(
       voiceoverBlob, audioHash, chunks, anchorTimedSegments, whisperTokens, silences, silenceError,
-      audioDuration, language, signal, localCoverageWarning,
+      audioDuration, language, signal, localCoverageWarning, owners,
     );
   }
 
@@ -598,6 +601,7 @@ async function runCloudFaAttempt(
   language: FaLanguageCode,
   signal: AbortSignal | undefined,
   localCoverageWarning: LocalCoverageResult | undefined,
+  owners?: { projectId?: string; rowId?: string },
 ): Promise<FaRunResult> {
   if (!audioHash) {
     return {
@@ -625,7 +629,10 @@ async function runCloudFaAttempt(
         cached: true,
         handedOff: false,
       }
-    : await alignViaCloud({ voiceoverBlob, audioHash, chunks, language, signal });
+    : await alignViaCloud({
+        voiceoverBlob, audioHash, chunks, language, signal,
+        projectId: owners?.projectId, rowId: owners?.rowId,
+      });
   if (!cachedWords && outcome.status === 'ok' && bound) {
     noteClientFaStamp(makeClientFaCache(
       { audioHash, scriptHash: bound.scriptHash, engineKey: bound.engineKey, planHash },

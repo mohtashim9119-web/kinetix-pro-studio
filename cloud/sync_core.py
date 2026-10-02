@@ -326,6 +326,120 @@ def result_expired(created_at: float, now: float) -> bool:
 # ---------------------------------------------------------------------------
 
 
+def validate_owner_id(value: Any, *, field: str) -> str | None:
+    """Optional project/row id the client stamps on a job so it can reattach."""
+    if value is None or value == "":
+        return None
+    if not isinstance(value, str) or len(value) > 128 or not value.isascii() or any(c.isspace() for c in value):
+        raise ValidationError("bad-owner", f"{field} must be a short ascii id")
+    return value
+
+
+def owner_index_key(member: str, kind: str, owner_id: str) -> str:
+    if kind not in ("project", "row", "member"):
+        raise ValueError(f"owner kind must be project, row, or member, got {kind!r}")
+    return f"owner:{member}:{kind}:{owner_id}"
+
+
+def member_index_key(member: str) -> str:
+    return owner_index_key(member, "member", member)
+
+
+def owner_ids_append(existing: Any, job_id: str, cap: int = 32) -> list[str]:
+    ids = [x for x in (existing or []) if isinstance(x, str)]
+    if job_id not in ids:
+        ids.append(job_id)
+    return ids[-cap:]
+
+
+def apply_owner_fields(job: dict[str, Any], project_id: str | None, row_id: str | None) -> dict[str, Any]:
+    if project_id:
+        job["projectId"] = project_id
+    if row_id:
+        job["rowId"] = row_id
+    return job
+
+
+# App lifecycle (reload, crash, quit) must never cancel a GPU job. Only an
+# explicit DELETE from the operator's Cancel control may. The client's poll
+# loop dying is a detach, not a cancel.
+CLIENT_DISCONNECT_KILLS_JOB = False
+
+
+def hold_is_open(job: dict[str, Any] | None, handoff_value: Any) -> bool:
+    """True while a held job is still waiting for a hand-off or release."""
+    if not job or not job.get("hold"):
+        return False
+    if job.get("status") not in ("queued", "running", "done"):
+        return False
+    return handoff_value is None
+
+
+def attach_pause(job: dict[str, Any], pause: dict[str, Any]) -> dict[str, Any]:
+    """Store a pause-and-ask on the job. Survives client death; answering is POST."""
+    if job.get("status") == "cancelled":
+        raise ValidationError("job-cancelled", "cannot pause a cancelled job")
+    pause_id = pause.get("id")
+    question = pause.get("question")
+    options = pause.get("options")
+    if not isinstance(pause_id, str) or not pause_id:
+        raise ValidationError("bad-pause", "pause id is required")
+    if not isinstance(question, str) or not question:
+        raise ValidationError("bad-pause", "pause question is required")
+    if not isinstance(options, list) or not options:
+        raise ValidationError("bad-pause", "pause options must be a non-empty list")
+    out = dict(job)
+    record = {
+        "id": pause_id,
+        "kind": pause.get("kind"),
+        "question": question,
+        "options": options,
+        "answer": None,
+        "projectId": pause.get("projectId"),
+        "host": pause.get("host"),
+        "audioHash": pause.get("audioHash"),
+        "stage": pause.get("stage"),
+        "timestamp": pause.get("timestamp"),
+        "detail": pause.get("detail"),
+    }
+    out["pause"] = record
+    out["awaitingAnswer"] = True
+    return out
+
+
+def answer_pause(job: dict[str, Any], pause_id: str, choice: str) -> dict[str, Any]:
+    pause = job.get("pause")
+    if not isinstance(pause, dict) or pause.get("id") != pause_id:
+        raise ValidationError("stale-pause", "this pause is no longer the live question")
+    options = pause.get("options") or []
+    allowed: list[str] = []
+    for opt in options:
+        if isinstance(opt, str):
+            allowed.append(opt)
+        elif isinstance(opt, dict) and isinstance(opt.get("id"), str):
+            allowed.append(opt["id"])
+    if choice not in allowed:
+        raise ValidationError("bad-answer", f"answer must be one of {', '.join(allowed)}")
+    if pause.get("answer") is not None:
+        return job
+    out = dict(job)
+    out["pause"] = {**pause, "answer": choice}
+    out["awaitingAnswer"] = False
+    return out
+
+
+def pause_dialog_for_job(job: dict[str, Any] | None) -> dict[str, Any] | None:
+    """What the app should show. An answered job — even if it later succeeded — is silent."""
+    if not job:
+        return None
+    pause = job.get("pause")
+    if not isinstance(pause, dict):
+        return None
+    if pause.get("answer") is not None or not job.get("awaitingAnswer"):
+        return None
+    return pause
+
+
 def new_job(
     job_id: str,
     member: str,
@@ -458,11 +572,52 @@ def reusable_inflight(job: dict[str, Any] | None, member: str) -> bool:
 # hold just means a normal spawn).
 # ---------------------------------------------------------------------------
 
-# Do not widen this. A second cold boot is about $0.014; sitting the full
-# window is about $0.006. Closing the client gap (release on an operator
-# prompt, hand off within a few seconds) is the cheaper fix. Widening the
-# window doubles idle cost on every sync that already hands off promptly.
-HOLD_FOR_PLAN_SEC = 30.0
+# P11: this is the orphan / crash-natural floor (Modal GPU scaledown), not a
+# dead-man wait for the client to poll. A last job (hold=false) waits 0; a
+# chained next job is handed off as soon as it is posted. Do not widen this.
+HOLD_FOR_PLAN_SEC = 2.0
+
+
+def hold_wait_budget(*, hold: bool) -> float:
+    """Seconds the worker may sit after a job finishes waiting for a hand-off."""
+    return HOLD_FOR_PLAN_SEC if hold else 0.0
+
+
+def post_finish_held_sec(
+    *,
+    hold: bool,
+    handed_off: bool,
+    released: bool,
+    waited_sec: float = 0.0,
+) -> float:
+    """Idle GPU seconds billed after the job itself finished.
+
+    Success that handed off or was released has a fixed cost at that instant.
+    An orphaned holder (no queued work) is capped at HOLD_FOR_PLAN_SEC.
+    A last queue item (hold=false) is 0 — no timeout wait.
+    """
+    if not hold or handed_off or released:
+        return 0.0
+    return min(max(waited_sec, 0.0), HOLD_FOR_PLAN_SEC)
+
+
+def held_after_finish(lines: list[dict[str, Any]], *, job_id: str) -> float:
+    """The `held` meter attached to `job_id` after that job's work line."""
+    return round(
+        sum(
+            float(line.get("workerSec") or 0)
+            for line in lines
+            if line.get("outcome") == "held" and line.get("jobId") in (job_id, f"{job_id}-hold")
+        ),
+        3,
+    )
+
+
+def kill_gpu_keep_record(store: Any, job_id: str) -> str:
+    """Kill = RELEASE the GPU. The job record, billing, and result stay."""
+    key = handoff_key(job_id)
+    store.put(key, HANDOFF_RELEASE, skip_if_exists=True)
+    return HANDOFF_RELEASE
 
 # One live GPU container. A lookup never boots one. A job a held container
 # can run must not boot a second — that second container shows up as
@@ -505,8 +660,13 @@ def can_hold_for(holder: dict[str, Any] | None, member: str) -> bool:
         holder is not None
         and holder.get("member") == member
         and holder.get("stage") in STAGES
-        and bool(holder.get("hold"))
-        and holder.get("status") in ("queued", "running", "done")
+        and (
+            holder.get("status") == "failed"
+            or (
+                bool(holder.get("hold"))
+                and holder.get("status") in ("queued", "running", "done")
+            )
+        )
     )
 
 
@@ -608,7 +768,7 @@ def hit_line(member: str, stage: str, audio_hash: str, language: str, now: float
     return {"ts": now, "member": member, "stage": stage, "audioHash": audio_hash, "language": language}
 
 
-def public_job(job: dict[str, Any]) -> dict[str, Any]:
+def public_job(job: dict[str, Any], *, hold_open: bool | None = None) -> dict[str, Any]:
     """The job as the desktop app sees it: no call ids, no member names."""
     return {
         "jobId": job["jobId"],
@@ -627,4 +787,9 @@ def public_job(job: dict[str, Any]) -> dict[str, Any]:
         # Wave 3 U4.5 — the container that ran it (None until it ran).
         "taskId": job.get("taskId"),
         "handedOff": bool(job.get("handedOff")),
+        "projectId": job.get("projectId"),
+        "rowId": job.get("rowId"),
+        "pause": job.get("pause"),
+        "awaitingAnswer": bool(job.get("awaitingAnswer")),
+        "holdOpen": bool(hold_open) if hold_open is not None else bool(job.get("holdOpen")),
     }

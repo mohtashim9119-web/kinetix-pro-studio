@@ -99,6 +99,7 @@ describe('runCloudJob', () => {
     const cancelCalls = invokeMock.mock.calls.filter(c => c[0] === 'cloud_cancel_run');
     expect(cancelCalls.length).toBeGreaterThanOrEqual(2);
     expect(cancelCalls.every(c => (c[1] as { runId: string }).runId === runId)).toBe(true);
+    expect(invokeMock.mock.calls.every(c => c[0] !== 'cloud_kill_job')).toBe(true);
     resolveRun({ kind: 'cancelled' });
     await expect(pending).rejects.toEqual({ kind: 'cancelled' });
     const after = invokeMock.mock.calls.length;

@@ -300,6 +300,7 @@ export async function runBuildTimeline(input: FinishPipelineInput): Promise<Fini
       audioHash,
     };
     saveFaPause(pauseRecord);
+    void import('./cloudJobReattach').then(m => m.postLivePause(pauseRecord)).catch(() => undefined);
     return {
       ok: false,
       message: SYNC_PAUSED_MESSAGE,

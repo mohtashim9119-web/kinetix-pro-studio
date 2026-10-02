@@ -10,6 +10,7 @@ import type { CloudQueueDeps } from '../services/cloudQueueJob';
 import { SyncQueuePanel } from './SyncQueuePanel';
 import { BULK_COPY } from '../services/bulkContext';
 import { batchProgress } from '../services/bulkBatch';
+import { killAllMemberCloudJobs } from '../services/cloudSyncEngine';
 import { FailedDot, ProgressRing } from './BulkProgress';
 import { Z } from './overlayLayers';
 import './ProjectDashboard.css';
@@ -312,6 +313,7 @@ export function ProjectDashboard({
           {/* Bulk UI rebuild U3 — ONE bulk door, and it only ever opens the
               drawer. It never asks a number: creating lives in the drawer. */}
           {onBulkOpen && parseProjectData && (
+            <>
             <button className="kxd-btn kxd-btn-quiet" data-testid="dashboard-bulk" onClick={onBulkOpen}>
               {BULK_COPY.button}
               {/* The batch at a glance: a ring + n/m from the first Build Timeline until the
@@ -324,6 +326,16 @@ export function ProjectDashboard({
               )}
               {bulkSignal.failed > 0 && <span className="ml-1.5 inline-flex align-middle"><FailedDot count={bulkSignal.failed} /></span>}
             </button>
+            {batchRows.some(r => r.phase === 'queued' || r.phase === 'cloud') && (
+              <button
+                className="kxd-btn kxd-btn-quiet"
+                data-testid="dashboard-stop-all"
+                onClick={() => { void batch.stopAllCloudWork(() => killAllMemberCloudJobs()); }}
+              >
+                {BULK_COPY.stopAll}
+              </button>
+            )}
+            </>
           )}
           <button className="kxd-btn kxd-btn-accent" onClick={onNewProject}>
             <Plus size={14} strokeWidth={2.2} aria-hidden="true" />

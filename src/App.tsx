@@ -122,6 +122,7 @@ import {
 import { runForcedAlignmentForSync, FA_SUPPORTED_LANGUAGES, type FaFailureKind, type FaRunResult } from './services/forcedAlignmentRun';
 import { computeSyncEngineKey, resolveSyncEngine, probeFaReadiness } from './services/faPreflight';
 import { saveFaPause, readFaPause, clearFaPause, type FaPauseRecord } from './services/faSyncPauseStore';
+import { answerServerPause, loadServerPause, loadServerPauses, postLivePause } from './services/cloudJobReattach';
 import {
   stampCloudProvenance,
   stampFaProvenance,
@@ -141,7 +142,7 @@ import {
   saveRunHostOverride,
   shouldStartStaging,
 } from './services/syncEngineHost';
-import { CloudStageError, cloudPauseReason, hasHeldTranscription, onCloudPhase, releaseHeldTranscription, transcribeForHost } from './services/cloudSyncEngine';
+import { CloudStageError, cloudPauseReason, hasHeldTranscription, killLiveCloudJob, onCloudPhase, releaseHeldTranscription, transcribeForHost } from './services/cloudSyncEngine';
 import {
   CLOUD_CANCEL_COPY,
   SETTLE_TIMEOUT_MS,
@@ -2658,6 +2659,14 @@ export default function App() {
     if (isHydrating || !project.id) return;
     const pending = readFaPause(project.id);
     setFaPauseDialog(pending);
+    const projectId = project.id;
+    let cancelled = false;
+    void loadServerPause(projectId).then(fromServer => {
+      if (cancelled) return;
+      if (fromServer) setFaPauseDialog(fromServer);
+      else if (fromServer === null) setFaPauseDialog(null);
+    });
+    return () => { cancelled = true; };
   }, [project.id, isHydrating]);
 
   // G6 Step 5 — lazy, non-blocking Asset.contentHash backfill for whichever
@@ -4067,6 +4076,7 @@ export default function App() {
     setFaPauseDialog(null);
     const projectId = liveProjectRef.current.id;
     clearFaPause(projectId);
+    void answerServerPause(projectId, 'retry');
     void (async () => {
       const ready = await ensureStagedSnapshotReady(
         projectId,
@@ -4097,6 +4107,7 @@ export default function App() {
   const handleSyncPausedUseWhisper = useCallback((): void => {
     setFaPauseDialog(null);
     clearFaPause(liveProjectRef.current.id);
+    void answerServerPause(liveProjectRef.current.id, 'whisper');
     faForceWhisperOnceRef.current = faPauseDialog?.reason ?? 'inference-failed';
     void handleApplySyncFromFiles();
   }, [faPauseDialog]);
@@ -4104,12 +4115,14 @@ export default function App() {
   const handleSyncPausedCancel = useCallback((): void => {
     setFaPauseDialog(null);
     clearFaPause(liveProjectRef.current.id);
+    void answerServerPause(liveProjectRef.current.id, 'cancel');
   }, []);
 
   // plan-v3 item 5 — the overlay's Cancel control and its Escape handler
   // both funnel through this one function, so there is exactly one place
   // that decides what "cancel" means.
   const handleCancelSync = useCallback((): void => {
+    void killLiveCloudJob();
     syncAbortControllerRef.current?.abort();
     cancelTranscription();
   }, [cancelTranscription]);
@@ -5354,6 +5367,7 @@ export default function App() {
           timestamp: at, host: 'cloud', audioHash,
         };
         saveFaPause(record);
+        void postLivePause(record);
         setProject(prev => appendSyncLogEntries(
           prev, [buildFaPausedEntry(runId, outcome.faRun.reason, outcome.faRun.detail, at)], undefined,
         ));
@@ -6484,6 +6498,10 @@ export default function App() {
     bulkResumed.current = true;
     const runner = bulkBatchRunner(parseProjectData);
     runner.resume();
+    void loadServerPauses(runner.snapshot().map(r => r.id)).then(records => {
+      const open = records.find(r => r.projectId === liveProjectRef.current.id);
+      if (open) setFaPauseDialog(open);
+    });
     // v1.2.2 standing guard: every built bulk record in the batch is proven
     // against its OWN staged files; one built from another project's files
     // (the v1.2.1 cross-write) is reset and queued to rebuild from its own.

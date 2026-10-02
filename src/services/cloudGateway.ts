@@ -129,6 +129,9 @@ export interface CloudJobRequest {
   hold?: boolean;
   /** Wave 3 U4.5 — the held job to hand this one to (U7: either stage). */
   holdJobId?: string;
+  /** Server-owned jobs: stamped so a later app instance can reattach. */
+  projectId?: string;
+  rowId?: string;
 }
 
 export interface CloudProvenance {
@@ -170,12 +173,31 @@ export interface CloudJobView<R> {
   cached: boolean;
   audioDurationSec: number | null;
   workerSec: number | null;
+  startedAt?: number | null;
+  estimatedUsd?: number | null;
   error: { code: string; detail: string } | null;
   /** Wave 3 U4.5 — the container that ran it; a held transcription's
    *  container took it (no second boot). */
   taskId?: string | null;
   handedOff?: boolean;
   result?: R;
+  projectId?: string | null;
+  rowId?: string | null;
+  pause?: {
+    id: string;
+    kind?: string | null;
+    question: string;
+    options: unknown[];
+    answer?: string | null;
+    projectId?: string | null;
+    host?: string | null;
+    audioHash?: string | null;
+    stage?: string | null;
+    timestamp?: number | null;
+    detail?: string | null;
+  } | null;
+  awaitingAnswer?: boolean;
+  holdOpen?: boolean;
 }
 
 export type CloudJobEvent =
@@ -256,25 +278,27 @@ export function releaseCloudJob(jobId: string): Promise<boolean> {
   return call('cloud_release_job', { jobId });
 }
 
+/** Operator Cancel only. App lifecycle (reload/quit/crash) must never call this. */
+export function killCloudJob(jobId: string): Promise<CloudJobView<unknown>> {
+  return call('cloud_kill_job', { jobId });
+}
+
+export function listCloudJobs(owners: { projectId?: string; rowId?: string }): Promise<CloudJobView<unknown>[]> {
+  return call('cloud_list_jobs', { projectId: owners.projectId ?? null, rowId: owners.rowId ?? null });
+}
+
+export function pauseCloudJob(jobId: string, pause: NonNullable<CloudJobView<unknown>['pause']> & Record<string, unknown>): Promise<CloudJobView<unknown>> {
+  return call('cloud_pause_job', { jobId, pause });
+}
+
+export function answerCloudJob(jobId: string, pauseId: string, answer: string): Promise<CloudJobView<unknown>> {
+  return call('cloud_answer_job', { jobId, pauseId, answer });
+}
+
 const CANCEL_RETRY_MS = 200;
 
-/**
- * Submit one stage and resolve with its finished view (result included).
- * Aborting `signal` cancels the job on the gateway — a job still waiting for
- * a GPU is never charged — and rejects with `{ kind: 'cancelled' }`.
- */
-export async function runCloudJob<R>(
-  request: CloudJobRequest,
-  options: { onEvent?: (event: CloudJobEvent) => void; signal?: AbortSignal } = {},
-): Promise<CloudJobView<R>> {
-  const { onEvent, signal } = options;
-  if (signal?.aborted) throw { kind: 'cancelled' } satisfies CloudError;
-  const runId = crypto.randomUUID();
-  const channel = new Channel<CloudJobEvent>();
-  if (onEvent) channel.onmessage = onEvent;
+function attachAbort(runId: string, signal: AbortSignal | undefined): { settled: () => void } {
   let settled = false;
-  // The abort can land before Rust has registered the run id; keep asking
-  // until Rust confirms it tripped the flag or the run settles on its own.
   const onAbort = (): void => {
     const attempt = (): void => {
       if (settled) return;
@@ -285,10 +309,50 @@ export async function runCloudJob<R>(
     attempt();
   };
   signal?.addEventListener('abort', onAbort, { once: true });
+  return {
+    settled: () => {
+      settled = true;
+      signal?.removeEventListener('abort', onAbort);
+    },
+  };
+}
+
+/**
+ * Submit one stage and resolve with its finished view (result included).
+ * Aborting `signal` DETACHES the poller — it does not DELETE the gateway job.
+ * Operator Cancel is `killCloudJob`.
+ */
+export async function runCloudJob<R>(
+  request: CloudJobRequest,
+  options: { onEvent?: (event: CloudJobEvent) => void; signal?: AbortSignal } = {},
+): Promise<CloudJobView<R>> {
+  const { onEvent, signal } = options;
+  if (signal?.aborted) throw { kind: 'cancelled' } satisfies CloudError;
+  const runId = crypto.randomUUID();
+  const channel = new Channel<CloudJobEvent>();
+  if (onEvent) channel.onmessage = onEvent;
+  const abort = attachAbort(runId, signal);
   try {
     return await call<CloudJobView<R>>('cloud_run_job', { runId, job: request, onEvent: channel });
   } finally {
-    settled = true;
-    signal?.removeEventListener('abort', onAbort);
+    abort.settled();
+  }
+}
+
+/** Reattach to a job the server is already running. Abort detaches; does not DELETE. */
+export async function pollCloudJob<R>(
+  jobId: string,
+  options: { onEvent?: (event: CloudJobEvent) => void; signal?: AbortSignal } = {},
+): Promise<CloudJobView<R>> {
+  const { onEvent, signal } = options;
+  if (signal?.aborted) throw { kind: 'cancelled' } satisfies CloudError;
+  const runId = crypto.randomUUID();
+  const channel = new Channel<CloudJobEvent>();
+  if (onEvent) channel.onmessage = onEvent;
+  const abort = attachAbort(runId, signal);
+  try {
+    return await call<CloudJobView<R>>('cloud_poll_job', { runId, jobId, onEvent: channel });
+  } finally {
+    abort.settled();
   }
 }
