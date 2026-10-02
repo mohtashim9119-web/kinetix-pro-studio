@@ -358,12 +358,12 @@ describe('WS2-50 — the delete contract is actually invoked', () => {
     // The dashboard's delete and the bulk drawer's row delete share ONE
     // project delete (projectDelete.ts); the staged-rows step lives there.
     expect(DASHBOARD_SRC, 'ProjectDashboard no longer deletes through the shared project delete')
-      .toContain('await deleteProjectEverywhere(id)');
+      .toContain('await deleteProjectRecords(ids)');
     expect(
       DELETE_SRC,
       'the shared project delete no longer clears staged rows — they outlive the only thing ' +
         'that could ever restore them.',
-    ).toContain("step('staged files cleanup', () => deleteAllStagedForProject(id))");
+    ).toContain("bounded(id, 'staged files cleanup', () => deleteAllStagedForProject(id), timeoutMs)");
   });
 });
 

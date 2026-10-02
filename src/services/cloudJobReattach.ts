@@ -7,6 +7,7 @@ import { answerCloudJob, listCloudJobs, pauseCloudJob } from './cloudGateway';
 import { liveCloudJobId } from './cloudSyncEngine';
 import { pauseDialogFromJobs, type CloudJobPause, type OwnedCloudJob } from './cloudJobOwnership';
 import { saveFaPause, clearFaPause, type FaPauseRecord } from './faSyncPauseStore';
+import { deletedProjectIds } from './projectTombstones';
 
 function asPauseRecord(projectId: string, pause: CloudJobPause): FaPauseRecord {
   return {
@@ -26,6 +27,7 @@ function asOwned(jobs: Awaited<ReturnType<typeof listCloudJobs>>): OwnedCloudJob
 }
 
 export async function loadServerPause(projectId: string): Promise<FaPauseRecord | null | undefined> {
+  if (deletedProjectIds().has(projectId)) return null;
   try {
     const jobs = asOwned(await listCloudJobs({ projectId, rowId: projectId }));
     const pause = pauseDialogFromJobs(jobs);
@@ -48,8 +50,10 @@ export async function loadServerPause(projectId: string): Promise<FaPauseRecord 
 }
 
 export async function loadServerPauses(projectIds: readonly string[]): Promise<FaPauseRecord[]> {
+  const dead = deletedProjectIds();
   const out: FaPauseRecord[] = [];
   for (const id of projectIds) {
+    if (dead.has(id)) continue;
     const record = await loadServerPause(id);
     if (record) out.push(record);
   }

@@ -16,7 +16,7 @@ import { act } from 'react';
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 let metas: { id: string; name: string; savedAt: number; segmentCount: number }[] = [];
-vi.mock('../services/projectStore', () => ({ loadAllMetas: () => metas, loadProject: async () => null, deleteProjectData: async () => undefined }));
+vi.mock('../services/projectStore', () => ({ loadAllMetas: () => metas, loadProject: async () => null, deleteProjectData: async () => undefined, commitTombstones: async () => undefined, deletedProjectIds: () => new Set() }));
 vi.mock('../services/syncEngineHost', async importActual => ({
   ...(await importActual<typeof import('../services/syncEngineHost')>()),
   readSyncEngineHost: () => 'cloud',

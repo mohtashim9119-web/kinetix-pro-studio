@@ -4,7 +4,7 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { deleteProjectEverywhere } from './projectDelete';
+import { deleteProjectEverywhere, cleanupDeletedProjectAssets } from './projectDelete';
 
 const deleteProjectData = vi.fn(async (_id: string) => undefined);
 const deleteAllAssets = vi.fn(async (_id: string) => undefined);
@@ -14,10 +14,13 @@ const deleteProjectAssetsNativeStrict = vi.fn(async (_id: string) => undefined);
 const mediaVaultUnreference = vi.fn(async (_hash: string, _id: string) => undefined);
 const mediaVaultUnreferenceProject = vi.fn(async (_id: string) => undefined);
 const loadProject = vi.fn(async (_id: string) => null);
+const tomb = new Set<string>();
 
 vi.mock('./projectStore', () => ({
   loadProject: (id: string) => loadProject(id),
   deleteProjectData: (id: string) => deleteProjectData(id),
+  commitTombstones: async (ids: readonly string[]) => { for (const id of ids) tomb.add(id); },
+  deletedProjectIds: () => tomb,
 }));
 vi.mock('./assetStore', () => ({ deleteAllAssets: (id: string) => deleteAllAssets(id) }));
 vi.mock('./waveformStore', () => ({ deleteAllWaveforms: (id: string) => deleteAllWaveforms(id) }));
@@ -35,6 +38,7 @@ vi.mock('./mediaVaultClient', () => ({
 describe('deleteProjectEverywhere', () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    tomb.clear();
     deleteProjectData.mockResolvedValue(undefined);
     deleteAllAssets.mockResolvedValue(undefined);
     deleteAllWaveforms.mockResolvedValue(undefined);
@@ -63,5 +67,13 @@ describe('deleteProjectEverywhere', () => {
     await deleteProjectEverywhere('p');
     expect(order[0]).toBe('record');
     expect(order).toContain('vault');
+  });
+
+  it('(d) a background cleaner touching an id with no tombstone writes nothing', async () => {
+    tomb.clear();
+    expect(await cleanupDeletedProjectAssets('ghost')).toEqual([]);
+    expect(deleteAllAssets).not.toHaveBeenCalled();
+    expect(mediaVaultUnreferenceProject).not.toHaveBeenCalled();
+    expect(deleteProjectData).not.toHaveBeenCalled();
   });
 });

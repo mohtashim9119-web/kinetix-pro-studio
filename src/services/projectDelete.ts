@@ -9,38 +9,55 @@
 // Each step is independent and bounded: one that throws or hangs must never
 // keep the project record alive (that was how deleted projects came back).
 
-import { deleteProjectData } from './projectStore';
+import { commitTombstones, deletedProjectIds, deleteProjectData } from './projectStore';
 import { deleteAllStagedForProject } from './stagedFilesStore';
 import { deleteAllAssets } from './assetStore';
 import { deleteProjectAssetsNativeStrict } from './nativeAssetStore';
 import { deleteAllWaveforms } from './waveformStore';
 import { mediaVaultUnreferenceProject } from './mediaVaultClient';
 
+async function bounded(id: string, label: string, work: () => Promise<unknown>, timeoutMs: number): Promise<string | null> {
+  try {
+    await Promise.race([
+      work(),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timed out')), timeoutMs)),
+    ]);
+    return null;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`[projectDelete] ${label} FAILED for deleted project ${id}:`, message);
+    return `${id}: ${label}: ${message}`;
+  }
+}
+
+/** Store + dashboard + mirror for a whole confirm set — one tombstone write. */
+export async function deleteProjectRecords(ids: readonly string[], timeoutMs = 10_000): Promise<string[]> {
+  await commitTombstones(ids);
+  const failures = await Promise.all(
+    ids.map(id => bounded(id, 'project record removal', () => deleteProjectData(id), timeoutMs)),
+  );
+  return failures.filter((f): f is string => f !== null);
+}
+
+/**
+ * Vault / IndexedDB / native bytes. Must not recreate a record, ref, or list
+ * entry for a tombstoned id — unreference drops refs only.
+ */
+export async function cleanupDeletedProjectAssets(id: string, timeoutMs = 10_000): Promise<string[]> {
+  if (!deletedProjectIds().has(id)) return [];
+  const failures = await Promise.all([
+    bounded(id, 'asset cleanup', () => deleteAllAssets(id), timeoutMs),
+    bounded(id, 'waveform cleanup', () => deleteAllWaveforms(id), timeoutMs),
+    bounded(id, 'staged files cleanup', () => deleteAllStagedForProject(id), timeoutMs),
+    bounded(id, 'native asset cleanup', () => deleteProjectAssetsNativeStrict(id), timeoutMs),
+    bounded(id, 'media vault cleanup', () => mediaVaultUnreferenceProject(id), timeoutMs),
+  ]);
+  return failures.filter((f): f is string => f !== null);
+}
+
 /** Deletes one project everywhere. Returns the steps that failed (`id: label: why`). */
 export async function deleteProjectEverywhere(id: string, timeoutMs = 10_000): Promise<string[]> {
-  const failures: string[] = [];
-  const step = async (label: string, work: () => Promise<unknown>): Promise<void> => {
-    try {
-      await Promise.race([
-        work(),
-        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timed out')), timeoutMs)),
-      ]);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      failures.push(`${id}: ${label}: ${message}`);
-      console.error(`[projectDelete] ${label} FAILED for deleted project ${id}:`, message);
-    }
-  };
-  // Record first so the grid can drop the card without waiting on vault I/O.
-  await step('project record removal', () => deleteProjectData(id));
-  // One vault registry mutation (unreference every hash this id holds) — never
-  // N per-asset IPC writes. IndexedDB + native cleanup run beside it.
-  await Promise.all([
-    step('asset cleanup', () => deleteAllAssets(id)),
-    step('waveform cleanup', () => deleteAllWaveforms(id)),
-    step('staged files cleanup', () => deleteAllStagedForProject(id)),
-    step('native asset cleanup', () => deleteProjectAssetsNativeStrict(id)),
-    step('media vault cleanup', () => mediaVaultUnreferenceProject(id)),
-  ]);
-  return failures;
+  const recordFailures = await deleteProjectRecords([id], timeoutMs);
+  const assetFailures = await cleanupDeletedProjectAssets(id, timeoutMs);
+  return [...recordFailures, ...assetFailures];
 }

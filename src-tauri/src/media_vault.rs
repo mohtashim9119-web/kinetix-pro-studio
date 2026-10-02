@@ -507,6 +507,11 @@ pub fn media_vault_import_bytes_ex(
     mime_type: &str,
     sync_dir: bool,
 ) -> Result<MediaVaultEntry, String> {
+    if crate::project_tombstones::is_tombstoned(root, project_id) {
+        return Err(format!(
+            "refusing vault import for tombstoned project {project_id}"
+        ));
+    }
     ensure_root_live(root)?;
     if sync_dir {
         let content_hash = write_blob_if_absent(root, bytes, true)?;

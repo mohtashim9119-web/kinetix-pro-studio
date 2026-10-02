@@ -501,6 +501,10 @@ pub fn project_mirror_write_project(
     contents: String,
     registry: Option<String>,
 ) -> Result<(), String> {
+    let storage = crate::storage_root::resolve_storage_root(&app)?;
+    if crate::project_tombstones::is_tombstoned(&storage, &id) {
+        return Ok(());
+    }
     let root = mirror_root(&app)?;
     let id = safe_id(&id)?;
     let dest = projects_dir(&root).join(format!("{id}.json"));
@@ -592,6 +596,9 @@ fn store_backups_dir(root: &Path) -> PathBuf {
 pub fn project_store_read(app: tauri::AppHandle, id: String) -> Result<Option<String>, String> {
     let root = store_root(&app)?;
     let id = safe_id(&id)?;
+    if crate::project_tombstones::is_tombstoned(&root, id) {
+        return Ok(None);
+    }
     let path = store_project_file(&root, id);
     match fs::read_to_string(&path) {
         Ok(text) => Ok(Some(text)),
@@ -611,6 +618,9 @@ pub fn project_store_write(
 ) -> Result<(), String> {
     let root = store_root(&app)?;
     let id = safe_id(&id)?;
+    if crate::project_tombstones::is_tombstoned(&root, id) {
+        return Ok(());
+    }
     let dest = store_project_file(&root, id);
 
     // WS3 item A — same backstop as `project_mirror_write_project`; see
@@ -675,7 +685,9 @@ pub fn project_store_list_ids(app: tauri::AppHandle) -> Result<Vec<String>, Stri
                 if safe_id(&name).is_err() {
                     continue;
                 }
-                if path.join("project.json").is_file() {
+                if path.join("project.json").is_file()
+                    && !crate::project_tombstones::is_tombstoned(&root, &name)
+                {
                     ids.push(name);
                 }
             }

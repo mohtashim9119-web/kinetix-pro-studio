@@ -29,6 +29,7 @@ mod media_vault;
 mod media_vault_recovery;
 mod relink;
 mod project_mirror;
+mod project_tombstones;
 mod safe_delete;
 // G6 Step 1 — widened `mod` -> `pub mod`, same reasoning as `fa`/`fa_shared`
 // above: `tests/media_hash_throughput_live.rs` (a separate `harness = false`
@@ -694,6 +695,8 @@ pub fn run() {
             project_mirror::project_store_write,
             project_mirror::project_store_delete,
             project_mirror::project_store_list_ids,
+            project_tombstones::project_tombstones_add,
+            project_tombstones::project_tombstones_list,
             storage_root::storage_root_status,
             storage_root::storage_root_relocate,
             storage_root::storage_root_relocate_cancel,
