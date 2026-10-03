@@ -15,7 +15,10 @@
 // is the sync-log Details line's quiet register.
 
 import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { Check, ChevronDown, ChevronLeft, ChevronRight, Clapperboard, ExternalLink, FileText, Image as ImageIcon, Mic, Plus, RefreshCw, Trash2, Upload, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronLeft, ChevronRight, Clapperboard, ExternalLink, FileText, Image as ImageIcon, Mic, Plus, RefreshCw, Trash2, Upload, Volume2, VolumeX, X } from 'lucide-react';
+import completeChimeUrl from '../assets/bulk-group-complete.wav';
+import { bulkRowBar, groupAllBuilt, useEasedBarFill, audioSecFromPreflight } from './bulkRowProgress';
+import { shortLogTitle } from './bulkLogTitle';
 import { BULK_COPY, BULK_MAX_PROJECTS, BULK_MIN_PROJECTS, parseBulkCount } from '../services/bulkContext';
 import { BulkRowStore, defaultBulkRowDeps, type BulkRowState } from '../services/bulkRows';
 import type { Project } from '../types';
@@ -25,7 +28,6 @@ import {
 } from '../services/bulkBatch';
 import { BulkGroupHeader } from './BulkProgress';
 import { bulkFooterLine, cloudCostLine, type CloudQueueDeps } from '../services/cloudQueueJob';
-import { bulkStageChecklist } from '../services/bulkStageChecklist';
 import { collectDroppedFiles } from '../services/droppedFiles';
 import { missingSpineSlots } from '../services/buildTimelineGate';
 import { type QueueItem, type SyncQueue } from '../services/syncQueue';
@@ -48,6 +50,47 @@ const DRAWER_PALETTE = {
   '--kx-line': 'rgba(255,255,255,.07)',
   '--kx-line-2': 'rgba(255,255,255,.12)',
 } as React.CSSProperties;
+const SOUND_MUTE_KEY = 'kinetix:bulk-complete-sound-muted';
+
+function playGroupCompleteSound(): void {
+  if (typeof process !== 'undefined' && process.env.VITEST) return;
+  void (async () => {
+    try {
+      const Ctor = typeof AudioContext !== 'undefined'
+        ? AudioContext
+        : (globalThis as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (Ctor) {
+        const ctx = new Ctor();
+        await ctx.resume().catch(() => undefined);
+        const res = await fetch(completeChimeUrl);
+        const buf = await ctx.decodeAudioData(await res.arrayBuffer());
+        const src = ctx.createBufferSource();
+        const gain = ctx.createGain();
+        gain.gain.value = 1.8;
+        src.buffer = buf;
+        src.connect(gain);
+        gain.connect(ctx.destination);
+        src.start(0);
+        return;
+      }
+    } catch { /* fall through */ }
+    try {
+      const audio = new Audio(completeChimeUrl);
+      audio.volume = 1;
+      await audio.play();
+    } catch {
+      // Best-effort — never block the drawer.
+    }
+  })();
+}
+
+function readSoundMuted(): boolean {
+  try { return sessionStorage.getItem(SOUND_MUTE_KEY) === '1'; } catch { return false; }
+}
+
+function writeSoundMuted(muted: boolean): void {
+  try { sessionStorage.setItem(SOUND_MUTE_KEY, muted ? '1' : '0'); } catch { /* ignore */ }
+}
 /** Over content it casts a shadow; docked beside the dashboard it is a flat column. */
 const DRAWER_FLOAT = 'shadow-[8px_0_40px_rgba(0,0,0,.55)]';
 const LABEL = 'text-[10px] uppercase tracking-widest text-[var(--kx-muted)] font-bold block mb-2';
@@ -141,11 +184,17 @@ function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFi
   const liveSec = item && item.finishedAt === undefined ? item.workerSec : 0;
   const workerSec = (record?.workerSec ?? 0) + liveSec;
   const cost = record && workerSec > 0 ? cloudCostLine(workerSec) : '';
-  const stages = record ? bulkStageChecklist({
-    checkpoint: record.checkpoint,
-    phase: record.phase,
+  const bar = bulkRowBar({
+    rowId: row.projectId,
+    contentKey: record?.contentKey,
+    phase,
+    checkpoint: record?.checkpoint,
     queuePhase: item?.phase,
-  }) : [];
+    durationSec: audioSecFromPreflight(row.preflight),
+  });
+  const barKey = `${row.projectId}|${record?.contentKey ?? ''}`;
+  const fill = useEasedBarFill(barKey, bar);
+  const shownPct = bar.percentVisible ? Math.round(fill) : null;
   // The row's messages, one line at a time: its status first, then the cancel
   // receipt and any problem notes (a broken bundle, skipped files).
   const messages: { text: string; warn: boolean }[] = [
@@ -155,6 +204,7 @@ function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFi
   ].filter(m => m.text.trim() !== '');
   const shown = messages.length === 0 ? 0 : Math.min(msgIdx, messages.length - 1);
   const current = messages[shown] ?? { text: '', warn: false };
+  const logTitle = shortLogTitle(current.text);
   const openable = row.built || !!record;
   const failedish = phase === 'failed' || phase === 'finish-failed' || phase === 'paused' || phase === 'cancelled';
   return (
@@ -169,11 +219,11 @@ function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFi
         if (locked) return;
         void collectDroppedFiles(e.dataTransfer).then(onFiles);
       }}
-      className={`rounded-xl border p-3.5 transition-colors ${over
+      className={`kx-bulk-row rounded-xl border p-3.5 transition-colors ${over
         ? 'bg-[var(--kx-accent-soft)] border-[var(--kx-accent-line)]'
         : 'bg-[var(--kx-surface)] border-[var(--kx-line-2)] hover:border-[rgba(255,255,255,.18)]'}`}
     >
-      {/* Row 1 — name, Open project, Upload. */}
+      {/* Row 1 — name, Open, Rebuild, Upload. */}
       <div className="flex items-center gap-2">
         <input
           type="text"
@@ -240,56 +290,70 @@ function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFi
         </div>
       </div>
 
-      {/* Row 2 — file count; chips and stages live in the expanded detail so
-          every collapsed row is the same height. */}
+      {/* Row 2 — four file chips, always visible. */}
+      <div className="mt-3 flex flex-nowrap items-center gap-1 overflow-hidden" data-testid={`bulk-slots-${row.projectId}`}>
+        {(['script', 'scene', 'voiceover', 'media'] as const).map(slot => (
+          <span
+            key={slot}
+            data-slot={slot}
+            data-filled={row.slots[slot]}
+            className={`${CHIP} ${row.slots[slot]
+              ? 'bg-[var(--kx-ready-soft)] text-[var(--kx-ready)]'
+              : 'bg-[var(--kx-surface-2)] text-[var(--kx-muted)]'}`}
+          >
+            <SlotIcon slot={slot} />
+            {BULK_COPY.slot[slot]}
+            {slot === 'media' && row.mediaCount > 0 ? ` · ${row.mediaCount}` : ''}
+            {row.slots[slot] && <Check size={11} />}
+          </span>
+        ))}
+      </div>
+
+      {/* Row 3 — cloud+timeline progress only. Staging never moves this bar. */}
+      <div className="mt-3" data-testid={`bulk-progress-${row.projectId}`}>
+        <div className="kx-bulk-bar" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={shownPct ?? undefined} aria-label={bar.label}>
+          <div
+            className="kx-bulk-bar-fill"
+            data-kind={bar.kind}
+            data-glow={bar.glowing ? 'true' : 'false'}
+            style={{ width: `${bar.kind === 'indeterminate' ? 42 : fill}%` }}
+          >
+            {bar.glowing && (
+              <>
+                <span className="kx-bulk-bar-sheen" aria-hidden="true" />
+                <span className="kx-bulk-spark kx-bulk-spark-a" aria-hidden="true" />
+                <span className="kx-bulk-spark kx-bulk-spark-b" aria-hidden="true" />
+                <span className="kx-bulk-spark kx-bulk-spark-c" aria-hidden="true" />
+              </>
+            )}
+          </div>
+        </div>
+        <div className="mt-1 flex items-center gap-2">
+          <span data-testid={`bulk-progress-label-${row.projectId}`} className="min-w-0 flex-1 truncate text-left text-[11px] text-[var(--kx-muted)]">
+            {bar.label}
+          </span>
+          {shownPct !== null && (
+            <span data-testid={`bulk-progress-pct-${row.projectId}`} className="flex-shrink-0 text-[11px] tabular-nums text-[var(--kx-faint)]">
+              {`${shownPct}%`}
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* Row 4 — expand arrow + N files; replace/delete list unchanged. */}
       <button
         type="button"
         data-testid={`bulk-files-toggle-${row.projectId}`}
         aria-expanded={listOpen}
         disabled={row.files.length === 0}
         onClick={() => setListOpen(o => !o)}
-        className="mt-3 -ml-1.5 flex items-center gap-1 h-6 px-1.5 rounded-md text-[11px] text-[var(--kx-muted)] enabled:hover:text-[var(--kx-text)] enabled:hover:bg-[var(--kx-hover)] transition-colors disabled:cursor-default"
+        className="mt-2 -ml-1.5 flex items-center gap-1 h-6 px-1.5 rounded-md text-[11px] text-[var(--kx-muted)] enabled:hover:text-[var(--kx-text)] enabled:hover:bg-[var(--kx-hover)] transition-colors disabled:cursor-default"
       >
-        {BULK_COPY.filesToggle(row.files.length)}
         {listOpen && row.files.length > 0 ? <ChevronDown size={12} /> : <ChevronRight size={12} className={row.files.length === 0 ? 'opacity-40' : ''} />}
+        {BULK_COPY.filesToggle(row.files.length)}
       </button>
       {listOpen && row.files.length > 0 && (
         <div className="mt-2 rounded-lg border border-[var(--kx-line)] bg-[var(--kx-panel)] py-1" data-testid={`bulk-files-${row.projectId}`}>
-          <div className="px-3 pt-2 pb-1.5 flex flex-nowrap items-center gap-1 overflow-hidden" data-testid={`bulk-slots-${row.projectId}`}>
-            {(['script', 'scene', 'voiceover', 'media'] as const).map(slot => (
-              <span
-                key={slot}
-                data-slot={slot}
-                data-filled={row.slots[slot]}
-                className={`${CHIP} ${row.slots[slot]
-                  ? 'bg-[var(--kx-ready-soft)] text-[var(--kx-ready)]'
-                  : 'bg-[var(--kx-surface-2)] text-[var(--kx-muted)]'}`}
-              >
-                <SlotIcon slot={slot} />
-                {BULK_COPY.slot[slot]}
-                {slot === 'media' && row.mediaCount > 0 ? ` · ${row.mediaCount}` : ''}
-                {row.slots[slot] && <Check size={11} />}
-              </span>
-            ))}
-          </div>
-          {record && stages.length > 0 && (
-            <p className="px-3 pb-2 flex flex-wrap gap-1" data-testid={`bulk-stages-${row.projectId}`}>
-              {stages.map(stage => (
-                <span
-                  key={stage.id}
-                  data-testid={`bulk-stage-${row.projectId}-${stage.id}`}
-                  data-tone={stage.tone}
-                  className={`${CHIP} ${
-                    stage.tone === 'active' ? 'bg-[var(--kx-accent-soft)] text-[var(--kx-accent-2)]'
-                    : stage.tone === 'done' ? 'bg-[var(--kx-ready-soft)] text-[var(--kx-ready)]'
-                    : 'bg-[var(--kx-surface-2)] text-[var(--kx-faint)]'
-                  }`}
-                >
-                  {stage.label}
-                </span>
-              ))}
-            </p>
-          )}
           <ul>
             {(['script', 'scene', 'voiceover'] as const).map(kind => {
               const f = row.files.find(x => x.id === kind);
@@ -416,8 +480,7 @@ function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFi
         </div>
       )}
 
-      {/* Row 3 — ONE fixed-height message line (status, then any problems;
-          the arrows step through them), Retry / Cancel, the bin in the corner. */}
+      {/* Last row — messages, Retry / Cancel, the bin. Long lines use a fitted title. */}
       <div className="mt-3 pt-2.5 border-t border-[var(--kx-line)] flex items-center gap-2 h-[38px] relative">
         <button
           type="button"
@@ -427,7 +490,7 @@ function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFi
           onClick={() => { if (current.text) setStatusOpen(o => !o); }}
           className={`flex-1 min-w-0 truncate text-left text-[12px] leading-snug ${current.warn ? 'text-amber-300/90' : dim ? 'text-[var(--kx-faint)]' : 'text-[var(--kx-muted)]'}`}
         >
-          {current.text}
+          {logTitle.title}
         </button>
         {statusOpen && current.text && (
           <div
@@ -573,6 +636,8 @@ export function BulkProjectsModal({
   // 1.3.1 — a group is created inline (a 2–30 field and "Create Group"),
   // never through a popup and never from the dashboard.
   const [countRaw, setCountRaw] = useState('');
+  const [soundMuted, setSoundMuted] = useState(readSoundMuted);
+  const seenComplete = useRef<Set<string> | null>(null);
   const count = parseBulkCount(countRaw, BULK_MAX_PROJECTS, BULK_MIN_PROJECTS);
   const createGroup = (): void => {
     if (!store || count === null || !runner.canCreateGroup()) return;
@@ -593,6 +658,23 @@ export function BulkProjectsModal({
   const recordById = useMemo(() => new Map(records.map(r => [r.id, r])), [records]);
   const isComplete = (r: BulkRowState): boolean => !r.built && r.typedName.trim().length > 0 && missingSpineSlots(r.slots).length === 0;
   const line = bulkFooterLine(records, queue.batchLine());
+
+  useEffect(() => {
+    const complete = new Set<string>();
+    for (const group of groups) {
+      const phases = group.rowIds.map(id => recordById.get(id)?.phase);
+      if (groupAllBuilt(phases)) complete.add(group.id);
+    }
+    if (seenComplete.current === null) {
+      seenComplete.current = complete;
+      return;
+    }
+    for (const id of complete) {
+      if (seenComplete.current.has(id)) continue;
+      if (!soundMuted) playGroupCompleteSound();
+    }
+    seenComplete.current = complete;
+  }, [groups, records, recordById, soundMuted]);
 
   const rowById = new Map(rows.map(r => [r.projectId, r]));
   // Every row belongs to a group (each group carries the Build Timeline): a
@@ -695,6 +777,21 @@ export function BulkProjectsModal({
               {BULK_COPY.modalTitle}
             </h2>
             <div className="flex items-center gap-2">
+              <button
+                type="button"
+                data-testid="bulk-sound-toggle"
+                aria-pressed={!soundMuted}
+                aria-label={soundMuted ? 'Completion sound off' : 'Completion sound on'}
+                title={soundMuted ? 'Completion sound off' : 'Completion sound on'}
+                onClick={() => {
+                  const next = !soundMuted;
+                  setSoundMuted(next);
+                  writeSoundMuted(next);
+                }}
+                className="w-8 h-8 flex items-center justify-center rounded-lg text-[var(--kx-muted)] hover:text-white hover:bg-[var(--kx-hover)] transition-colors"
+              >
+                {soundMuted ? <VolumeX size={15} /> : <Volume2 size={15} />}
+              </button>
               {records.some(r => r.phase === 'queued' || r.phase === 'cloud') && (
                 <button
                   type="button"

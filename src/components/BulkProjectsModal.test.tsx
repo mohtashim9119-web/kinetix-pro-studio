@@ -135,15 +135,31 @@ describe('BulkProjectsModal — draft rows', () => {
     expect(buildFor(host, a!).disabled).toBe(false);
   });
 
+  it('row layout: chips (row 2) and progress (row 3) are always visible; files expand is row 4; no stage chips', async () => {
+    const h = store();
+    const { host } = await mount(modal(h, 1));
+    const [id] = rowIds(host);
+    expect(q(host, `bulk-name-${id}`)).not.toBeNull();
+    expect(q(host, `bulk-open-${id}`)).not.toBeNull();
+    expect(q(host, `bulk-upload-${id}`)).not.toBeNull();
+    expect(q(host, `bulk-slots-${id}`)).not.toBeNull();
+    expect(q(host, `bulk-progress-${id}`)).not.toBeNull();
+    expect(q(host, `bulk-progress-label-${id}`)!.textContent).toBe('Staged');
+    expect(q(host, `bulk-progress-pct-${id}`)!.textContent).toBe('0%');
+    expect(q(host, `bulk-files-toggle-${id}`)!.textContent).toBe('0 files');
+    expect(q(host, `bulk-stages-${id}`)).toBeNull();
+    expect(q(host, `bulk-row-${id}`)!.className).toMatch(/kx-bulk-row/);
+    await act(async () => { await h.store.addFiles(id!, fourFiles()); });
+    expect(q(host, `bulk-progress-label-${id}`)!.textContent).toBe('Staged');
+    expect(q(host, `bulk-progress-pct-${id}`)!.textContent).toBe('0%');
+    expect(q(host, `bulk-status-${id}`)!.textContent).not.toBe('');
+  });
+
   it('B5: an empty media chip reads just "Media" (media stays optional for Build), and fills to a count once media lands', async () => {
     const h = store();
     const { host } = await mount(modal(h, 1));
     const [id] = rowIds(host);
-    const chip = async () => {
-      const toggle = q(host, `bulk-files-toggle-${id}`) as HTMLButtonElement;
-      if (toggle.getAttribute('aria-expanded') !== 'true') await act(async () => { toggle.click(); });
-      return q(host, `bulk-slots-${id}`)!.querySelector('[data-slot="media"]')!;
-    };
+    const chip = async () => q(host, `bulk-slots-${id}`)!.querySelector('[data-slot="media"]')!;
     await act(async () => {
       await h.store.addFiles(id!, [new File(['line'], 'script.txt'), new File(['[a] x\n[b] y\n[c] z'], 'scene.txt'), new File(['a'], 'vo.wav')]);
     });
@@ -458,13 +474,12 @@ describe('Bulk UI rebuild U4 — row files', () => {
     expect(h.store.snapshot().find(r => r.projectId === b)!.files.map(f => f.name)).toEqual(['script.txt', 'scene.txt', 'vo.wav', 'a.png']);
   });
 
-  it('the four chips read Script · Scenes · Audio · Media, each with its type icon, on one line — inside the expanded detail', async () => {
+  it('the four chips read Script · Scenes · Audio · Media, each with its type icon, always on row 2', async () => {
     const h = store();
     const { host } = await mount(modal(h, 2));
     const [a] = rowIds(host);
-    expect(q(host, `bulk-slots-${a}`)).toBeNull();
+    expect(q(host, `bulk-slots-${a}`)).not.toBeNull();
     await act(async () => { await h.store.addFiles(a!, fourFiles()); });
-    await act(async () => { (q(host, `bulk-files-toggle-${a}`) as HTMLButtonElement).click(); });
     const slots = q(host, `bulk-slots-${a}`)!;
     expect(slots.className).toContain('flex-nowrap');
     const chips = [...slots.querySelectorAll('[data-slot]')];
@@ -555,7 +570,7 @@ describe('1.3.0 landing — the background pipeline drives drawer rows to ready'
 });
 
 describe('1.3.2 — operator 1.3.1 follow-ups', () => {
-  it('F6: stage chips live only in the expanded file list, and Open is enabled once the project record exists (paused/failed included)', async () => {
+  it('F6: stage chips are gone; Open is enabled once the project record exists (paused/failed included)', async () => {
     const h = store();
     const runner = makeRunner();
     const g = runner.createGroup(h.store.createDrafts(2))!;
@@ -570,7 +585,7 @@ describe('1.3.2 — operator 1.3.1 follow-ups', () => {
     await act(async () => { await h.store.addFiles(id!, fourFiles()); });
     expect(q(host, `bulk-stages-${id}`)).toBeNull();
     await act(async () => { (q(host, `bulk-files-toggle-${id}`) as HTMLButtonElement).click(); });
-    expect(q(host, `bulk-stages-${id}`)).not.toBeNull();
+    expect(q(host, `bulk-stages-${id}`)).toBeNull();
     const open = q(host, `bulk-open-${id}`) as HTMLButtonElement;
     expect(open.disabled).toBe(false);
   });
@@ -588,6 +603,8 @@ describe('1.3.2 — operator 1.3.1 follow-ups', () => {
     const { host } = await mount(modal(h, 0, { runner }));
     const status = q(host, `bulk-status-${id}`)!;
     expect(status.getAttribute('role')).toBe('button');
+    expect(status.textContent).toBe('Failed — Retry');
+    expect(status.getAttribute('title')).toContain('CUDA OOM on worker-7');
     await act(async () => { (status as HTMLButtonElement).click(); });
     const pop = q(host, `bulk-status-pop-${id}`)!;
     expect(pop.textContent).toContain('CUDA OOM on worker-7');

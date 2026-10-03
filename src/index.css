@@ -125,3 +125,75 @@ body.resizing * {
   cursor: col-resize !important;
   user-select: none;
 }
+
+/* Bulk drawer row — tokened orange border glow (dark + hover). */
+.kx-bulk-row {
+  box-shadow: 0 0 0 1px rgba(255, 138, 60, .22), 0 0 8px rgba(255, 138, 60, .12);
+}
+.kx-bulk-row:hover {
+  box-shadow: 0 0 0 1px rgba(255, 138, 60, .32), 0 0 11px rgba(255, 138, 60, .14);
+}
+
+.kx-bulk-bar {
+  height: 5px;
+  border-radius: 999px;
+  background: var(--kx-surface-2);
+  overflow: hidden;
+}
+.kx-bulk-bar-fill {
+  position: relative;
+  height: 100%;
+  border-radius: inherit;
+  overflow: hidden;
+  background: linear-gradient(90deg, #b44a12 0%, var(--kx-accent) 50%, #b44a12 100%);
+}
+.kx-bulk-bar-fill[data-glow="true"] {
+  box-shadow: 0 0 8px var(--kx-accent-line);
+}
+.kx-bulk-bar-sheen {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(105deg, transparent 30%, rgba(255,255,255,.16) 50%, transparent 70%);
+  background-size: 220% 100%;
+  animation: kx-bulk-sheen 3.2s ease-in-out infinite;
+  pointer-events: none;
+}
+.kx-bulk-spark {
+  position: absolute;
+  top: 50%;
+  width: 2px;
+  height: 2px;
+  margin-top: -1px;
+  border-radius: 999px;
+  background: rgba(255, 236, 214, .95);
+  box-shadow: 0 0 3px 1px rgba(255, 176, 114, .7);
+  pointer-events: none;
+  animation: kx-bulk-spark 2.2s ease-in-out infinite;
+}
+.kx-bulk-spark-a { left: 22%; animation-delay: 0s; }
+.kx-bulk-spark-b { left: 48%; animation-delay: .7s; }
+.kx-bulk-spark-c { left: 74%; animation-delay: 1.3s; }
+.kx-bulk-bar-fill[data-kind="indeterminate"] {
+  width: 42% !important;
+  animation: kx-bulk-bar-slide 1.8s ease-in-out infinite;
+}
+@keyframes kx-bulk-sheen {
+  0% { background-position: 120% 0; }
+  100% { background-position: -40% 0; }
+}
+@keyframes kx-bulk-spark {
+  0%, 100% { opacity: .2; }
+  50% { opacity: 1; }
+}
+@keyframes kx-bulk-bar-slide {
+  0% { transform: translateX(-120%); }
+  100% { transform: translateX(220%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .kx-bulk-bar-sheen,
+  .kx-bulk-spark,
+  .kx-bulk-bar-fill[data-kind="indeterminate"] {
+    animation: none;
+  }
+  .kx-bulk-spark { opacity: .5; }
+}

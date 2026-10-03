@@ -199,6 +199,7 @@ async function flush(ms = 40): Promise<void> {
 describe('bulk finish — every row is built from its OWN inputs', () => {
   it('finishes in the background without opening the editor', async () => {
     expect(container.querySelector('[data-testid="project-grid"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="dashboard-bulk"]')).not.toBeNull();
     let done = false;
     void finalizer!(ROW_B, AUTO).then(() => { done = true; });
     for (let i = 0; i < 80 && !done; i++) await flush(50);
@@ -214,7 +215,10 @@ describe('bulk finish — every row is built from its OWN inputs', () => {
     await act(async () => { card!.click(); });
     await flush();
     expect(editorProjectId()).toBe(ROW_A);
-
+    expect(container.querySelector('[data-testid="bulk-drawer-handle"]')).toBeNull();
+    expect(container.querySelector('[data-testid="dashboard-bulk"]')).toBeNull();
+    const drawer = container.querySelector('[data-testid="bulk-modal"]');
+    if (drawer) expect(drawer.getAttribute('data-hidden')).toBe('true');
     let done = false;
     void finalizer!(ROW_B, AUTO).then(() => { done = true; });
     for (let i = 0; i < 60 && !scriptReads.some(r => r.script === 'script B') && !done; i++) await flush(50);

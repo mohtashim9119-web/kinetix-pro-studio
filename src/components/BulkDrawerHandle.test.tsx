@@ -1,47 +1,34 @@
 // @vitest-environment jsdom
-import { describe, it, expect, afterEach, vi } from 'vitest';
-import { act } from 'react';
-import { createRoot, type Root } from 'react-dom/client';
-import { BulkDrawerHandle } from './BulkDrawerHandle';
-import { Z } from './overlayLayers';
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
 
-(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+// Operator checklist (bulk UI):
+// 4. Open a project from a bulk row → editor shows zero bulk UI (no drawer,
+//    no left-edge handle, no badge, no dashboard bulk button).
+// 5. Back to the dashboard → Bulk Projects button + live progress intact.
 
-let root: Root | undefined;
-let container: HTMLElement | undefined;
-afterEach(() => { act(() => root?.unmount()); container?.remove(); });
+import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
-function mount(count: number, drawerOpen: boolean, onOpen = vi.fn()): ReturnType<typeof vi.fn> {
-  container = document.createElement('div');
-  document.body.appendChild(container);
-  root = createRoot(container);
-  act(() => { root!.render(<BulkDrawerHandle count={count} drawerOpen={drawerOpen} onOpen={onOpen} />); });
-  return onOpen;
-}
-const handle = (): HTMLElement | null => container!.querySelector('[data-testid="bulk-drawer-handle"]');
+const ROOT = resolve(process.cwd());
+const read = (rel: string): string => readFileSync(resolve(ROOT, rel), 'utf8');
 
-describe('BulkDrawerHandle', () => {
-  it('shows the batch size while a batch exists and the drawer is closed', () => {
-    mount(3, false);
-    expect(handle()).not.toBeNull();
-    expect(container!.querySelector('[data-testid="bulk-drawer-handle-count"]')!.textContent).toBe('3');
-    expect(handle()!.getAttribute('aria-label')).toBe('Bulk builds (3)');
+describe('editor has no bulk affordances', () => {
+  it('App never mounts a bulk drawer handle or editor-side bulk tab', () => {
+    const app = read('src/App.tsx');
+    expect(app).not.toMatch(/BulkDrawerHandle/);
+    expect(app).not.toMatch(/bulk-drawer-handle/);
+    expect(app).toContain('hidden={bulkHidden || !showDashboard}');
   });
-  it('is absent when there is no batch', () => {
-    mount(0, false);
-    expect(handle()).toBeNull();
-  });
-  it('is hidden while the drawer is open', () => {
-    mount(3, true);
-    expect(handle()).toBeNull();
-  });
-  it('opens through the supplied open logic', () => {
-    const onOpen = mount(2, false);
-    act(() => { handle()!.click(); });
-    expect(onOpen).toHaveBeenCalledTimes(1);
-  });
-  it('sits on the drawer layer — above editor content, below every modal', () => {
-    mount(1, false);
-    expect(handle()!.className).toContain(Z.drawer);
+
+  it('dashboard still renders the bulk button with progress', () => {
+    const dash = read('src/components/ProjectDashboard.tsx');
+    expect(dash).toContain('data-testid="dashboard-bulk"');
+    expect(dash).toContain('dashboard-bulk-count');
+    expect(dash).toContain('ProgressRing');
+    expect(dash).toContain('FailedDot');
   });
 });
