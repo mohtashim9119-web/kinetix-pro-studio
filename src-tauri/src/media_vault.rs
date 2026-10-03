@@ -777,7 +777,10 @@ pub async fn media_vault_generate_thumbnail(app: tauri::AppHandle, content_hash:
         std::process::id(),
         crate::atomic_stage::next_temp_seq()
     ));
-    match ffmpeg_extract_thumbnail(&app, &blob, &tmp).await {
+    crate::ffmpeg_sidecar_gate::begin_thumbnail();
+    let result = ffmpeg_extract_thumbnail(&app, &blob, &tmp).await;
+    crate::ffmpeg_sidecar_gate::end_thumbnail();
+    match result {
         Ok(()) => match fs::rename(&tmp, &thumb) {
             Ok(()) => Ok(true),
             Err(e) => {

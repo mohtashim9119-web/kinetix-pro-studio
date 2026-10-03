@@ -14,7 +14,7 @@ export type BulkBarKind = 'idle' | 'glide' | 'indeterminate' | 'hold';
 
 export interface BulkBarPlan {
   kind: BulkBarKind;
-  band: 'idle' | 'transcribe' | 'align' | 'build' | 'paused' | 'failed' | 'cancelled' | 'ready';
+  band: 'idle' | 'waiting' | 'transcribe' | 'align' | 'build' | 'paused' | 'failed' | 'cancelled' | 'ready';
   start: number;
   /** Where this glide is heading. Incomplete stages stop 1pt shy until done. */
   target: number;
@@ -30,6 +30,8 @@ export interface BulkBarInput {
   phase?: BatchPhase;
   checkpoint?: BulkCheckpoint;
   queuePhase?: string;
+  /** Live queue item status — queued rows must not look like the GPU row. */
+  queueStatus?: 'queued' | 'running' | 'done' | 'skipped' | 'paused' | 'failed' | 'cancelled';
   /** Audio length from the row's existing preflight / probe, when known. */
   durationSec?: number;
 }
@@ -78,18 +80,27 @@ export function buildDurationMs(): number {
   return BUILD_MS;
 }
 
-function liveBand(phase: BatchPhase | undefined, queuePhase: string | undefined, checkpoint: BulkCheckpoint | undefined): BulkBarPlan['band'] {
+function liveBand(
+  phase: BatchPhase | undefined,
+  queuePhase: string | undefined,
+  checkpoint: BulkCheckpoint | undefined,
+  queueStatus: BulkBarInput['queueStatus'],
+): BulkBarPlan['band'] {
   if (phase === 'done') return 'ready';
   if (phase === 'paused') return 'paused';
   if (phase === 'failed' || phase === 'finish-failed') return 'failed';
   if (phase === 'cancelled') return 'cancelled';
   if (phase === 'skipped' || phase === undefined) return 'idle';
   if (phase === 'finishing' || phase === 'cloud-done') return 'build';
+  const gpuLive = queueStatus === 'running'
+    || (queueStatus === undefined && /transcrib|aligning/i.test(queuePhase ?? ''));
+  if (!gpuLive && (phase === 'queued' || queueStatus === 'queued')) return 'waiting';
   if (/aligning/i.test(queuePhase ?? '')) return 'align';
   if (/transcrib/i.test(queuePhase ?? '')) return 'transcribe';
   if (checkpoint === 'aligned' || checkpoint === 'built' || checkpoint === 'ready') return 'build';
   if (checkpoint === 'transcript-cached') return 'align';
-  if (phase === 'queued' || phase === 'cloud') return 'transcribe';
+  if (phase === 'queued') return 'waiting';
+  if (phase === 'cloud') return gpuLive ? 'transcribe' : 'waiting';
   return 'idle';
 }
 
@@ -103,9 +114,21 @@ function floorFor(checkpoint: BulkCheckpoint | undefined): number {
   }
 }
 
+export function shouldAnimateBulkBar(plan: BulkBarPlan, drawerHidden: boolean): boolean {
+  if (drawerHidden) return false;
+  return plan.kind === 'glide' || plan.kind === 'indeterminate';
+}
+
 export function bulkRowBar(input: BulkBarInput): BulkBarPlan {
-  const band = liveBand(input.phase, input.queuePhase, input.checkpoint);
+  const band = liveBand(input.phase, input.queuePhase, input.checkpoint, input.queueStatus);
   const floor = floorFor(input.checkpoint);
+
+  if (band === 'waiting') {
+    return {
+      kind: 'hold', band, start: floor, target: floor, durationMs: null,
+      percentVisible: floor > 0, label: 'Waiting', glowing: false,
+    };
+  }
 
   if (band === 'idle') {
     return {
@@ -208,7 +231,7 @@ export function groupAllBuilt(phases: readonly (BatchPhase | undefined)[]): bool
   return phases.every(p => p === 'done');
 }
 
-export function useEasedBarFill(rowKey: string, plan: BulkBarPlan): number {
+export function useEasedBarFill(rowKey: string, plan: BulkBarPlan, drawerHidden = false): number {
   const [fill, setFill] = useState(() => {
     if (plan.kind === 'idle') return 0;
     if (plan.band === 'ready') return 100;
@@ -228,6 +251,10 @@ export function useEasedBarFill(rowKey: string, plan: BulkBarPlan): number {
       tickBarFill(rowKey, plan, performance.now(), 100);
       return;
     }
+    if (!shouldAnimateBulkBar(plan, drawerHidden) || plan.kind === 'hold') {
+      setFill(prev => tickBarFill(rowKey, plan, performance.now(), prev));
+      return;
+    }
     const reduced = typeof window !== 'undefined'
       && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
     if (reduced) {
@@ -241,7 +268,7 @@ export function useEasedBarFill(rowKey: string, plan: BulkBarPlan): number {
     };
     raf = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(raf);
-  }, [rowKey, plan.kind, plan.band, plan.target, plan.durationMs, plan.start]);
+  }, [rowKey, plan.kind, plan.band, plan.target, plan.durationMs, plan.start, drawerHidden]);
 
   return fill;
 }

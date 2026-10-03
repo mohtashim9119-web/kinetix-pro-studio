@@ -9,8 +9,10 @@
 
 import { SyncQueue } from './syncQueue';
 import { cloudQueueEngine, createCloudProjectJob, defaultCloudQueueDeps, type CloudQueueDeps } from './cloudQueueJob';
+import { markBulkQueuePumping } from './cloudGpuDoor';
 
 export const cloudSyncQueue = new SyncQueue(cloudQueueEngine);
+cloudSyncQueue.subscribe(() => markBulkQueuePumping(cloudSyncQueue.snapshot().running));
 
 /** Queues these stored projects for a cloud sync. Returns how many were added
  *  (a project already live in the queue is not added twice). */

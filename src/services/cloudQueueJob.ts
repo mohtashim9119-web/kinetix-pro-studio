@@ -318,6 +318,7 @@ export function createCloudProjectJob(
             onProgress: () => {}, signal: ctx.signal, audioHash,
             hold: resolution.gateOpen, holdJobId: token,
             projectId: project.id, rowId: meta.id,
+            gpuLane: 'bulk',
           });
           tokens = tr.tokens;
           if (tr.jobId) {
@@ -364,6 +365,7 @@ export function createCloudProjectJob(
           prepareSegments: () => deps.parseProjectData(
             project.script, project.sceneDetails, project.assets, durationSec, project.segments, project.defaultTextOverlay ?? false,
           ),
+          gpuLane: 'bulk',
         }, ctx.signal);
 
         const kept = takeHeldAlign(audioHash);

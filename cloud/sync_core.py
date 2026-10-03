@@ -117,6 +117,9 @@ WARM_HOUR_ALIGN_SEC = 66.0
 WORKER_TIMEOUT_SEC = 10 * 60
 MAX_CHUNKS = 5000
 MAX_CHUNK_TEXT_CHARS = 20_000
+# wav2vec2 softmax OOM: a single hour-long window (~16 kHz) is the 607 GiB
+# allocator. Client plans are MAX_RUN_SEC=30; the gateway enforces the same.
+MAX_ALIGN_WINDOW_SEC = 30.0
 
 # ---------------------------------------------------------------------------
 # Retention (operator D4): cached audio 7 days after last use, results 30
@@ -226,6 +229,16 @@ def validate_probe(codec: str | None, duration_sec: float | None) -> float:
     return duration_sec
 
 
+def validate_align_audio(duration_sec: float | None) -> None:
+    """Same hour cap as transcribe, on the ALIGN submit path (no GPU boot)."""
+    if duration_sec is None:
+        return
+    if duration_sec > MAX_AUDIO_SEC + AUDIO_DURATION_TOLERANCE_SEC:
+        raise ValidationError(
+            "too-long", f"audio is {duration_sec:.1f}s; the cap is {MAX_AUDIO_SEC:.0f}s"
+        )
+
+
 def validate_language(stage: str, language: Any) -> str:
     allowed = TRANSCRIBE_LANGS if stage == "transcribe" else FA_LANGS
     if language not in allowed:
@@ -252,6 +265,11 @@ def canonical_chunks(chunks: Any, audio_duration_sec: float | None) -> list[dict
         start, end = float(start), float(end)
         if not (math.isfinite(start) and math.isfinite(end)) or start < 0 or end <= start or end > ceiling:
             raise ValidationError("bad-chunks", f"chunk {i} window [{start}, {end}] is out of range")
+        if end - start > MAX_ALIGN_WINDOW_SEC + 1e-3:
+            raise ValidationError(
+                "bad-chunks",
+                f"chunk {i} window [{start}, {end}] is longer than {MAX_ALIGN_WINDOW_SEC:.0f}s",
+            )
         if not isinstance(text, str) or len(text) > MAX_CHUNK_TEXT_CHARS:
             raise ValidationError("bad-chunks", f"chunk {i} text must be a string under {MAX_CHUNK_TEXT_CHARS} chars")
         out.append({"startSec": start, "endSec": end, "text": text})

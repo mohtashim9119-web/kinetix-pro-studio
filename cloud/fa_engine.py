@@ -24,6 +24,19 @@ FA_SAMPLE_RATE_HZ = 16_000
 CONF_MIN = 0.3
 CTC_INFEASIBLE_FALLBACK_SCORE = float("-inf")
 
+
+def max_align_samples() -> int:
+    from sync_core import MAX_ALIGN_WINDOW_SEC
+
+    return int(MAX_ALIGN_WINDOW_SEC * FA_SAMPLE_RATE_HZ) + FA_SAMPLE_RATE_HZ
+
+
+def guard_align_samples(n: int) -> None:
+    from sync_core import ValidationError
+
+    if n > max_align_samples():
+        raise ValidationError("bad-chunks", f"alignment window is {n} samples; exceeds MAX_RUN_SEC")
+
 NON_CHARACTER_VOCAB_TOKENS = {"<pad>", "<s>", "</s>", "<unk>", "|"}
 DIGIT_RE = re.compile(r"[0-9]")
 ZERO_WIDTH = dict.fromkeys(map(ord, "\u200b\u200c\u200d\ufeff\u2060"))
@@ -688,6 +701,7 @@ def align_chunked(
         end_sec = float(chunk["endSec"])
         text = str(chunk.get("text") or "")
         i0, i1 = chunk_sample_range(len(samples), start_sec, end_sec)
+        guard_align_samples(i1 - i0)
         window = samples[i0:i1]
         if window.size == 0:
             continue
