@@ -113,10 +113,14 @@ const buildFor = (host: HTMLElement, rowId: string): HTMLButtonElement =>
   q(host, `bulk-row-${rowId}`)!.closest('section')!.querySelector('[data-testid^="bulk-build-"]') as HTMLButtonElement;
 const rowIds = (host: HTMLElement): string[] =>
   [...host.querySelectorAll('[data-testid^="bulk-row-"]')].map(el => el.getAttribute('data-testid')!.replace('bulk-row-', ''));
+const clickTab = async (host: HTMLElement, tab: 'new' | 'failed-paused' | 'finished'): Promise<void> => {
+  await act(async () => { (q(host, `bulk-tab-${tab}`) as HTMLButtonElement).click(); });
+};
 
 beforeEach(() => {
   finishAtOnce = false;
   cloudSyncQueue.clearFinished();
+  try { localStorage.removeItem('kinetix:bulk-drawer-tab:v1'); } catch { /* ignore */ }
 });
 
 describe('BulkProjectsModal — draft rows', () => {
@@ -248,6 +252,7 @@ describe('BulkProjectsModal — draft rows', () => {
     expect(q(host, `bulk-status-${id}`)!.textContent).toBe('Building the timeline…');
     expect((q(host, `bulk-open-${id}`) as HTMLButtonElement).disabled).toBe(false);
     await act(async () => { finish({ ok: true }); });
+    await clickTab(host, 'finished');
     await vi.waitFor(() => expect(q(host, `bulk-status-${id}`)!.textContent).toBe('Ready'));
     await act(async () => { (q(host, `bulk-open-${id}`) as HTMLButtonElement).click(); });
     await vi.waitFor(() => expect(onOpen).toHaveBeenCalledWith(id));
@@ -262,9 +267,10 @@ describe('BulkProjectsModal — draft rows', () => {
     const [id] = rowIds(host);
     await act(async () => { await h.store.addFiles(id!, fourFiles()); h.store.setTypedName(id!, 'Harbour'); });
     await act(async () => { buildFor(host, id!).click(); });
-    await vi.waitFor(() => expect(q(host, `bulk-open-${id}`)).not.toBeNull());
-    expect(q(host, `bulk-status-${id}`)!.textContent).toContain('the timeline could not be finished');
+    await clickTab(host, 'failed-paused');
+    await vi.waitFor(() => expect(q(host, `bulk-status-${id}`)!.textContent).toContain('the timeline could not be finished'));
     expect(q(host, `bulk-status-${id}`)!.textContent).toContain('Sync cancelled.');
+    expect(q(host, `bulk-open-${id}`)).not.toBeNull();
     finishAtOnce = false;
   });
 
@@ -422,11 +428,13 @@ describe('Bulk UI rebuild U2 — left-edge drawer with group headers', () => {
       [{ id: 'g1', name: 'Client A', collapsed: false, rowIds: ['a', 'b'] }, { id: 'g2', name: 'Client B', collapsed: false, rowIds: ['c', 'd'] }],
     );
     const { host } = await mount(modal(h, 0, { runner }));
+    await clickTab(host, 'finished');
     const g1 = q(host, 'bulk-group-section-g1')!;
     expect(g1.querySelector('[data-testid="bulk-group-count-g1"]')!.textContent).toBe('1/2 done');
     expect(g1.querySelector('[data-testid="bulk-failed-dot"]')!.textContent).toBe('1');
-    expect(g1.querySelectorAll('[data-testid^="bulk-row-"]')).toHaveLength(2);
-    expect(q(host, 'bulk-group-section-g2')!.querySelector('[data-testid="bulk-failed-dot"]')).toBeNull();
+    await clickTab(host, 'failed-paused');
+    expect(q(host, 'bulk-group-section-g1')!.querySelectorAll('[data-testid^="bulk-row-"]')).toHaveLength(1);
+    expect(q(host, 'bulk-group-section-g2')!.querySelectorAll('[data-testid^="bulk-row-"]')).toHaveLength(0);
     await act(async () => { (q(host, 'bulk-group-toggle-g1') as HTMLButtonElement).click(); });
     expect(q(host, 'bulk-group-section-g1')!.querySelectorAll('[data-testid^="bulk-row-"]')).toHaveLength(0);
     expect(runner.groups()[0]!.collapsed).toBe(true);
@@ -517,11 +525,13 @@ describe('Bulk UI rebuild U5 — delete and persist', () => {
     const deleted: string[] = [];
     const onProjectsDeleted = vi.fn();
     const { host } = await mount(modal(h, 0, { runner, deleteProject: async id => { deleted.push(id); return []; }, onProjectsDeleted }));
+    await clickTab(host, 'failed-paused');
     await act(async () => { (q(host, 'bulk-remove-p2') as HTMLButtonElement).click(); });
     expect(document.querySelector('[role="dialog"][aria-label="Delete this project?"]')!.textContent).toContain('and the project with them');
     await act(async () => { (document.querySelector('[data-testid="confirm-dialog-confirm"]') as HTMLButtonElement).click(); });
     await vi.waitFor(() => expect(deleted).toEqual(['p2']));
     expect(runner.snapshot().map(r => r.id)).toEqual(['p1']);
+    await clickTab(host, 'finished');
     expect(rowIds(host)).toEqual(['p1']);
     expect(onProjectsDeleted).toHaveBeenCalledWith(['p2'], []);
   });
@@ -533,6 +543,7 @@ describe('Bulk UI rebuild U5 — delete and persist', () => {
       [{ id: 'g1', name: 'One', collapsed: false, rowIds: ['a', 'b'] }, { id: 'g2', name: 'Two', collapsed: false, rowIds: ['c', 'd'] }],
     );
     const { host } = await mount(modal(h, 0, { runner }));
+    await clickTab(host, 'finished');
     expect(q(host, 'bulk-clear-finished')).toBeNull();
     await act(async () => { (q(host, 'bulk-clear-finished-g1') as HTMLButtonElement).click(); });
     expect(runner.snapshot().map(r => r.id)).toEqual(['b', 'c', 'd']);
@@ -558,6 +569,7 @@ describe('1.3.0 landing — the background pipeline drives drawer rows to ready'
     await act(async () => { root.render(modal(h, 0, { runner, onOpenProject: onOpen, onFinishRow, hidden: true })); });
     await vi.waitFor(() => expect(runner.snapshot().find(r => r.id === id)?.phase).toBe('done'));
     expect(finalize).toHaveBeenCalledWith(id, { userInitiated: false });
+    await clickTab(host, 'finished');
     expect(q(host, `bulk-status-${id}`)!.textContent).toBe('Ready');
     const open = q(host, `bulk-open-${id}`) as HTMLButtonElement;
     expect(open).not.toBeNull();
@@ -581,6 +593,7 @@ describe('1.3.2 — operator 1.3.1 follow-ups', () => {
     row.message = 'CUDA OOM on worker-7';
     row.checkpoint = 'staged';
     const { host } = await mount(modal(h, 0, { runner }));
+    await clickTab(host, 'failed-paused');
     expect(q(host, `bulk-stages-${id}`)).toBeNull();
     await act(async () => { await h.store.addFiles(id!, fourFiles()); });
     expect(q(host, `bulk-stages-${id}`)).toBeNull();
@@ -601,6 +614,7 @@ describe('1.3.2 — operator 1.3.1 follow-ups', () => {
     row.message = 'The cloud job failed (worker-error). CUDA OOM on worker-7: device-side assert';
     row.workerSec = 12;
     const { host } = await mount(modal(h, 0, { runner }));
+    await clickTab(host, 'failed-paused');
     const status = q(host, `bulk-status-${id}`)!;
     expect(status.getAttribute('role')).toBe('button');
     expect(status.textContent).toBe('Failed — Retry');
@@ -645,6 +659,7 @@ describe('1.3.2 — operator 1.3.1 follow-ups', () => {
     });
     seeded.setFinalizer(finalize);
     const { host } = await mount(modal(h, 0, { runner: seeded }));
+    await clickTab(host, 'finished');
     const btn = q(host, 'bulk-rebuild-built-1') as HTMLButtonElement;
     expect(btn).not.toBeNull();
     expect(btn.textContent).toContain('Rebuild');
@@ -737,15 +752,124 @@ describe('1.3.1 — row files, message line, docking', () => {
     await act(async () => { (q(host, `bulk-build-${g.id}`) as HTMLButtonElement).click(); });
     await vi.waitFor(() => expect(q(host, `bulk-cancel-${id}`)).not.toBeNull());
     await act(async () => { (q(host, `bulk-cancel-${id}`) as HTMLButtonElement).click(); });
+    await clickTab(host, 'failed-paused');
     await vi.waitFor(() => expect(q(host, `bulk-status-${id}`)!.textContent).toContain('Cancelled — Retry'));
     expect(q(host, `bulk-retry-${id}`)).not.toBeNull();
     expect((q(host, `bulk-name-${id}`) as HTMLInputElement).disabled).toBe(false);
     expect(h.store.snapshot().find(r => r.projectId === id)!.sealed).toBe(false);
     finishAtOnce = true;
     await act(async () => { (q(host, `bulk-retry-${id}`) as HTMLButtonElement).click(); });
+    await clickTab(host, 'new');
     await vi.waitFor(() => {
       const text = q(host, `bulk-status-${id}`)!.textContent ?? '';
       expect(text).not.toContain('Cancelled — Retry');
     });
   }, 15_000);
+});
+
+describe('bulk drawer tabs — T1 T2 T3 T4 T5', () => {
+  it('T1: NEW / FAILED-PAUSED / FINISHED render as horizontal tabs under each group header', async () => {
+    const h = store();
+    const { host } = await mount(modal(h, 2));
+    const section = host.querySelector('[data-testid^="bulk-group-section-"]')!;
+    const tabs = section.querySelector('[data-testid="bulk-drawer-tabs"]')!;
+    const header = section.querySelector('[data-testid="bulk-group-toggle-' + section.getAttribute('data-testid')!.replace('bulk-group-section-', '') + '"]');
+    expect(tabs).not.toBeNull();
+    expect(header && (header.compareDocumentPosition(tabs) & Node.DOCUMENT_POSITION_FOLLOWING)).toBeTruthy();
+    expect(tabs.getAttribute('role')).toBe('tablist');
+    expect(tabs.className).toMatch(/flex/);
+    expect(q(host, 'bulk-tab-new')!.textContent).toBe('NEW');
+    expect(q(host, 'bulk-tab-failed-paused')!.textContent).toBe('FAILED-PAUSED');
+    expect(q(host, 'bulk-tab-finished')!.textContent).toBe('FINISHED');
+    expect(q(host, 'bulk-create')).not.toBeNull();
+  });
+
+  it('T2: a mixed group files rows across NEW / FAILED-PAUSED / FINISHED', async () => {
+    const h = store();
+    const runner = seededRunner(
+      [{ id: 'a', name: 'A', phase: 'cloud' }, { id: 'b', name: 'B', phase: 'failed' }, { id: 'c', name: 'C', phase: 'done' }],
+      [{ id: 'g1', name: 'G', collapsed: false, rowIds: ['a', 'b', 'c'] }],
+    );
+    const { host } = await mount(modal(h, 0, { runner }));
+    expect(rowIds(host)).toEqual(['a']);
+    await clickTab(host, 'failed-paused');
+    expect(rowIds(host)).toEqual(['b']);
+    await clickTab(host, 'finished');
+    expect(rowIds(host)).toEqual(['c']);
+    expect(q(host, 'bulk-group-section-g1')).not.toBeNull();
+  });
+
+  it('T3: selected tab persists in kinetix:bulk-drawer-tab:v1 and collapse is independent', async () => {
+    const h = store();
+    const runner = seededRunner(
+      [{ id: 'a', name: 'A', phase: 'queued' }, { id: 'b', name: 'B', phase: 'failed' }],
+      [{ id: 'g1', name: 'G', collapsed: false, rowIds: ['a', 'b'] }],
+    );
+    const { root, host } = await mount(modal(h, 0, { runner }));
+    expect(runner.groups()[0]!.collapsed).toBe(false);
+    await clickTab(host, 'failed-paused');
+    expect(localStorage.getItem('kinetix:bulk-drawer-tab:v1')).toBe('failed-paused');
+    expect(runner.groups()[0]!.collapsed).toBe(false);
+    await act(async () => { (q(host, 'bulk-group-toggle-g1') as HTMLButtonElement).click(); });
+    expect(runner.groups()[0]!.collapsed).toBe(true);
+    await clickTab(host, 'new');
+    expect(runner.groups()[0]!.collapsed).toBe(true);
+    await clickTab(host, 'failed-paused');
+    await act(async () => { root.unmount(); });
+    const again = await mount(modal(h, 0, { runner }));
+    expect(q(again.host, 'bulk-tab-failed-paused')!.getAttribute('aria-selected')).toBe('true');
+    expect(runner.groups()[0]!.collapsed).toBe(true);
+  });
+
+  it('T4: Retry All queues failed|finish-failed|cancelled FIFO without next and without resetting autoRetries; paused stays', async () => {
+    const h = store();
+    const enqueued: { id: string; next?: boolean }[] = [];
+    const disk = memStorage();
+    disk.setItem('kinetix:bulk-batch:v1', JSON.stringify({
+      rows: [
+        { id: 'live', name: 'Live', phase: 'cloud', autoRetries: 1 },
+        { id: 'f1', name: 'F1', phase: 'failed', autoRetries: 1 },
+        { id: 'paused', name: 'P', phase: 'paused', autoRetries: 0 },
+        { id: 'c1', name: 'C1', phase: 'cancelled', autoRetries: 1 },
+      ],
+      groups: [
+        { id: 'g1', name: 'One', collapsed: false, rowIds: ['live', 'f1', 'paused'] },
+        { id: 'g2', name: 'Two', collapsed: false, rowIds: ['c1'] },
+      ],
+    }));
+    const runner = new BulkBatchRunner({
+      queue: cloudSyncQueue,
+      enqueue: (rows, opts) => { for (const r of rows) enqueued.push({ id: r.id, next: opts?.next }); },
+      exists: () => true,
+      storage: disk,
+    });
+    const { host } = await mount(modal(h, 0, { runner }));
+    await clickTab(host, 'failed-paused');
+    const btn = q(host, 'bulk-retry-all') as HTMLButtonElement;
+    expect(btn.disabled).toBe(false);
+    await act(async () => { btn.click(); });
+    expect(enqueued.map(e => e.id)).toEqual(['f1', 'c1']);
+    expect(enqueued.every(e => e.next !== true)).toBe(true);
+    expect(runner.snapshot().find(r => r.id === 'f1')!.autoRetries).toBe(1);
+    expect(runner.snapshot().find(r => r.id === 'c1')!.autoRetries).toBe(1);
+    expect(runner.snapshot().find(r => r.id === 'paused')!.phase).toBe('paused');
+    expect(runner.snapshot().find(r => r.id === 'live')!.phase).toBe('cloud');
+  });
+
+  it('T4/T5: Retry All is disabled with honest copy when empty; empty tabs are never blank', async () => {
+    const h = store();
+    const runner = seededRunner(
+      [{ id: 'a', name: 'A', phase: 'queued' }],
+      [{ id: 'g1', name: 'G', collapsed: false, rowIds: ['a'] }],
+    );
+    const { host } = await mount(modal(h, 0, { runner }));
+    await clickTab(host, 'failed-paused');
+    const retry = q(host, 'bulk-retry-all') as HTMLButtonElement;
+    expect(retry.disabled).toBe(true);
+    expect(retry.textContent).toBe('No failed rows');
+    expect(q(host, 'bulk-tab-empty')!.textContent).toBe('No failed rows');
+    await clickTab(host, 'finished');
+    expect(q(host, 'bulk-tab-empty')!.textContent).toBe('Nothing finished yet');
+    expect(q(host, 'bulk-retry-all')).toBeNull();
+  });
 });

@@ -390,11 +390,11 @@ export class BulkBatchRunner {
   }
 
   /** Run this row again from its checkpoint. Content changes start over. */
-  retry(id: string, contentKey?: string, opts?: { auto?: boolean; next?: boolean }): void {
+  retry(id: string, contentKey?: string, opts?: { auto?: boolean; next?: boolean; preserveAutoRetries?: boolean }): void {
     const row = this.rows.find(r => r.id === id);
     if (!row) return;
     if (row.phase !== 'failed' && row.phase !== 'finish-failed' && row.phase !== 'paused' && row.phase !== 'cancelled' && !opts?.auto) return;
-    if (!opts?.auto) row.autoRetries = 0;
+    if (!opts?.auto && !opts?.preserveAutoRetries) row.autoRetries = 0;
     if (contentKey !== undefined && row.contentKey !== undefined && contentKey !== row.contentKey) {
       row.checkpoint = undefined;
     }
