@@ -1,7 +1,7 @@
 import { describe, expect, it, beforeEach } from 'vitest';
 import {
   bulkRowBar, groupAllBuilt, resetBulkBarPeaksForTests, tickBarFill,
-  STAGE_END, SETTLE_MS, transcribeDurationMs,
+  STAGE_END, SETTLE_MS, transcribeDurationMs, shouldAnimateBulkBar,
 } from './bulkRowProgress';
 import { shortLogTitle } from './bulkLogTitle';
 
@@ -120,6 +120,37 @@ describe('bulk row progress bar (cloud+timeline only)', () => {
   it('paused / cancelled labels match the operator spec', () => {
     expect(bulkRowBar({ rowId: 'r', phase: 'paused' }).label).toBe('Paused — open project to answer');
     expect(bulkRowBar({ rowId: 'r', phase: 'cancelled' }).label).toBe('Cancelled');
+  });
+
+  it('H1: three queued rows — only the running item is Transcribing; the other two are static Waiting', () => {
+    const waitingA = bulkRowBar({ rowId: 'a', phase: 'queued', queueStatus: 'queued', durationSec: 60 });
+    const waitingB = bulkRowBar({ rowId: 'b', phase: 'queued', queueStatus: 'queued', durationSec: 60 });
+    const running = bulkRowBar({
+      rowId: 'c', phase: 'cloud', queueStatus: 'running',
+      queuePhase: 'Transcribing on the cloud…', durationSec: 60,
+    });
+    expect(waitingA).toMatchObject({ label: 'Waiting', glowing: false, kind: 'hold' });
+    expect(waitingB).toMatchObject({ label: 'Waiting', glowing: false, kind: 'hold' });
+    expect(running.label).toBe('Transcribing');
+    expect(running.glowing).toBe(true);
+    const fill0 = tickBarFill('wait-a', waitingA, 0, 0);
+    const fill1 = tickBarFill('wait-a', waitingA, 5_000, fill0);
+    expect(fill1).toBe(fill0);
+  });
+
+  it('H1: eased rAF is idle when the bar is static or the drawer is hidden', () => {
+    const idle = bulkRowBar({ rowId: 'r' });
+    expect(idle.kind).toBe('idle');
+    expect(shouldAnimateBulkBar(idle, false)).toBe(false);
+    const waiting = bulkRowBar({ rowId: 'r', phase: 'queued', queueStatus: 'queued' });
+    expect(shouldAnimateBulkBar(waiting, false)).toBe(false);
+    expect(shouldAnimateBulkBar(waiting, true)).toBe(false);
+    const running = bulkRowBar({
+      rowId: 'r', phase: 'cloud', queueStatus: 'running',
+      queuePhase: 'Transcribing on the cloud…', durationSec: 30,
+    });
+    expect(shouldAnimateBulkBar(running, false)).toBe(true);
+    expect(shouldAnimateBulkBar(running, true)).toBe(false);
   });
 
   it('group sound fires only when every row is built', () => {

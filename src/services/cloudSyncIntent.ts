@@ -38,6 +38,7 @@ import type { Asset, TranscriptToken, VideoSegment } from '../types';
 import { applyAnchorBasedTiming } from './syncEngine';
 import { runForcedAlignmentForSync, type FaRunResult } from './forcedAlignmentRun';
 import { onCloudPhase, releaseHeldTranscription, type CloudPhase } from './cloudSyncEngine';
+import { editorCloudGpuBlockedReason, waitForEditorCloudGpu } from './cloudGpuDoor';
 
 export interface SyncIntentInputs {
   /** `audioHash|scriptHash|engineKey` — one intent per spine. */
@@ -54,6 +55,7 @@ export interface SyncIntentInputs {
   prepareSegments: () => Promise<VideoSegment[]>;
   projectId?: string;
   rowId?: string;
+  gpuLane?: 'bulk' | 'editor';
 }
 
 export type SyncIntentOutcome =
@@ -66,13 +68,17 @@ export type SyncIntentOutcome =
   | { status: 'skipped'; reason: string }
   | { status: 'cancelled' };
 
-export type IntentPhase = CloudPhase | 'planning' | 'ready' | 'paused' | 'skipped';
+export type IntentPhase = CloudPhase | 'planning' | 'waiting-bulk' | 'ready' | 'paused' | 'skipped';
 
 export async function runCloudSyncIntent(
   inputs: SyncIntentInputs,
   signal?: AbortSignal,
 ): Promise<SyncIntentOutcome> {
   try {
+    if (inputs.gpuLane !== 'bulk' && typeof import.meta.env !== 'undefined' && !import.meta.env.VITEST) {
+      await waitForEditorCloudGpu(signal, undefined);
+      if (signal?.aborted) return { status: 'cancelled' };
+    }
     const segments = await inputs.prepareSegments();
     if (signal?.aborted) return { status: 'cancelled' };
     if (segments.length === 0) return { status: 'skipped', reason: 'the scene doc has no scenes' };
@@ -149,7 +155,7 @@ export function startSyncIntent(
   const entry: IntentEntry = {
     spineKey: inputs.spineKey,
     audioHash: inputs.audioHash,
-    phase: 'planning',
+    phase: editorCloudGpuBlockedReason() ?? 'planning',
     controller,
     promise: Promise.resolve({ status: 'skipped', reason: 'not started' }),
   };
@@ -239,6 +245,7 @@ export function __resetSyncIntentsForTests(): void {
 /** One human line per phase, for the reveal overlay. Operator-swappable. */
 export const INTENT_PHASE_COPY: Record<IntentPhase, string> = {
   planning: 'Checking the script against the audio…',
+  'waiting-bulk': 'Waiting for bulk cloud work to finish…',
   // Wave 3 U5 — the queued state says what a cancel costs right now.
   'waiting-gpu': 'Waiting for a cloud GPU… Cancel now and this job costs nothing (a GPU already starting up may bill its start-up, about $0.01 or less).',
   transcribing: 'Transcribing on the cloud…',

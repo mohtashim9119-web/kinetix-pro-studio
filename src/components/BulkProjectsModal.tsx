@@ -141,9 +141,10 @@ interface RowProps {
   onFinish: () => void;
   onRebuild: () => void;
   onRetry: () => void;
+  drawerHidden?: boolean;
 }
 
-function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFile, onReplaceFile, onReplaceAll, onReplaceMedia, onRemoveMedia, onClearFiles, onRemoveRow, onCancel, onOpen, onFinish, onRebuild, onRetry }: RowProps): React.ReactElement {
+function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFile, onReplaceFile, onReplaceAll, onReplaceMedia, onRemoveMedia, onClearFiles, onRemoveRow, onCancel, onOpen, onFinish, onRebuild, onRetry, drawerHidden }: RowProps): React.ReactElement {
   const filesRef = useRef<HTMLInputElement>(null);
   const folderRef = useRef<HTMLInputElement>(null);
   const replaceRef = useRef<HTMLInputElement>(null);
@@ -190,10 +191,11 @@ function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFi
     phase,
     checkpoint: record?.checkpoint,
     queuePhase: item?.phase,
+    queueStatus: item?.status,
     durationSec: audioSecFromPreflight(row.preflight),
   });
   const barKey = `${row.projectId}|${record?.contentKey ?? ''}`;
-  const fill = useEasedBarFill(barKey, bar);
+  const fill = useEasedBarFill(barKey, bar, drawerHidden);
   const shownPct = bar.percentVisible ? Math.round(fill) : null;
   // The row's messages, one line at a time: its status first, then the cancel
   // receipt and any problem notes (a broken bundle, skipped files).
@@ -704,6 +706,7 @@ export function BulkProjectsModal({
       onFinish={() => finishRow(row.projectId)}
       onRebuild={() => { runner.rebuildFromCache(row.projectId); }}
       onRetry={() => runner.retry(row.projectId)}
+      drawerHidden={hidden}
     />
   );
 

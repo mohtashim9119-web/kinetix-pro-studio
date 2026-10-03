@@ -561,6 +561,8 @@ def gateway() -> Any:
         if meta is not None and not os.path.isfile(core.audio_path(CACHE_ROOT, audio_hash)):
             meta = None
         duration = meta["durationSec"] if meta else None
+        if stage == "align":
+            core.validate_align_audio(duration)
         chunks: list[dict[str, Any]] | None = None
         if stage == "transcribe":
             cache_key = core.transcript_cache_key(audio_hash, language)

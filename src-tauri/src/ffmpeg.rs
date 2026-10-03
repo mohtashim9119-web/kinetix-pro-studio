@@ -286,6 +286,7 @@ pub fn ffmpeg_create_session(
     let dir = export_sessions_base_dir(&app)?.join(format!("kinetix-export-{}", id));
     fs::create_dir_all(&dir).map_err(|e| format!("create_session: {}", e))?;
     acquire_session_claim(&dir, &id).map_err(|e| format!("create_session: {e}"))?;
+    crate::ffmpeg_sidecar_gate::begin_export_session();
     register_session_cancel_flag(&state, &id);
     Ok(id)
 }
@@ -557,6 +558,7 @@ pub fn ffmpeg_retain_session_for_resume(
     state.cancel_flags.lock().unwrap().remove(&session_id);
     state.resume_pending.lock().unwrap().remove(&session_id);
     state.io_gates.lock().unwrap().remove(&session_id);
+    crate::ffmpeg_sidecar_gate::end_export_session();
     let dir = session_dir(&app, &session_id)?;
     let result = retain_session_for_resume(&dir, &session_id);
     match &result {
@@ -1963,6 +1965,7 @@ pub fn ffmpeg_destroy_session(
     state.cancel_flags.lock().unwrap().remove(&session_id);
     state.resume_pending.lock().unwrap().remove(&session_id);
     state.io_gates.lock().unwrap().remove(&session_id);
+    crate::ffmpeg_sidecar_gate::end_export_session();
     let dir = session_dir(&app, &session_id)?;
     let forced = force.unwrap_or(false);
     let result = destroy_session_dir(&dir, forced);

@@ -20,6 +20,7 @@ mod fa_onnx;
 mod disk_space;
 mod durable_fs;
 mod ffmpeg;
+mod ffmpeg_sidecar_gate;
 mod session_claim;
 mod event_sink;
 pub mod model_download;

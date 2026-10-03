@@ -785,8 +785,14 @@ export async function transcribeForHost(args: {
   holdJobId?: string;
   projectId?: string;
   rowId?: string;
+  /** Bulk queue jobs skip the editor GPU door (they ARE the door). */
+  gpuLane?: 'bulk' | 'editor';
 }): Promise<HostTranscribeResult> {
   if (args.host === 'cloud') {
+    if (args.gpuLane !== 'bulk' && typeof import.meta.env !== 'undefined' && !import.meta.env.VITEST) {
+      const { waitForEditorCloudGpu } = await import('./cloudGpuDoor');
+      await waitForEditorCloudGpu(args.signal);
+    }
     if (!args.audioHash) {
       throw new CloudStageError(
         { kind: 'protocol', detail: 'no audio hash' },
