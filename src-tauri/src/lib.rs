@@ -29,6 +29,7 @@ mod media_vault;
 mod media_vault_recovery;
 mod relink;
 mod project_mirror;
+mod project_thumbnail;
 mod project_tombstones;
 mod safe_delete;
 // G6 Step 1 — widened `mod` -> `pub mod`, same reasoning as `fa`/`fa_shared`
@@ -695,6 +696,9 @@ pub fn run() {
             project_mirror::project_store_write,
             project_mirror::project_store_delete,
             project_mirror::project_store_list_ids,
+            project_thumbnail::project_thumbnail_write,
+            project_thumbnail::project_thumbnail_read,
+            project_thumbnail::project_thumbnail_has,
             project_tombstones::project_tombstones_add,
             project_tombstones::project_tombstones_list,
             storage_root::storage_root_status,

@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useRef, useEffect, useLayoutEffect, useMemo, useCallback, useSyncExternalStore, ChangeEvent, lazy, Suspense, type ReactElement } from 'react';
+import { useState, useRef, useEffect, useLayoutEffect, useMemo, useCallback, ChangeEvent, lazy, Suspense, type ReactElement } from 'react';
 import { 
   Play, 
   Pause, 
@@ -355,7 +355,8 @@ import { reconnectOfflineAssets } from './services/reconnectOfflineAssets';
 import type { OfflineReconnect } from './services/mediaIngest';
 import { requestStoragePersistence } from './services/storagePersistence';
 import { getAppSessionToken } from './services/historyPersist';
-import { usePersistProject, buildThumbnailBase64 } from './hooks/usePersistProject';
+import { usePersistProject } from './hooks/usePersistProject';
+import { persistPreviewThumbnail } from './services/projectThumbnail';
 import { UnappliedTranscriptBanner } from './components/UnappliedTranscriptBanner';
 import {
   clearUnappliedTranscript,
@@ -414,7 +415,6 @@ import { ProjectSettingsModal } from './components/ProjectSettingsModal';
 import { AppSettingsModal } from './components/AppSettingsModal';
 import { SyncLogPanel } from './components/SyncLogPanel';
 import { VaultRecoveryNotice } from './components/VaultRecoveryNotice';
-import { BulkDrawerHandle } from './components/BulkDrawerHandle';
 import {
   acknowledgeVaultRecovery,
   fetchVaultRecoveryFindings,
@@ -2152,12 +2152,6 @@ export default function App() {
   const [bulkMounted, setBulkMounted] = useState(readBulkDrawerOpen);
   const [bulkHidden, setBulkHidden] = useState(false);
   useEffect(() => { writeBulkDrawerOpen(bulkMounted && !bulkHidden); }, [bulkMounted, bulkHidden]);
-  // The batch's rows, live — the editor's right-edge handle shows their count.
-  const bulkBatch = bulkBatchRunner(parseProjectData);
-  const bulkBatchRows = useSyncExternalStore(l => bulkBatch.subscribe(l), () => bulkBatch.snapshot());
-  // ONE open logic for every door into the drawer (the dashboard's bulk button
-  // and the editor handle): un-hide, and mount it if it is not. Mounted once,
-  // then only hidden. It never asks a number — creating lives in the drawer.
   const openBulkDrawer = useCallback(() => {
     setBulkHidden(false);
     setBulkMounted(true);
@@ -2169,8 +2163,7 @@ export default function App() {
     else openBulkDrawer();
   }, [bulkDrawerOpen, openBulkDrawer]);
   // On the dashboard the panel DOCKS as its left column (the grid moves over to
-  // make room) when the window is wide enough; on a narrow window, and in the
-  // editor, it slides over the content as before.
+  // make room) when the window is wide enough; on a narrow window it overlays.
   const [bulkDockWide, setBulkDockWide] = useState(() => typeof window === 'undefined' || window.matchMedia?.(`(min-width: ${BULK_DOCK_MIN_WIDTH}px)`).matches !== false);
   useEffect(() => {
     const mq = window.matchMedia?.(`(min-width: ${BULK_DOCK_MIN_WIDTH}px)`);
@@ -5114,26 +5107,13 @@ export default function App() {
     // writes it synchronously at every call site instead.
   });
 
-  // --- Thumbnail: write base64 to meta immediately when first image asset changes ---
-  // This ensures the dashboard shows a correct thumbnail even on fresh app launch,
-  // without waiting for the next full auto-save cycle.
+  // Persist a per-project preview JPEG (content-addressed). Never writes a
+  // shared in-memory slot; other dashboard cards keep their own files.
   useEffect(() => {
-    const firstImage = project.assets.find(a => a.type === 'image');
-    if (!firstImage || !project.confirmed) return;
-
-    void buildThumbnailBase64(firstImage.url).then((base64) => {
-      if (!base64) return;
-      upsertProjectMeta({
-        id: project.id,
-        name: project.name,
-        savedAt: Date.now(),
-        segmentCount: project.segments.length,
-        thumbnailUrl: base64,
-        thumbnailAssetId: firstImage.id,
-      });
-    });
+    if (!project.confirmed) return;
+    void persistPreviewThumbnail(project);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [project.assets, project.confirmed, project.id]);
+  }, [project.assets, project.confirmed, project.id, project.segments]);
 
   const voiceover = project.assets.find(a => a.id === project.voiceoverId);
 
@@ -6523,7 +6503,7 @@ export default function App() {
   useEffect(() => {
     const onInput = (e: Event): void => {
       const t = e.target;
-      if (t instanceof Element && t.closest('[data-testid="bulk-modal"], [data-testid="bulk-drawer-handle"]')) return;
+      if (t instanceof Element && t.closest('[data-testid="bulk-modal"]')) return;
       lastEditorInputAtRef.current = Date.now();
     };
     document.addEventListener('pointerdown', onInput, true);
@@ -7693,7 +7673,7 @@ export default function App() {
           project, so cancelling needs no view restore. */}
       {bulkMounted && (
         <BulkProjectsModal
-          hidden={bulkHidden}
+          hidden={bulkHidden || !showDashboard}
           docked={showDashboard && bulkDockWide}
           createBlankProject={makeDefaultProject}
           parseProjectData={parseProjectData}
@@ -7710,13 +7690,6 @@ export default function App() {
             setDashboardVersion(v => v + 1);
             if (failures.length > 0) showToast(`The project is gone, but some of its files could not be cleaned up on disk. (${failures.join('; ')})`);
           }}
-        />
-      )}
-      {!showDashboard && (
-        <BulkDrawerHandle
-          count={bulkBatchRows.length}
-          drawerOpen={bulkMounted && !bulkHidden}
-          onOpen={openBulkDrawer}
         />
       )}
       {showNewProjectModal && (

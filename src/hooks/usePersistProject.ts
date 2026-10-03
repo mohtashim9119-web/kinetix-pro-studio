@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Project } from '../types';
 import { saveProject, upsertProjectMeta, type SaveOutcome, type StoreFailureReason } from '../services/projectStore';
+import { persistPreviewThumbnail } from '../services/projectThumbnail';
 
 // ---------------------------------------------------------------------------
 // G2 close-out FIX 2 — bounded auto-retry for a save failure.
@@ -120,16 +121,13 @@ export async function buildThumbnailBase64(url: string | undefined): Promise<str
  * data URL that survives app restarts (blob URLs are ephemeral).
  */
 async function persistMeta(project: Project, savedAt: number): Promise<void> {
-  const firstImageAsset = project.assets.find(a => a.type === 'image');
-  const thumbnailUrl = await buildThumbnailBase64(firstImageAsset?.url);
   upsertProjectMeta({
     id: project.id,
     name: project.name,
     savedAt,
     segmentCount: project.segments.length,
-    thumbnailUrl,
-    thumbnailAssetId: firstImageAsset?.id ?? undefined,
   });
+  await persistPreviewThumbnail(project);
 }
 
 export function usePersistProject(project: Project, enabled = true): PersistHandle {

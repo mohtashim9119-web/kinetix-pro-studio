@@ -476,13 +476,13 @@ export async function saveProject(project: Project, opts: SaveOptions = {}): Pro
   let registryJson: string | undefined;
   try {
     const metas = loadAllMetas();
-    const meta: ProjectMeta = {
+    const idx = metas.findIndex(m => m.id === project.id);
+    const meta = mergeProjectMeta(idx >= 0 ? metas[idx] : undefined, {
       id: project.id,
       name: project.name,
       savedAt,
       segmentCount: project.segments.length,
-    };
-    const idx = metas.findIndex(m => m.id === project.id);
+    });
     if (idx >= 0) {
       metas[idx] = meta;
     } else {
@@ -659,15 +659,30 @@ export function loadAllMetas(): ProjectMeta[] {
  * per-project JSON blob.  Use this to update lightweight meta (name, thumbnail,
  * segmentCount) independently of a full saveProject() call.
  */
+function mergeProjectMeta(prev: ProjectMeta | undefined, incoming: ProjectMeta): ProjectMeta {
+  return {
+    ...prev,
+    ...incoming,
+    thumbnailHash: incoming.thumbnailHash ?? prev?.thumbnailHash,
+    thumbnailAssetId: incoming.thumbnailAssetId ?? prev?.thumbnailAssetId,
+    // Never persist ephemeral blob URLs; never wipe a still-valid data URL with undefined.
+    thumbnailUrl:
+      incoming.thumbnailUrl === undefined
+        ? prev?.thumbnailUrl
+        : incoming.thumbnailUrl,
+  };
+}
+
 export function upsertProjectMeta(meta: ProjectMeta): void {
   if (deletedProjectIds().has(meta.id)) return;
   try {
     const metas = loadAllMetas();
     const idx = metas.findIndex(m => m.id === meta.id);
+    const merged = mergeProjectMeta(idx >= 0 ? metas[idx] : undefined, meta);
     if (idx >= 0) {
-      metas[idx] = meta;
+      metas[idx] = merged;
     } else {
-      metas.push(meta);
+      metas.push(merged);
     }
     metas.sort((a, b) => b.savedAt - a.savedAt);
     localStorage.setItem(REGISTRY_KEY, JSON.stringify(metas));

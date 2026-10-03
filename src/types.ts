@@ -1114,8 +1114,10 @@ export interface ProjectMeta {
   name: string;
   savedAt: number;
   segmentCount: number;
-  /** Optional base64 or blob-URL thumbnail captured at save time. */
+  /** Optional legacy base64/blob URL. New writes persist a JPEG file and set `thumbnailHash`. */
   thumbnailUrl?: string;
+  /** Content-addressed preview-spine hash; cards load `thumbs/<hash>.jpg` by this key. */
+  thumbnailHash?: string;
   /** Asset id of the thumbnail source (used to re-derive the URL after reload). */
   thumbnailAssetId?: string;
 }

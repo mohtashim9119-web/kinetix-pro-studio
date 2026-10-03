@@ -1,5 +1,5 @@
 import React, { useEffect, useLayoutEffect, useState, useRef, useCallback, useSyncExternalStore } from 'react';
-import { Plus, Trash2, Search, Check, Loader2, Settings, ChevronDown, Play, Image as ImageIcon } from 'lucide-react';
+import { Plus, Trash2, Search, Check, Loader2, Settings, ChevronDown, Play } from 'lucide-react';
 import type { ProjectMeta } from '../types';
 import { loadAllMetas, commitTombstones } from '../services/projectStore';
 import { cleanupDeletedProjectAssets, deleteProjectRecords } from '../services/projectDelete';
@@ -13,6 +13,7 @@ import { batchProgress } from '../services/bulkBatch';
 import { killAllMemberCloudJobs } from '../services/cloudSyncEngine';
 import { FailedDot, ProgressRing } from './BulkProgress';
 import { Z } from './overlayLayers';
+import { ProjectCardThumb } from './ProjectCardThumb';
 import './ProjectDashboard.css';
 
 /**
@@ -529,13 +530,7 @@ export function ProjectDashboard({
                       {PERFORATIONS.map(i => <span key={i} />)}
                     </div>
 
-                    {meta.thumbnailUrl ? (
-                      <img src={meta.thumbnailUrl} alt="" draggable={false} />
-                    ) : (
-                      <div className="kxd-art-empty">
-                        <ImageIcon size={26} strokeWidth={1.5} aria-hidden="true" />
-                      </div>
-                    )}
+                    <ProjectCardThumb meta={meta} />
 
                     <div className="kxd-play-hint">
                       <div className="kxd-play-hint-circle">

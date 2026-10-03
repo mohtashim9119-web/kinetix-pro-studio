@@ -78,6 +78,13 @@ vi.mock('./services/projectStore', async () => {
   };
 });
 
+vi.mock('./services/projectThumbnail', () => ({
+  persistPreviewThumbnail: async () => false,
+  enqueueBackgroundThumbnail: () => {},
+  objectUrlForThumbnail: async () => null,
+  releaseThumbnailObjectUrl: () => {},
+}));
+
 const mockPutAsset = vi.fn(async (
   _projectId: string, _id: string, _blob: Blob, _meta: { name: string; mimeType: string },
 ): Promise<void> => undefined);

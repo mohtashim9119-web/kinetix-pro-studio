@@ -299,6 +299,9 @@
 
 .kxd-thumb { position: relative; aspect-ratio: 16 / 10; background: #141416; overflow: hidden; }
 .kxd-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.kxd-card-thumb-host { position: absolute; inset: 0; z-index: 1; }
+.kxd-card-thumb-host img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.kxd-card-thumb-host .kxd-art-empty { height: 100%; }
 
 .kxd-perf {
   position: absolute; left: 0; right: 0; height: 14px;

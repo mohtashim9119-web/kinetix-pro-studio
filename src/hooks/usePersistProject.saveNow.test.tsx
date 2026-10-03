@@ -34,6 +34,10 @@ vi.mock('../services/projectStore', () => ({
   upsertProjectMeta: (m: unknown) => upsertProjectMetaMock(m),
 }));
 
+vi.mock('../services/projectThumbnail', () => ({
+  persistPreviewThumbnail: async () => false,
+}));
+
 import { usePersistProject, type PersistHandle } from './usePersistProject';
 
 function project(overrides: Partial<Project> = {}): Project {

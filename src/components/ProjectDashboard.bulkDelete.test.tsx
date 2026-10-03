@@ -44,6 +44,12 @@ vi.mock('../services/mediaVaultClient', () => ({
   mediaVaultUnreference: (contentHash: string, projectId: string) => mockMediaVaultUnreference(contentHash, projectId),
   mediaVaultUnreferenceProject: (projectId: string) => mockMediaVaultUnreferenceProject(projectId),
 }));
+vi.mock('../services/projectThumbnail', () => ({
+  persistPreviewThumbnail: async () => false,
+  enqueueBackgroundThumbnail: () => {},
+  objectUrlForThumbnail: async () => null,
+  releaseThumbnailObjectUrl: () => {},
+}));
 vi.mock('../services/cloudSyncEngine', async importActual => ({
   ...(await importActual<typeof import('../services/cloudSyncEngine')>()),
   killAllMemberCloudJobs: async () => {},
