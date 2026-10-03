@@ -74,6 +74,16 @@ def row_section(since_ts: float) -> None:
     print(f"  BOOT-UNUSED  containers={len(unused)}  {unused_sec:6.1f} s  ${unused_usd:.4f}")
 
 
+def lane_section(since_ts: float) -> None:
+    lines = modal.Function.from_name("kinetix-sync", "meter_lines").remote(since_ts)
+    print("LANES — GPU seconds and dollars by lane (no cross-billing)")
+    for row in sync_core.lane_summaries(lines):
+        print(
+            f"  {row['gpuLane']:<8}  boots={row['boots']:>2}  jobs={row['jobs']:>3}  "
+            f"worker={row['workerSec']:7.1f} s  ${row['estimatedUsd']:.4f}"
+        )
+
+
 def batch_section(since_ts: float) -> None:
     """Wave 3 U7 — the bulk queue's batches: projects, GPU jobs, containers
     (boots), held/unused seconds and the batch total, one line each."""
@@ -129,6 +139,8 @@ def main() -> None:
     batch_section(args.since_ts)
     print()
     row_section(args.since_ts)
+    print()
+    lane_section(args.since_ts)
     print()
     hits_section(args.since_ts)
     print()

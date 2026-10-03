@@ -135,6 +135,8 @@ export interface CloudJobRequest {
   /** Server-owned jobs: stamped so a later app instance can reattach. */
   projectId?: string;
   rowId?: string;
+  /** Bulk queue vs editor (Apply Sync) GPU lane. */
+  gpuLane?: 'bulk' | 'editor';
 }
 
 export interface CloudProvenance {

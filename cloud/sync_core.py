@@ -118,7 +118,7 @@ WORKER_TIMEOUT_SEC = 10 * 60
 MAX_CHUNKS = 5000
 MAX_CHUNK_TEXT_CHARS = 20_000
 # wav2vec2 softmax OOM: a single hour-long window (~16 kHz) is the 607 GiB
-# allocator. Client plans are MAX_RUN_SEC=30; the gateway enforces the same.
+# allocator. Lockstep with src/services/syncConstants.ts MAX_RUN_SEC.
 MAX_ALIGN_WINDOW_SEC = 30.0
 
 # ---------------------------------------------------------------------------
@@ -505,6 +505,7 @@ def meter_line(job: dict[str, Any], outcome: str, worker_sec: float, now: float)
         "taskId": job.get("taskId"),
         "workerSec": round(worker_sec, 3),
         "estimatedUsd": round(worker_sec * USD_PER_WORKER_SEC, 6),
+        "gpuLane": parse_gpu_lane(job.get("gpuLane")),
     }
 
 
@@ -640,15 +641,26 @@ def kill_gpu_keep_record(store: Any, job_id: str) -> str:
     store.put(key, HANDOFF_RELEASE, skip_if_exists=True)
     return HANDOFF_RELEASE
 
-# One live GPU container. A lookup never boots one. A job a held container
-# can run must not boot a second — that second container shows up as
-# `boot-unused` (it did no work) while the warm one takes the job.
-GPU_MAX_CONTAINERS = 1
+# Two live GPU containers — one per lane (bulk FIFO, editor). A lookup never
+# boots one. A job a held container on the SAME lane can run must not boot a
+# second on that lane (`boot-unused`). A second lane with none may boot.
+GPU_MAX_CONTAINERS = 2
+GPU_LANES = ("bulk", "editor")
 
 
-def gpu_boot_allowed(*, lookup: bool, handed_off: bool, live_containers: int) -> bool:
+def parse_gpu_lane(value: Any) -> str:
+    if value in GPU_LANES:
+        return str(value)
+    return "editor"
+
+
+def gpu_boot_allowed(
+    *, lookup: bool, handed_off: bool, live_containers: int, lane_live: int = 0
+) -> bool:
     """Whether this submission may start a GPU container."""
     if lookup or handed_off:
+        return False
+    if lane_live > 0:
         return False
     return live_containers < GPU_MAX_CONTAINERS
 # Wave 3 U7 — the bulk queue chains many jobs through ONE container: any job
@@ -673,10 +685,10 @@ def handoff_target(value: Any) -> str | None:
     return value
 
 
-def can_hold_for(holder: dict[str, Any] | None, member: str) -> bool:
+def can_hold_for(holder: dict[str, Any] | None, member: str, lane: str | None = None) -> bool:
     """A job the next job may be handed to: this member's job (either stage —
     U7 chains a whole queue) that asked to be held and has not been
-    released/closed by its own record."""
+    released/closed by its own record. Never hands across GPU lanes."""
     return (
         holder is not None
         and holder.get("member") == member
@@ -684,6 +696,7 @@ def can_hold_for(holder: dict[str, Any] | None, member: str) -> bool:
         and holder.get("status") != "failed"
         and bool(holder.get("hold"))
         and holder.get("status") in ("queued", "running", "done")
+        and (lane is None or parse_gpu_lane(holder.get("gpuLane")) == parse_gpu_lane(lane))
     )
 
 
@@ -812,6 +825,25 @@ def row_summaries(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
         })
     rows.sort(key=lambda row: row["from"])
     return rows
+
+
+def lane_summaries(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Per-GPU-lane boots, GPU-seconds, and dollars — never cross-billed."""
+    by_lane: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for line in lines:
+        by_lane[parse_gpu_lane(line.get("gpuLane"))].append(line)
+    out: list[dict[str, Any]] = []
+    for lane in GPU_LANES:
+        group = by_lane.get(lane, [])
+        sec = sum(line.get("workerSec") or 0 for line in group)
+        out.append({
+            "gpuLane": lane,
+            "jobs": len(group),
+            "boots": len({line.get("taskId") for line in group if line.get("taskId")}),
+            "workerSec": round(sec, 3),
+            "estimatedUsd": round(sec * USD_PER_WORKER_SEC, 6),
+        })
+    return out
 
 
 def may_hold(call_age_sec: float) -> bool:

@@ -46,11 +46,13 @@ import { expandTokensToWords } from './transcriptWords';
 import { alignQueryToSubjectAsync } from './hirschbergMatchClient';
 import { computeFaAnchors, type FaAnchor, type FaRun } from './faAnchors';
 import { normalizeForForcedAlignment, type FaLanguageCode, type FaCardinalData } from './faTextNormalize';
+import { MAX_RUN_SEC } from './syncConstants';
 
 /** One forced-alignment chunk: an audio time window (raw, unpadded — R.2
  *  padding is out of scope for this slice) and the script text to align
- *  against it. `endSec - startSec <= MAX_RUN_SEC` for every chunk except a
- *  degenerate merge (see module doc comment on empty-run merging below). */
+ *  against it. `endSec - startSec <= MAX_RUN_SEC` for every emitted chunk:
+ *  a silence-bounded / empty-run-merged window over the cap is split at the
+ *  word nearest the midpoint before return (never an over-cap window). */
 export interface FaChunk {
   startSec: number;
   endSec: number;
@@ -1098,9 +1100,71 @@ export function computeFaChunkPlanWithAttribution(
     );
   }
 
+  chunks = enforceAlignWindowCap(chunks, tokens);
+
   return languageCode !== undefined && vocabChars !== undefined && cardinalData !== undefined
     ? applyFaTextNormalization(chunks, languageCode, vocabChars, cardinalData)
     : chunks;
+}
+
+/** Lockstep with `cloud/sync_core.py` `MAX_ALIGN_WINDOW_SEC`. Any window
+ *  longer than `MAX_RUN_SEC` splits at the word whose onset is nearest the
+ *  midpoint (both halves then recurse). Empty-run merge may join a leftover
+ *  run onto a full 30s neighbour — this pass is what keeps the planner from
+ *  ever emitting that 33s dense-speech window. */
+export function enforceAlignWindowCap(
+  chunks: readonly FaChunk[],
+  tokens: readonly TranscriptToken[],
+  capSec: number = MAX_RUN_SEC,
+): FaChunk[] {
+  const out: FaChunk[] = [];
+  for (const chunk of chunks) out.push(...splitChunkAtCap(chunk, tokens, capSec));
+  return out;
+}
+
+function splitChunkAtCap(
+  chunk: FaChunk,
+  tokens: readonly TranscriptToken[],
+  capSec: number,
+): FaChunk[] {
+  const dur = chunk.endSec - chunk.startSec;
+  if (dur <= capSec + 1e-9) return [chunk];
+  const mid = (chunk.startSec + chunk.endSec) / 2;
+  const onsets = tokens
+    .map(t => t.startSec)
+    .filter(t => t > chunk.startSec + 1e-6 && t < chunk.endSec - 1e-6);
+  const valid = onsets.filter(t => t - chunk.startSec <= capSec + 1e-9 && chunk.endSec - t <= capSec + 1e-9);
+  const pool = valid.length > 0 ? valid : onsets;
+  let cut = mid;
+  if (pool.length > 0) {
+    cut = pool.reduce((best, t) => (Math.abs(t - mid) < Math.abs(best - mid) ? t : best));
+  } else {
+    cut = Math.min(chunk.startSec + capSec, (chunk.startSec + chunk.endSec) / 2);
+  }
+  if (!(cut > chunk.startSec && cut < chunk.endSec)) return [chunk];
+  const { leftText, rightText } = splitTextAtCut(chunk, tokens, cut);
+  const left: FaChunk = { startSec: chunk.startSec, endSec: cut, text: leftText };
+  const right: FaChunk = { startSec: cut, endSec: chunk.endSec, text: rightText };
+  return [...splitChunkAtCap(left, tokens, capSec), ...splitChunkAtCap(right, tokens, capSec)];
+}
+
+function splitTextAtCut(
+  chunk: FaChunk,
+  tokens: readonly TranscriptToken[],
+  cut: number,
+): { leftText: string; rightText: string } {
+  const words = chunk.text.split(/\s+/).filter(w => w.length > 0);
+  if (words.length <= 1) return { leftText: chunk.text, rightText: chunk.text };
+  const inWin = tokens
+    .filter(t => t.startSec >= chunk.startSec - 1e-6 && t.startSec < chunk.endSec - 1e-6)
+    .sort((a, b) => a.startSec - b.startSec);
+  if (inWin.length >= 2) {
+    const nLeft = Math.max(1, Math.min(words.length - 1, inWin.filter(t => t.startSec < cut).length || 1));
+    return { leftText: words.slice(0, nLeft).join(' '), rightText: words.slice(nLeft).join(' ') };
+  }
+  const frac = (cut - chunk.startSec) / (chunk.endSec - chunk.startSec);
+  const idx = Math.max(1, Math.min(words.length - 1, Math.round(frac * words.length)));
+  return { leftText: words.slice(0, idx).join(' '), rightText: words.slice(idx).join(' ') };
 }
 
 /** Post-processes an already-built chunk plan's `text` through

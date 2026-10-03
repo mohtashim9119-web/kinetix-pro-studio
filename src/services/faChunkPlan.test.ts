@@ -21,6 +21,7 @@ import {
   computeRuns,
   computeUnscriptedRuns,
   detectUnscriptedRuns,
+  enforceAlignWindowCap,
 } from './faChunkPlan';
 import type { FaRun } from './faAnchors';
 import { MAX_RUN_SEC } from './syncConstants';
@@ -143,6 +144,61 @@ describe('computeFaChunkPlan', () => {
     expect(chunks.every(c => c.text.length > 0)).toBe(true);
     expect(chunks[0]!.startSec).toBe(0);
     expect(chunks[chunks.length - 1]!.endSec).toBe(35);
+    for (const c of chunks) expect(c.endSec - c.startSec).toBeLessThanOrEqual(MAX_RUN_SEC);
+    expect(chunks.length).toBeGreaterThan(1);
+  });
+
+  it('splits the team dense-speech window [249.34, 282.32] at a word near the midpoint into two <=30s windows', () => {
+    const start = 249.34;
+    const end = 282.32;
+    const words = Array.from({ length: 40 }, (_, i) => `word${i}`);
+    const stride = (end - start) / words.length;
+    const tokens: TranscriptToken[] = words.map((w, i) => token(w, start + i * stride, start + i * stride + stride * 0.8));
+    const split = enforceAlignWindowCap([{ startSec: start, endSec: end, text: words.join(' ') }], tokens);
+    expect(split.length).toBe(2);
+    for (const c of split) expect(c.endSec - c.startSec).toBeLessThanOrEqual(MAX_RUN_SEC);
+    expect(split[0]!.startSec).toBe(start);
+    expect(split[split.length - 1]!.endSec).toBe(end);
+    expect(split[0]!.endSec).toBe(split[1]!.startSec);
+    const cut = split[0]!.endSec;
+    const mid = (start + end) / 2;
+    expect(Math.abs(cut - mid)).toBeLessThan(2);
+
+    const fillerWords = Array.from({ length: 80 }, (_, i) => `fill${i}`);
+    const segments = [
+      seg('s0', fillerWords.join(' '), 0, start),
+      seg('s1', words.join(' '), start, end - start),
+    ];
+    const allTokens: TranscriptToken[] = [
+      ...fillerWords.map((w, i) => token(w, i * (start / fillerWords.length), i * (start / fillerWords.length) + 0.2)),
+      ...tokens,
+    ];
+    const plan = computeFaChunkPlan(segments, allTokens, [], end);
+    const over = plan.filter(c => c.endSec - c.startSec > MAX_RUN_SEC + 1e-6);
+    expect(over).toEqual([]);
+    const covering = plan.filter(c => c.endSec > start && c.startSec < end);
+    expect(covering.length).toBeGreaterThanOrEqual(2);
+    for (const c of covering) expect(c.endSec - c.startSec).toBeLessThanOrEqual(MAX_RUN_SEC);
+  });
+
+  it('never emits a chunk longer than MAX_RUN_SEC (property: dense speech, no silences)', () => {
+    const duration = 120;
+    const n = 60;
+    const segments = Array.from({ length: n }, (_, i) =>
+      seg(`s${i}`, `narration block number ${i} continues without pause`, i * (duration / n), duration / n),
+    );
+    const tokens: TranscriptToken[] = segments.flatMap((s, si) =>
+      s.text.split(' ').map((w, wi) => token(w, s.startTime + wi * 0.08, s.startTime + wi * 0.08 + 0.06)),
+    );
+    const plan = computeFaChunkPlan(segments, tokens, [], duration);
+    for (const c of plan) expect(c.endSec - c.startSec).toBeLessThanOrEqual(MAX_RUN_SEC);
+  });
+
+  it('MAX_RUN_SEC is lockstep with the Python MAX_ALIGN_WINDOW_SEC guard', () => {
+    const py = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '../../cloud/sync_core.py'), 'utf8');
+    const m = py.match(/^MAX_ALIGN_WINDOW_SEC = ([0-9.]+)/m);
+    expect(m).not.toBeNull();
+    expect(Number(m![1])).toBe(MAX_RUN_SEC);
   });
 
   it('returns [] when every segment has empty text', () => {
@@ -486,10 +542,13 @@ describe('computeFaChunkPlanWithAttribution — forced-split attribution (ear-pa
       segments, tokens, silences, audioDuration, 'script-word-index',
     );
 
-    expect(chunks).toEqual([
-      { startSec: 0, endSec: 1.5, text: 'kittens likes purple' },
-      { startSec: 1.5, endSec: 40, text: 'hats dragons chase silver moons falcons guard hidden castles' },
-    ]);
+    expect(chunks[0]).toEqual({ startSec: 0, endSec: 1.5, text: 'kittens likes purple' });
+    expect(chunks[chunks.length - 1]!.endSec).toBe(40);
+    expect(chunks.flatMap(c => c.text.split(' ').filter(Boolean)).join(' ')).toBe(
+      'kittens likes purple hats dragons chase silver moons falcons guard hidden castles',
+    );
+    for (const c of chunks) expect(c.endSec - c.startSec).toBeLessThanOrEqual(MAX_RUN_SEC);
+    expect(chunks.length).toBeGreaterThan(1);
   });
 
   it('still covers the full audio gaplessly across the forced split (R-E)', () => {
@@ -520,10 +579,12 @@ describe('computeFaChunkPlanWithAttribution — forced-split attribution (ear-pa
     const byTime = computeFaChunkPlanWithAttribution(
       segments, tokens, silences, audioDuration, 'segment-start-time',
     );
-    expect(byTime).toEqual([
-      { startSec: 0, endSec: 1.5, text: 'kittens likes purple hats' },
-      { startSec: 1.5, endSec: 40, text: 'dragons chase silver moons falcons guard hidden castles' },
-    ]);
+    expect(byTime[0]).toEqual({ startSec: 0, endSec: 1.5, text: 'kittens likes purple hats' });
+    expect(byTime[byTime.length - 1]!.endSec).toBe(40);
+    expect(byTime.flatMap(c => c.text.split(' ').filter(Boolean)).join(' ')).toBe(
+      'kittens likes purple hats dragons chase silver moons falcons guard hidden castles',
+    );
+    for (const c of byTime) expect(c.endSec - c.startSec).toBeLessThanOrEqual(MAX_RUN_SEC);
   });
 });
 

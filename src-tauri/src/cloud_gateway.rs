@@ -198,6 +198,8 @@ pub struct JobRequest {
     pub project_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub row_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gpu_lane: Option<String>,
 }
 
 /// `POST /v1/cache/lookup` (`sync_core.lookup_reply`).
@@ -1066,13 +1068,14 @@ mod tests {
             hold_job_id: None,
             project_id: None,
             row_id: None,
+            gpu_lane: None,
         };
         let v = serde_json::to_value(&req).unwrap();
         assert_eq!(v["audioHash"], "a".repeat(64));
         assert_eq!(v["chunks"][0]["startSec"], 0.0);
         let transcribe = JobRequest {
             stage: "transcribe".into(), audio_hash: "a".repeat(64), language: "auto".into(), chunks: None,
-            hold: None, hold_job_id: None, project_id: None, row_id: None,
+            hold: None, hold_job_id: None, project_id: None, row_id: None, gpu_lane: None,
         };
         let plain = serde_json::to_value(&transcribe).unwrap();
         assert!(plain.get("chunks").is_none() && plain.get("hold").is_none() && plain.get("holdJobId").is_none());
@@ -1219,14 +1222,14 @@ mod tests {
             // gzip-negotiated, with the full result in hand.
             let t0 = Instant::now();
             let hit = api
-                .lookup(&JobRequest { stage: "transcribe".into(), audio_hash: audio_hash.clone(), language: "en".into(), chunks: None, hold: None, hold_job_id: None, project_id: None, row_id: None })
+                .lookup(&JobRequest { stage: "transcribe".into(), audio_hash: audio_hash.clone(), language: "en".into(), chunks: None, hold: None, hold_job_id: None, project_id: None, row_id: None, gpu_lane: None })
                 .await
                 .expect("lookup");
             assert!(hit.cached);
             assert_eq!(hit.result.as_ref().unwrap()["tokens"].as_array().unwrap().len(), 3960);
             println!("lookup transcribe: cached={} {}ms", hit.cached, t0.elapsed().as_millis());
             let unknown = api
-                .lookup(&JobRequest { stage: "transcribe".into(), audio_hash: "d".repeat(64), language: "en".into(), chunks: None, hold: None, hold_job_id: None, project_id: None, row_id: None })
+                .lookup(&JobRequest { stage: "transcribe".into(), audio_hash: "d".repeat(64), language: "en".into(), chunks: None, hold: None, hold_job_id: None, project_id: None, row_id: None, gpu_lane: None })
                 .await
                 .expect("lookup miss");
             assert_eq!(unknown, CacheLookup { cached: false, result: None, audio_present: false, audio_duration_sec: None });
@@ -1236,7 +1239,7 @@ mod tests {
             let events = Mutex::new(Vec::new());
             let emit = |e: CloudJobEvent| events.lock().unwrap().push(e);
             let transcript = api
-                .run_job(&JobRequest { stage: "transcribe".into(), audio_hash: audio_hash.clone(), language: "en".into(), chunks: None, hold: None, hold_job_id: None, project_id: None, row_id: None }, &never, &emit)
+                .run_job(&JobRequest { stage: "transcribe".into(), audio_hash: audio_hash.clone(), language: "en".into(), chunks: None, hold: None, hold_job_id: None, project_id: None, row_id: None, gpu_lane: None }, &never, &emit)
                 .await
                 .expect("transcribe cache hit");
             assert!(transcript.cached);
@@ -1257,7 +1260,7 @@ mod tests {
                 })
                 .collect();
             let aligned = api
-                .run_job(&JobRequest { stage: "align".into(), audio_hash: audio_hash.clone(), language: "en".into(), chunks: Some(chunks), hold: None, hold_job_id: None, project_id: None, row_id: None }, &never, &emit)
+                .run_job(&JobRequest { stage: "align".into(), audio_hash: audio_hash.clone(), language: "en".into(), chunks: Some(chunks), hold: None, hold_job_id: None, project_id: None, row_id: None, gpu_lane: None }, &never, &emit)
                 .await
                 .expect("align cache hit");
             let n_words = aligned.result.as_ref().unwrap()["words"].as_array().unwrap().len();
@@ -1276,6 +1279,7 @@ mod tests {
                         hold_job_id: None,
                         project_id: None,
                         row_id: None,
+                        gpu_lane: None,
                     },
                     &never,
                     &emit,
@@ -1287,7 +1291,7 @@ mod tests {
             // A pre-tripped cancel never submits.
             let tripped = AtomicBool::new(true);
             let r = api
-                .run_job(&JobRequest { stage: "transcribe".into(), audio_hash, language: "en".into(), chunks: None, hold: None, hold_job_id: None, project_id: None, row_id: None }, &tripped, &emit)
+                .run_job(&JobRequest { stage: "transcribe".into(), audio_hash, language: "en".into(), chunks: None, hold: None, hold_job_id: None, project_id: None, row_id: None, gpu_lane: None }, &tripped, &emit)
                 .await;
             assert_eq!(r.unwrap_err(), CloudError::Cancelled);
             println!("events: {:?}", events.lock().unwrap());

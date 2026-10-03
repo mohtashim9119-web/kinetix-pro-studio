@@ -130,7 +130,7 @@ def test_meter_line_carries_no_text_and_prices_seconds():
     line = core.meter_line(job, "done", 100.0, 6.0)
     assert set(line) == {
         "ts", "jobId", "member", "stage", "audioHash", "language",
-        "audioDurationSec", "outcome", "taskId", "workerSec", "estimatedUsd",
+        "audioDurationSec", "outcome", "taskId", "workerSec", "estimatedUsd", "gpuLane",
     }
     assert line["estimatedUsd"] == pytest.approx(100.0 * core.USD_PER_WORKER_SEC, abs=1e-6)
     assert core.meter_line(job, "cancelled", -3.0, 6.0)["workerSec"] == 0.0
@@ -263,12 +263,34 @@ def test_handoff_gap_inside_window_does_not_second_boot():
     measured_gap_sec = 5.0
     assert measured_gap_sec < core.HOLD_FOR_PLAN_SEC
     assert core.gpu_boot_allowed(lookup=False, handed_off=True, live_containers=0) is False
-    assert core.gpu_boot_allowed(lookup=False, handed_off=False, live_containers=1) is False
+    assert core.gpu_boot_allowed(lookup=False, handed_off=False, live_containers=1, lane_live=1) is False
 
 
 def test_gap_beyond_window_never_pays_a_second_boot_while_holder_live():
-    assert core.GPU_MAX_CONTAINERS == 1
-    assert core.gpu_boot_allowed(lookup=False, handed_off=False, live_containers=1) is False
+    assert core.GPU_MAX_CONTAINERS == 2
+    assert core.gpu_boot_allowed(lookup=False, handed_off=False, live_containers=1, lane_live=1) is False
+
+
+def test_a_lookup_never_boots_and_a_held_container_blocks_a_second():
+    assert core.gpu_boot_allowed(lookup=True, handed_off=False, live_containers=0) is False
+    assert core.gpu_boot_allowed(lookup=False, handed_off=True, live_containers=0) is False
+    assert core.gpu_boot_allowed(lookup=False, handed_off=False, live_containers=1, lane_live=1) is False
+    assert core.gpu_boot_allowed(lookup=False, handed_off=False, live_containers=0, lane_live=0) is True
+    assert core.GPU_MAX_CONTAINERS == 2
+
+
+def test_second_lane_may_boot_while_first_lane_holds_one():
+    assert core.gpu_boot_allowed(lookup=False, handed_off=False, live_containers=1, lane_live=0) is True
+    assert core.gpu_boot_allowed(lookup=False, handed_off=False, live_containers=2, lane_live=0) is False
+
+
+def test_can_hold_for_never_hands_across_lanes():
+    held = core.new_job("j1", "operator", "transcribe", AUDIO, "en", "k" * 64, 5.0, 1.0)
+    held["hold"] = True
+    held["status"] = "done"
+    held["gpuLane"] = "bulk"
+    assert core.can_hold_for(held, "operator", "bulk")
+    assert not core.can_hold_for(held, "operator", "editor")
 
 
 def test_finished_job_post_finish_held_is_zero_with_wide_window():
@@ -282,12 +304,22 @@ def test_orphan_cap_equals_hold_window_never_more():
     assert core.post_finish_held_sec(hold=True, handed_off=False, released=False, waited_sec=core.HOLD_FOR_PLAN_SEC) == core.HOLD_FOR_PLAN_SEC
 
 
-def test_a_lookup_never_boots_and_a_held_container_blocks_a_second():
-    assert core.gpu_boot_allowed(lookup=True, handed_off=False, live_containers=0) is False
-    assert core.gpu_boot_allowed(lookup=False, handed_off=True, live_containers=0) is False
-    assert core.gpu_boot_allowed(lookup=False, handed_off=False, live_containers=1) is False
-    assert core.gpu_boot_allowed(lookup=False, handed_off=False, live_containers=0) is True
-    assert core.GPU_MAX_CONTAINERS == 1
+def test_lane_summaries_never_cross_bill():
+    lines = [
+        {**_line(1, "done", 10, audio="a" * 64, task="ta-bulk"), "gpuLane": "bulk"},
+        {**_line(2, "done", 7, audio="b" * 64, task="ta-edit"), "gpuLane": "editor"},
+    ]
+    lanes = {row["gpuLane"]: row for row in core.lane_summaries(lines)}
+    assert lanes["bulk"]["workerSec"] == 10
+    assert lanes["editor"]["workerSec"] == 7
+    assert lanes["bulk"]["boots"] == 1 and lanes["editor"]["boots"] == 1
+
+
+def test_max_align_window_lockstep_with_ts_max_run_sec():
+    ts = Path(__file__).resolve().parent.parent / "src" / "services" / "syncConstants.ts"
+    m = re.search(r"export const MAX_RUN_SEC = (\d+)", ts.read_text())
+    assert m is not None
+    assert float(m.group(1)) == core.MAX_ALIGN_WINDOW_SEC
 
 
 def test_row_summary_splits_boots_hold_and_free_cache():

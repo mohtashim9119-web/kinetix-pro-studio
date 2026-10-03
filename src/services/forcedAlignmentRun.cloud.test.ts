@@ -95,7 +95,7 @@ describe('runForcedAlignmentForSync — cloud arm (Wave 3 U2)', () => {
         result: { words: WORDS, nChunks: 1, nFallbackChunks: 0, provenance: PROVENANCE, createdAt: 1 } };
     });
     const result = await run();
-    expect(sentJob).toEqual({ stage: 'align', audioHash: HASH, language: 'en', chunks: [{ startSec: 0, endSec: 1, text: 'hello world' }] });
+    expect(sentJob).toEqual({ stage: 'align', audioHash: HASH, language: 'en', chunks: [{ startSec: 0, endSec: 1, text: 'hello world' }], gpuLane: 'editor' });
     expect(result.status).toBe('ok');
     if (result.status !== 'ok') return;
     expect(result.tokens.map(t => t.text)).toEqual(['hello', 'world']);
@@ -166,7 +166,7 @@ describe('runForcedAlignmentForSync — cloud arm (Wave 3 U2)', () => {
       return { cached: true, result: { words: WORDS, nChunks: 1, nFallbackChunks: 0, provenance: PROVENANCE, createdAt: 1 } };
     });
     const result = await run();
-    expect(lookedUp).toEqual({ stage: 'align', audioHash: HASH, language: 'en', chunks: [{ startSec: 0, endSec: 1, text: 'hello world' }] });
+    expect(lookedUp).toEqual({ stage: 'align', audioHash: HASH, language: 'en', chunks: [{ startSec: 0, endSec: 1, text: 'hello world' }], gpuLane: 'editor' });
     expect(result).toMatchObject({ status: 'ok', cloudProvenance: PROVENANCE, cloudCached: true });
     expect(mockInvoke).toHaveBeenCalledTimes(1);
   });

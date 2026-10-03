@@ -2332,8 +2332,8 @@ const ANCHOR_PATH: AnchorPathSpec[] = [
   },
   {
     key: 'spanish', audioDuration: 92.04,
-    runCount: 6, anchorCount: 4, chunkCount: 5,
-    anchorDigest: 'ac2408783c30f62f', runDigest: '41a72024d26d3389', chunkDigest: 'c7e4be33cf7ab3c7',
+    runCount: 6, anchorCount: 4, chunkCount: 6,
+    anchorDigest: 'ac2408783c30f62f', runDigest: '41a72024d26d3389', chunkDigest: '781da39fa5e4d1cc',
   },
 ];
 

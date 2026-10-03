@@ -184,9 +184,15 @@ class SyncWorker:
         self.billed = False
         self.whisper = None
         self.fa: dict[str, tuple[Any, Any]] = {}
+        self.gpu_lane: str | None = None
 
     @modal.exit()
     def exit_unbilled(self) -> None:
+        if self.gpu_lane:
+            lanes = dict(jobs.get("gpu-lanes") or {})
+            lanes[self.gpu_lane] = max(0, int(lanes.get(self.gpu_lane, 0) or 0) - 1)
+            jobs.put("gpu-lanes", lanes)
+            self.gpu_lane = None
         if self.billed:
             return
         now = time.time()
@@ -281,6 +287,9 @@ class SyncWorker:
         # model load and volume attach land on the meter, not in a gap.
         began = self.booted_at if not self.billed else time.time()
         call_started = time.time()
+        first_job = jobs.get(job_id) or {}
+        if not first_job.get("handedOff"):
+            self.gpu_lane = core.parse_gpu_lane(first_job.get("gpuLane"))
         outcome = self._execute(job_id, began)
         first = outcome
         # Wave 3 U7 — a held job hands its container to the next job, which
@@ -630,12 +639,14 @@ def gateway() -> Any:
         )
         if hold:
             job["hold"] = True
+        lane = core.parse_gpu_lane(body_owners.get("gpuLane"))
+        job["gpuLane"] = lane
 
         async def attach_if_held() -> bool:
             if not hold_job_id:
                 return False
             holder = await jobs.get.aio(hold_job_id)
-            if not core.can_hold_for(holder, member) or holder is None:
+            if not core.can_hold_for(holder, member, lane) or holder is None:
                 return False
             key = core.handoff_key(hold_job_id)
             existing = await jobs.get.aio(key)
@@ -701,6 +712,15 @@ def gateway() -> Any:
             # The held container runs it: no spawn, no second boot. Its
             # FunctionCall is the holder's, so crash detection still works.
             return await view_job(job)
+        lanes = dict((await jobs.get.aio("gpu-lanes")) or {"bulk": 0, "editor": 0})
+        live = int(lanes.get("bulk", 0) or 0) + int(lanes.get("editor", 0) or 0)
+        lane_live = int(lanes.get(lane, 0) or 0)
+        if not core.gpu_boot_allowed(
+            lookup=False, handed_off=False, live_containers=live, lane_live=lane_live
+        ):
+            raise GatewayError(409, "gpu-lane-busy", f"the {lane} GPU lane already has a worker")
+        lanes[lane] = lane_live + 1
+        await jobs.put.aio("gpu-lanes", lanes)
         call = await SyncWorker().run.spawn.aio(job_id)
         # Stored under its own key: the worker rewrites the job record as it
         # runs, and a second put of the whole record here could race it.

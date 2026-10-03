@@ -6,14 +6,10 @@
 // ---------------------------------------------------------------------------
 // M4 discipline — the permanent net under the amount-drop fix.
 //
-//  (b) Chunk plans for the three committed corpora (v6, 173, Spanish) are
-//      BYTE-EQUAL to what commit 983bb2c (before the fix) produced, in both
-//      shapes (production: language data supplied; raw: none). Nothing in those
-//      corpora carries an amount, so nothing may move.
-//      The ONLY plans allowed to change are amount-bearing ones — here the two
-//      engines' plans for the 14-segment project — and every changed chunk is
-//      pinned, with the proof that it differs by the amount words and nothing
-//      else.
+//  (b) Chunk plans for v6 and 173 stay BYTE-EQUAL to pre-F1. Spanish is the
+//      one F1 re-key: an over-cap silence-bounded window is now split at a
+//      word near the midpoint (5→6 chunks). Amount-bearing 14-seg exceptions
+//      stay pinned as before.
 //  (c) A plan built by the BATCH path (`runCloudSyncIntent`, the bulk queue's
 //      unit of work) and by the DIRECT path (`runForcedAlignmentForSync`, what
 //      Apply Sync calls) is the same chunk array — hence the same plan hash and
