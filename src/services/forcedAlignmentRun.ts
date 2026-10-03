@@ -308,7 +308,7 @@ export async function runForcedAlignmentForSync(
   // before any cloud FA is charged) and every outcome mapping below is
   // shared. Default `'local'` keeps every existing caller unchanged.
   host: SyncEngineHost = 'local',
-  owners?: { projectId?: string; rowId?: string },
+  owners?: { projectId?: string; rowId?: string; gpuLane?: 'bulk' | 'editor' },
 ): Promise<FaRunResult> {
   if (signal?.aborted) return { status: 'cancelled' };
 
@@ -388,7 +388,7 @@ async function runFaAttempt(
   // log a warn-only finding; nothing in this function branches on it.
   localCoverageWarning?: LocalCoverageResult,
   host: SyncEngineHost = 'local',
-  owners?: { projectId?: string; rowId?: string },
+  owners?: { projectId?: string; rowId?: string; gpuLane?: 'bulk' | 'editor' },
 ): Promise<FaRunResult> {
   const voiceoverBlob = voiceoverAsset.file ?? await (await fetch(voiceoverAsset.url)).blob();
 
@@ -601,7 +601,7 @@ async function runCloudFaAttempt(
   language: FaLanguageCode,
   signal: AbortSignal | undefined,
   localCoverageWarning: LocalCoverageResult | undefined,
-  owners?: { projectId?: string; rowId?: string },
+  owners?: { projectId?: string; rowId?: string; gpuLane?: 'bulk' | 'editor' },
 ): Promise<FaRunResult> {
   if (!audioHash) {
     return {
@@ -631,7 +631,7 @@ async function runCloudFaAttempt(
       }
     : await alignViaCloud({
         voiceoverBlob, audioHash, chunks, language, signal,
-        projectId: owners?.projectId, rowId: owners?.rowId,
+        projectId: owners?.projectId, rowId: owners?.rowId, gpuLane: owners?.gpuLane,
       });
   if (!cachedWords && outcome.status === 'ok' && bound) {
     noteClientFaStamp(makeClientFaCache(

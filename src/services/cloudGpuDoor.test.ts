@@ -9,45 +9,63 @@ import { dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import {
   __resetCloudGpuDoorForTests,
+  PARALLEL_GPU_NOTICE,
+  dismissParallelGpuNotice,
   markBulkQueuePumping,
-  waitForEditorCloudGpu,
-  editorCloudGpuBlockedReason,
+  peekParallelGpuNotice,
+  runOnEditorLane,
 } from './cloudGpuDoor';
 
 beforeEach(() => {
   __resetCloudGpuDoorForTests();
 });
 
-describe('H2 one GPU door', () => {
-  it('editor sync waits while the bulk queue pumps, then both complete; never two GPU clients', async () => {
+describe('F2 parallel GPU lanes', () => {
+  it('editor lane starts immediately while bulk is pumping (no waiting gate)', async () => {
     markBulkQueuePumping(true);
-    expect(editorCloudGpuBlockedReason()).toBe('waiting-bulk');
+    let started = false;
+    await runOnEditorLane(async () => { started = true; });
+    expect(started).toBe(true);
+    expect(peekParallelGpuNotice()).toBe(PARALLEL_GPU_NOTICE);
+  });
 
-    let editorStarted = false;
-    const editor = (async () => {
-      await waitForEditorCloudGpu();
-      editorStarted = true;
-    })();
-
+  it('two editor syncs serialize within the editor lane', async () => {
+    const order: string[] = [];
+    let releaseFirst!: () => void;
+    const first = runOnEditorLane(() => new Promise<void>(resolve => {
+      order.push('a-start');
+      releaseFirst = resolve;
+    }));
+    const second = runOnEditorLane(async () => { order.push('b'); });
     await new Promise(r => setTimeout(r, 20));
-    expect(editorStarted).toBe(false);
-
-    markBulkQueuePumping(false);
-    await editor;
-    expect(editorStarted).toBe(true);
+    expect(order).toEqual(['a-start']);
+    releaseFirst();
+    await Promise.all([first, second]);
+    expect(order).toEqual(['a-start', 'b']);
   });
 
-  it('waitForEditorCloudGpu is a no-op when bulk is idle', async () => {
-    markBulkQueuePumping(false);
-    await waitForEditorCloudGpu();
-    expect(editorCloudGpuBlockedReason()).toBeUndefined();
+  it('the parallel notice shows once per event, is dismissible, and never blocks', async () => {
+    markBulkQueuePumping(true);
+    let editorDone = false;
+    const work = runOnEditorLane(async () => {
+      expect(peekParallelGpuNotice()).toBe(PARALLEL_GPU_NOTICE);
+      dismissParallelGpuNotice();
+      expect(peekParallelGpuNotice()).toBeUndefined();
+      editorDone = true;
+    });
+    await work;
+    expect(editorDone).toBe(true);
+    expect(peekParallelGpuNotice()).toBeUndefined();
   });
 
-  it('editor intent and host transcribe wait on the bulk GPU door outside tests', () => {
+  it('waiting-bulk overlay and waitForEditorCloudGpu are gone', () => {
     const intent = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), './cloudSyncIntent.ts'), 'utf8');
-    expect(intent).toMatch(/waitForEditorCloudGpu/);
-    expect(intent).toMatch(/waiting-bulk/);
+    expect(intent).not.toMatch(/waitForEditorCloudGpu/);
+    expect(intent).not.toMatch(/waiting-bulk/);
+    expect(intent).not.toMatch(/Waiting for bulk cloud work to finish/);
     const host = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), './cloudSyncEngine.ts'), 'utf8');
-    expect(host).toMatch(/waitForEditorCloudGpu/);
+    expect(host).not.toMatch(/waitForEditorCloudGpu/);
+    const door = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), './cloudGpuDoor.ts'), 'utf8');
+    expect(door).not.toMatch(/waitForEditorCloudGpu/);
   });
 });

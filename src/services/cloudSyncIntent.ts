@@ -38,7 +38,7 @@ import type { Asset, TranscriptToken, VideoSegment } from '../types';
 import { applyAnchorBasedTiming } from './syncEngine';
 import { runForcedAlignmentForSync, type FaRunResult } from './forcedAlignmentRun';
 import { onCloudPhase, releaseHeldTranscription, type CloudPhase } from './cloudSyncEngine';
-import { editorCloudGpuBlockedReason, waitForEditorCloudGpu } from './cloudGpuDoor';
+import { runOnEditorLane } from './cloudGpuDoor';
 
 export interface SyncIntentInputs {
   /** `audioHash|scriptHash|engineKey` — one intent per spine. */
@@ -68,17 +68,13 @@ export type SyncIntentOutcome =
   | { status: 'skipped'; reason: string }
   | { status: 'cancelled' };
 
-export type IntentPhase = CloudPhase | 'planning' | 'waiting-bulk' | 'ready' | 'paused' | 'skipped';
+export type IntentPhase = CloudPhase | 'planning' | 'ready' | 'paused' | 'skipped';
 
-export async function runCloudSyncIntent(
+async function runCloudSyncIntentBody(
   inputs: SyncIntentInputs,
   signal?: AbortSignal,
 ): Promise<SyncIntentOutcome> {
   try {
-    if (inputs.gpuLane !== 'bulk' && typeof import.meta.env !== 'undefined' && !import.meta.env.VITEST) {
-      await waitForEditorCloudGpu(signal, undefined);
-      if (signal?.aborted) return { status: 'cancelled' };
-    }
     const segments = await inputs.prepareSegments();
     if (signal?.aborted) return { status: 'cancelled' };
     if (segments.length === 0) return { status: 'skipped', reason: 'the scene doc has no scenes' };
@@ -93,7 +89,7 @@ export async function runCloudSyncIntent(
       inputs.audioHash,
       false,
       'cloud',
-      { projectId: inputs.projectId, rowId: inputs.rowId },
+      { projectId: inputs.projectId, rowId: inputs.rowId, gpuLane: inputs.gpuLane ?? 'editor' },
     );
     if (faRun.status === 'cancelled') return { status: 'cancelled' };
     if (faRun.status === 'paused') {
@@ -112,6 +108,14 @@ export async function runCloudSyncIntent(
     // let it go now. Idempotent: `alignViaCloud` already took it if it ran.
     releaseHeldTranscription(inputs.audioHash);
   }
+}
+
+export async function runCloudSyncIntent(
+  inputs: SyncIntentInputs,
+  signal?: AbortSignal,
+): Promise<SyncIntentOutcome> {
+  if (inputs.gpuLane === 'bulk') return runCloudSyncIntentBody(inputs, signal);
+  return runOnEditorLane(() => runCloudSyncIntentBody(inputs, signal));
 }
 
 // ---------------------------------------------------------------------------
@@ -155,7 +159,7 @@ export function startSyncIntent(
   const entry: IntentEntry = {
     spineKey: inputs.spineKey,
     audioHash: inputs.audioHash,
-    phase: editorCloudGpuBlockedReason() ?? 'planning',
+    phase: 'planning',
     controller,
     promise: Promise.resolve({ status: 'skipped', reason: 'not started' }),
   };
@@ -245,7 +249,6 @@ export function __resetSyncIntentsForTests(): void {
 /** One human line per phase, for the reveal overlay. Operator-swappable. */
 export const INTENT_PHASE_COPY: Record<IntentPhase, string> = {
   planning: 'Checking the script against the audio…',
-  'waiting-bulk': 'Waiting for bulk cloud work to finish…',
   // Wave 3 U5 — the queued state says what a cancel costs right now.
   'waiting-gpu': 'Waiting for a cloud GPU… Cancel now and this job costs nothing (a GPU already starting up may bill its start-up, about $0.01 or less).',
   transcribing: 'Transcribing on the cloud…',

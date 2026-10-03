@@ -128,16 +128,25 @@ let workerSecTotal = 0;
 export function cloudWorkerSecTotal(): number {
   return workerSecTotal;
 }
-export function noteCloudJobWorkerSec(jobId: string, sec: number): void {
+export function noteCloudJobWorkerSec(jobId: string, sec: number, lane?: 'bulk' | 'editor'): void {
   jobWorkerSec.set(jobId, sec);
   workerSecTotal = [...jobWorkerSec.values()].reduce((a, b) => a + b, 0);
+  if (lane) {
+    const list = jobsForLane.get(lane) ?? [];
+    if (!list.includes(jobId)) list.push(jobId);
+    jobsForLane.set(lane, list);
+  }
 }
 export function cloudWorkerSecForJobs(jobIds: readonly string[]): number {
   return jobIds.reduce((sum, id) => sum + (jobWorkerSec.get(id) ?? 0), 0);
 }
+export function cloudWorkerSecForLane(lane: 'bulk' | 'editor'): number {
+  return cloudWorkerSecForJobs(jobsForLane.get(lane) ?? []);
+}
 export function __resetCloudWorkerSecForTests(): void {
   jobWorkerSec.clear();
   workerSecTotal = 0;
+  jobsForLane.clear();
 }
 
 /** What one cache-first stage run actually did — for logs and the billing
@@ -447,7 +456,7 @@ async function attemptStageCacheFirst<R>(
   }
   if (view.jobId) {
     bindLiveCloudJob(view.jobId, { projectId: request.projectId, rowId: request.rowId });
-    noteCloudJobWorkerSec(view.jobId, view.workerSec ?? 0);
+    noteCloudJobWorkerSec(view.jobId, view.workerSec ?? 0, request.gpuLane ?? 'editor');
   } else {
     workerSecTotal += view.workerSec ?? 0;
   }
@@ -515,6 +524,7 @@ function targetKey(target?: CloudJobTarget): string {
 
 const liveJobs = new Map<string, string>();
 const jobsForTarget = new Map<string, string[]>();
+const jobsForLane = new Map<'bulk' | 'editor', string[]>();
 
 export function bindLiveCloudJob(jobId: string, target?: CloudJobTarget): void {
   const key = targetKey(target);
@@ -535,6 +545,7 @@ export function cloudWorkerSecForTarget(target: CloudJobTarget): number {
 export function __resetLiveCloudJobsForTests(): void {
   liveJobs.clear();
   jobsForTarget.clear();
+  jobsForLane.clear();
 }
 
 export async function killLiveCloudJob(target?: CloudJobTarget): Promise<void> {
@@ -657,6 +668,7 @@ export async function transcribeViaCloud(args: {
   holdJobId?: string;
   projectId?: string;
   rowId?: string;
+  gpuLane?: 'bulk' | 'editor';
 }): Promise<HostTranscribeResult> {
   const { asset, audioHash, durationSecs, language, onProgress, signal, hold } = args;
   let { holdJobId } = args;
@@ -703,6 +715,7 @@ export async function transcribeViaCloud(args: {
         ...(hold ? { hold: true } : {}), ...(holdJobId ? { holdJobId } : {}),
         ...(args.projectId ? { projectId: args.projectId } : {}),
         ...(args.rowId ? { rowId: args.rowId } : {}),
+        gpuLane: args.gpuLane ?? 'editor',
       },
       () => assetBlob(asset),
       {
@@ -785,31 +798,34 @@ export async function transcribeForHost(args: {
   holdJobId?: string;
   projectId?: string;
   rowId?: string;
-  /** Bulk queue jobs skip the editor GPU door (they ARE the door). */
+  /** Bulk queue jobs skip the editor lane mutex (they ARE the bulk lane). */
   gpuLane?: 'bulk' | 'editor';
 }): Promise<HostTranscribeResult> {
-  if (args.host === 'cloud') {
-    if (args.gpuLane !== 'bulk' && typeof import.meta.env !== 'undefined' && !import.meta.env.VITEST) {
-      const { waitForEditorCloudGpu } = await import('./cloudGpuDoor');
-      await waitForEditorCloudGpu(args.signal);
+  const go = async (): Promise<HostTranscribeResult> => {
+    if (args.host === 'cloud') {
+      if (!args.audioHash) {
+        throw new CloudStageError(
+          { kind: 'protocol', detail: 'no audio hash' },
+          'Cloud transcription failed: the voiceover could not be identified (no content hash).',
+        );
+      }
+      return transcribeViaCloud({ ...args, audioHash: args.audioHash });
     }
-    if (!args.audioHash) {
-      throw new CloudStageError(
-        { kind: 'protocol', detail: 'no audio hash' },
-        'Cloud transcription failed: the voiceover could not be identified (no content hash).',
-      );
-    }
-    return transcribeViaCloud({ ...args, audioHash: args.audioHash });
-  }
-  const { tokens, detectedLanguage } = await transcribeWithProgress(
-    args.asset, args.durationSecs, args.language, args.onProgress, args.signal, args.jobKey,
-  );
-  return {
-    tokens,
-    detectedLanguage,
-    stamp: ({ language, completedAt }) => stampWhisperProvenance({ language, completedAt }),
-    host: 'local',
+    const { tokens, detectedLanguage } = await transcribeWithProgress(
+      args.asset, args.durationSecs, args.language, args.onProgress, args.signal, args.jobKey,
+    );
+    return {
+      tokens,
+      detectedLanguage,
+      stamp: ({ language, completedAt }) => stampWhisperProvenance({ language, completedAt }),
+      host: 'local',
+    };
   };
+  if (args.host === 'cloud' && args.gpuLane !== 'bulk') {
+    const { runOnEditorLane } = await import('./cloudGpuDoor');
+    return runOnEditorLane(go);
+  }
+  return go();
 }
 
 // ---------------------------------------------------------------------------
@@ -837,6 +853,7 @@ export async function alignViaCloud(args: {
   signal?: AbortSignal;
   projectId?: string;
   rowId?: string;
+  gpuLane?: 'bulk' | 'editor';
 }): Promise<CloudAlignOutcome> {
   // Wave 3 U4.5 — hand this to the held transcription's container, if any.
   const pendingHold = heldTranscriptions.get(args.audioHash);
@@ -885,6 +902,7 @@ export async function alignViaCloud(args: {
         ...(holdNext ? { hold: true } : {}),
         ...(args.projectId ? { projectId: args.projectId } : {}),
         ...(args.rowId ? { rowId: args.rowId } : {}),
+        gpuLane: args.gpuLane ?? 'editor',
       },
       async () => args.voiceoverBlob,
       {

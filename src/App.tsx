@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useRef, useEffect, useLayoutEffect, useMemo, useCallback, ChangeEvent, lazy, Suspense, type ReactElement } from 'react';
+import { useState, useRef, useEffect, useLayoutEffect, useMemo, useCallback, useSyncExternalStore, ChangeEvent, lazy, Suspense, type ReactElement } from 'react';
 import { 
   Play, 
   Pause, 
@@ -166,6 +166,11 @@ import {
   startSyncIntent,
   subscribeSyncIntents,
 } from './services/cloudSyncIntent';
+import {
+  dismissParallelGpuNotice,
+  peekParallelGpuNotice,
+  subscribeParallelGpuNotice,
+} from './services/cloudGpuDoor';
 import { BULK_COPY, decideStagingStart, isBulkAutoFireSuppressed, peekCloudTranscript } from './services/bulkContext';
 import { runBulkProjectFinish } from './services/bulkFinish';
 import type { FinishRequest, FinishResult } from './services/bulkBatch';
@@ -1809,6 +1814,7 @@ export default function App() {
   // the time (the common case), so the overlay falls back to its plain
   // "Preparing your project…" copy — purely additive, no behavior change.
   const [syncStageMessage, setSyncStageMessage] = useState<string | null>(null);
+  const parallelGpuNotice = useSyncExternalStore(subscribeParallelGpuNotice, peekParallelGpuNotice, peekParallelGpuNotice);
   // plan-v3 item 4 — the currently-shown SyncPausedDialog's record, or null
   // when no run-level FA failure is awaiting an answer. Driven by
   // `faSyncPauseStore.ts` (restart-safe, app/session-scoped) so a pause the
@@ -5333,6 +5339,8 @@ export default function App() {
         audioDurationSec,
         tokens: tokens!,
         language: resolveFaLanguage(p),
+        projectId: p.id,
+        gpuLane: 'editor',
         prepareSegments: () => parseProjectData(
           scriptText, sceneText, p.assets, audioDurationSec, p.segments, p.defaultTextOverlay ?? false,
         ),
@@ -7605,6 +7613,20 @@ export default function App() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {parallelGpuNotice && (
+        <div className={`fixed top-4 right-4 ${Z.banner} relative max-w-sm rounded-xl border border-[#282828] bg-[#111] px-4 py-3 text-sm text-zinc-200 shadow-2xl`}>
+          <p className="pr-6">{parallelGpuNotice}</p>
+          <button
+            type="button"
+            className="absolute right-2 top-2 text-zinc-500 hover:text-zinc-300"
+            onClick={() => dismissParallelGpuNotice()}
+            aria-label="Dismiss"
+          >
+            ×
+          </button>
+        </div>
+      )}
 
       {/* Lock-block toast — bottom-center, 5 s auto-dismiss */}
       {toast !== null && (

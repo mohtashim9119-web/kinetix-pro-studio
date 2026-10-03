@@ -239,8 +239,8 @@ describe('Wave 3 U3 — cache first: nothing is encoded or uploaded before the l
       signal: new AbortController().signal, audioHash: HASH,
     });
     expect(sent).toEqual([
-      { stage: 'transcribe', audioHash: HASH, language: 'auto' },
-      { stage: 'transcribe', audioHash: HASH, language: 'auto' },
+      { stage: 'transcribe', audioHash: HASH, language: 'auto', gpuLane: 'editor' },
+      { stage: 'transcribe', audioHash: HASH, language: 'auto', gpuLane: 'editor' },
     ]);
   });
 

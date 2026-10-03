@@ -42,18 +42,19 @@
   "spanish": {
    "language": "es",
    "audioHash": "4d9f295ffa74456485cf9cf70d53e786c35202a2fe3c8a38d80e3e4f653aa216",
+   "rekeyReason": "F1 MAX_RUN_SEC lockstep: a silence-bounded/empty-run-merged window exceeded 30s; planner now splits at the nearest word to the midpoint (5 chunks -> 6). Dense-speech re-key, cents.",
    "prod": {
-    "chunks": 5,
-    "digest": "c31b0dc4f1e7a193",
-    "digestAfter": "c31b0dc4f1e7a193"
+    "chunks": 6,
+    "digest": "de87fd23ecffe72d",
+    "digestAfter": "de87fd23ecffe72d"
    },
    "raw": {
-    "chunks": 5,
-    "digest": "94a9fef79a73ee0d",
-    "digestAfter": "94a9fef79a73ee0d"
+    "chunks": 6,
+    "digest": "4f2b0b2f734a795f",
+    "digestAfter": "4f2b0b2f734a795f"
    },
-   "planHash": "c31b0dc4f1e7a1937a6ef3692360eb45a3a6268fcdb96cc75f14edf37f0f16ac",
-   "alignmentKey": "d7d4a2d59eea8254c8e8c7c04985c7f34884e6d441516c9b6ab572409fec7661"
+   "planHash": "de87fd23ecffe72d795336fe9af10f126a5a7bd4a0ba1a16d84bc7fbdf3af193",
+   "alignmentKey": "765843e229bcdaf4ba7773124cf7ea7d561130662c0f9c516f0d4476cebff43d"
   }
  },
  "amountBearing": {

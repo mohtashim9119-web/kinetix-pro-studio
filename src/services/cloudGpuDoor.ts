@@ -3,45 +3,59 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-/** At most one GPU client: the bulk queue owns the door while it pumps. */
+/** Two GPU lanes: bulk stays FIFO-serial; editor syncs run on their own
+ *  lane immediately (a second cold boot is an acceptable, disclosed cost). */
+
+export const PARALLEL_GPU_NOTICE =
+  'This sync runs in parallel — it may start a second cloud worker (about $0.01 extra).';
 
 let bulkPumping = false;
-const waiters = new Set<() => void>();
+let editorChain: Promise<unknown> = Promise.resolve();
+let notice: string | undefined;
+const noticeListeners = new Set<() => void>();
 
 export function markBulkQueuePumping(pumping: boolean): void {
   bulkPumping = pumping;
-  if (!pumping) {
-    const due = [...waiters];
-    waiters.clear();
-    for (const w of due) w();
-  }
 }
 
-export function editorCloudGpuBlockedReason(): 'waiting-bulk' | undefined {
-  return bulkPumping ? 'waiting-bulk' : undefined;
+export function bulkLaneIsLive(): boolean {
+  return bulkPumping;
 }
 
-export async function waitForEditorCloudGpu(signal?: AbortSignal, onWait?: () => void): Promise<void> {
-  while (bulkPumping) {
-    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
-    onWait?.();
-    await new Promise<void>((resolve, reject) => {
-      const finish = (): void => {
-        signal?.removeEventListener('abort', onAbort);
-        waiters.delete(finish);
-        resolve();
-      };
-      const onAbort = (): void => {
-        waiters.delete(finish);
-        reject(new DOMException('Aborted', 'AbortError'));
-      };
-      waiters.add(finish);
-      if (signal) signal.addEventListener('abort', onAbort, { once: true });
-    });
-  }
+function notifyNotice(): void {
+  for (const l of noticeListeners) l();
+}
+
+/** Editor-lane mutex: one job at a time. Does not wait on the bulk lane. */
+export async function runOnEditorLane<T>(work: () => Promise<T>): Promise<T> {
+  const run = editorChain.then(async () => {
+    if (bulkPumping) {
+      notice = PARALLEL_GPU_NOTICE;
+      notifyNotice();
+    }
+    return work();
+  });
+  editorChain = run.then(() => undefined, () => undefined);
+  return run as Promise<T>;
+}
+
+export function peekParallelGpuNotice(): string | undefined {
+  return notice;
+}
+
+export function dismissParallelGpuNotice(): void {
+  notice = undefined;
+  notifyNotice();
+}
+
+export function subscribeParallelGpuNotice(listener: () => void): () => void {
+  noticeListeners.add(listener);
+  return () => { noticeListeners.delete(listener); };
 }
 
 export function __resetCloudGpuDoorForTests(): void {
   bulkPumping = false;
-  waiters.clear();
+  editorChain = Promise.resolve();
+  notice = undefined;
+  noticeListeners.clear();
 }
