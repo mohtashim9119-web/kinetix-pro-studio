@@ -194,7 +194,80 @@ async function jpegFromRawBytes(bytes: Uint8Array, mime: string): Promise<Uint8A
   }
 }
 
-/** Closed projects have empty asset.url — pull bytes from vault / native / IDB. */
+export type VideoFrameGrabber = (bytes: Uint8Array, mime: string) => Promise<Uint8Array | null>;
+
+/** One early frame of a video, as a card-sized JPEG. Never throws; null on any failure. */
+const domVideoFrame: VideoFrameGrabber = (bytes, mime) => new Promise(resolve => {
+  let done = false;
+  const url = URL.createObjectURL(new Blob([new Uint8Array(bytes)], { type: mime || 'video/mp4' }));
+  const video = document.createElement('video');
+  const finish = (jpeg: Uint8Array | null): void => {
+    if (done) return;
+    done = true;
+    clearTimeout(timer);
+    video.removeAttribute('src');
+    video.load();
+    URL.revokeObjectURL(url);
+    resolve(jpeg);
+  };
+  const timer = setTimeout(() => finish(null), 8000);
+  video.muted = true;
+  video.preload = 'auto';
+  video.onerror = () => finish(null);
+  video.onloadeddata = () => {
+    const at = Number.isFinite(video.duration) && video.duration > 0 ? Math.min(0.1, video.duration / 2) : 0;
+    video.onseeked = () => {
+      void jpegBytesFromImageLike(video, video.videoWidth, video.videoHeight).then(finish);
+    };
+    video.currentTime = at;
+  };
+  video.src = url;
+});
+
+async function jpegBytesFromImageLike(
+  source: CanvasImageSource,
+  width: number,
+  height: number,
+): Promise<Uint8Array | null> {
+  if (!width || !height) return null;
+  try {
+    const canvas = document.createElement('canvas');
+    canvas.width = 320;
+    canvas.height = 180;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, 320, 180);
+    const scale = Math.min(320 / width, 180 / height);
+    ctx.drawImage(source, (320 - width * scale) / 2, (180 - height * scale) / 2, width * scale, height * scale);
+    return dataUrlToJpeg(canvas.toDataURL('image/jpeg', 0.7));
+  } catch {
+    return null;
+  }
+}
+
+let videoFrameGrabber: VideoFrameGrabber = domVideoFrame;
+export function __setVideoFrameGrabberForTests(next: VideoFrameGrabber | null): void {
+  videoFrameGrabber = next ?? domVideoFrame;
+}
+
+/** How many timeline visuals a card tries before it honestly gives up. */
+const MAX_PREVIEW_CANDIDATES = 8;
+
+const isJpeg = (b: Uint8Array | null | undefined): b is Uint8Array =>
+  !!b && b.length >= 4 && b[0] === 0xFF && b[1] === 0xD8;
+
+async function previewFromBytes(asset: Asset, bytes: Uint8Array, mime: string): Promise<Uint8Array | null> {
+  if (isJpeg(bytes) && bytes.length < 80_000) return bytes;
+  if (asset.type === 'image') return jpegFromRawBytes(bytes, mime || 'image/jpeg');
+  return videoFrameGrabber(bytes, mime || 'video/mp4');
+}
+
+/**
+ * Closed projects have empty asset.url — pull bytes from vault / native / IDB.
+ * Tries the timeline's first visual, then the next few: a video the stores
+ * cannot give a frame for must not leave the card blank while an image works.
+ */
 export async function extractPreviewJpeg(project: Project): Promise<Uint8Array | null> {
   const visual = previewVisualAsset(project);
   if (!visual) return null;
@@ -204,59 +277,51 @@ export async function extractPreviewJpeg(project: Project): Promise<Uint8Array |
     if (fromUrl) return fromUrl;
   }
 
-  const hashed = [visual, ...project.assets.filter(a => a !== visual && (a.type === 'image' || a.type === 'video'))];
-  for (const asset of hashed) {
-    if (!asset.contentHash) continue;
-    if (asset.type === 'video') {
-      await mediaVaultGenerateThumbnail(asset.contentHash);
-      try {
-        const vault = await mediaVaultReadThumbnail(asset.contentHash);
-        if (vault && vault.length >= 4 && vault[0] === 0xFF && vault[1] === 0xD8) return vault;
-      } catch {
-        /* next */
-      }
-    } else {
-      try {
-        const blob = await mediaVaultReadBlob(asset.contentHash);
-        if (blob) {
-          const jpeg = await jpegFromRawBytes(blob, 'image/jpeg');
-          if (jpeg) return jpeg;
+  const candidates = [visual, ...project.assets.filter(a => a !== visual && (a.type === 'image' || a.type === 'video'))]
+    .slice(0, MAX_PREVIEW_CANDIDATES);
+  for (const asset of candidates) {
+    if (asset.contentHash) {
+      if (asset.type === 'video') {
+        await mediaVaultGenerateThumbnail(asset.contentHash);
+        try {
+          const vault = await mediaVaultReadThumbnail(asset.contentHash);
+          if (isJpeg(vault)) return vault;
+        } catch {
+          /* next source */
         }
-      } catch {
-        /* next */
+      } else {
+        try {
+          const blob = await mediaVaultReadBlob(asset.contentHash);
+          if (blob) {
+            const jpeg = await jpegFromRawBytes(blob, 'image/jpeg');
+            if (jpeg) return jpeg;
+          }
+        } catch {
+          /* next source */
+        }
       }
     }
-  }
-
-  try {
-    const { readAssetNative } = await import('./nativeAssetStore');
-    const native = await readAssetNative(project.id, visual.id);
-    if (native?.length) {
-      if (visual.type === 'image') {
-        const jpeg = await jpegFromRawBytes(native, 'image/jpeg');
+    try {
+      const { readAssetNative } = await import('./nativeAssetStore');
+      const native = await readAssetNative(project.id, asset.id);
+      if (native?.length) {
+        const jpeg = await previewFromBytes(asset, native, asset.type === 'video' ? 'video/mp4' : 'image/jpeg');
         if (jpeg) return jpeg;
-      } else if (native[0] === 0xFF && native[1] === 0xD8) {
-        return native;
       }
+    } catch {
+      /* next source */
     }
-  } catch {
-    /* next */
-  }
-
-  try {
-    const { getAsset } = await import('./assetStore');
-    const stored = await getAsset(project.id, visual.id);
-    if (stored?.blob) {
-      const buf = new Uint8Array(await stored.blob.arrayBuffer());
-      if (visual.type === 'image') {
-        const jpeg = await jpegFromRawBytes(buf, stored.mimeType || 'image/jpeg');
+    try {
+      const { getAsset } = await import('./assetStore');
+      const stored = await getAsset(project.id, asset.id);
+      if (stored?.blob) {
+        const buf = new Uint8Array(await stored.blob.arrayBuffer());
+        const jpeg = await previewFromBytes(asset, buf, stored.mimeType || '');
         if (jpeg) return jpeg;
-      } else if (buf[0] === 0xFF && buf[1] === 0xD8) {
-        return buf;
       }
+    } catch {
+      /* next asset */
     }
-  } catch {
-    /* none */
   }
   return null;
 }

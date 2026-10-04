@@ -34,16 +34,20 @@ export function queueProjectsForCloudSync(
 // module stays side-effect free for tests.
 import { BulkBatchRunner } from './bulkBatch';
 import { loadAllMetas } from './projectStore';
+import { projectCostLedger } from './projectCostLedgerShared';
 
 let runner: BulkBatchRunner | undefined;
 let parseForResume: CloudQueueDeps['parseProjectData'] | undefined;
 
 export function bulkBatchRunner(parseProjectData?: CloudQueueDeps['parseProjectData']): BulkBatchRunner {
   if (parseProjectData) parseForResume = parseProjectData;
+  projectCostLedger(); // wires the display-only stage tap before any job runs
   runner ??= new BulkBatchRunner({
     queue: cloudSyncQueue,
     enqueue: (rows, opts) => { if (parseForResume) queueProjectsForCloudSync(rows, parseForResume, opts); },
     exists: id => loadAllMetas().some(m => m.id === id),
+    onBilled: (id, at, sec) => projectCostLedger().settleAttempt(id, at, sec),
+    onBuilt: (id, sec) => projectCostLedger().noteTimeline(id, sec),
   });
   return runner;
 }

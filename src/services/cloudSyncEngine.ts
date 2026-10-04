@@ -65,6 +65,7 @@ import { transcribeWithProgress } from './whisperService';
 import { checkAudioDuration } from './cloudAudioLimit';
 import { recordCancelReceipt, trackStoppingRun } from './cloudCancelReceipts';
 import { reattachPlan } from './cloudJobOwnership';
+import { reportCloudStageFinished } from './cloudStageObserver';
 
 // ---------------------------------------------------------------------------
 // Audio preparation, single-flight by content hash.
@@ -454,6 +455,16 @@ export async function runStageCacheFirst<R>(
   }
 }
 
+/** Display-only tap for the per-project cost ledger; never affects the run. */
+function reportStageForLedger(
+  request: CloudJobRequest,
+  run: { jobId?: string; workerSec: number; cached: boolean; handedOff: boolean },
+): void {
+  const ownerId = request.rowId ?? request.projectId;
+  if (!ownerId) return;
+  reportCloudStageFinished({ ownerId, stage: request.stage, ...run });
+}
+
 async function attemptStageCacheFirst<R>(
   request: CloudJobRequest,
   audio: () => Promise<Blob>,
@@ -468,6 +479,7 @@ async function attemptStageCacheFirst<R>(
   if (overLong) throw overLong;
   const lookup = await lookupCloudCache<R>(request);
   if (lookup.cached && !request.holdJobId) {
+    reportStageForLedger(request, { workerSec: 0, cached: true, handedOff: false });
     return { result: lookup.result, cached: true, uploaded: false, encoded: false, retried: false };
   }
   if (signal?.aborted) throw cancelled;
@@ -495,6 +507,7 @@ async function attemptStageCacheFirst<R>(
   } else {
     workerSecTotal += view.workerSec ?? 0;
   }
+  reportStageForLedger(request, { jobId: view.jobId, workerSec: view.workerSec ?? 0, cached: view.cached, handedOff: view.handedOff === true });
   return {
     result: view.result!, cached: view.cached, uploaded, encoded, retried: false,
     jobId: view.jobId, handedOff: view.handedOff === true, workerSec: view.workerSec ?? undefined,

@@ -777,9 +777,15 @@ pub async fn media_vault_generate_thumbnail(app: tauri::AppHandle, content_hash:
         std::process::id(),
         crate::atomic_stage::next_temp_seq()
     ));
-    crate::ffmpeg_sidecar_gate::begin_thumbnail();
+    // Bounded and off the async workers: a request that died mid-export must
+    // not park this thread forever. The guard releases on drop.
+    let guard = tauri::async_runtime::spawn_blocking(|| {
+        crate::ffmpeg_sidecar_gate::begin_thumbnail_within(crate::ffmpeg_sidecar_gate::THUMBNAIL_WAIT)
+    })
+    .await
+    .map_err(|e| format!("thumbnail gate task failed: {e}"))??;
     let result = ffmpeg_extract_thumbnail(&app, &blob, &tmp).await;
-    crate::ffmpeg_sidecar_gate::end_thumbnail();
+    drop(guard);
     match result {
         Ok(()) => match fs::rename(&tmp, &thumb) {
             Ok(()) => Ok(true),

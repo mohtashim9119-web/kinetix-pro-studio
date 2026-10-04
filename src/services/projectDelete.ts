@@ -15,6 +15,7 @@ import { deleteAllAssets } from './assetStore';
 import { deleteProjectAssetsNativeStrict } from './nativeAssetStore';
 import { deleteAllWaveforms } from './waveformStore';
 import { mediaVaultUnreferenceProject } from './mediaVaultClient';
+import { projectCostLedger } from './projectCostLedgerShared';
 
 async function bounded(id: string, label: string, work: () => Promise<unknown>, timeoutMs: number): Promise<string | null> {
   try {
@@ -33,6 +34,7 @@ async function bounded(id: string, label: string, work: () => Promise<unknown>, 
 /** Store + dashboard + mirror for a whole confirm set — one tombstone write. */
 export async function deleteProjectRecords(ids: readonly string[], timeoutMs = 10_000): Promise<string[]> {
   await commitTombstones(ids);
+  for (const id of ids) projectCostLedger().forget(id);
   const failures = await Promise.all(
     ids.map(id => bounded(id, 'project record removal', () => deleteProjectData(id), timeoutMs)),
   );

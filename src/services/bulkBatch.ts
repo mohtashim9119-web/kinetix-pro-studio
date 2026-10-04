@@ -166,13 +166,14 @@ export const groupProgress = (group: BulkGroup, records: readonly BatchRow[]): B
 export const batchProgress = (groups: readonly BulkGroup[], records: readonly BatchRow[]): BulkProgress =>
   progressOf(groups.flatMap(g => g.rowIds), records);
 
-function recordQueueBilling(row: BatchRow, item: Readonly<QueueItem>): boolean {
+function recordQueueBilling(row: BatchRow, item: Readonly<QueueItem>, onBilled?: BatchRunnerDeps['onBilled']): boolean {
   if (!(item.workerSec > 0) || item.finishedAt === undefined) return false;
   const attempts = row.billingAttempts ?? [];
   if (attempts.some(a => a.at === item.finishedAt && a.workerSec === item.workerSec)) return false;
   attempts.push({ at: item.finishedAt, workerSec: item.workerSec });
   row.billingAttempts = attempts;
   row.workerSec = attempts.reduce((sum, a) => sum + a.workerSec, 0);
+  try { onBilled?.(row.id, item.finishedAt, item.workerSec); } catch { /* display-only hook */ }
   return true;
 }
 
@@ -186,6 +187,9 @@ export interface BatchRunnerDeps {
   /** Does this project still exist? A deleted one is dropped, not built. */
   exists: (id: string) => boolean;
   storage?: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
+  /** Display-only hooks (the cost ledger): called after the fact, never consulted. */
+  onBilled?: (rowId: string, at: number, workerSec: number) => void;
+  onBuilt?: (rowId: string, sec: number) => void;
 }
 
 export class BulkBatchRunner {
@@ -477,7 +481,7 @@ export class BulkBatchRunner {
     for (const item of items) {
       const row = this.rows.find(r => r.id === item.id);
       if (row) {
-        const billed = recordQueueBilling(row, item);
+        const billed = recordQueueBilling(row, item, this.deps.onBilled);
         if (billed) changed = true;
       }
       if (!row || isBatchRowFinal(row.phase) || row.phase === 'finishing') continue;
@@ -572,6 +576,7 @@ export class BulkBatchRunner {
       if (!this.deps.exists(id)) { this.forget([id]); return; }
       this.set(id, 'finishing');
       let result: FinishResult;
+      const builtFrom = Date.now();
       try { result = await this.finalize(id, { userInitiated }); } catch (err) { result = { ok: false, message: err instanceof Error ? err.message : String(err) }; }
       const after = this.rows.find(r => r.id === id);
       if (!after) return; // deleted meanwhile
@@ -584,6 +589,7 @@ export class BulkBatchRunner {
       }
       this.set(id, result.ok ? 'done' : 'finish-failed', result.ok ? undefined : result.message);
       if (result.ok) {
+        try { this.deps.onBuilt?.(id, (Date.now() - builtFrom) / 1000); } catch { /* display-only hook */ }
         const row = this.rows.find(r => r.id === id);
         if (row) row.checkpoint = 'ready';
         this.commit();

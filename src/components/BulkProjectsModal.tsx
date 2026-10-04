@@ -16,13 +16,14 @@
 
 import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Check, ChevronDown, ChevronLeft, ChevronRight, Clapperboard, ExternalLink, FileText, Image as ImageIcon, Mic, Plus, RefreshCw, Trash2, Upload, Volume2, VolumeX, X } from 'lucide-react';
-import completeChimeUrl from '../assets/bulk-group-complete.wav';
+import completeChimeUrl from '../assets/group-complete-notification.mp3';
 import { bulkRowBar, groupAllBuilt, useEasedBarFill, audioSecFromPreflight } from './bulkRowProgress';
 import {
   BULK_DRAWER_TABS, bulkDrawerTabForPhase, collectRetryAllRowIds, readBulkDrawerTab, writeBulkDrawerTab,
   type BulkDrawerTab,
 } from './bulkDrawerTab';
 import { shortLogTitle } from './bulkLogTitle';
+import { BulkCostLedger, setLedgerOpen } from './BulkCostLedger';
 import { BULK_COPY, BULK_MAX_PROJECTS, BULK_MIN_PROJECTS, parseBulkCount } from '../services/bulkContext';
 import { BulkRowStore, defaultBulkRowDeps, type BulkRowState } from '../services/bulkRows';
 import type { Project } from '../types';
@@ -493,7 +494,7 @@ function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFi
           data-testid={`bulk-status-${row.projectId}`}
           role="button"
           title={current.text}
-          onClick={() => { if (current.text) setStatusOpen(o => !o); }}
+          onClick={() => { if (current.text) { setLedgerOpen(null); setStatusOpen(o => !o); } }}
           className={`flex-1 min-w-0 truncate text-left text-[12px] leading-snug ${current.warn ? 'text-amber-300/90' : dim ? 'text-[var(--kx-faint)]' : 'text-[var(--kx-muted)]'}`}
         >
           {logTitle.title}
@@ -536,6 +537,7 @@ function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFi
             </button>
           </div>
         )}
+        <BulkCostLedger projectId={row.projectId} billingAttempts={record?.billingAttempts} onOpen={() => setStatusOpen(false)} />
         <button
           type="button"
           aria-label={BULK_COPY.removeProject}

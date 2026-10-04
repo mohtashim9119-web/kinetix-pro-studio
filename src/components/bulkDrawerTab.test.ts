@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { statSync, readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { existsSync, statSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { BatchPhase, BatchRow, BulkGroup } from '../services/bulkBatch';
 import {
@@ -56,20 +57,13 @@ describe('T3 — selected tab persist key', () => {
   });
 });
 
-describe('T6 — completion chime asset', () => {
-  it('is a small bundled wav replacing the old cartoon chime', () => {
-    const wav = resolve(__dirname, '../assets/bulk-group-complete.wav');
-    const bytes = statSync(wav).size;
-    expect(bytes).toBeGreaterThan(200);
-    expect(bytes).toBeLessThan(100_000);
-    const buf = readFileSync(wav);
-    const rate = buf.readUInt32LE(24);
-    const bits = buf.readUInt16LE(34);
-    const ch = buf.readUInt16LE(22);
-    const data = buf.readUInt32LE(40);
-    const dur = data / (rate * ch * (bits / 8));
-    expect(dur).toBeGreaterThan(0.15);
-    expect(dur).toBeLessThan(1);
+describe('T6 — completion sound asset', () => {
+  it('is the operator-supplied mp3, original bytes, replacing the old wav', () => {
+    const mp3 = resolve(__dirname, '../assets/group-complete-notification.mp3');
+    expect(statSync(mp3).size).toBe(56842);
+    expect(createHash('sha256').update(readFileSync(mp3)).digest('hex'))
+      .toBe('def38e52d2c18d85a31e2f638ec6e89cb2ab15cafba47941104f93729a32e968');
+    expect(existsSync(resolve(__dirname, '../assets/bulk-group-complete.wav'))).toBe(false);
   });
 });
 
