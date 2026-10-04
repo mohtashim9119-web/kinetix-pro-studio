@@ -99,6 +99,37 @@ def batch_section(since_ts: float) -> None:
         )
 
 
+def member_section(since_ts: float) -> None:
+    """1.5.2 — per key (member): its own jobs, containers, GPU-seconds and
+    dollars — one key's work never lands on another's line — and how much of
+    its rolling-hour GPU allowance it is using now."""
+    import time
+
+    lines = modal.Function.from_name("kinetix-sync", "meter_lines").remote(since_ts)
+    jobs = modal.Dict.from_name("kinetix-sync-jobs")
+    members = {line["member"] for line in lines if line.get("member")}
+    usage = {m: jobs.get(sync_core.usage_key(m)) for m in members}
+    print(f"MEMBERS — per key (quota {sync_core.MEMBER_QUOTA_GPU_SEC:.0f} GPU-s per rolling hour)")
+    for row in sync_core.member_summaries(lines, usage, time.time()):
+        print(
+            f"  {row['member']:<10} jobs={row['jobs']:>3} boots={row['boots']:>2}  "
+            f"worker={row['workerSec']:7.1f} s  ${row['estimatedUsd']:.4f}  "
+            f"quota-now={row['quotaUsedSec']:6.1f}/{sync_core.MEMBER_QUOTA_GPU_SEC:.0f} s"
+        )
+
+
+def owner_section(since_ts: float) -> None:
+    """1.5.2 — per app row/project: every billed attempt (a failure, its
+    fresh-submit retry, the finish), so no attempt is lost or merged."""
+    lines = modal.Function.from_name("kinetix-sync", "meter_lines").remote(since_ts)
+    owners = sync_core.owner_attempts(lines)
+    print(f"ATTEMPTS — {len(owners)} row/project owner(s)")
+    for o in owners:
+        detail = ", ".join(f"{a['stage'][:5]}:{a['outcome']}:{a['workerSec']:.1f}s" for a in o["attempts"])
+        print(f"  {o['member']:<10} {str(o['owner'])[:12]:<12} attempts={len(o['attempts']):>2}  "
+              f"worker={o['workerSec']:7.1f} s  ${o['estimatedUsd']:.4f}  [{detail}]")
+
+
 def hits_section(since_ts: float) -> None:
     lines = modal.Function.from_name("kinetix-sync", "hit_lines").remote(since_ts)
     by_stage: dict[str, int] = defaultdict(int)
@@ -112,16 +143,22 @@ def modal_section() -> None:
     # An explicit end past today: with `--start` alone Modal reports only
     # complete intervals and drops the hour in progress.
     end = (datetime.now(timezone.utc) + timedelta(days=1)).date().isoformat()
+    args = sync_core.modal_billing_args(WAVE3_START_DATE, end)
     proc = subprocess.run(
-        [modal_bin(), "billing", "report", "--start", WAVE3_START_DATE, "--end", end, "-r", "h", "--show-resources", "--json"],
-        capture_output=True, text=True, check=True,
+        [modal_bin(), "billing", "report", *args, "--show-resources", "--json"],
+        capture_output=True, text=True,
     )
+    if proc.returncode != 0:
+        # Typed, not a traceback: the meter sections above already printed.
+        print(f"MODAL — invoice unavailable: {(proc.stderr or proc.stdout).strip()[-300:]}")
+        return
     rows = json.loads(proc.stdout or "[]")
     by_app: dict[str, dict[str, Decimal]] = defaultdict(lambda: defaultdict(Decimal))
     for row in rows:
         by_app[row["description"]][row["resource"]] += Decimal(row["cost"])
     total = Decimal(0)
-    print(f"MODAL — workspace charges since {WAVE3_START_DATE} (hour buckets, may lag ~1 h)")
+    bucket = "hour" if args[-1] == "h" else "day"
+    print(f"MODAL — workspace charges since {WAVE3_START_DATE} ({bucket} buckets, may lag ~1 h)")
     for app_name, resources in sorted(by_app.items()):
         app_total = sum(resources.values(), Decimal(0))
         total += app_total
@@ -141,6 +178,10 @@ def main() -> None:
     row_section(args.since_ts)
     print()
     lane_section(args.since_ts)
+    print()
+    member_section(args.since_ts)
+    print()
+    owner_section(args.since_ts)
     print()
     hits_section(args.since_ts)
     print()

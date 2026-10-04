@@ -47,20 +47,19 @@ export function jobsForOwners(
   );
 }
 
+/** What a listing offers a reattach. 1.5.2: no job to POLL in place of the
+ *  caller's own request (that adopted stale and never-run jobs); a relaunch
+ *  re-submits and the gateway re-attaches an identical in-flight job. */
 export function reattachPlan(jobs: readonly OwnedCloudJob[]): {
-  poll?: OwnedCloudJob;
   holdJobId?: string;
   pause?: CloudJobPause;
   taskIds: string[];
 } {
-  const running = [...jobs].reverse().find(j => j.status === 'queued' || j.status === 'running');
   const held = [...jobs].reverse().find(j => j.holdOpen && (j.status === 'queued' || j.status === 'running' || j.status === 'done'));
-  const pauseJob = [...jobs].reverse().find(j => pauseDialogFromJob(j));
   const taskIds = [...new Set(jobs.map(j => j.taskId).filter((id): id is string => !!id))];
   return {
-    poll: running,
     holdJobId: held?.jobId,
-    pause: pauseJob ? pauseDialogFromJob(pauseJob) ?? undefined : undefined,
+    pause: pauseDialogFromJobs(jobs),
     taskIds,
   };
 }
@@ -70,10 +69,15 @@ export function pauseDialogFromJob(job: OwnedCloudJob | null | undefined): Cloud
   return job.pause;
 }
 
+/** The pause to ask about: the newest open one — unless a LATER job for the
+ *  same owner finished (1.5.2). A bulk row's Retry / auto-retry / Retry All
+ *  re-runs fresh and never answers; its success is the answer, so an older
+ *  pause is retired rather than resurfacing as a ghost dialog on reload. */
 export function pauseDialogFromJobs(jobs: readonly OwnedCloudJob[]): CloudJobPause | undefined {
   for (const job of [...jobs].reverse()) {
     const pause = pauseDialogFromJob(job);
     if (pause) return pause;
+    if (job.status === 'done') return undefined;
   }
   return undefined;
 }

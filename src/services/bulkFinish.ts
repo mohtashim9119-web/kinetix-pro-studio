@@ -11,8 +11,8 @@
 // ---------------------------------------------------------------------------
 
 import type { TranscriptToken } from '../types';
-import { lookupCloudCache } from './cloudGateway';
-import { cloudTranscribeLanguage } from './cloudSyncEngine';
+import { describeCloudError, lookupCloudCache, toCloudError } from './cloudGateway';
+import { CloudStageError, cloudTranscribeLanguage } from './cloudSyncEngine';
 import type { FinishResult } from './bulkBatch';
 
 /** How long finish waits for the editor to become ready after the active steps. */
@@ -47,18 +47,37 @@ export async function lookupBatchTranscript(
   audioHash: string,
   language: string | undefined,
 ): Promise<CachedTranscript | null> {
+  try {
+    return await lookupBatchTranscriptTyped(audioHash, language);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 1.5.2 — the bulk cloud queue's transcript check. A gateway failure
+ * (offline, auth, 5xx) is a typed `CloudStageError`, never read as "not
+ * cached" — that read became "the lookup missed". `lookupBatchTranscript`
+ * keeps its null-on-failure contract for the shared build path.
+ */
+export async function lookupBatchTranscriptTyped(
+  audioHash: string,
+  language: string | undefined,
+): Promise<CachedTranscript | null> {
   const primary = cloudTranscribeLanguage(language);
   const keys = primary === 'auto' ? [primary] : [primary, 'auto'];
   for (const key of keys) {
+    let found;
     try {
-      const found = await lookupCloudCache<{ tokens?: TranscriptToken[] }>({
+      found = await lookupCloudCache<{ tokens?: TranscriptToken[] }>({
         stage: 'transcribe', audioHash, language: key,
       });
-      if (found.cached && (found.result.tokens?.length ?? 0) > 0) {
-        return { tokens: found.result.tokens!, language: key };
-      }
-    } catch {
-      return null;
+    } catch (err) {
+      const cloud = toCloudError(err);
+      throw new CloudStageError(cloud, `Cloud transcript lookup failed: ${describeCloudError(cloud)}`);
+    }
+    if (found.cached && (found.result.tokens?.length ?? 0) > 0) {
+      return { tokens: found.result.tokens!, language: key };
     }
   }
   return null;

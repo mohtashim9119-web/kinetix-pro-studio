@@ -131,6 +131,7 @@ def test_meter_line_carries_no_text_and_prices_seconds():
     assert set(line) == {
         "ts", "jobId", "member", "stage", "audioHash", "language",
         "audioDurationSec", "outcome", "taskId", "workerSec", "estimatedUsd", "gpuLane",
+        "projectId", "rowId",  # 1.5.2 — owner ids (never text): per-row billing
     }
     assert line["estimatedUsd"] == pytest.approx(100.0 * core.USD_PER_WORKER_SEC, abs=1e-6)
     assert core.meter_line(job, "cancelled", -3.0, 6.0)["workerSec"] == 0.0
@@ -262,26 +263,8 @@ def test_handoff_gap_inside_window_does_not_second_boot():
     # missed a 2s window and paid a second boot. The window must cover it.
     measured_gap_sec = 5.0
     assert measured_gap_sec < core.HOLD_FOR_PLAN_SEC
-    assert core.gpu_boot_allowed(lookup=False, handed_off=True, live_containers=0) is False
-    assert core.gpu_boot_allowed(lookup=False, handed_off=False, live_containers=1, lane_live=1) is False
-
-
-def test_gap_beyond_window_never_pays_a_second_boot_while_holder_live():
-    assert core.GPU_MAX_CONTAINERS == 2
-    assert core.gpu_boot_allowed(lookup=False, handed_off=False, live_containers=1, lane_live=1) is False
-
-
-def test_a_lookup_never_boots_and_a_held_container_blocks_a_second():
-    assert core.gpu_boot_allowed(lookup=True, handed_off=False, live_containers=0) is False
-    assert core.gpu_boot_allowed(lookup=False, handed_off=True, live_containers=0) is False
-    assert core.gpu_boot_allowed(lookup=False, handed_off=False, live_containers=1, lane_live=1) is False
-    assert core.gpu_boot_allowed(lookup=False, handed_off=False, live_containers=0, lane_live=0) is True
-    assert core.GPU_MAX_CONTAINERS == 2
-
-
-def test_second_lane_may_boot_while_first_lane_holds_one():
-    assert core.gpu_boot_allowed(lookup=False, handed_off=False, live_containers=1, lane_live=0) is True
-    assert core.gpu_boot_allowed(lookup=False, handed_off=False, live_containers=2, lane_live=0) is False
+    # Inside one member's lane a live call (the holder) means wait, not boot.
+    assert core.lane_decision(own_live=1, workspace_live=1, waited_sec=0.0) == "wait"
 
 
 def test_can_hold_for_never_hands_across_lanes():
@@ -663,7 +646,7 @@ def _holder(job_id="t-old", **extra):
 
 def test_lane_refusal_leaves_no_runnable_record():
     job = core.new_job("j-busy", "operator", "align", AUDIO, "en", "k" * 64, 755.3, 1.0)
-    refused = core.lane_refused(job, "bulk", 2.0)
+    refused = core.lane_refused(job, core.lane_refusal("refuse-lane", "bulk"), 2.0)
     assert refused["status"] == "failed"
     assert refused["error"]["code"] == "gpu-lane-busy"
     assert refused["workerSec"] == 0.0 and refused["finishedAt"] == 2.0
@@ -676,8 +659,8 @@ def test_lane_refusal_leaves_no_runnable_record():
 
 def test_gateway_records_the_refusal_before_answering_409():
     src = (Path(__file__).parent / "sync_service.py").read_text(encoding="utf-8")
-    refusal = src.index('"gpu-lane-busy"')
-    branch = src[src.rindex('if decision == "refuse"', 0, refusal):refusal]
+    start = src.index('if decision != "wait":')
+    branch = src[start:src.index("raise GatewayError(refused.status", start)]
     assert "core.lane_refused(" in branch
 
 
@@ -731,19 +714,6 @@ def test_a_job_that_asked_no_hold_ends_the_chain_untouched():
 # every row after a chain-budget close hit exactly that.
 
 
-def test_a_free_lane_boots_and_a_busy_one_waits_then_refuses():
-    free = {"bulk": 0, "editor": 0}
-    assert core.lane_decision(free, "bulk", 0.0) == "boot"
-    busy = {"bulk": 1, "editor": 0}
-    assert core.lane_decision(busy, "bulk", 0.0) == "wait"
-    assert core.lane_decision(busy, "bulk", core.LANE_WAIT_SEC - 0.01) == "wait"
-    assert core.lane_decision(busy, "bulk", core.LANE_WAIT_SEC) == "refuse"
-    # The other lane is independent; the total cap still holds.
-    assert core.lane_decision(busy, "editor", 0.0) == "boot"
-    assert core.lane_decision({"bulk": 1, "editor": 1}, "editor", core.LANE_WAIT_SEC) == "refuse"
-    assert core.lane_decision(None, "bulk", 0.0) == "boot"
-
-
 def test_the_wait_covers_a_holders_remaining_hold_and_fits_the_client_timeout():
     # A busy lane frees when its call ends; the longest a call lingers without
     # work is a hold (HOLD_FOR_PLAN_SEC). The wait outlasts it, and the whole
@@ -754,19 +724,245 @@ def test_the_wait_covers_a_holders_remaining_hold_and_fits_the_client_timeout():
     assert core.LANE_WAIT_SEC + 10 < timeout
 
 
-def test_lane_acquire_and_release_touch_only_their_lane_and_floor_at_zero():
-    lanes = core.lane_acquire({"bulk": 0, "editor": 1}, "bulk")
-    assert lanes == {"bulk": 1, "editor": 1}
-    lanes = core.lane_release(lanes, "bulk")
-    assert lanes == {"bulk": 0, "editor": 1}
-    assert core.lane_release(lanes, "bulk") == {"bulk": 0, "editor": 1}
-    assert core.lane_release(None, "editor") == {"bulk": 0, "editor": 0}
-
-
 def test_the_worker_frees_its_lane_when_the_call_ends():
     src = (Path(__file__).parent / "sync_service.py").read_text(encoding="utf-8")
     run = src[src.index("    def run(self, job_id: str) -> str:"):src.index("    def _hold_for_next(")]
     assert "finally:" in run and "self._release_lane()" in run.split("finally:")[-1]
+    assert "laneKey" in run  # it frees exactly the entry the gateway acquired
     # Container exit stays the fallback for a call that never reached its end.
     exit_hook = src[src.index("    def exit_unbilled(self)"):src.index("    def _whisper_model(")]
     assert "self._release_lane()" in exit_hook
+
+
+# --- 1.5.2 operator ruling: 1 key = 1 member = ISOLATED lanes ---------------
+#
+# Live on v19 (2026-10-04 13:27): three members submitted at once on the
+# editor lane — one booted, two waited 11.4 s and were refused 409; a bulk
+# member waited 8.0 s behind another member's bulk job. Lanes were global.
+
+NOW = 1_800_000_000.0
+
+
+def test_lanes_are_per_member():
+    assert core.lane_key("operator", "bulk") != core.lane_key("team-2", "bulk")
+    assert core.lane_key("operator", "bulk") != core.lane_key("operator", "editor")
+    # An old client (no lane field) lands on ITS OWN member's editor lane.
+    assert core.lane_key("team-2", None) == core.lane_key("team-2", "editor")
+
+
+def test_a_member_never_waits_on_another_member():
+    # Another member's live calls are only in the workspace count, which is
+    # an abuse ceiling — far above any real load — not a queue.
+    for others in (0, 1, 7, core.GPU_WORKSPACE_CEILING - 1):
+        assert core.lane_decision(own_live=0, workspace_live=others, waited_sec=0.0) == "boot"
+
+
+def test_within_a_member_a_lane_stays_serial_then_refuses_typed():
+    assert core.lane_decision(own_live=1, workspace_live=1, waited_sec=0.0) == "wait"
+    assert core.lane_decision(own_live=1, workspace_live=1, waited_sec=core.LANE_WAIT_SEC - 0.01) == "wait"
+    assert core.lane_decision(own_live=1, workspace_live=1, waited_sec=core.LANE_WAIT_SEC) == "refuse-lane"
+
+
+def test_the_workspace_ceiling_refuses_at_once_and_never_queues():
+    assert core.GPU_WORKSPACE_CEILING >= 20
+    assert core.lane_decision(own_live=0, workspace_live=core.GPU_WORKSPACE_CEILING, waited_sec=0.0) == "refuse-ceiling"
+    assert core.lane_decision(own_live=1, workspace_live=core.GPU_WORKSPACE_CEILING, waited_sec=0.0) == "refuse-ceiling"
+
+
+def test_lane_entries_name_their_calls_and_self_heal():
+    entries = core.lane_with(None, "j1", NOW)
+    entries = core.lane_with(entries, "j2", NOW)
+    assert set(core.lane_entries(entries, NOW)) == {"j1", "j2"}
+    assert set(core.lane_entries(core.lane_without(entries, "j1", NOW), NOW)) == {"j2"}
+    assert core.lane_without(None, "missing", NOW) == {}
+    # A call cannot outlive its timeout: an entry older than that is a dead
+    # call's leftover (hard container death runs no `finally`) and stops counting.
+    stale = core.lane_with(None, "dead", NOW - core.LANE_ENTRY_TTL_SEC - 1)
+    assert core.lane_entries(stale, NOW) == {}
+    assert core.LANE_ENTRY_TTL_SEC > core.WORKER_TIMEOUT_SEC
+    assert core.lane_entries({"x": "junk", 5: NOW}, NOW) == {}
+
+
+def test_member_quota_is_an_abuse_guard_far_above_real_use():
+    # team-1's real bulk batch (10-04 02:03-02:35) used ~662 GPU-s in 32 min.
+    measured_pace_per_hour = 662.0 * 3600 / (32 * 60)
+    assert core.MEMBER_QUOTA_GPU_SEC >= 1.5 * measured_pace_per_hour
+    assert core.MEMBER_QUOTA_WINDOW_SEC == 3600.0
+    usage = None
+    for i in range(10):
+        usage = core.usage_with(usage, 100.0, NOW - 60 * i)
+    assert core.quota_used(usage, NOW) == 1000.0
+    core.check_member_quota(usage, NOW)  # under the cap: no refusal
+    old = core.usage_with(None, 9_999.0, NOW - core.MEMBER_QUOTA_WINDOW_SEC - 1)
+    assert core.quota_used(old, NOW) == 0.0  # outside the rolling hour
+
+
+def test_member_quota_refusal_is_typed_with_a_retry_time():
+    usage = core.usage_with(None, core.MEMBER_QUOTA_GPU_SEC, NOW - 600)
+    with pytest.raises(core.ValidationError) as e:
+        core.check_member_quota(usage, NOW)
+    assert e.value.code == "member-quota"
+    assert e.value.retry_after_sec == pytest.approx(core.MEMBER_QUOTA_WINDOW_SEC - 600, abs=1)
+    assert "GPU" in e.value.detail and "hour" in e.value.detail
+
+
+def test_refusals_are_typed_terminal_and_plain_spoken():
+    job = core.new_job("j", "team-2", "align", AUDIO, "en", "k" * 64, 60.0, NOW)
+    for decision, code, status in (("refuse-lane", "gpu-lane-busy", 409), ("refuse-ceiling", "service-busy", 429)):
+        refusal = core.lane_refusal(decision, "editor")
+        assert (refusal.status, refusal.code) == (status, code)
+        assert refusal.retry_after_sec > 0
+        # 1.1.x clients show `detail` verbatim: no lane/worker jargon.
+        assert "worker" not in refusal.detail and "lane" not in refusal.detail
+        rec = core.lane_refused(job, refusal, NOW)
+        assert rec["status"] == "failed" and rec["error"]["code"] == code and rec["workerSec"] == 0.0
+        assert not core.reusable_inflight(rec, "team-2")
+
+
+def test_an_orphaned_submit_is_reaped_typed_and_never_reused():
+    job = core.new_job("j-orph", "operator", "transcribe", AUDIO, "en", "k" * 64, 20.0, NOW - 120)
+    # The live probe's record: queued, no call, no hand-off, two minutes old.
+    assert core.is_orphan(job, has_call=False, now=NOW)
+    reaped = core.reaped(job, NOW)
+    assert reaped["status"] == "failed" and reaped["error"]["code"] == "worker-lost"
+    assert not core.reusable_inflight(reaped, "operator")
+    # Not an orphan: still inside the submit's own lane wait, spawned, handed
+    # off, or already running/terminal.
+    fresh = dict(job, createdAt=NOW - core.LANE_WAIT_SEC)
+    assert not core.is_orphan(fresh, has_call=False, now=NOW)
+    assert core.ORPHAN_AFTER_SEC > core.LANE_WAIT_SEC
+    assert not core.is_orphan(job, has_call=True, now=NOW)
+    assert not core.is_orphan(dict(job, handedOff=True), has_call=False, now=NOW)
+    assert not core.is_orphan(dict(job, status="running"), has_call=False, now=NOW)
+    assert not core.is_orphan(dict(job, status="done"), has_call=False, now=NOW)
+
+
+def _src(name="sync_service.py"):
+    return (Path(__file__).parent / name).read_text(encoding="utf-8")
+
+
+def _fn(src, header, nxt):
+    return src[src.index(header):src.index(nxt, src.index(header))]
+
+
+def test_submit_refuses_quota_before_any_record_and_ends_every_path_terminal():
+    sub = _fn(_src(), "    async def submit(request: Request)", "    @web.post(\"/v1/jobs/{job_id}/release\")")
+    # (A cache hit spends no GPU and is never quota-refused; the queued path is.)
+    assert sub.index("core.check_member_quota(") < sub.index("await jobs.put.aio(inflight, job_id)")
+    # Anything that stops the submit after the record exists (an exception,
+    # the request being cancelled) leaves it terminal, never queued.
+    assert "except BaseException" in sub and "core.submit_interrupted(" in sub
+    # A cancel that lands during the lane wait is honoured before any spawn.
+    loop = sub[sub.index("while True:"):sub.index(".spawn.aio(")]
+    assert "core.cancelled_key(job_id)" in loop
+
+
+def test_the_gateway_never_rewrites_a_record_a_worker_may_own():
+    sub = _fn(_src(), "    async def submit(request: Request)", "    @web.post(\"/v1/jobs/{job_id}/release\")")
+    # Inflight reuse indexes the owner; it does not rewrite the live job.
+    assert 'await jobs.put.aio(existing["jobId"], existing)' not in sub
+    # A hand-off's record (and its call) is complete BEFORE the worker can
+    # see the target: the hand-off key is written last.
+    att = _fn(sub, "        async def attach_if_held()", "        if os.path.isfile(")
+    assert att.index("await jobs.put.aio(job_id,") < att.index("core.claim_handoff_key(")
+
+
+def test_typed_failures_reach_the_client():
+    src = _src()
+    worker = _fn(src, "    def _execute(self, job_id: str, began: float) -> str:", "# Gateway.")
+    assert "core.worker_error(exc)" in worker
+    assert core.worker_error(core.ValidationError("too-large-batch", "x"))["code"] == "too-large-batch"
+    assert core.worker_error(RuntimeError("boom"))["code"] == "worker-error"
+    assert "@web.exception_handler(Exception)" in src  # no bare-text 500
+
+
+def test_modal_never_queues_below_the_ceiling():
+    src = _src()
+    assert "max_containers=core.GPU_WORKSPACE_CEILING" in src
+
+
+def test_meter_lines_carry_their_owner_for_per_row_and_per_attempt_billing():
+    job = dict(core.new_job("j", "team-3", "transcribe", AUDIO, "en", "k" * 64, 20.0, NOW), projectId="p1", rowId="r1")
+    line = core.meter_line(job, "done", 5.0, NOW)
+    assert (line["member"], line["projectId"], line["rowId"]) == ("team-3", "p1", "r1")
+
+
+def test_member_summaries_split_cost_by_key_with_zero_cross_billing():
+    lines = [
+        dict(core.meter_line(dict(core.new_job("a1", "operator", "transcribe", AUDIO, "en", "k" * 64, 20.0, NOW), taskId="ta-1"), "done", 6.0, NOW)),
+        dict(core.meter_line(dict(core.new_job("b1", "team-2", "transcribe", AUDIO, "en", "k" * 64, 20.0, NOW), taskId="ta-2"), "done", 4.0, NOW)),
+        dict(core.meter_line(dict(core.new_job("b2", "team-2", "align", AUDIO, "en", "k" * 64, 20.0, NOW), taskId="ta-2"), "done", 3.0, NOW)),
+    ]
+    by = {m["member"]: m for m in core.member_summaries(lines, {"team-2": core.usage_with(None, 7.0, NOW)}, NOW)}
+    assert by["operator"]["workerSec"] == 6.0 and by["operator"]["boots"] == 1 and by["operator"]["jobs"] == 1
+    assert by["team-2"]["workerSec"] == 7.0 and by["team-2"]["boots"] == 1 and by["team-2"]["jobs"] == 2
+    assert by["team-2"]["quotaUsedSec"] == 7.0 and by["operator"]["quotaUsedSec"] == 0.0
+
+
+def test_retention_drops_old_finished_jobs_and_their_keys_only():
+    old_done = dict(core.new_job("old", "operator", "align", AUDIO, "en", "k" * 64, 20.0, NOW - core.JOB_RETENTION_SEC - 10), status="done")
+    old_live = dict(core.new_job("live", "operator", "align", AUDIO, "en", "q" * 64, 20.0, NOW - core.JOB_RETENTION_SEC - 10), status="running")
+    recent = dict(core.new_job("new", "operator", "align", AUDIO, "en", "r" * 64, 20.0, NOW - 60), status="done")
+    items = {
+        "old": old_done, "call:old": "fc-1", "start:old": 1.0, "handoff:old": "CLOSED", "cancelled:old": old_done,
+        core.inflight_key("operator", "k" * 64): "old",
+        "live": old_live, "call:live": "fc-2",
+        "new": recent, "call:new": "fc-3",
+        "gpu-lanes": {"bulk": 0, "editor": 0},
+    }
+    gone = set(core.expired_job_keys(items, NOW))
+    assert gone == {"old", "call:old", "start:old", "handoff:old", "cancelled:old",
+                    core.inflight_key("operator", "k" * 64), "gpu-lanes"}
+    assert core.JOB_RETENTION_SEC >= core.RESULT_RETENTION_SEC
+
+
+def test_the_async_handoff_claim_mirrors_the_sync_one():
+    import asyncio
+
+    class _Async:
+        def __init__(self, d):
+            self.d = d
+
+        async def get(self, key):
+            return self.d.get(key)
+
+        async def put(self, key, value, skip_if_exists=False):
+            return self.d.put(key, value, skip_if_exists=skip_if_exists)
+
+    for existing, expect in ((None, True), ("a1", True), (core.HANDOFF_CLOSED, False),
+                             (core.HANDOFF_RELEASE, False), ("other", False)):
+        d = _PutIfAbsent()
+        if existing is not None:
+            d[core.handoff_key("t1")] = existing
+        store = _Async(d)
+        got = asyncio.run(core.claim_handoff_key(store.get, store.put, "t1", "a1"))
+        assert got is expect, existing
+        if expect:
+            assert d[core.handoff_key("t1")] == "a1"
+
+
+def test_the_modal_invoice_query_stays_inside_modals_limits():
+    # Live 2026-10-04: an hourly report from the Wave 3 start (8+ days) is
+    # refused by Modal ("Hourly reports cannot span more than 7 days") and the
+    # billing report crashed before printing the invoice section.
+    assert core.modal_billing_args("2026-09-27", "2026-10-05")[-1] == "d"
+    assert core.modal_billing_args("2026-10-01", "2026-10-05")[-1] == "h"
+    assert core.modal_billing_args("2026-09-28", "2026-10-05")[-1] == "h"  # exactly 7 days
+
+
+def test_owner_attempts_list_every_billed_attempt_of_a_row():
+    def line(job_id, stage, outcome, sec, ts, row="r1", member="team-2"):
+        job = dict(core.new_job(job_id, member, stage, AUDIO, "en", "k" * 64, 20.0, ts), rowId=row, projectId=row)
+        return core.meter_line(job, outcome, sec, ts)
+
+    lines = [
+        line("t1", "transcribe", "done", 30.0, NOW),
+        line("a1", "align", "failed", 4.0, NOW + 40),      # the failed attempt
+        line("a2", "align", "done", 22.0, NOW + 400),      # the fresh-submit retry
+        line("x", "transcribe", "done", 9.0, NOW, row="r9", member="operator"),
+    ]
+    by = {(o["member"], o["owner"]): o for o in core.owner_attempts(lines)}
+    r1 = by[("team-2", "r1")]
+    assert [a["jobId"] for a in r1["attempts"]] == ["t1", "a1", "a2"]
+    assert r1["workerSec"] == 56.0
+    assert by[("operator", "r9")]["workerSec"] == 9.0  # never merged across members

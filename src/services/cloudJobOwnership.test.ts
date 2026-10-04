@@ -135,8 +135,7 @@ describe('server-owned cloud jobs', () => {
     gw.dropClient();
     expect(gw.jobs.get(align.jobId)?.status).toBe('running');
     expect(gw.kills).toBe(0);
-    const listed = gw.list({ projectIds: ['p1'] });
-    expect(reattachPlan(listed).poll?.stage).toBe('align');
+    // The relaunch re-submits; the gateway re-attaches the live job (1.5.2).
     const again = gw.submit({ stage: 'align', projectId: 'p1', rowId: 'p1' });
     expect(again.jobId).toBe(align.jobId);
     expect(gw.spawns).toBe(2);
@@ -189,5 +188,40 @@ describe('server-owned cloud jobs', () => {
     const again = gw.submit({ stage: 'align', projectId: 'p1', rowId: 'p1' });
     expect(again.jobId).not.toBe(job.jobId);
     expect(gw.spawns).toBe(2);
+  });
+});
+
+// 1.5.2 — a pause is retired by a LATER success on the same owner, not only by
+// an explicit answer: a bulk row's Retry / auto-retry / Retry All re-run fresh
+// and never answer. Captured live from v19 (2026-10-04): pause posted on the
+// row's job, then the row's fresh run succeeded — the gateway still lists the
+// old pause as awaiting an answer.
+describe('1.5.2 a later success retires an older pause', () => {
+  const LIVE_LIST_AFTER_SUCCESS = [
+    { jobId: '3a2bc59a42b74a6caf78c20810d4191a', stage: 'transcribe', status: 'done', cached: true, projectId: 'p152-pause-1791103111', rowId: 'p152-pause-1791103111', awaitingAnswer: true, holdOpen: false,
+      pause: { id: 'run-1', kind: 'inference-failed', question: 'The cloud job failed.', options: ['retry', 'local', 'whisper', 'cancel'], answer: null, projectId: 'p152-pause-1791103111', host: 'cloud', audioHash: '5a326cc8c82ab1a8c5213b4c8c1590d67bdaf367ddd7eaa995c7215b9b335670', stage: 'align', timestamp: 1791103118341, detail: 'The cloud job failed.' } },
+    { jobId: 'eb848131ef9f429db52a74e03d86af07', stage: 'transcribe', status: 'done', cached: true, projectId: 'p152-pause-1791103111', rowId: 'p152-pause-1791103111', awaitingAnswer: false, holdOpen: false, pause: null },
+  ];
+  const open = (id: string) => ({ id, question: 'q', options: [], answer: null });
+
+  it('the live list after a successful retry resurfaces no dialog', () => {
+    expect(pauseDialogFromJobs(LIVE_LIST_AFTER_SUCCESS)).toBeUndefined();
+  });
+
+  it('a pause with no later success still asks', () => {
+    // Bulk posts the pause on the row's (done) transcribe; its align failed.
+    expect(pauseDialogFromJobs([
+      { jobId: 't', stage: 'transcribe', status: 'done', awaitingAnswer: true, pause: open('p1') },
+      { jobId: 'a', stage: 'align', status: 'failed' },
+    ])?.id).toBe('p1');
+    expect(pauseDialogFromJobs([{ jobId: 't', stage: 'transcribe', status: 'done', awaitingAnswer: true, pause: open('p1') }])?.id).toBe('p1');
+  });
+
+  it('the newest open pause wins over an older retired one', () => {
+    expect(pauseDialogFromJobs([
+      { jobId: 't1', stage: 'transcribe', status: 'done', awaitingAnswer: true, pause: open('p1') },
+      { jobId: 't2', stage: 'transcribe', status: 'done', cached: true },
+      { jobId: 'a2', stage: 'align', status: 'failed', awaitingAnswer: true, pause: open('p2') },
+    ])?.id).toBe('p2');
   });
 });

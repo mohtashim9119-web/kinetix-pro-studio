@@ -228,3 +228,36 @@ describe('adopt path — peek result is reused (no second lookup)', () => {
     expect(lookups).toBe(1);
   });
 });
+
+// 1.5.2 — the bulk queue's transcript check must not read a gateway failure
+// as "not cached": that became "checkpoint said the transcript was cached,
+// but the lookup missed" (and, in the shared build, "No speech was found").
+describe('1.5.2 lookupBatchTranscriptTyped', () => {
+  it('a gateway failure is a typed error, not a miss', async () => {
+    const { lookupBatchTranscriptTyped } = await import('./bulkFinish');
+    (invoke as unknown as ReturnType<typeof vi.fn>).mockReset();
+    (invoke as unknown as ReturnType<typeof vi.fn>).mockRejectedValue({ kind: 'unreachable', detail: 'dns' });
+    const err = await lookupBatchTranscriptTyped('h'.repeat(64), 'en').catch(e => e);
+    expect(err?.name).toBe('CloudStageError');
+    expect(err?.cloud?.kind).toBe('unreachable');
+  });
+
+  it('a real miss is still null, a hit still returns tokens', async () => {
+    const { lookupBatchTranscriptTyped } = await import('./bulkFinish');
+    const mock = invoke as unknown as ReturnType<typeof vi.fn>;
+    mock.mockReset();
+    mock.mockResolvedValue({ cached: false, audioPresent: true, audioDurationSec: 1 });
+    expect(await lookupBatchTranscriptTyped('h'.repeat(64), 'en')).toBeNull();
+    mock.mockReset();
+    mock.mockResolvedValue({ cached: true, result: { tokens: TOKENS } });
+    expect((await lookupBatchTranscriptTyped('h'.repeat(64), 'en'))?.tokens).toEqual(TOKENS);
+  });
+
+  it('the bulk cloud queue uses the typed lookup', async () => {
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const src = fs.readFileSync(path.resolve(process.cwd(), 'src/services/cloudQueueJob.ts'), 'utf8');
+    expect(src).toContain('lookupBatchTranscriptTyped(');
+    expect(src).not.toMatch(/\blookupBatchTranscript\(/);
+  });
+});

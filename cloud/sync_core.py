@@ -26,6 +26,7 @@ import math
 import re
 from collections import defaultdict
 from pathlib import Path
+from dataclasses import dataclass
 from typing import Any
 
 SERVICE_SCHEMA = 2
@@ -165,10 +166,12 @@ TERMINAL_STATUSES = ("done", "failed", "cancelled")
 class ValidationError(ValueError):
     """A request the gateway refuses with a typed 4xx, never a 500."""
 
-    def __init__(self, code: str, detail: str) -> None:
+    def __init__(self, code: str, detail: str, retry_after_sec: float | None = None) -> None:
         super().__init__(f"{code}: {detail}")
         self.code = code
         self.detail = detail
+        # Set when trying again later will work (a quota refusal).
+        self.retry_after_sec = retry_after_sec
 
 
 def sha256_hex(data: bytes | str) -> str:
@@ -563,6 +566,9 @@ def meter_line(job: dict[str, Any], outcome: str, worker_sec: float, now: float)
         "workerSec": round(worker_sec, 3),
         "estimatedUsd": round(worker_sec * USD_PER_WORKER_SEC, 6),
         "gpuLane": parse_gpu_lane(job.get("gpuLane")),
+        # 1.5.2 — the app row/project it ran for: per-row and per-attempt billing.
+        "projectId": job.get("projectId"),
+        "rowId": job.get("rowId"),
     }
 
 
@@ -698,69 +704,255 @@ def kill_gpu_keep_record(store: Any, job_id: str) -> str:
     store.put(key, HANDOFF_RELEASE, skip_if_exists=True)
     return HANDOFF_RELEASE
 
-# Two live GPU containers — one per lane (bulk FIFO, editor). A lookup never
-# boots one. A job a held container on the SAME lane can run must not boot a
-# second on that lane (`boot-unused`). A second lane with none may boot.
-GPU_MAX_CONTAINERS = 2
+# 1.5.2 — operator ruling (the SaaS model): 1 key = 1 member = ISOLATED lanes.
+# Each member owns a bulk lane and an editor lane (1.4.4 semantics, per
+# member: each lane serial, bulk + editor parallel — up to 2 containers per
+# member). Across members there is no shared serialization, ever: a second
+# member's job boots its own container. Before this, both lanes were global:
+# live on v19, two of three members syncing at once waited 11.4 s and were
+# refused, and a bulk job waited 8.0 s behind another member's.
 GPU_LANES = ("bulk", "editor")
+# An ABUSE ceiling on GPU calls running at once across the workspace, not a
+# queue: a new job over it is refused at once (typed `service-busy`), never
+# parked. Real use stays far below it (11 keys x 2 lanes = 22 is the most the
+# lanes allow). Modal's own max_containers is the same number, so Modal never
+# queues below it either.
+GPU_WORKSPACE_CEILING = 24
+# A lane entry names the call holding it; a call cannot outlive the worker
+# timeout, so an older entry is a dead call's leftover (a hard container death
+# runs no `finally`) and stops counting by itself.
+LANE_ENTRY_TTL_SEC = WORKER_TIMEOUT_SEC + 120.0
 
 
 def parse_gpu_lane(value: Any) -> str:
+    """Old 1.1.x clients send no lane: their own member's editor lane."""
     if value in GPU_LANES:
         return str(value)
     return "editor"
 
 
-def gpu_boot_allowed(
-    *, lookup: bool, handed_off: bool, live_containers: int, lane_live: int = 0
-) -> bool:
-    """Whether this submission may start a GPU container."""
-    if lookup or handed_off:
-        return False
-    if lane_live > 0:
-        return False
-    return live_containers < GPU_MAX_CONTAINERS
+def lane_key(member: str, lane: Any) -> str:
+    return f"gpu-lane:{member}:{parse_gpu_lane(lane)}"
 
 
-# 1.5.1 — a lane counts the GPU CALLS in flight on it, not live containers.
-# Freed when its call ends (`SyncWorker.run`), a container idling out its
-# scaledown window no longer holds the lane, so the next job's spawn is
-# accepted — Modal hands it to that warm container (no second boot). Until
-# then the lane was freed only at container EXIT: a bulk job submitted 3.3 s
-# after the previous one finished was refused 409 (live on v18, 2026-10-04),
-# which every retried row and every row after a chain-budget close hit. A
-# lane still busy is waited for, bounded: the longest a call lingers without
-# work is a hold, so the wait outlasts one.
+def lane_entries(value: Any, now: float) -> dict[str, float]:
+    """The live calls on a lane: {spawned job id: acquired at}."""
+    if not isinstance(value, dict):
+        return {}
+    return {
+        k: float(v) for k, v in value.items()
+        if isinstance(k, str) and isinstance(v, (int, float)) and not isinstance(v, bool)
+        and now - float(v) <= LANE_ENTRY_TTL_SEC
+    }
+
+
+def lane_with(value: Any, job_id: str, now: float) -> dict[str, float]:
+    entries = lane_entries(value, now)
+    entries[job_id] = now
+    return entries
+
+
+def lane_without(value: Any, job_id: str, now: float) -> dict[str, float]:
+    entries = lane_entries(value, now)
+    entries.pop(job_id, None)
+    return entries
+
+
+# 1.5.1 — a lane counts the GPU CALLS in flight on it, freed when its call
+# ends (`SyncWorker.run`), so a container idling out its scaledown window
+# never holds a lane. Inside ONE member a still-busy lane is waited for,
+# bounded: the longest a call lingers without work is a hold.
 LANE_POLL_SEC = 0.25
 LANE_WAIT_SEC = HOLD_FOR_PLAN_SEC + 2.0
+# A queued job with no call, no hand-off and older than this was written by a
+# submit that never reached its spawn (the gateway died, the request was
+# dropped): it is reaped as `worker-lost`, never re-adopted.
+ORPHAN_AFTER_SEC = LANE_WAIT_SEC + 20.0
 
 
-def lane_counts(lanes: dict[str, Any] | None) -> dict[str, int]:
-    return {lane: max(0, int((lanes or {}).get(lane, 0) or 0)) for lane in GPU_LANES}
-
-
-def lane_decision(lanes: dict[str, Any] | None, lane: str, waited_sec: float) -> str:
-    """`boot` — spawn now; `wait` — the lane's call may end any moment;
-    `refuse` — still busy after LANE_WAIT_SEC."""
-    counts = lane_counts(lanes)
-    if gpu_boot_allowed(
-        lookup=False, handed_off=False, live_containers=sum(counts.values()), lane_live=counts[parse_gpu_lane(lane)]
-    ):
+def lane_decision(*, own_live: int, workspace_live: int, waited_sec: float) -> str:
+    """`boot` — spawn now; `wait` — this member's own call on the lane may end
+    any moment; `refuse-lane` — still busy after LANE_WAIT_SEC;
+    `refuse-ceiling` — the workspace abuse ceiling (at once, never queued)."""
+    if workspace_live >= GPU_WORKSPACE_CEILING:
+        return "refuse-ceiling"
+    if own_live <= 0:
         return "boot"
-    return "wait" if waited_sec < LANE_WAIT_SEC else "refuse"
+    return "wait" if waited_sec < LANE_WAIT_SEC else "refuse-lane"
 
 
-def lane_acquire(lanes: dict[str, Any] | None, lane: str) -> dict[str, int]:
-    counts = lane_counts(lanes)
-    counts[parse_gpu_lane(lane)] += 1
-    return counts
+@dataclass(frozen=True)
+class Refusal:
+    status: int
+    code: str
+    detail: str
+    retry_after_sec: float
 
 
-def lane_release(lanes: dict[str, Any] | None, lane: str) -> dict[str, int]:
-    counts = lane_counts(lanes)
-    key = parse_gpu_lane(lane)
-    counts[key] = max(0, counts[key] - 1)
-    return counts
+def lane_refusal(decision: str, lane: Any) -> Refusal:
+    """What a refused spawn tells the client. Old clients show `detail`
+    verbatim, so it is a plain sentence."""
+    if decision == "refuse-ceiling":
+        return Refusal(
+            429, "service-busy",
+            "The cloud sync service is at its safety limit for jobs running at once. "
+            "Nothing was charged — try again in about 30 seconds.",
+            30.0,
+        )
+    kind = "bulk" if parse_gpu_lane(lane) == "bulk" else "editor"
+    return Refusal(
+        409, "gpu-lane-busy",
+        f"Your other {kind} cloud sync is still running on your GPU. This one can start as soon as "
+        f"it finishes — try again in a few seconds. Nothing was charged.",
+        float(LANE_WAIT_SEC),
+    )
+
+
+def lane_refused(job: dict[str, Any], refusal: Refusal, now: float) -> dict[str, Any]:
+    """The record of a refused submit: terminal, never started, never billed —
+    nothing can re-attach to it."""
+    return dict(
+        job, status="failed", startedAt=None, finishedAt=now, workerSec=0.0,
+        error={"code": refusal.code, "detail": refusal.detail},
+    )
+
+
+def is_orphan(job: dict[str, Any], *, has_call: bool, now: float) -> bool:
+    return (
+        job.get("status") == "queued"
+        and not has_call
+        and not job.get("handedOff")
+        and now - float(job.get("createdAt") or 0.0) > ORPHAN_AFTER_SEC
+    )
+
+
+def reaped(job: dict[str, Any], now: float) -> dict[str, Any]:
+    """A job no worker will ever run: terminal, and retryable on the client."""
+    return dict(
+        job, status="failed", finishedAt=now, workerSec=0.0,
+        error={"code": "worker-lost", "detail": "the job never reached a GPU worker; run it again"},
+    )
+
+
+def submit_interrupted(job: dict[str, Any], exc: BaseException, now: float) -> dict[str, Any]:
+    """A submit stopped after its record existed: terminal, never queued."""
+    return dict(
+        job, status="failed", finishedAt=now, workerSec=0.0,
+        error={"code": "worker-lost", "detail": f"the submit was interrupted ({type(exc).__name__}); run it again"},
+    )
+
+
+def worker_error(exc: BaseException) -> dict[str, str]:
+    """A worker failure as a typed job error — a typed refusal keeps its code."""
+    if isinstance(exc, ValidationError):
+        return {"code": exc.code, "detail": exc.detail[:500]}
+    return {"code": "worker-error", "detail": f"{type(exc).__name__}: {exc}"[:500]}
+
+
+# 1.5.2 — per-member GPU budget: an ABUSE guard on a rolling hour, not a
+# queue. team-1's real 10-04 bulk batch used ~662 GPU-s in 32 min (~1,240
+# GPU-s/hour pace); the suggested 300 s/hour would have refused it at its 5th
+# row. 2,400 GPU-s (~$0.50) per member per hour is ~2x that pace — and a
+# member can physically run at most 2 containers (7,200 GPU-s/hour). TUNABLE.
+MEMBER_QUOTA_GPU_SEC = 2400.0
+MEMBER_QUOTA_WINDOW_SEC = 3600.0
+
+
+def usage_key(member: str) -> str:
+    return f"gpu-usage:{member}"
+
+
+def usage_entries(value: Any, now: float) -> list[list[float]]:
+    if not isinstance(value, list):
+        return []
+    out: list[list[float]] = []
+    for item in value:
+        if isinstance(item, (list, tuple)) and len(item) == 2 and all(isinstance(x, (int, float)) for x in item):
+            if now - float(item[0]) <= MEMBER_QUOTA_WINDOW_SEC:
+                out.append([float(item[0]), float(item[1])])
+    return out
+
+
+def usage_with(value: Any, sec: float, now: float) -> list[list[float]]:
+    entries = usage_entries(value, now)
+    if sec > 0:
+        entries.append([now, round(float(sec), 3)])
+    return entries
+
+
+def quota_used(value: Any, now: float) -> float:
+    return round(sum(sec for _, sec in usage_entries(value, now)), 3)
+
+
+def check_member_quota(value: Any, now: float) -> None:
+    used = quota_used(value, now)
+    if used < MEMBER_QUOTA_GPU_SEC:
+        return
+    # It frees as the oldest seconds leave the rolling hour.
+    excess, frees_at = used - MEMBER_QUOTA_GPU_SEC, now
+    for ts, sec in sorted(usage_entries(value, now)):
+        excess -= sec
+        frees_at = ts + MEMBER_QUOTA_WINDOW_SEC
+        if excess < 0:
+            break
+    retry = max(1.0, frees_at - now)
+    raise ValidationError(
+        "member-quota",
+        f"This key has used its cloud GPU allowance for the past hour ({used:.0f} of "
+        f"{MEMBER_QUOTA_GPU_SEC:.0f} GPU-seconds). Nothing was charged — it frees up in about "
+        f"{max(1, round(retry / 60))} minute(s).",
+        retry_after_sec=retry,
+    )
+
+
+def member_summaries(lines: list[dict[str, Any]], usage: dict[str, Any], now: float) -> list[dict[str, Any]]:
+    """Per key: jobs, distinct containers, GPU-seconds, dollars, quota used."""
+    by: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for line in lines:
+        if line.get("member"):
+            by[line["member"]].append(line)
+    out = []
+    for member in sorted(set(by) | set(usage)):
+        group = by.get(member, [])
+        sec = sum(float(line.get("workerSec") or 0.0) for line in group)
+        out.append({
+            "member": member,
+            "jobs": sum(1 for line in group if line.get("outcome") != "held"),
+            "boots": len({line.get("taskId") for line in group if line.get("taskId")}),
+            "workerSec": round(sec, 3),
+            "estimatedUsd": round(sec * USD_PER_WORKER_SEC, 6),
+            "quotaUsedSec": quota_used(usage.get(member), now),
+        })
+    return out
+
+
+# 1.5.2 — retention for the job Dict (job records, their call/start/handoff/
+# cancelled keys, inflight pointers). Nothing removed them before: 1,418 keys
+# after one week, the first day's records all still there. Results live 30
+# days; a finished job's record goes with them.
+JOB_RETENTION_SEC = RESULT_RETENTION_SEC
+JOB_AUX_PREFIXES = ("call:", "start:", "handoff:", "cancelled:")
+
+
+def expired_job_keys(items: dict[str, Any], now: float) -> list[str]:
+    """Keys to delete: finished jobs past retention with their aux keys and
+    the inflight pointers to them, plus the retired global lane counter."""
+    expired = {
+        k for k, v in items.items()
+        if isinstance(v, dict) and v.get("jobId") == k and v.get("status") in TERMINAL_STATUSES
+        and now - float(v.get("createdAt") or now) > JOB_RETENTION_SEC
+    }
+    gone = set(expired)
+    for k, v in items.items():
+        if any(k.startswith(p) and k[len(p):] in expired for p in JOB_AUX_PREFIXES):
+            gone.add(k)
+        elif k.startswith("inflight:") and v in expired:
+            gone.add(k)
+    if "gpu-lanes" in items:
+        gone.add("gpu-lanes")
+    return sorted(gone)
+
+
 # Wave 3 U7 — the bulk queue chains many jobs through ONE container: any job
 # may be held (not only a transcription) and handed the next. Modal's timeout
 # is per CALL, so a chain must stay well inside it: once a call has run this
@@ -796,6 +988,26 @@ def can_hold_for(holder: dict[str, Any] | None, member: str, lane: str | None = 
         and holder.get("status") in ("queued", "running", "done")
         and (lane is None or parse_gpu_lane(holder.get("gpuLane")) == parse_gpu_lane(lane))
     )
+
+
+async def claim_handoff_key(get: Any, put: Any, holder_job_id: str, new_job_id: str) -> bool:
+    """The gateway's (async) claim of `handoff:<holder>` for `new_job_id` —
+    the same decisions as `claim_handoff`. True when attached."""
+    key = handoff_key(holder_job_id)
+    action = decide_handoff_put(await get(key), new_job_id)
+    if action == "ok":
+        return True
+    if action == "spawn":
+        return False
+    if await put(key, new_job_id, skip_if_exists=True):
+        return True
+    retry = decide_handoff_retry(await get(key), new_job_id)
+    if retry == "ok":
+        return True
+    if retry == "overwrite":
+        await put(key, new_job_id)
+        return True
+    return False
 
 
 def chain_fields(body: dict[str, Any]) -> tuple[bool, str | None]:
@@ -958,15 +1170,6 @@ def may_hold(call_age_sec: float) -> bool:
 # that had already moved on.
 
 
-def lane_refused(job: dict[str, Any], lane: str, now: float) -> dict[str, Any]:
-    """The record of a submit refused for a busy GPU lane: terminal, never
-    started, never billed — nothing can re-attach to it."""
-    return dict(
-        job, status="failed", startedAt=None, finishedAt=now, workerSec=0.0,
-        error={"code": "gpu-lane-busy", "detail": f"the {lane} GPU lane already has a worker"},
-    )
-
-
 def close_hold(store: Any, job_id: str) -> str | None:
     """Stop holding `job_id`'s container now. Returns a job already handed to
     it (attached to this call — the worker must run it), else None with the
@@ -1007,6 +1210,41 @@ def lookup_reply(result: dict[str, Any] | None, audio_duration_sec: float | None
         "audioPresent": audio_duration_sec is not None,
         "audioDurationSec": audio_duration_sec,
     }
+
+
+def modal_billing_args(start: str, end: str) -> list[str]:
+    """`modal billing report` range flags. Modal refuses an hourly report over
+    7 days, so a longer range is asked for in day buckets."""
+    from datetime import date
+
+    days = (date.fromisoformat(end) - date.fromisoformat(start)).days
+    return ["--start", start, "--end", end, "-r", "h" if days <= 7 else "d"]
+
+
+def owner_attempts(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """1.5.2 — per app row/project (per member): every billed attempt in
+    order — a failure, its fresh-submit retry, the finish — and their sum."""
+    groups: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    for line in lines:
+        if line.get("outcome") in ("boot-unused",) or not line.get("member"):
+            continue
+        owner = line.get("rowId") or line.get("projectId") or "(no owner recorded)"
+        groups[(line["member"], owner)].append(line)
+    out = []
+    for (member, owner), group in sorted(groups.items()):
+        group.sort(key=lambda line: line["ts"])
+        sec = sum(float(line.get("workerSec") or 0.0) for line in group)
+        out.append({
+            "member": member, "owner": owner,
+            "attempts": [
+                {"jobId": line["jobId"], "ts": line["ts"], "stage": line.get("stage"),
+                 "outcome": line.get("outcome"), "workerSec": line.get("workerSec")}
+                for line in group
+            ],
+            "workerSec": round(sec, 3),
+            "estimatedUsd": round(sec * USD_PER_WORKER_SEC, 6),
+        })
+    return out
 
 
 def hit_line(member: str, stage: str, audio_hash: str, language: str, now: float) -> dict[str, Any]:

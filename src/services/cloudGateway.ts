@@ -63,6 +63,10 @@ export function toCloudError(value: unknown): CloudError {
   return { kind: 'protocol', detail: detail ?? 'unknown error' };
 }
 
+const PLAIN_REFUSAL_CODES: ReadonlySet<string> = new Set([
+  'schema-mismatch', 'gpu-lane-busy', 'service-busy', 'member-quota',
+]);
+
 /** One human sentence per failure kind, for settings/status lines. */
 export function describeCloudError(error: CloudError): string {
   switch (error.kind) {
@@ -75,7 +79,9 @@ export function describeCloudError(error: CloudError): string {
         ? error.detail
         : 'This audio is longer than the one-hour cloud limit. Split it or use Local.';
     case 'rejected':
-      return error.code === 'schema-mismatch'
+      // The gateway words these for a person (1.5.2: busy / quota refusals
+      // say what happened, that nothing was charged, and when to try again).
+      return PLAIN_REFUSAL_CODES.has(error.code)
         ? error.detail
         : `The cloud sync server refused the request (${error.code}): ${error.detail}`;
     case 'server': {
@@ -367,24 +373,6 @@ export async function runCloudJob<R>(
   const abort = attachAbort(runId, signal);
   try {
     return await call<CloudJobView<R>>('cloud_run_job', { runId, job: request, onEvent: channel });
-  } finally {
-    abort.settled();
-  }
-}
-
-/** Reattach to a job the server is already running. Abort detaches; does not DELETE. */
-export async function pollCloudJob<R>(
-  jobId: string,
-  options: { onEvent?: (event: CloudJobEvent) => void; signal?: AbortSignal } = {},
-): Promise<CloudJobView<R>> {
-  const { onEvent, signal } = options;
-  if (signal?.aborted) throw { kind: 'cancelled' } satisfies CloudError;
-  const runId = crypto.randomUUID();
-  const channel = new Channel<CloudJobEvent>();
-  if (onEvent) channel.onmessage = onEvent;
-  const abort = attachAbort(runId, signal);
-  try {
-    return await call<CloudJobView<R>>('cloud_poll_job', { runId, jobId, onEvent: channel });
   } finally {
     abort.settled();
   }
