@@ -55,7 +55,7 @@ describe('plan-v3 Wave 2 item 4 — cachedTokensReady reads the content-hash spi
 
 describe('plan-v3 Wave 2 item 4 — the audio hash is computed once, not per branch', () => {
   it('runBuildTimeline hashes the voiceover file through computeAudioHash', () => {
-    expect(PIPE).toContain('audioHash = await hashAudio(staged.voiceoverFile.file)');
+    expect(PIPE).toContain('audioHash = await hashAudio(voiceoverFile)');
   });
 
   it('the commit stamps lastSyncSpine so the next Apply Sync can prove nothing changed', () => {

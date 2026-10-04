@@ -158,6 +158,29 @@ describe('v1.2.2 owner-id check lives on the extracted pipeline', () => {
   });
 });
 
+describe('1.5.3 — the build persists a typed voiceover, whichever door staged it', () => {
+  it('an untyped staged voiceover reaches persistVoiceover typed, with the same audio hash bytes', async () => {
+    const persisted: File[] = [];
+    const hashedBytes: string[] = [];
+    const { staged, owner } = stagedFor('row');
+    const untyped = new File([new Uint8Array([0xff, 0xfb, 0x90, 0xc4])], 'WH40K 1 - V95.mp3');
+    const result = await runBuildTimeline(baseInput('row', {
+      staged: { ...staged, voiceoverFile: { file: untyped, key: 'v-row' } },
+      stagedOwnerId: owner,
+      persistVoiceover: async (_pid, file) => {
+        persisted.push(file);
+        return { id: 'vo-row', name: file.name, url: 'blob:test', type: 'audio', file, addedAt: 1, duration: 1 } as Asset;
+      },
+      hashAudio: async file => { hashedBytes.push(Array.from(new Uint8Array(await file.arrayBuffer())).join(',')); return 'audio-row'; },
+    }));
+    expect(result.ok).toBe(true);
+    expect(persisted).toHaveLength(1);
+    expect(persisted[0]?.type).toBe('audio/mpeg');
+    expect(persisted[0]?.name).toBe('WH40K 1 - V95.mp3');
+    expect(hashedBytes).toEqual(['255,251,144,196']);
+  });
+});
+
 describe('voiceover probe failures keep a typed cause', () => {
   it('sidecar-blocked is named in the abort, not relabeled as a corrupt file', async () => {
     const result = await runBuildTimeline(baseInput('row', {

@@ -43,3 +43,45 @@ export function isAudioFile(file: File): boolean {
   if ((AUDIO_EXTENSIONS as readonly string[]).includes(ext)) return true;
   return file.type.startsWith('audio/');
 }
+
+/**
+ * 1.5.3 — the audio MIME type for a voiceover filename, or '' when the
+ * extension is not a supported audio format. A Blob with no type cannot be
+ * sniffed by WebKit when the MP3 starts on a bare frame (no ID3 tag): the
+ * preview's <audio> fails with MEDIA_ERR_SRC_NOT_SUPPORTED and plays nothing.
+ */
+const AUDIO_MIME_BY_EXTENSION: Readonly<Record<(typeof AUDIO_EXTENSIONS)[number], string>> = {
+  mp3: 'audio/mpeg',
+  wav: 'audio/wav',
+  m4a: 'audio/mp4',
+  ogg: 'audio/ogg',
+  flac: 'audio/flac',
+  aac: 'audio/aac',
+  wma: 'audio/x-ms-wma',
+  opus: 'audio/ogg',
+  aiff: 'audio/aiff',
+  aif: 'audio/aiff',
+};
+
+export function audioMimeTypeForName(name: string): string {
+  const ext = fileExtension(name);
+  return (AUDIO_MIME_BY_EXTENSION as Record<string, string>)[ext] ?? '';
+}
+
+/** The same file typed by its name when it arrived untyped (the zip-bundle
+ *  door, or any picker that leaves `type` empty); otherwise the file itself. */
+export function withAudioMimeType(file: File): File {
+  if (file.type) return file;
+  const type = audioMimeTypeForName(file.name);
+  if (!type) return file;
+  return new File([file], file.name, { type, lastModified: file.lastModified });
+}
+
+/** Open-time repair for a project already persisted with `mimeType: ""`
+ *  (built through the bundle door before 1.5.3): an untyped audio blob is
+ *  re-wrapped with the type its name implies. Anything else is returned as is. */
+export function playableAudioBlob(blob: Blob, name: string, assetType: string): Blob {
+  if (blob.type || assetType !== 'audio') return blob;
+  const type = audioMimeTypeForName(name);
+  return type ? new Blob([blob], { type }) : blob;
+}

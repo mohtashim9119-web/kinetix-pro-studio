@@ -346,6 +346,7 @@ import {
   type UnresolvedAssetMetadata,
 } from './services/relinkResolution';
 import { relinkPickFolder, relinkListFolder, inferMimeType, type RelinkCandidateFile } from './services/relinkNative';
+import { playableAudioBlob } from './services/audioFormats';
 import { writeAssetFromPath } from './services/nativeAssetStore';
 import type { RecoveryAsset, RecoverySegment } from './components/recovery/degradedLoad';
 import { writeAssetBlobNative, deleteAssetNative, deleteProjectAssetsNative } from './services/nativeAssetStore';
@@ -6325,8 +6326,10 @@ export default function App() {
             return { ...asset, url: '', file: undefined, unresolved: true };
           }
           const stored = blobMap.get(asset.id)!;
-          const rehydratedUrl = URL.createObjectURL(stored.blob);
-          const rehydratedFile = new File([stored.blob], asset.name, { type: stored.blob.type });
+          // 1.5.3 — repairs a voiceover persisted untyped (bundle door, pre-1.5.3).
+          const playable = playableAudioBlob(stored.blob, asset.name, asset.type);
+          const rehydratedUrl = URL.createObjectURL(playable);
+          const rehydratedFile = new File([playable], asset.name, { type: playable.type });
           // Back-compat backfill: a project saved before Asset.duration existed
           // carries no clip length. This is the one place every stored asset's
           // blob URL is recreated, so probing here is what keeps the trim bar
