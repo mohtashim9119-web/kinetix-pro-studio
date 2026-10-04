@@ -549,3 +549,35 @@ describe('P9 local build resume + P10 cancel', () => {
     expect(phases(runner).b).toBe('cloud-done');
   });
 });
+
+// 1.5.1 — ONE retry workflow: every retry path re-plans through the shared
+// service from the row's checkpoint. What a retry hands the queue is the
+// row's identity and checkpoint — never a stored request or job id.
+describe('1.5.1 one retry workflow', () => {
+  it('auto-retry, row Retry and Retry All enqueue identity + checkpoint only', async () => {
+    const { runner, started, failCloud } = boot(memory());
+    runner.start([{ id: 'a', name: 'A' }]);
+    await vi.waitFor(() => expect(started).toHaveLength(1));
+    runner.noteCloudJob('a', 'stale-job');
+    const payloads: Record<string, unknown>[] = [];
+    const real = runner['deps'].enqueue;
+    runner['deps'].enqueue = (rows, opts) => { payloads.push(...rows.map(r => ({ ...r }))); real(rows, opts); };
+    failCloud('a'); // the one auto-retry
+    await vi.waitFor(() => expect(started).toHaveLength(2));
+    failCloud('a');
+    await vi.waitFor(() => expect(phases(runner).a).toBe('failed'));
+    runner.retry('a'); // the row's Retry
+    await vi.waitFor(() => expect(started).toHaveLength(3));
+    failCloud('a'); // (Retry re-arms the one auto-retry)
+    await vi.waitFor(() => expect(started).toHaveLength(4));
+    failCloud('a');
+    await vi.waitFor(() => expect(phases(runner).a).toBe('failed'));
+    runner.retry('a', undefined, { preserveAutoRetries: true }); // Retry All
+    await vi.waitFor(() => expect(started).toHaveLength(5));
+    expect(payloads).toHaveLength(4);
+    for (const p of payloads) {
+      expect(Object.keys(p).every(k => ['id', 'name', 'checkpoint', 'contentKey'].includes(k))).toBe(true);
+      expect(JSON.stringify(p)).not.toContain('stale-job');
+    }
+  });
+});

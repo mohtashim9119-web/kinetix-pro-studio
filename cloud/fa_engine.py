@@ -694,14 +694,20 @@ def align_chunked(
 
     Returns FaWordSpan dicts and per-run metrics.
     """
+    from sync_core import guard_align_memory
+
+    # Every window is checked before the first forward: a doomed plan does
+    # no GPU work at all. One window per forward (batch 1), so memory is the
+    # widest window's — the number of windows never raises it.
+    ranges = [chunk_sample_range(len(samples), float(c["startSec"]), float(c["endSec"])) for c in chunks]
+    for i0, i1 in ranges:
+        guard_align_samples(i1 - i0)
+    guard_align_memory([i1 - i0 for i0, i1 in ranges])
     all_words: list[WordSpan] = []
     n_fallback = 0
-    for i, chunk in enumerate(chunks):
+    for chunk, (i0, i1) in zip(chunks, ranges):
         start_sec = float(chunk["startSec"])
-        end_sec = float(chunk["endSec"])
         text = str(chunk.get("text") or "")
-        i0, i1 = chunk_sample_range(len(samples), start_sec, end_sec)
-        guard_align_samples(i1 - i0)
         window = samples[i0:i1]
         if window.size == 0:
             continue

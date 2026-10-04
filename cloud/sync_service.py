@@ -186,13 +186,16 @@ class SyncWorker:
         self.fa: dict[str, tuple[Any, Any]] = {}
         self.gpu_lane: str | None = None
 
+    def _release_lane(self) -> None:
+        """1.5.1 — the lane is this call's: freed the moment the call ends."""
+        if self.gpu_lane:
+            jobs.put("gpu-lanes", core.lane_release(jobs.get("gpu-lanes"), self.gpu_lane))
+            self.gpu_lane = None
+
     @modal.exit()
     def exit_unbilled(self) -> None:
-        if self.gpu_lane:
-            lanes = dict(jobs.get("gpu-lanes") or {})
-            lanes[self.gpu_lane] = max(0, int(lanes.get(self.gpu_lane, 0) or 0) - 1)
-            jobs.put("gpu-lanes", lanes)
-            self.gpu_lane = None
+        # Fallback for a call that never reached its own end (timeout, stop).
+        self._release_lane()
         if self.billed:
             return
         now = time.time()
@@ -290,21 +293,25 @@ class SyncWorker:
         first_job = jobs.get(job_id) or {}
         if not first_job.get("handedOff"):
             self.gpu_lane = core.parse_gpu_lane(first_job.get("gpuLane"))
-        outcome = self._execute(job_id, began)
-        first = outcome
-        # Wave 3 U7 — a held job hands its container to the next job, which
-        # may itself be held: a bulk queue rides ONE container. The chain
-        # stops holding once this call has used its budget (the next job
-        # then spawns normally). Any hold that was not handed a job ends the
-        # loop.
-        current = jobs.get(job_id) or {}
-        while outcome == "done" and current.get("hold") and core.may_hold(time.time() - call_started):
-            target = self._hold_for_next(current)
-            if not target:
-                break
-            outcome = self._execute(target, time.time())
-            current = jobs.get(target) or {}
-        return first
+        try:
+            outcome = self._execute(job_id, began)
+            first = outcome
+            # Wave 3 U7 — a held job hands its container to the next job,
+            # which may itself be held: a bulk queue rides ONE container. Once
+            # this call has used its budget the hold is CLOSED at once (1.5.1:
+            # never left open for a hand-off this container would not run —
+            # the next job then spawns normally). Any hold that was not handed
+            # a job ends the loop.
+            current = jobs.get(job_id) or {}
+            while outcome == "done":
+                target = core.chain_next(jobs, current, time.time() - call_started, self._hold_for_next)
+                if not target:
+                    break
+                outcome = self._execute(target, time.time())
+                current = jobs.get(target) or {}
+            return first
+        finally:
+            self._release_lane()
 
     def _hold_for_next(self, job: dict[str, Any]) -> str | None:
         """Wave 3 U4.5 — wait (bounded) for the client's hand-off: the
@@ -712,15 +719,22 @@ def gateway() -> Any:
             # The held container runs it: no spawn, no second boot. Its
             # FunctionCall is the holder's, so crash detection still works.
             return await view_job(job)
-        lanes = dict((await jobs.get.aio("gpu-lanes")) or {"bulk": 0, "editor": 0})
-        live = int(lanes.get("bulk", 0) or 0) + int(lanes.get("editor", 0) or 0)
-        lane_live = int(lanes.get(lane, 0) or 0)
-        if not core.gpu_boot_allowed(
-            lookup=False, handed_off=False, live_containers=live, lane_live=lane_live
-        ):
-            raise GatewayError(409, "gpu-lane-busy", f"the {lane} GPU lane already has a worker")
-        lanes[lane] = lane_live + 1
-        await jobs.put.aio("gpu-lanes", lanes)
+        # 1.5.1 — a lane busy with a call that is about to end (a hold running
+        # out, a chain closing) is waited for, bounded, instead of refused.
+        waited_from = time.time()
+        while True:
+            lanes = await jobs.get.aio("gpu-lanes")
+            decision = core.lane_decision(lanes, lane, time.time() - waited_from)
+            if decision == "boot":
+                break
+            if decision == "refuse":
+                # The record is already written (a hand-off needed it): make
+                # it terminal so no retry or reattach can adopt a job that
+                # will never run.
+                await jobs.put.aio(job_id, core.lane_refused(job, lane, time.time()))
+                raise GatewayError(409, "gpu-lane-busy", f"the {lane} GPU lane already has a worker")
+            await asyncio.sleep(core.LANE_POLL_SEC)
+        await jobs.put.aio("gpu-lanes", core.lane_acquire(lanes, lane))
         call = await SyncWorker().run.spawn.aio(job_id)
         # Stored under its own key: the worker rewrites the job record as it
         # runs, and a second put of the whole record here could race it.
