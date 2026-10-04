@@ -643,3 +643,130 @@ def test_p11_kill_releases_gpu_and_keeps_the_finished_record():
     assert d[job["jobId"]]["workerSec"] == 4.0
     assert d[core.handoff_key(job["jobId"])] == core.HANDOFF_RELEASE
 
+
+
+# --- 1.5.1 P2: a job the gateway accepted can always run --------------------
+#
+# Job records 2026-10-04: f16a319b / 53fa8afe / 7b00a719 were written, then
+# refused 409 gpu-lane-busy, and sat `queued` with no worker; f8c82e01 was
+# handed to a holder (dba20702) whose container had already passed the chain
+# budget. Every retry then re-attached to them: "Waiting for a cloud GPU…"
+# for 4-16 min until a manual cancel.
+
+
+def _holder(job_id="t-old", **extra):
+    return dict(
+        core.new_job(job_id, "operator", "transcribe", AUDIO, "en", "k" * 64, 10.0, 1.0),
+        hold=True, status="done", gpuLane="bulk", **extra,
+    )
+
+
+def test_lane_refusal_leaves_no_runnable_record():
+    job = core.new_job("j-busy", "operator", "align", AUDIO, "en", "k" * 64, 755.3, 1.0)
+    refused = core.lane_refused(job, "bulk", 2.0)
+    assert refused["status"] == "failed"
+    assert refused["error"]["code"] == "gpu-lane-busy"
+    assert refused["workerSec"] == 0.0 and refused["finishedAt"] == 2.0
+    # Neither re-attach route can adopt it: the gateway's inflight reuse...
+    assert not core.reusable_inflight(refused, "operator")
+    # ...nor a hand-off naming it.
+    assert not core.can_hold_for(dict(refused, hold=True), "operator")
+    assert core.public_job(refused)["status"] == "failed"
+
+
+def test_gateway_records_the_refusal_before_answering_409():
+    src = (Path(__file__).parent / "sync_service.py").read_text(encoding="utf-8")
+    refusal = src.index('"gpu-lane-busy"')
+    branch = src[src.rindex('if decision == "refuse"', 0, refusal):refusal]
+    assert "core.lane_refused(" in branch
+
+
+def test_holder_past_the_chain_budget_closes_its_hold_so_no_job_is_orphaned():
+    d = _PutIfAbsent()
+    holder = _holder()
+    waited: list[dict] = []
+    # dba20702: its container booted ~02:11:08, the hand-off came at 02:16:49.
+    nxt = core.chain_next(d, holder, core.CHAIN_BUDGET_SEC + 34.0, lambda job: waited.append(job))
+    assert nxt is None and waited == []  # past the budget: no wait, no idle billing
+    assert d[core.handoff_key("t-old")] == core.HANDOFF_CLOSED
+    # The client's next job naming it now spawns — it is never attached to a
+    # container that will not run it.
+    assert core.claim_handoff(d, holder=holder, member="operator", new_job_id="a-new") is False
+
+
+def test_a_handoff_that_landed_before_the_close_is_run_not_dropped():
+    d = _PutIfAbsent()
+    d[core.handoff_key("t-old")] = "a-raced"
+    assert core.chain_next(d, _holder(), core.CHAIN_BUDGET_SEC + 1.0, lambda job: None) == "a-raced"
+
+
+def test_close_claims_a_none_tombstone_too():
+    d = _PutIfAbsent()
+    d[core.handoff_key("t-old")] = None
+    assert core.chain_next(d, _holder(), core.CHAIN_BUDGET_SEC + 1.0, lambda job: None) is None
+    assert d[core.handoff_key("t-old")] == core.HANDOFF_CLOSED
+
+
+def test_inside_the_budget_the_holder_waits_for_the_handoff():
+    d = _PutIfAbsent()
+    assert core.chain_next(d, _holder(), 10.0, lambda job: "a-next") == "a-next"
+    assert core.handoff_key("t-old") not in d  # the wait owns the key inside the budget
+
+
+def test_a_job_that_asked_no_hold_ends_the_chain_untouched():
+    d = _PutIfAbsent()
+    plain = dict(_holder(), hold=False)
+    assert core.chain_next(d, plain, 10.0, lambda job: "never") is None
+    assert core.chain_next(d, plain, core.CHAIN_BUDGET_SEC + 1.0, lambda job: "never") is None
+    assert d == {}
+
+
+# --- 1.5.1 P2: a lane counts calls in flight, not containers alive ----------
+#
+# Live on v18 (2026-10-04 13:06): a bulk job finished (10.2 s) and the next
+# bulk job, 3.26 s later, was refused 409 gpu-lane-busy — the finished
+# container was idling out its scaledown window, still counted on the lane —
+# and left a queued record no worker would take. Every retried row (transcript
+# cached: the carried container is released, the align spawns at once) and
+# every row after a chain-budget close hit exactly that.
+
+
+def test_a_free_lane_boots_and_a_busy_one_waits_then_refuses():
+    free = {"bulk": 0, "editor": 0}
+    assert core.lane_decision(free, "bulk", 0.0) == "boot"
+    busy = {"bulk": 1, "editor": 0}
+    assert core.lane_decision(busy, "bulk", 0.0) == "wait"
+    assert core.lane_decision(busy, "bulk", core.LANE_WAIT_SEC - 0.01) == "wait"
+    assert core.lane_decision(busy, "bulk", core.LANE_WAIT_SEC) == "refuse"
+    # The other lane is independent; the total cap still holds.
+    assert core.lane_decision(busy, "editor", 0.0) == "boot"
+    assert core.lane_decision({"bulk": 1, "editor": 1}, "editor", core.LANE_WAIT_SEC) == "refuse"
+    assert core.lane_decision(None, "bulk", 0.0) == "boot"
+
+
+def test_the_wait_covers_a_holders_remaining_hold_and_fits_the_client_timeout():
+    # A busy lane frees when its call ends; the longest a call lingers without
+    # work is a hold (HOLD_FOR_PLAN_SEC). The wait outlasts it, and the whole
+    # submit still answers well inside the client's 60 s request timeout.
+    assert core.LANE_WAIT_SEC > core.HOLD_FOR_PLAN_SEC
+    rs = (Path(__file__).parent.parent / "src-tauri" / "src" / "cloud_gateway.rs").read_text(encoding="utf-8")
+    timeout = int(re.search(r"const REQUEST_TIMEOUT: Duration = Duration::from_secs\((\d+)\)", rs).group(1))
+    assert core.LANE_WAIT_SEC + 10 < timeout
+
+
+def test_lane_acquire_and_release_touch_only_their_lane_and_floor_at_zero():
+    lanes = core.lane_acquire({"bulk": 0, "editor": 1}, "bulk")
+    assert lanes == {"bulk": 1, "editor": 1}
+    lanes = core.lane_release(lanes, "bulk")
+    assert lanes == {"bulk": 0, "editor": 1}
+    assert core.lane_release(lanes, "bulk") == {"bulk": 0, "editor": 1}
+    assert core.lane_release(None, "editor") == {"bulk": 0, "editor": 0}
+
+
+def test_the_worker_frees_its_lane_when_the_call_ends():
+    src = (Path(__file__).parent / "sync_service.py").read_text(encoding="utf-8")
+    run = src[src.index("    def run(self, job_id: str) -> str:"):src.index("    def _hold_for_next(")]
+    assert "finally:" in run and "self._release_lane()" in run.split("finally:")[-1]
+    # Container exit stays the fallback for a call that never reached its end.
+    exit_hook = src[src.index("    def exit_unbilled(self)"):src.index("    def _whisper_model(")]
+    assert "self._release_lane()" in exit_hook

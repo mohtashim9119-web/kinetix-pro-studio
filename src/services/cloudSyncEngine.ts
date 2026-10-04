@@ -46,7 +46,6 @@ import {
   prepareCloudAudio,
   releaseCloudJob,
   runCloudJob,
-  pollCloudJob,
   listCloudJobs,
   killCloudJob,
   toCloudError,
@@ -675,40 +674,10 @@ export async function transcribeViaCloud(args: {
   if (signal.aborted) throw abortError();
   try {
     onProgress(1);
-    const hotHold = Boolean(args.holdJobId);
     if (!holdJobId) holdJobId = await heldJobIdForOwner(args.projectId, args.rowId);
-    if (!hotHold && !holdJobId && (args.projectId || args.rowId)) {
-      try {
-        const listed = await listCloudJobs({ projectId: args.projectId, rowId: args.rowId });
-        const running = reattachPlan(listed).poll;
-        if (running && running.stage === 'transcribe' && (running.status === 'queued' || running.status === 'running')) {
-          const view = await pollCloudJob<CloudTranscribeResult>(running.jobId, {
-            signal,
-            onEvent: e => {
-              if (e.type === 'submitted') bindLiveCloudJob(e.jobId, { projectId: args.projectId, rowId: args.rowId });
-              onProgress(cloudProgressPercent(e, durationSecs));
-              const phase = phaseForEvent('transcribe', e);
-              if (phase) reportPhase(audioHash, phase);
-            },
-          });
-          bindLiveCloudJob(view.jobId, { projectId: args.projectId, rowId: args.rowId });
-          if (view.jobId) noteCloudJobWorkerSec(view.jobId, view.workerSec ?? 0);
-          if (hold && !view.cached && view.jobId) rememberHeld(audioHash, view.jobId);
-          const result = view.result!;
-          const provenance = result.provenance as GatewayProvenance;
-          return {
-            tokens: result.tokens,
-            detectedLanguage: language === undefined ? (result.detectedLanguage ?? undefined) : undefined,
-            stamp: ({ language: lang, completedAt }) => stampCloudProvenance(provenance, { language: lang, completedAt }),
-            host: 'cloud',
-            cached: view.cached,
-            handedOff: view.handedOff === true,
-            workerSec: view.workerSec ?? undefined,
-            jobId: view.jobId,
-          };
-        }
-      } catch { /* list/poll failed: submit below (inflight reuse still applies) */ }
-    }
+    // 1.5.1 — always THIS request. A job listed for the row is never adopted
+    // in its place (it may be another voiceover, or one no worker will run);
+    // the gateway re-attaches an identical request to its live job itself.
     const run = await runStageCacheFirst<CloudTranscribeResult>(
       {
         stage: 'transcribe', audioHash, language: cloudTranscribeLanguage(language),
@@ -863,35 +832,10 @@ export async function alignViaCloud(args: {
   if (!hotHold && !holdJobId) holdJobId = await heldJobIdForOwner(args.projectId, args.rowId);
   const holdNext = holdAfterAlign.delete(args.audioHash);
   try {
-    if (!hotHold && !holdJobId && (args.projectId || args.rowId)) {
-      try {
-        const listed = await listCloudJobs({ projectId: args.projectId, rowId: args.rowId });
-        const running = reattachPlan(listed).poll;
-        if (running && running.stage === 'align' && (running.status === 'queued' || running.status === 'running')) {
-          const view = await pollCloudJob<CloudAlignResult>(running.jobId, {
-            signal: args.signal,
-            onEvent: e => {
-              if (e.type === 'submitted') bindLiveCloudJob(e.jobId, { projectId: args.projectId, rowId: args.rowId });
-              const phase = phaseForEvent('align', e);
-              if (phase) reportPhase(args.audioHash, phase);
-            },
-          });
-          bindLiveCloudJob(view.jobId, { projectId: args.projectId, rowId: args.rowId });
-          if (view.jobId) noteCloudJobWorkerSec(view.jobId, view.workerSec ?? 0);
-          if (holdNext && !view.cached && view.jobId) heldAligns.set(args.audioHash, { jobId: view.jobId, at: Date.now() });
-          const result = view.result!;
-          return {
-            status: 'ok',
-            words: result.words,
-            nFallbackChunks: result.nFallbackChunks,
-            provenance: result.provenance as GatewayProvenance,
-            cached: view.cached,
-            handedOff: view.handedOff === true,
-            workerSec: view.workerSec ?? undefined,
-          };
-        }
-      } catch { /* list/poll failed: submit below */ }
-    }
+    // 1.5.1 — always THIS (freshly planned) request. A queued/running job
+    // listed for the row is never adopted in its place: it may carry a stale
+    // plan, or be one no worker will run. An identical in-flight request is
+    // re-attached by the gateway's own de-duplication — that is the reattach.
     const run = await runStageCacheFirst<CloudAlignResult>(
       {
         stage: 'align',

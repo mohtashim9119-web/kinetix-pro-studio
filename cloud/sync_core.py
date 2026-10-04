@@ -121,6 +121,21 @@ MAX_CHUNK_TEXT_CHARS = 20_000
 # allocator. Lockstep with src/services/syncConstants.ts MAX_RUN_SEC.
 MAX_ALIGN_WINDOW_SEC = 30.0
 
+# 1.5.1 — alignment memory, the physical bound behind that policy cap. The
+# worker forwards ONE window at a time (batch 1); each encoder layer holds the
+# attention scores and their softmax together, each [1, 16, T, T] float32, T
+# being the conv stack's frame count (~50/s). So peak memory is the LONGEST
+# window's, squared — never the number of windows. Pinned against the two
+# production OOMs (job records bf762a2b / 2672bce4): a 231.2 s window asked for
+# 8,551,070,976 B and a 194.8 s one 6,072,773,376 B, both reproduced to the
+# byte by `align_attention_bytes`; the widest window that ever succeeded on
+# the T4 was 130.8 s (~5.5 GB peak). A 30 s window peaks at ~0.29 GB; the
+# bound refuses anything past ~58 s, still 5x under the widest success.
+ALIGN_SAMPLE_RATE_HZ = 16_000
+ALIGN_ATTENTION_HEADS = 16
+ALIGN_CONV_LAYERS = ((10, 5), (3, 2), (3, 2), (3, 2), (3, 2), (2, 2), (2, 2))
+ALIGN_MEMORY_BOUND_BYTES = 1 << 30
+
 # ---------------------------------------------------------------------------
 # Retention (operator D4): cached audio 7 days after last use, results 30
 # days, nothing used for training, logs hold hashes/durations/GPU-seconds
@@ -273,7 +288,49 @@ def canonical_chunks(chunks: Any, audio_duration_sec: float | None) -> list[dict
         if not isinstance(text, str) or len(text) > MAX_CHUNK_TEXT_CHARS:
             raise ValidationError("bad-chunks", f"chunk {i} text must be a string under {MAX_CHUNK_TEXT_CHARS} chars")
         out.append({"startSec": start, "endSec": end, "text": text})
+    guard_align_memory([window_samples(c["startSec"], c["endSec"]) for c in out])
     return out
+
+
+def window_samples(start_sec: float, end_sec: float) -> int:
+    """Samples in a chunk window, as the worker slices it (unclamped: an upper bound)."""
+    rate = ALIGN_SAMPLE_RATE_HZ
+    return max(0, int(round(end_sec * rate)) - int(round(start_sec * rate)))
+
+
+def align_frames(n_samples: int) -> int:
+    """Encoder frames wav2vec2's conv stack makes of `n_samples` (~50/s)."""
+    n = int(n_samples)
+    for kernel, stride in ALIGN_CONV_LAYERS:
+        if n < kernel:
+            return 0
+        n = (n - kernel) // stride + 1
+    return n
+
+
+def align_attention_bytes(n_samples: int) -> int:
+    """One [1, heads, T, T] float32 attention buffer for a window."""
+    t = align_frames(n_samples)
+    return ALIGN_ATTENTION_HEADS * t * t * 4
+
+
+def align_peak_bytes(n_samples: int) -> int:
+    """A window's forward peak: scores and softmax alive together."""
+    return 2 * align_attention_bytes(n_samples)
+
+
+def guard_align_memory(window_sample_counts: list[int]) -> None:
+    """Refuse — typed, before any GPU work — a plan whose widest window's
+    forward would exceed ALIGN_MEMORY_BOUND_BYTES. The backstop under the
+    MAX_ALIGN_WINDOW_SEC policy: it holds even if that cap drifts."""
+    for i, n in enumerate(window_sample_counts):
+        need = align_peak_bytes(n)
+        if need > ALIGN_MEMORY_BOUND_BYTES:
+            raise ValidationError(
+                "too-large-batch",
+                f"chunk {i} window ({n / ALIGN_SAMPLE_RATE_HZ:.2f}s) needs {need / 2**30:.1f} GiB of attention "
+                f"memory; the bound is {ALIGN_MEMORY_BOUND_BYTES / 2**30:.1f} GiB",
+            )
 
 
 def chunk_plan_hash(chunks: list[dict[str, Any]]) -> str:
@@ -663,6 +720,47 @@ def gpu_boot_allowed(
     if lane_live > 0:
         return False
     return live_containers < GPU_MAX_CONTAINERS
+
+
+# 1.5.1 — a lane counts the GPU CALLS in flight on it, not live containers.
+# Freed when its call ends (`SyncWorker.run`), a container idling out its
+# scaledown window no longer holds the lane, so the next job's spawn is
+# accepted — Modal hands it to that warm container (no second boot). Until
+# then the lane was freed only at container EXIT: a bulk job submitted 3.3 s
+# after the previous one finished was refused 409 (live on v18, 2026-10-04),
+# which every retried row and every row after a chain-budget close hit. A
+# lane still busy is waited for, bounded: the longest a call lingers without
+# work is a hold, so the wait outlasts one.
+LANE_POLL_SEC = 0.25
+LANE_WAIT_SEC = HOLD_FOR_PLAN_SEC + 2.0
+
+
+def lane_counts(lanes: dict[str, Any] | None) -> dict[str, int]:
+    return {lane: max(0, int((lanes or {}).get(lane, 0) or 0)) for lane in GPU_LANES}
+
+
+def lane_decision(lanes: dict[str, Any] | None, lane: str, waited_sec: float) -> str:
+    """`boot` — spawn now; `wait` — the lane's call may end any moment;
+    `refuse` — still busy after LANE_WAIT_SEC."""
+    counts = lane_counts(lanes)
+    if gpu_boot_allowed(
+        lookup=False, handed_off=False, live_containers=sum(counts.values()), lane_live=counts[parse_gpu_lane(lane)]
+    ):
+        return "boot"
+    return "wait" if waited_sec < LANE_WAIT_SEC else "refuse"
+
+
+def lane_acquire(lanes: dict[str, Any] | None, lane: str) -> dict[str, int]:
+    counts = lane_counts(lanes)
+    counts[parse_gpu_lane(lane)] += 1
+    return counts
+
+
+def lane_release(lanes: dict[str, Any] | None, lane: str) -> dict[str, int]:
+    counts = lane_counts(lanes)
+    key = parse_gpu_lane(lane)
+    counts[key] = max(0, counts[key] - 1)
+    return counts
 # Wave 3 U7 — the bulk queue chains many jobs through ONE container: any job
 # may be held (not only a transcription) and handed the next. Modal's timeout
 # is per CALL, so a chain must stay well inside it: once a call has run this
@@ -850,6 +948,48 @@ def may_hold(call_age_sec: float) -> bool:
     """Whether a container whose call has run `call_age_sec` may still wait
     for a hand-off (see CHAIN_BUDGET_SEC)."""
     return call_age_sec < CHAIN_BUDGET_SEC
+
+
+# 1.5.1 — every job the gateway accepts can run. Before this, a submit wrote
+# its record (and inflight + owner index) and THEN met a busy lane: the 409
+# left a `queued` job no worker would ever take, and the client's next retry
+# re-attached to it. Likewise a holder that stopped for the chain budget left
+# its hand-off key open, so the gateway attached the next job to a container
+# that had already moved on.
+
+
+def lane_refused(job: dict[str, Any], lane: str, now: float) -> dict[str, Any]:
+    """The record of a submit refused for a busy GPU lane: terminal, never
+    started, never billed — nothing can re-attach to it."""
+    return dict(
+        job, status="failed", startedAt=None, finishedAt=now, workerSec=0.0,
+        error={"code": "gpu-lane-busy", "detail": f"the {lane} GPU lane already has a worker"},
+    )
+
+
+def close_hold(store: Any, job_id: str) -> str | None:
+    """Stop holding `job_id`'s container now. Returns a job already handed to
+    it (attached to this call — the worker must run it), else None with the
+    key CLOSED so the gateway spawns instead of attaching."""
+    key = handoff_key(job_id)
+    if store.put(key, HANDOFF_CLOSED, skip_if_exists=True):
+        return None
+    existing = store.get(key)
+    if existing is None:  # a None tombstone: claim it the way claim_handoff does
+        store.put(key, HANDOFF_CLOSED)
+        existing = store.get(key)
+    return handoff_target(existing)
+
+
+def chain_next(store: Any, job: dict[str, Any], call_age_sec: float, wait_for_handoff: Any) -> str | None:
+    """After a held `job` finished: the next job this container runs, or None.
+    Inside the chain budget it waits (bounded) for the client's hand-off;
+    past it, it closes the hold at once and runs only a job already attached."""
+    if not job.get("hold"):
+        return None
+    if may_hold(call_age_sec):
+        return wait_for_handoff(job)
+    return close_hold(store, job["jobId"])
 
 
 def lookup_reply(result: dict[str, Any] | None, audio_duration_sec: float | None) -> dict[str, Any]:
