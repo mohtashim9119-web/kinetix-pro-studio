@@ -49,6 +49,7 @@ import { stripRtfIfNeeded, detectTextFileRole } from './textUtils';
 import { ZIP_MAX_ENTRIES, ZIP_MAX_ENTRY_BYTES, ZIP_MAX_TOTAL_BYTES, ZipTooLargeError, walkZipMediaEntries } from './zipIngest';
 import { isMacOSMetadataPath } from './macosMetadata';
 import { timedIngest } from './ingestTiming';
+import { withAudioMimeType } from './audioFormats';
 import type { Asset } from '../types';
 
 export interface BundleIngestSuccess {
@@ -257,7 +258,7 @@ export async function classifyAndIngestBundleZip(
     kind: 'success',
     scriptFile: new File([pendingScript!.text], pendingScript!.name, { type: 'text/plain' }),
     sceneFile: new File([pendingScene!.text], pendingScene!.name, { type: 'text/plain' }),
-    voiceoverFile: new File([voiceoverEntry!.blob], voiceoverEntry!.name),
+    voiceoverFile: withAudioMimeType(new File([voiceoverEntry!.blob], voiceoverEntry!.name)),
     mediaAssets,
     counts,
     duplicateNames,

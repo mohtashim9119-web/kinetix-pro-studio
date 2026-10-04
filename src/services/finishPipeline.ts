@@ -45,6 +45,7 @@ import { appendSyncLogEntries, mintSyncLogId } from './syncLog';
 import type { BulkCheckpoint } from './bulkBatch';
 import { SYNC_PAUSED_MESSAGE, VOICEOVER_DURATION_ABORT_PREFIX } from './applySyncAbort';
 import { classifyVoiceoverReadCause, voiceoverReadSkipReason } from './voiceoverReadCause';
+import { withAudioMimeType } from './audioFormats';
 
 export const STAGED_FOR_ANOTHER_PROJECT_MESSAGE =
   'The staged files belong to a different project, so nothing was built. Reopen this project and try again.';
@@ -215,13 +216,16 @@ export async function runBuildTimeline(input: FinishPipelineInput): Promise<Fini
   let audioHash = start.lastTranscribedAudioHash;
 
   if (staged.voiceoverFile) {
-    const asset = await input.persistVoiceover(start.id, staged.voiceoverFile.file);
+    // 1.5.3 — persist a typed voiceover whichever door staged it: an untyped
+    // one is stored as `mimeType: ""` and the preview cannot play it.
+    const voiceoverFile = withAudioMimeType(staged.voiceoverFile.file);
+    const asset = await input.persistVoiceover(start.id, voiceoverFile);
     if (!asset) return { ok: false, message: NO_VOICEOVER_FOR_FINISH };
     const oldIdx = allAssets.findIndex(a => a.id === start.voiceoverId);
     if (oldIdx >= 0) allAssets.splice(oldIdx, 1);
     allAssets.push(asset);
     voiceoverId = asset.id;
-    audioHash = await hashAudio(staged.voiceoverFile.file);
+    audioHash = await hashAudio(voiceoverFile);
   }
 
   // Media (files and zips), exactly as the editor's Build Timeline commits them.

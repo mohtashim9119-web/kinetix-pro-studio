@@ -115,6 +115,8 @@ describe('classifyAndIngestBundleZip — a full bundle succeeds', () => {
     expect(await outcome.scriptFile.text()).toBe(SCRIPT_TEXT);
     expect(await outcome.sceneFile.text()).toBe(SCENE_TEXT);
     expect(outcome.voiceoverFile.name).toBe('voice.mp3');
+    // 1.5.3 — the bundle door types the voiceover like the manual door does.
+    expect(outcome.voiceoverFile.type).toBe('audio/mpeg');
     expect(outcome.mediaAssets).toHaveLength(2);
     expect(outcome.counts).toEqual({ imported: 2, deduped: 0, unsupportedSkipped: 0, failed: 0 });
     expect(mockMediaVaultImportBytes).toHaveBeenCalledTimes(2);

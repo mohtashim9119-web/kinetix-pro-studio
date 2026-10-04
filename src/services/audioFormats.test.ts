@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { isAudioFile, AUDIO_EXTENSIONS } from './audioFormats';
+import { readFileSync } from 'fs';
+import { resolve } from 'path';
+import { isAudioFile, AUDIO_EXTENSIONS, audioMimeTypeForName, withAudioMimeType, playableAudioBlob } from './audioFormats';
 
 /** Builds a File with a given name/MIME for classification tests. */
 function makeFile(name: string, type = ''): File {
@@ -48,5 +50,51 @@ describe('isAudioFile — voiceover extension router (Part 2)', () => {
     // "mix.final." ends in a dot → no extension token → not audio by extension,
     // and no audio MIME → false.
     expect(isAudioFile(makeFile('mix.final.'))).toBe(false);
+  });
+});
+
+// 1.5.3 — V95/V100 played nothing: the zip-bundle door staged the voiceover as
+// an untyped File, the build persisted `mimeType: ""`, and every open
+// rehydrated an untyped blob. WebKit cannot sniff a bare-frame MP3 (no ID3)
+// without a type, so <audio> failed with MEDIA_ERR_SRC_NOT_SUPPORTED (4).
+describe('1.5.3 — a voiceover always carries its audio MIME type', () => {
+  it('maps every supported audio extension to a non-empty audio/* type', () => {
+    for (const ext of AUDIO_EXTENSIONS) {
+      expect(audioMimeTypeForName(`voice.${ext}`)).toMatch(/^audio\//);
+    }
+    expect(audioMimeTypeForName('WH40K 1 - V95.mp3')).toBe('audio/mpeg');
+    expect(audioMimeTypeForName('VOICE.M4A')).toBe('audio/mp4');
+    expect(audioMimeTypeForName('notes.txt')).toBe('');
+    expect(audioMimeTypeForName('voiceover')).toBe('');
+  });
+
+  it('types an untyped audio File by its name, keeping name and bytes', async () => {
+    const untyped = new File([new Uint8Array([0xff, 0xfb, 0x90, 0xc4])], 'WH40K 1 - V100.mp3');
+    expect(untyped.type).toBe('');
+    const typed = withAudioMimeType(untyped);
+    expect(typed.type).toBe('audio/mpeg');
+    expect(typed.name).toBe('WH40K 1 - V100.mp3');
+    expect(new Uint8Array(await typed.arrayBuffer())).toEqual(new Uint8Array([0xff, 0xfb, 0x90, 0xc4]));
+  });
+
+  it('leaves an already-typed or unrecognised file untouched', () => {
+    const typed = new File([new Uint8Array([1])], 'voice.mp3', { type: 'audio/mpeg' });
+    expect(withAudioMimeType(typed)).toBe(typed);
+    const unknown = new File([new Uint8Array([1])], 'voiceover');
+    expect(withAudioMimeType(unknown)).toBe(unknown);
+  });
+
+  it('repairs an already-persisted untyped audio blob at open (V95/V100 shape)', () => {
+    const stored = new Blob([new Uint8Array([0xff, 0xfb])]);
+    expect(playableAudioBlob(stored, 'WH40K 1 - V95.mp3', 'audio').type).toBe('audio/mpeg');
+    const good = new Blob([new Uint8Array([1])], { type: 'audio/x-m4a' });
+    expect(playableAudioBlob(good, 'voiceover.m4a', 'audio')).toBe(good);
+    const image = new Blob([new Uint8Array([1])]);
+    expect(playableAudioBlob(image, 'shot.mp3', 'image')).toBe(image);
+  });
+
+  it('the project-open rehydrate goes through the repair', () => {
+    const app = readFileSync(resolve(import.meta.dirname, '..', 'App.tsx'), 'utf-8');
+    expect(app).toMatch(/playableAudioBlob\(stored\.blob, asset\.name, asset\.type\)/);
   });
 });
