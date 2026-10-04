@@ -337,6 +337,9 @@ export function isRetryableCloudError(error: CloudError): boolean {
 export type CloudPauseReason = 'offline' | 'cloud-auth' | 'inference-failed';
 
 export function cloudPauseReason(error: CloudError): CloudPauseReason {
+  // 1.5.2 — a job that outran the client's 25-minute wall reached the server
+  // fine (cloud_gateway.rs JOB_WALL_LIMIT: "job … ran past …s"): not offline.
+  if (error.kind === 'timeout' && /\bran past \d+s\b/.test(error.detail)) return 'inference-failed';
   if (error.kind === 'unreachable' || error.kind === 'timeout') return 'offline';
   if (error.kind === 'auth' || error.kind === 'notConfigured') return 'cloud-auth';
   return 'inference-failed';
@@ -372,6 +375,25 @@ export function __setCloudRetryDelayForTests(ms: number): void {
   retryDelayMs = ms;
 }
 
+/** 1.5.2 — refusals that cost nothing and clear by themselves: this member's
+ *  own other sync still on the lane (the gateway already waited ~10 s), or the
+ *  workspace abuse ceiling. Lanes are per member, so never another member. */
+const BUSY_CODES: ReadonlySet<string> = new Set(['gpu-lane-busy', 'service-busy']);
+
+export function isBusyCloudError(error: CloudError): boolean {
+  return error.kind === 'rejected' && BUSY_CODES.has(error.code);
+}
+
+/** The short, honest auto-retry: the phase reads "Waiting for a cloud GPU…"
+ *  meanwhile; after these the server's own plain sentence is shown. */
+export const CLOUD_BUSY_RETRY_DELAYS_MS: readonly number[] = [3000, 6000, 10000, 15000];
+let busyRetryDelaysMs: readonly number[] = CLOUD_BUSY_RETRY_DELAYS_MS;
+
+/** Test-only. */
+export function __setCloudBusyRetryDelaysForTests(delays: readonly number[]): void {
+  busyRetryDelaysMs = delays;
+}
+
 function cancellableDelay(ms: number, signal: AbortSignal | undefined): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) { reject({ kind: 'cancelled' } satisfies CloudError); return; }
@@ -405,16 +427,30 @@ export async function runStageCacheFirst<R>(
     audioDurationSec?: number;
   } = {},
 ): Promise<CloudStageRun<R>> {
-  try {
-    return await attemptStageCacheFirst<R>(request, audio, options);
-  } catch (err) {
-    const first = toCloudError(err);
-    if (!isRetryableCloudError(first)) throw first;
-    console.warn(`[cloud] ${request.stage} failed (${first.kind}) — retrying once in ${retryDelayMs / 1000}s:`, first);
-    options.onRetry?.(first);
-    await cancellableDelay(retryDelayMs, options.signal);
-    const run = await attemptStageCacheFirst<R>(request, audio, options);
-    return { ...run, retried: true };
+  let busyRetries = 0;
+  let transientRetried = false;
+  for (;;) {
+    try {
+      const run = await attemptStageCacheFirst<R>(request, audio, options);
+      return transientRetried ? { ...run, retried: true } : run;
+    } catch (err) {
+      const error = toCloudError(err);
+      if (isBusyCloudError(error) && busyRetries < busyRetryDelaysMs.length) {
+        const wait = busyRetryDelaysMs[busyRetries++]!;
+        console.info(`[cloud] ${request.stage}: ${error.kind === 'rejected' ? error.code : error.kind} — waiting ${wait / 1000}s for a cloud GPU`);
+        options.onEvent?.({ type: 'status', jobId: '', status: 'queued', elapsedSec: 0 });
+        await cancellableDelay(wait, options.signal);
+        continue;
+      }
+      if (!transientRetried && isRetryableCloudError(error)) {
+        console.warn(`[cloud] ${request.stage} failed (${error.kind}) — retrying once in ${retryDelayMs / 1000}s:`, error);
+        options.onRetry?.(error);
+        transientRetried = true;
+        await cancellableDelay(retryDelayMs, options.signal);
+        continue;
+      }
+      throw error;
+    }
   }
 }
 

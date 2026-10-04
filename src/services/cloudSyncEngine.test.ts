@@ -664,3 +664,59 @@ describe('1.5.1 a retry submits its freshly planned request', () => {
     expect(sent.map(j => j.audioHash)).toEqual([HASH]);
   });
 });
+
+// 1.5.2 — busy refusals cost nothing and clear by themselves (the member's
+// own other sync is finishing; the workspace abuse ceiling). The client says
+// "Waiting for a cloud GPU…" and retries, briefly, instead of parking the row.
+describe('1.5.2 busy refusals: a short honest auto-retry', () => {
+  const BUSY = { kind: 'rejected', status: 409, code: 'gpu-lane-busy', detail: 'Your other editor cloud sync is still running on your GPU. This one can start as soon as it finishes — try again in a few seconds. Nothing was charged.' };
+  const CEILING = { kind: 'rejected', status: 429, code: 'service-busy', detail: 'The cloud sync service is at its safety limit for jobs running at once. Nothing was charged — try again in about 30 seconds.' };
+  const QUOTA = { kind: 'rejected', status: 429, code: 'member-quota', detail: 'This key has used its cloud GPU allowance for the past hour (2400 of 2400 GPU-seconds). Nothing was charged — it frees up in about 12 minute(s).' };
+
+  it.each([['gpu-lane-busy', BUSY], ['service-busy', CEILING]])('%s: waits, retries and succeeds', async (_code, refusal) => {
+    const mod = await import('./cloudSyncEngine');
+    mod.__setCloudBusyRetryDelaysForTests([0, 0, 0]);
+    let submits = 0;
+    gateway(() => { submits += 1; if (submits < 3) throw refusal; return doneTranscript('en'); }, 99, () => ({ cached: false, audioPresent: true, audioDurationSec: 60 }));
+    const events: string[] = [];
+    const run = await runStageCacheFirst({ stage: 'transcribe', audioHash: HASH, language: 'en' }, async () => new Blob(), {
+      onEvent: e => { if (e.type === 'status') events.push(e.status); },
+    });
+    expect(run.result).toBeTruthy();
+    expect(submits).toBe(3);
+    expect(events.filter(s => s === 'queued').length).toBeGreaterThanOrEqual(2); // "Waiting for a cloud GPU…"
+  });
+
+  it('still busy after the short retries: the server\'s own plain sentence, typed', async () => {
+    const mod = await import('./cloudSyncEngine');
+    mod.__setCloudBusyRetryDelaysForTests([0, 0]);
+    let submits = 0;
+    gateway(() => { submits += 1; throw BUSY; }, 99, () => ({ cached: false, audioPresent: true, audioDurationSec: 60 }));
+    const err = await runStageCacheFirst({ stage: 'transcribe', audioHash: HASH, language: 'en' }, async () => new Blob()).catch(e => e);
+    expect(submits).toBe(3);
+    expect(err).toMatchObject({ kind: 'rejected', code: 'gpu-lane-busy' });
+    const { describeCloudError } = await import('./cloudGateway');
+    expect(describeCloudError(err)).toBe(BUSY.detail);
+  });
+
+  it('member-quota is not retried and reads as the server says', async () => {
+    const mod = await import('./cloudSyncEngine');
+    mod.__setCloudBusyRetryDelaysForTests([0, 0, 0]);
+    let submits = 0;
+    gateway(() => { submits += 1; throw QUOTA; }, 99, () => ({ cached: false, audioPresent: true, audioDurationSec: 60 }));
+    const err = await runStageCacheFirst({ stage: 'transcribe', audioHash: HASH, language: 'en' }, async () => new Blob()).catch(e => e);
+    expect(submits).toBe(1);
+    const { describeCloudError } = await import('./cloudGateway');
+    expect(describeCloudError(err)).toBe(QUOTA.detail);
+  });
+
+  it('a job that outran the 25-minute client wall is not reported as offline', () => {
+    expect(cloudPauseReason({ kind: 'timeout', detail: 'job abc ran past 1500s' })).toBe('inference-failed');
+    expect(cloudPauseReason({ kind: 'timeout', detail: 'operation timed out' })).toBe('offline');
+  });
+
+  it('pollCloudJob is gone (no stage adopts a listed job)', async () => {
+    const gw = await import('./cloudGateway');
+    expect('pollCloudJob' in gw).toBe(false);
+  });
+});

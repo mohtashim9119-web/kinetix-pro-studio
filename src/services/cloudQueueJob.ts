@@ -57,7 +57,7 @@ import { memoizedDuration } from './bulkRows';
 import { mintSyncLogId, appendSyncLogEntries, buildFaPausedEntry } from './syncLog';
 import { BUILD_TIMELINE_COPY, missingSpineSlots, type BuildTimelineSlots } from './buildTimelineGate';
 import { stagesToRun, type BulkCheckpoint } from './bulkBatch';
-import { lookupBatchTranscript } from './bulkFinish';
+import { lookupBatchTranscriptTyped } from './bulkFinish';
 import { formatUsd, type QueueEngine, type QueueJob, type QueueJobOutcome } from './syncQueue';
 
 /** Mirrors `cloud/sync_core.py`'s USD_PER_WORKER_SEC (T4 + 2 cores + 8 GiB);
@@ -308,7 +308,8 @@ export function createCloudProjectJob(
         let tokens;
         try {
           if (!plan.includes('transcribe')) {
-            const cached = await lookupBatchTranscript(audioHash, project.language);
+            // 1.5.2 — a gateway failure throws typed (handled below), never reads as a miss.
+            const cached = await lookupBatchTranscriptTyped(audioHash, project.language);
             if (!cached) throw new Error('checkpoint said the transcript was cached, but the lookup missed');
             tokens = cached.tokens;
             if (token) letGo();

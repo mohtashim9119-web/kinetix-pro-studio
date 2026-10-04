@@ -158,6 +158,15 @@ def _write_meter(line: dict[str, Any]) -> None:
     _write_json_atomic(f"{CACHE_ROOT}/meter/{day}/{line['jobId']}.json", line)
 
 
+def _note_usage(line: dict[str, Any]) -> None:
+    """1.5.2 — every billed second counts toward its member's rolling-hour
+    GPU budget (the worker's side; the gateway uses `note_usage`)."""
+    member, sec = line.get("member"), float(line.get("workerSec") or 0.0)
+    if member and sec > 0:
+        key = core.usage_key(member)
+        jobs.put(key, core.usage_with(jobs.get(key), sec, line["ts"]))
+
+
 # ---------------------------------------------------------------------------
 # GPU worker.
 # ---------------------------------------------------------------------------
@@ -169,7 +178,8 @@ def _write_meter(line: dict[str, Any]) -> None:
     volumes={WHISPER_ROOT: whisper_vol, FA_ROOT: fa_vol, CACHE_ROOT: cache_vol},
     timeout=JOB_TIMEOUT_SEC,
     scaledown_window=GPU_SCALEDOWN_WINDOW_SEC,
-    max_containers=core.GPU_MAX_CONTAINERS,
+    # 1.5.2 — Modal must never queue below the abuse ceiling (per-member lanes).
+    max_containers=core.GPU_WORKSPACE_CEILING,
     buffer_containers=0,
     cpu=core.WORKER_CPU_CORES,
     memory=core.WORKER_MEMORY_GIB * 1024,
@@ -184,13 +194,15 @@ class SyncWorker:
         self.billed = False
         self.whisper = None
         self.fa: dict[str, tuple[Any, Any]] = {}
-        self.gpu_lane: str | None = None
+        # (lane key, spawned job id): the entry this call holds on its member's lane.
+        self.lane: tuple[str, str] | None = None
 
     def _release_lane(self) -> None:
-        """1.5.1 — the lane is this call's: freed the moment the call ends."""
-        if self.gpu_lane:
-            jobs.put("gpu-lanes", core.lane_release(jobs.get("gpu-lanes"), self.gpu_lane))
-            self.gpu_lane = None
+        """1.5.1 — the lane entry is this call's: freed the moment the call ends."""
+        if self.lane:
+            key, job_id = self.lane
+            jobs.put(key, core.lane_without(jobs.get(key), job_id, time.time()))
+            self.lane = None
 
     @modal.exit()
     def exit_unbilled(self) -> None:
@@ -291,8 +303,8 @@ class SyncWorker:
         began = self.booted_at if not self.billed else time.time()
         call_started = time.time()
         first_job = jobs.get(job_id) or {}
-        if not first_job.get("handedOff"):
-            self.gpu_lane = core.parse_gpu_lane(first_job.get("gpuLane"))
+        if first_job.get("laneKey"):
+            self.lane = (first_job["laneKey"], job_id)
         try:
             outcome = self._execute(job_id, began)
             first = outcome
@@ -344,7 +356,9 @@ class SyncWorker:
             hold=True, handed_off=bool(target), released=released, waited_sec=waited,
         )
         if billed > 0:
-            _write_meter(core.meter_line(dict(job, jobId=f"{job['jobId']}-hold"), "held", billed, now))
+            held_line = core.meter_line(dict(job, jobId=f"{job['jobId']}-hold"), "held", billed, now)
+            _write_meter(held_line)
+            _note_usage(held_line)
         cache_vol.commit()
         return target
 
@@ -376,7 +390,7 @@ class SyncWorker:
             cache_vol.commit()
             outcome, error = "done", None
         except Exception as exc:  # noqa: BLE001 — every failure becomes a typed job state
-            outcome, error = "failed", {"code": "worker-error", "detail": f"{type(exc).__name__}: {exc}"[:500]}
+            outcome, error = "failed", core.worker_error(exc)
         now = time.time()
         latest = jobs.get(job_id) or job
         if latest["status"] == "cancelled" or jobs.get(core.cancelled_key(job_id)) is not None:
@@ -388,9 +402,11 @@ class SyncWorker:
         )
         if job.get("hold"):
             latest["hold"] = True
-        _write_meter(core.meter_line(latest, outcome, now - began, now))
+        line = core.meter_line(latest, outcome, now - began, now)
+        _write_meter(line)
         cache_vol.commit()
         jobs.put(job_id, latest)
+        _note_usage(line)
         return outcome
 
 
@@ -429,19 +445,32 @@ def gateway() -> Any:
     background: set[asyncio.Task[Any]] = set()
 
     class GatewayError(Exception):
-        def __init__(self, status: int, code: str, detail: str) -> None:
-            self.status, self.code, self.detail = status, code, detail
+        def __init__(self, status: int, code: str, detail: str, retry_after_sec: float | None = None) -> None:
+            self.status, self.code, self.detail, self.retry_after_sec = status, code, detail, retry_after_sec
 
-    STATUS_FOR_CODE = {"too-long": 413, "length-required": 411}
+    STATUS_FOR_CODE = {"too-long": 413, "length-required": 411, "member-quota": 429}
+
+    def refusal(status: int, code: str, detail: str, retry_after_sec: float | None) -> JSONResponse:
+        body: dict[str, Any] = {"code": code, "detail": detail}
+        headers: dict[str, str] = {}
+        if retry_after_sec is not None:
+            body["retryAfterSec"] = round(retry_after_sec)
+            headers["Retry-After"] = str(max(1, round(retry_after_sec)))
+        return JSONResponse({"error": body}, status_code=status, headers=headers)
 
     @web.exception_handler(GatewayError)
     async def _gateway_error(_: Request, exc: GatewayError) -> JSONResponse:
-        return JSONResponse({"error": {"code": exc.code, "detail": exc.detail}}, status_code=exc.status)
+        return refusal(exc.status, exc.code, exc.detail, exc.retry_after_sec)
 
     @web.exception_handler(core.ValidationError)
     async def _validation_error(_: Request, exc: core.ValidationError) -> JSONResponse:
-        status = STATUS_FOR_CODE.get(exc.code, 400)
-        return JSONResponse({"error": {"code": exc.code, "detail": exc.detail}}, status_code=status)
+        return refusal(STATUS_FOR_CODE.get(exc.code, 400), exc.code, exc.detail, exc.retry_after_sec)
+
+    @web.exception_handler(Exception)
+    async def _unexpected(_: Request, exc: Exception) -> JSONResponse:
+        # 1.5.2 — never a bare-text 500: typed, and transient on the client.
+        print(f"[gateway] unexpected {type(exc).__name__}: {exc}")
+        return refusal(500, "gateway-error", f"{type(exc).__name__}: {exc}"[:300], None)
 
     def member_of(request: Request) -> str:
         member = core.authenticate(request.headers.get("authorization"), registry)
@@ -489,6 +518,91 @@ def gateway() -> Any:
     async def view_job(job: dict[str, Any]) -> dict[str, Any]:
         handoff = await jobs.get.aio(core.handoff_key(job["jobId"]))
         return core.public_job(job, hold_open=core.hold_is_open(job, handoff))
+
+    async def note_usage(line: dict[str, Any]) -> None:
+        """1.5.2 — billed seconds count toward the member's GPU budget."""
+        member, sec = line.get("member"), float(line.get("workerSec") or 0.0)
+        if member and sec > 0:
+            key = core.usage_key(member)
+            await jobs.put.aio(key, core.usage_with(await jobs.get.aio(key), sec, line["ts"]))
+
+    async def call_state(call_id: str) -> tuple[bool, dict[str, str] | None]:
+        """(finished, failure) for a worker call. A timed-out or crashed call
+        is finished with a typed failure; a running/queued one is not."""
+        try:
+            await modal.FunctionCall.from_id(call_id).get.aio(timeout=0)
+            return True, None
+        except modal.exception.FunctionTimeoutError:
+            return True, {"code": "worker-timeout", "detail": f"job exceeded {JOB_TIMEOUT_SEC}s"}
+        except modal.exception.OutputExpiredError:
+            return True, {"code": "worker-lost", "detail": "worker output expired before it reported"}
+        except (TimeoutError, modal.exception.TimeoutError):
+            return False, None  # still queued or running
+        except Exception as exc:  # noqa: BLE001 — container crash, OOM, preemption
+            return True, {"code": "worker-crashed", "detail": f"{type(exc).__name__}: {exc}"[:300]}
+
+    async def settle_if_dead(job: dict[str, Any]) -> dict[str, Any]:
+        """1.5.2 — a non-terminal job no worker will ever finish becomes
+        terminal (typed, retryable): never queued forever, never re-adopted.
+        Covers a submit that died before its spawn (no call), a worker that
+        crashed or timed out, and a call that ended without finishing it."""
+        if job["status"] in core.TERMINAL_STATUSES:
+            return job
+        job_id = job["jobId"]
+        call_id = await jobs.get.aio(f"call:{job_id}")
+        if call_id is None:
+            if not core.is_orphan(job, has_call=False, now=time.time()):
+                return job
+            failure: dict[str, str] | None = core.reaped(job, time.time())["error"]
+        else:
+            finished, failure = await call_state(call_id)
+            if not finished:
+                return job
+        latest = await jobs.get.aio(job_id) or job
+        cancelled = await jobs.get.aio(core.cancelled_key(job_id))
+        if cancelled is not None or latest["status"] in core.TERMINAL_STATUSES:
+            return cancelled if cancelled is not None else latest
+        now = time.time()
+        if failure is None:  # the call ended without ever finishing this job
+            settled = core.reaped(latest, now)
+        else:
+            started = latest.get("startedAt") or now
+            settled = dict(latest, status="failed", finishedAt=now, workerSec=round(now - started, 3), error=failure)
+        await jobs.put.aio(job_id, settled)
+        if settled["workerSec"] > 0:
+            line = core.meter_line(settled, "failed", settled["workerSec"], now)
+            async with vol_lock:
+                _write_meter(line)
+                await cache_vol.commit.aio()
+            await note_usage(line)
+        return settled
+
+    async def live_lane(key: str) -> dict[str, float]:
+        """1.5.2 — this member's live calls on one lane, healed: an entry whose
+        call has ended (a container that died without its `finally`) or that
+        never got a call is dropped and written back."""
+        now = time.time()
+        raw = await jobs.get.aio(key)
+        entries = core.lane_entries(raw, now)
+        for jid, at in list(entries.items()):
+            call_id = await jobs.get.aio(f"call:{jid}")
+            if call_id is None:
+                if now - at > core.ORPHAN_AFTER_SEC:
+                    entries.pop(jid)
+            elif (await call_state(call_id))[0]:
+                entries.pop(jid)
+        if isinstance(raw, dict) and len(raw) != len(entries):
+            await jobs.put.aio(key, entries)
+        return entries
+
+    members = sorted(set(registry.values()))
+
+    async def workspace_live() -> int:
+        """GPU calls running across every member — the abuse ceiling's count."""
+        now = time.time()
+        keys = [core.lane_key(m, lane) for m in members for lane in core.GPU_LANES]
+        values = await asyncio.gather(*(jobs.get.aio(k) for k in keys))
+        return sum(len(core.lane_entries(v, now)) for v in values)
 
     async def index_owner(job: dict[str, Any]) -> None:
         member = job["member"]
@@ -635,49 +749,43 @@ def gateway() -> Any:
         chunks, cache_key, meta, duration = req["chunks"], req["cacheKey"], req["meta"], req["duration"]
         hold, hold_job_id = req["hold"], req["holdJobId"]
         body_owners = await request.json()
+        project_id = core.validate_owner_id(body_owners.get("projectId"), field="projectId")
+        row_id = core.validate_owner_id(body_owners.get("rowId"), field="rowId")
 
         job_id = uuid.uuid4().hex
         now = time.time()
         job = core.new_job(job_id, member, stage, audio_hash, language, cache_key, duration, now)
-        core.apply_owner_fields(
-            job,
-            core.validate_owner_id(body_owners.get("projectId"), field="projectId"),
-            core.validate_owner_id(body_owners.get("rowId"), field="rowId"),
-        )
+        core.apply_owner_fields(job, project_id, row_id)
         if hold:
             job["hold"] = True
+        # 1.5.2 — this member's own lane (an old client sends none: its editor
+        # lane). The worker frees exactly this entry if it is spawned for it.
         lane = core.parse_gpu_lane(body_owners.get("gpuLane"))
+        own_key = core.lane_key(member, lane)
         job["gpuLane"] = lane
+        job["laneKey"] = own_key
 
         async def attach_if_held() -> bool:
+            """Hand this job to a held container of the same member and lane.
+            1.5.2 — the record (handedOff, the holder's call) is complete
+            BEFORE the hand-off key lets the worker see it, so no later write
+            here can overwrite the worker's own; a failed claim rolls back."""
             if not hold_job_id:
                 return False
             holder = await jobs.get.aio(hold_job_id)
-            if not core.can_hold_for(holder, member, lane) or holder is None:
-                return False
-            key = core.handoff_key(hold_job_id)
-            existing = await jobs.get.aio(key)
-            action = core.decide_handoff_put(existing, job_id)
-            attached = False
-            if action == "ok":
-                attached = True
-            elif action == "put":
-                attached = bool(await jobs.put.aio(key, job_id, skip_if_exists=True))
-                if not attached:
-                    retry = core.decide_handoff_retry(await jobs.get.aio(key), job_id)
-                    if retry == "ok":
-                        attached = True
-                    elif retry == "overwrite":
-                        await jobs.put.aio(key, job_id)
-                        attached = True
-            if not attached:
+            if holder is None or not core.can_hold_for(holder, member, lane):
                 return False
             holder_call = await jobs.get.aio(f"call:{hold_job_id}")
-            job["handedOff"] = True
-            await jobs.put.aio(job_id, job)
+            await jobs.put.aio(job_id, dict(job, handedOff=True))
             if holder_call:
                 await jobs.put.aio(f"call:{job_id}", holder_call)
-            return True
+            if await core.claim_handoff_key(jobs.get.aio, jobs.put.aio, hold_job_id, job_id):
+                job["handedOff"] = True
+                return True
+            await jobs.put.aio(job_id, job)
+            if holder_call:
+                await jobs.pop.aio(f"call:{job_id}", None)
+            return False
 
         if os.path.isfile(core.result_path(CACHE_ROOT, stage, cache_key)):
             # Result-cache hit: no GPU, no charge — metered at zero seconds
@@ -693,56 +801,86 @@ def gateway() -> Any:
             return await view_job(job)
 
         # Wave 3 U4 — a retry of a request whose job is still queued/running
-        # (the client lost a poll, not the job) re-attaches to that job.
+        # (the client lost a poll, not the job) re-attaches to that job. 1.5.2:
+        # only a job that can still finish, and without rewriting its record
+        # (its worker owns it) — the new owner is indexed instead.
         inflight = core.inflight_key(member, cache_key)
-        existing_id = await jobs.get.aio(inflight)
+        existing_id, usage = await asyncio.gather(jobs.get.aio(inflight), jobs.get.aio(core.usage_key(member)))
         existing = await jobs.get.aio(existing_id) if existing_id else None
         if core.reusable_inflight(existing, member):
-            core.apply_owner_fields(
-                existing,
-                core.validate_owner_id(body_owners.get("projectId"), field="projectId"),
-                core.validate_owner_id(body_owners.get("rowId"), field="rowId"),
-            )
-            await jobs.put.aio(existing["jobId"], existing)
-            await index_owner(existing)
+            existing = await settle_if_dead(existing)
+        if core.reusable_inflight(existing, member):
+            await index_owner(core.apply_owner_fields(dict(existing), project_id, row_id))
             return await view_job(existing)
 
         if meta is None:
             raise GatewayError(409, "audio-missing", "upload the audio for this hash before submitting")
+        # 1.5.2 — the member's rolling-hour GPU budget, refused before any
+        # record exists (no record, no zombie).
+        core.check_member_quota(usage, now)
 
         if chunks is not None:
             job["chunks"] = chunks
         await jobs.put.aio(job_id, job)
         await jobs.put.aio(inflight, job_id)
         await index_owner(job)
-        if await attach_if_held():
-            # The held container runs it: no spawn, no second boot. Its
-            # FunctionCall is the holder's, so crash detection still works.
-            return await view_job(job)
-        # 1.5.1 — a lane busy with a call that is about to end (a hold running
-        # out, a chain closing) is waited for, bounded, instead of refused.
-        waited_from = time.time()
-        while True:
-            lanes = await jobs.get.aio("gpu-lanes")
-            decision = core.lane_decision(lanes, lane, time.time() - waited_from)
-            if decision == "boot":
-                break
-            if decision == "refuse":
-                # The record is already written (a hand-off needed it): make
-                # it terminal so no retry or reattach can adopt a job that
-                # will never run.
-                await jobs.put.aio(job_id, core.lane_refused(job, lane, time.time()))
-                raise GatewayError(409, "gpu-lane-busy", f"the {lane} GPU lane already has a worker")
-            await asyncio.sleep(core.LANE_POLL_SEC)
-        await jobs.put.aio("gpu-lanes", core.lane_acquire(lanes, lane))
-        call = await SyncWorker().run.spawn.aio(job_id)
-        # Stored under its own key: the worker rewrites the job record as it
-        # runs, and a second put of the whole record here could race it.
-        await jobs.put.aio(f"call:{job_id}", call.object_id)
+        lane_held: str | None = None
+        spawned = False
+        try:
+            if await attach_if_held():
+                # The held container runs it: no spawn, no second boot. Its
+                # FunctionCall is the holder's, so crash detection still works.
+                return await view_job(job)
+            # 1.5.1 / 1.5.2 — only THIS member's own call on the lane can make
+            # it wait (bounded); other members never do. The workspace ceiling
+            # is an abuse guard that refuses at once and never queues.
+            waited_from = time.time()
+            while True:
+                # One concurrent round of reads, not one after another.
+                cancelled, own, workspace = await asyncio.gather(
+                    jobs.get.aio(core.cancelled_key(job_id)), live_lane(own_key), workspace_live(),
+                )
+                if cancelled is not None:
+                    # Cancelled during the wait: nothing spawns, nothing bills.
+                    return await view_job(await owned_job(job_id, member))
+                decision = core.lane_decision(
+                    own_live=len(own), workspace_live=workspace, waited_sec=time.time() - waited_from,
+                )
+                if decision == "boot":
+                    break
+                if decision != "wait":
+                    refused = core.lane_refusal(decision, lane)
+                    await jobs.put.aio(job_id, core.lane_refused(job, refused, time.time()))
+                    raise GatewayError(refused.status, refused.code, refused.detail, refused.retry_after_sec)
+                await asyncio.sleep(core.LANE_POLL_SEC)
+            await jobs.put.aio(own_key, core.lane_with(own, job_id, time.time()))
+            lane_held = own_key
+            call = await SyncWorker().run.spawn.aio(job_id)
+            spawned = True
+            # Stored under its own key: the worker rewrites the job record as
+            # it runs, and a second put of the whole record here could race it.
+            await jobs.put.aio(f"call:{job_id}", call.object_id)
+        except GatewayError:
+            raise
+        except BaseException as exc:
+            # 1.5.2 — a submit stopped after its record exists (an exception,
+            # the request cancelled) leaves it terminal, never queued, and
+            # gives back the lane entry it took. A spawned job is the worker's.
+            if not spawned:
+                await asyncio.shield(abandon_submit(job, exc, lane_held))
+            raise
         async with vol_lock:
             await touch_audio(audio_hash)
             await cache_vol.commit.aio()
         return await view_job(job)
+
+    async def abandon_submit(job: dict[str, Any], exc: BaseException, lane_held: str | None) -> None:
+        now = time.time()
+        latest = await jobs.get.aio(job["jobId"]) or job
+        if latest.get("status") == "queued" and not latest.get("handedOff"):
+            await jobs.put.aio(job["jobId"], core.submit_interrupted(job, exc, now))
+        if lane_held:
+            await jobs.put.aio(lane_held, core.lane_without(await jobs.get.aio(lane_held), job["jobId"], now))
 
     @web.post("/v1/jobs/{job_id}/release")
     async def release(job_id: str, request: Request) -> dict[str, Any]:
@@ -758,29 +896,8 @@ def gateway() -> Any:
     async def status(job_id: str, request: Request) -> dict[str, Any]:
         member = member_of(request)
         job = await owned_job(job_id, member)
-        if job["status"] not in core.TERMINAL_STATUSES:
-            call_id = await jobs.get.aio(f"call:{job_id}")
-            if call_id:
-                failure: dict[str, str] | None = None
-                try:
-                    await modal.FunctionCall.from_id(call_id).get.aio(timeout=0)
-                except modal.exception.FunctionTimeoutError:
-                    failure = {"code": "worker-timeout", "detail": f"job exceeded {JOB_TIMEOUT_SEC}s"}
-                except modal.exception.OutputExpiredError:
-                    failure = {"code": "worker-lost", "detail": "worker output expired before it reported"}
-                except (TimeoutError, modal.exception.TimeoutError):
-                    pass  # still queued or running
-                except Exception as exc:  # noqa: BLE001 — container crash, OOM, preemption
-                    failure = {"code": "worker-crashed", "detail": f"{type(exc).__name__}: {exc}"[:300]}
-                job = await owned_job(job_id, member)
-                if failure is not None and job["status"] not in core.TERMINAL_STATUSES:
-                    now = time.time()
-                    started = job.get("startedAt") or now
-                    job.update(status="failed", finishedAt=now, workerSec=round(now - started, 3), error=failure)
-                    await jobs.put.aio(job_id, job)
-                    async with vol_lock:
-                        _write_meter(core.meter_line(job, "failed", now - started, now))
-                        await cache_vol.commit.aio()
+        # 1.5.2 — a job no worker will finish is settled typed (never polled forever).
+        job = await settle_if_dead(job)
         out = await view_job(job)
         if job["status"] == "done":
             await reload()
@@ -821,9 +938,11 @@ def gateway() -> Any:
         )
         await jobs.put.aio(core.cancelled_key(job_id), job)
         await jobs.put.aio(job_id, job)
+        line = core.meter_line(job, "cancelled", spent, now)
         async with vol_lock:
-            _write_meter(core.meter_line(job, "cancelled", spent, now))
+            _write_meter(line)
             await cache_vol.commit.aio()
+        await note_usage(line)
         return await view_job(job)
 
     @web.get("/v1/jobs")
@@ -849,7 +968,8 @@ def gateway() -> Any:
             if job is None or job.get("member") != member:
                 continue
             cancelled = await jobs.get.aio(core.cancelled_key(jid))
-            out.append(await view_job(cancelled if cancelled is not None else job))
+            listed = cancelled if cancelled is not None else await settle_if_dead(job)
+            out.append(await view_job(listed))
         return {"jobs": out}
 
     @web.post("/v1/jobs/{job_id}/pause")
@@ -909,6 +1029,16 @@ def purge_expired() -> dict[str, int]:
                 result_file.unlink(missing_ok=True)
                 removed["results"] += 1
     cache_vol.commit()
+    # 1.5.2 — the job Dict too: finished jobs past retention, their aux keys
+    # and inflight pointers; owner indexes keep only jobs that still exist.
+    items = dict(jobs.items())
+    gone = set(core.expired_job_keys(items, now))
+    for key in gone:
+        jobs.pop(key, None)
+    for key, value in items.items():
+        if key.startswith("owner:") and isinstance(value, list) and any(v in gone for v in value):
+            jobs.put(key, [v for v in value if v not in gone])
+    removed["jobKeys"] = len(gone)
     return removed
 
 
