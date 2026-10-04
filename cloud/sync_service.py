@@ -591,7 +591,7 @@ def gateway() -> Any:
                     entries.pop(jid)
             elif (await call_state(call_id))[0]:
                 entries.pop(jid)
-        if not isinstance(raw, dict) or len(raw) != len(entries):
+        if isinstance(raw, dict) and len(raw) != len(entries):
             await jobs.put.aio(key, entries)
         return entries
 
@@ -758,9 +758,12 @@ def gateway() -> Any:
         core.apply_owner_fields(job, project_id, row_id)
         if hold:
             job["hold"] = True
-        # 1.5.2 — this member's own lane (an old client sends none: its editor lane).
+        # 1.5.2 — this member's own lane (an old client sends none: its editor
+        # lane). The worker frees exactly this entry if it is spawned for it.
         lane = core.parse_gpu_lane(body_owners.get("gpuLane"))
+        own_key = core.lane_key(member, lane)
         job["gpuLane"] = lane
+        job["laneKey"] = own_key
 
         async def attach_if_held() -> bool:
             """Hand this job to a held container of the same member and lane.
@@ -802,7 +805,7 @@ def gateway() -> Any:
         # only a job that can still finish, and without rewriting its record
         # (its worker owns it) — the new owner is indexed instead.
         inflight = core.inflight_key(member, cache_key)
-        existing_id = await jobs.get.aio(inflight)
+        existing_id, usage = await asyncio.gather(jobs.get.aio(inflight), jobs.get.aio(core.usage_key(member)))
         existing = await jobs.get.aio(existing_id) if existing_id else None
         if core.reusable_inflight(existing, member):
             existing = await settle_if_dead(existing)
@@ -814,7 +817,7 @@ def gateway() -> Any:
             raise GatewayError(409, "audio-missing", "upload the audio for this hash before submitting")
         # 1.5.2 — the member's rolling-hour GPU budget, refused before any
         # record exists (no record, no zombie).
-        core.check_member_quota(await jobs.get.aio(core.usage_key(member)), now)
+        core.check_member_quota(usage, now)
 
         if chunks is not None:
             job["chunks"] = chunks
@@ -831,15 +834,17 @@ def gateway() -> Any:
             # 1.5.1 / 1.5.2 — only THIS member's own call on the lane can make
             # it wait (bounded); other members never do. The workspace ceiling
             # is an abuse guard that refuses at once and never queues.
-            own_key = core.lane_key(member, lane)
             waited_from = time.time()
             while True:
-                if await jobs.get.aio(core.cancelled_key(job_id)) is not None:
+                # One concurrent round of reads, not one after another.
+                cancelled, own, workspace = await asyncio.gather(
+                    jobs.get.aio(core.cancelled_key(job_id)), live_lane(own_key), workspace_live(),
+                )
+                if cancelled is not None:
                     # Cancelled during the wait: nothing spawns, nothing bills.
                     return await view_job(await owned_job(job_id, member))
-                own = await live_lane(own_key)
                 decision = core.lane_decision(
-                    own_live=len(own), workspace_live=await workspace_live(), waited_sec=time.time() - waited_from,
+                    own_live=len(own), workspace_live=workspace, waited_sec=time.time() - waited_from,
                 )
                 if decision == "boot":
                     break
@@ -848,8 +853,6 @@ def gateway() -> Any:
                     await jobs.put.aio(job_id, core.lane_refused(job, refused, time.time()))
                     raise GatewayError(refused.status, refused.code, refused.detail, refused.retry_after_sec)
                 await asyncio.sleep(core.LANE_POLL_SEC)
-            job["laneKey"] = own_key
-            await jobs.put.aio(job_id, job)
             await jobs.put.aio(own_key, core.lane_with(own, job_id, time.time()))
             lane_held = own_key
             call = await SyncWorker().run.spawn.aio(job_id)
