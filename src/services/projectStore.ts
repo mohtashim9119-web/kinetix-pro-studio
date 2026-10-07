@@ -561,6 +561,14 @@ export async function loadProjectDetailed(id: string): Promise<LoadOutcome | nul
   // absent, for projects saved before the `headings` field existed. Layer 2
   // `spots` follows the same additive pattern.
   const project = { headings: [], spots: [], ...storedProject } as unknown as Project;
+  // Layer 2 — the per-project default clip and Sprinkle were removed: drop the
+  // field from older saves, and keep any sprinkle-made spot as an ordinary
+  // (editable) manual one.
+  delete (project as { defaultSpotAssetId?: string }).defaultSpotAssetId;
+  if (project.spots) {
+    project.spots = project.spots.map(sp =>
+      (sp.source as string) === 'sprinkle' ? { ...sp, source: 'manual' as const } : sp);
+  }
   // WS3 Batch B, Piece 2 back-compat — `playbackSpeed` was removed as a
   // concept (a video clip always plays at its native rate). A project
   // saved before this change may still carry a per-segment value; strip it

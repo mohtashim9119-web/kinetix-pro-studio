@@ -56,32 +56,37 @@ describe('parseSpotDoc', () => {
 describe('bindSpotDoc', () => {
   const segments = [seg('s1', 'intro', 'Welcome to the show', 0), seg('s2', 'city', 'The city at night looks great', 2)];
   const assets = [asset('v1', 'avatar1.mp4', 1, 'video'), asset('i1', 'logo.png', 2), asset('au', 'vo.mp3', 3, 'audio')];
-  const opts = { now: 100, newId: (() => { let n = 0; return () => `sp${++n}`; })() };
+  const opts = () => ({ now: 100, newId: (() => { let n = 0; return () => `sp${++n}`; })() });
 
-  it('binds tag->segment (exact), tag words within segment text (fallback), clip by name', () => {
+  it('binds tag->segment (exact), tag words within segment text (fallback), clip by name; records clipName', () => {
     const blocks = parseSpotDoc('[intro] avatar1.mp4\n[night] logo').blocks;
-    const r = bindSpotDoc(blocks, segments, assets, opts);
+    const r = bindSpotDoc(blocks, segments, assets, opts());
     expect(r.spots).toEqual([
-      { id: 'sp1', assetId: 'v1', anchorSegmentId: 's1', offsetSec: 0, corner: 'top-right', heightPct: 40, source: 'doc', boundAt: 100 },
-      { id: 'sp2', assetId: 'i1', anchorSegmentId: 's2', offsetSec: 0, corner: 'top-right', heightPct: 40, source: 'doc', boundAt: 100 },
+      { id: 'sp1', assetId: 'v1', clipName: 'avatar1.mp4', anchorSegmentId: 's1', offsetSec: 0, corner: 'top-right', heightPct: 40, source: 'doc', boundAt: 100 },
+      { id: 'sp2', assetId: 'i1', clipName: 'logo', anchorSegmentId: 's2', offsetSec: 0, corner: 'top-right', heightPct: 40, source: 'doc', boundAt: 100 },
     ]);
     expect(r.findings).toEqual([]);
   });
-  it('unmatched tag -> spot-segment-unmatched, no spot', () => {
-    const r = bindSpotDoc(parseSpotDoc('[nope] logo').blocks, segments, assets, opts);
-    expect(r.spots).toEqual([]);
-    expect(r.findings.map(f => f.kind)).toEqual(['spot-segment-unmatched']);
+  it('unmatched tag -> spot-segment-unmatched in the short clean wording, no spot', () => {
+    const r = bindSpotDoc(parseSpotDoc('[intro] logo\n[nope] logo').blocks, segments, assets, opts());
+    expect(r.spots).toHaveLength(1);
+    expect(r.findings).toEqual([{ kind: 'spot-segment-unmatched', blockIndex: 1, message: '[nope]: No scene found for block 2.' }]);
   });
-  it('no clip name -> default spot asset; none set -> spot-clip-unmatched (spot kept unbound)', () => {
-    const a = bindSpotDoc(parseSpotDoc('[intro]').blocks, segments, assets, { ...opts, defaultSpotAssetId: 'v1' });
-    expect(a.spots[0]!.assetId).toBe('v1');
-    const b = bindSpotDoc(parseSpotDoc('[intro]').blocks, segments, assets, opts);
-    expect(b.spots[0]!.assetId).toBeUndefined();
-    expect(b.findings.map(f => f.kind)).toEqual(['spot-clip-unmatched']);
-  });
-  it('named clip that matches nothing (audio never a candidate) -> spot-clip-unmatched, unbound', () => {
-    const r = bindSpotDoc(parseSpotDoc('[intro] vo.mp3').blocks, segments, assets, { ...opts, defaultSpotAssetId: 'v1' });
+  it('body-less block -> an UNBOUND spot (honest [NO CLIP]); no guess, not dropped, no finding', () => {
+    const r = bindSpotDoc(parseSpotDoc('[intro]').blocks, segments, assets, opts());
+    expect(r.spots).toHaveLength(1);
     expect(r.spots[0]!.assetId).toBeUndefined();
-    expect(r.findings.map(f => f.kind)).toEqual(['spot-clip-unmatched']);
+    expect('clipName' in r.spots[0]!).toBe(false);
+    expect(r.findings).toEqual([]);
+  });
+  it('named clip that matches nothing (audio never a candidate): unbound spot keeps clipName; EXACT wording', () => {
+    const r = bindSpotDoc(parseSpotDoc('[intro] vo.mp3').blocks, segments, assets, opts());
+    expect(r.spots[0]!.assetId).toBeUndefined();
+    expect(r.spots[0]!.clipName).toBe('vo.mp3');
+    expect(r.findings).toEqual([{ kind: 'spot-clip-unmatched', blockIndex: 0, message: '[intro]: No asset named "vo.mp3" found for block 1.' }]);
+  });
+  it('numbers blocks 1-based in doc order, verbatim name quotes', () => {
+    const r = bindSpotDoc(parseSpotDoc('[intro] logo\n[city] avatar01').blocks, segments, assets, opts());
+    expect(r.findings[0]!.message).toBe('[city]: No asset named "avatar01" found for block 2.');
   });
 });

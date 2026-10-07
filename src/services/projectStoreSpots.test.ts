@@ -4,7 +4,7 @@
  */
 
 /**
- * Layer 2 spots U1 — additive `Project.spots` / `defaultSpotAssetId`: a project
+ * Layer 2 spots U1 — additive `Project.spots`: a project
  * stored without them loads with `spots: []`; stored spots round-trip; the
  * five `spot-*` finding kinds are details-only in the sync-log user view.
  */
@@ -91,7 +91,6 @@ describe('Project.spots load default', () => {
     const loaded = await loadProjectDetailed('p-spot');
     if (!loaded || !loaded.ok) throw new Error('load failed');
     expect(loaded.project.spots).toEqual([]);
-    expect(loaded.project.defaultSpotAssetId).toBeUndefined();
   });
 
   it('round-trips stored spots and the per-project default spot asset', async () => {
@@ -105,11 +104,24 @@ describe('Project.spots load default', () => {
       source: 'doc',
       boundAt: 123,
     };
-    await saveProject(baseProject({ spots: [spot], defaultSpotAssetId: 'a1' }));
+    await saveProject(baseProject({ spots: [spot] }));
     const loaded = await loadProjectDetailed('p-spot');
     if (!loaded || !loaded.ok) throw new Error('load failed');
     expect(loaded.project.spots).toEqual([spot]);
-    expect(loaded.project.defaultSpotAssetId).toBe('a1');
+  });
+});
+
+describe('removed default-clip + sprinkle: older saves load clean', () => {
+  it('drops defaultSpotAssetId and re-labels a legacy sprinkle spot as manual (kept, editable)', async () => {
+    const legacy = {
+      id: 'sp9', assetId: 'a1', anchorSegmentId: computeContentKey('Spot fixture.', 0), offsetSec: 0,
+      corner: 'top-right', heightPct: 40, source: 'sprinkle', boundAt: 1,
+    };
+    await saveProject(baseProject({ spots: [legacy as unknown as Spot], defaultSpotAssetId: 'a1' } as Partial<Project>));
+    const loaded = await loadProjectDetailed('p-spot');
+    if (!loaded || !loaded.ok) throw new Error('load failed');
+    expect('defaultSpotAssetId' in loaded.project).toBe(false);
+    expect(loaded.project.spots![0]!.source).toBe('manual');
   });
 });
 

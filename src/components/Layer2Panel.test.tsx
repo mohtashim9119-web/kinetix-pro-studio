@@ -22,7 +22,7 @@ function props(o: Partial<Props> = {}): Props {
   return {
     segments: segs, assets, spots: [], resolved: {}, pendingDoc: null, findings: [],
     onDropDoc: noop, onClearPending: noop, onPatchSpot: noop, onDeleteSpot: noop, onAddManual: noop,
-    onSetDefaultAsset: noop, onSprinkle: noop, ...o,
+    ...o,
   };
 }
 const render = (o?: Partial<Props>) => renderToStaticMarkup(<Layer2Panel {...props(o)} />);
@@ -56,10 +56,11 @@ describe('Layer2Panel', () => {
     expect(html).toContain('NO CLIP');
     expect(html).toContain('Needs review');
   });
-  it('has the default-asset picker (video/image only) and Sprinkle', () => {
+  it('has NO default-clip picker and NO sprinkle anywhere', () => {
     const html = render({ assets: [...assets, { id: 'au', name: 'vo.mp3', url: '', type: 'audio' }] });
-    expect(html).toContain('data-testid="layer2-default-asset"');
-    expect(html).not.toContain('vo.mp3');
-    expect(html).toContain('Sprinkle');
+    expect(html).not.toContain('layer2-default-asset');
+    expect(html).not.toContain('Default Layer-2 clip');
+    expect(html).not.toContain('Sprinkle');
+    expect(html).not.toContain('layer2-sprinkle');
   });
 });

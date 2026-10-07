@@ -501,7 +501,10 @@ export interface Spot {
   corner: SpotCorner;
   /** Percent of frame height, default 40; width = native aspect. */
   heightPct: number;
-  source: 'doc' | 'sprinkle' | 'manual';
+  source: 'doc' | 'manual';
+  /** The clip name the doc block (or user) asked for — what the wand binds by when
+   *  `assetId` is unset. Absent = nameless: never guessed. */
+  clipName?: string;
   boundAt: number;
   /** Absolute start the resolver last computed from a LIVE anchor; if the anchor
    *  segment is later deleted the spot keeps this time (never deleted). */
@@ -541,9 +544,6 @@ export interface Project {
    *  segment). Additive, headings pattern: treat as `[]` when absent; the store
    *  defaults it to `[]` on load. Resolution lives in `services/spots/`. */
   spots?: Spot[];
-  /** Per-project default Layer-2 asset (used when a doc block names no clip, and
-   *  by Sprinkle). Same per-project-seed discipline as `defaultTextOverlay`. */
-  defaultSpotAssetId?: string;
   assets: Asset[];
   voiceoverId?: string;
   lastExportPath?: string;

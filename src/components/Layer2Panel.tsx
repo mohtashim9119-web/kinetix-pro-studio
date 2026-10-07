@@ -11,7 +11,7 @@
  */
 
 import { useRef, useState } from 'react';
-import { Trash2, Upload, Sparkles, Plus, AlertCircle } from 'lucide-react';
+import { Trash2, Upload, Plus, AlertCircle } from 'lucide-react';
 import type { Asset, Spot, SpotCorner, VideoSegment } from '../types';
 import type { SpotDocError } from '../services/spots/parseSpotDoc';
 import type { SpotFinding } from '../services/spots/spotFinding';
@@ -22,7 +22,6 @@ export interface Layer2PanelProps {
   segments: VideoSegment[];
   assets: Asset[];
   spots: Spot[];
-  defaultSpotAssetId?: string;
   /** spotId -> resolved absolute start/duration (undefined = not placeable). */
   resolved: Record<string, { startSec: number; durSec: number } | undefined>;
   /** A doc waiting to bind (or just bound) with its parse errors. */
@@ -33,8 +32,6 @@ export interface Layer2PanelProps {
   onPatchSpot: (id: string, patch: SpotPatch) => void;
   onDeleteSpot: (id: string) => void;
   onAddManual: (segmentId: string) => void;
-  onSetDefaultAsset: (assetId: string | undefined) => void;
-  onSprinkle: () => void;
 }
 
 const CORNERS: { value: SpotCorner; label: string }[] = [
@@ -56,7 +53,6 @@ export function Layer2Panel(p: Layer2PanelProps) {
   const [addSegId, setAddSegId] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
   const hasTimeline = p.segments.length > 0;
-  const mediaAssets = p.assets.filter(a => a.type === 'video' || a.type === 'image');
   const assetName = (id?: string) => (id ? p.assets.find(a => a.id === id)?.name : undefined);
 
   return (
@@ -130,31 +126,6 @@ export function Layer2Panel(p: Layer2PanelProps) {
           {p.findings.map((f, i) => <li key={i}>{f.message}</li>)}
         </ul>
       )}
-
-      {/* Default asset + sprinkle */}
-      <div className="flex flex-col gap-1.5 text-[12px]">
-        <label className="text-[var(--kx-faint)]" htmlFor="layer2-default-asset">Default Layer-2 clip</label>
-        <select
-          id="layer2-default-asset"
-          data-testid="layer2-default-asset"
-          value={p.defaultSpotAssetId ?? ''}
-          onChange={e => p.onSetDefaultAsset(e.target.value || undefined)}
-          className="bg-[var(--kx-line)] text-[var(--kx-text)] rounded px-1.5 py-1"
-        >
-          <option value="">None</option>
-          {mediaAssets.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-        </select>
-        <button
-          type="button"
-          data-testid="layer2-sprinkle"
-          disabled={!hasTimeline || !p.defaultSpotAssetId}
-          onClick={p.onSprinkle}
-          title={p.defaultSpotAssetId ? 'Give every scene without a spot the default clip' : 'Pick a default clip first'}
-          className="flex items-center justify-center gap-1.5 px-2 py-1.5 rounded bg-[var(--kx-line)] text-[var(--kx-text)] disabled:opacity-40 hover:opacity-80"
-        >
-          <Sparkles size={13} /> Sprinkle on every scene
-        </button>
-      </div>
 
       {/* Spot list */}
       <div className="flex flex-col gap-2" data-testid="layer2-list">

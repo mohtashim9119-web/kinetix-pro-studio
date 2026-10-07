@@ -358,7 +358,7 @@ import { unbindDeletedAssets } from './services/unbindDeletedAssets';
 import { parseSpotDoc, type SpotDocBlock, type SpotDocError } from './services/spots/parseSpotDoc';
 import { bindSpotDoc } from './services/spots/bindSpotDoc';
 import { resolveSpots } from './services/spots/resolveSpots';
-import { sprinkleSpots, mergeDocSpots, addManualSpot, patchSpot, deleteSpot, stampResolution, type SpotPatch } from './services/spots/spotOps';
+import { mergeDocSpots, addManualSpot, patchSpot, deleteSpot, stampResolution, type SpotPatch } from './services/spots/spotOps';
 import type { PreviewSpotItem } from './services/spots/spotPreviewMath';
 import { buildExportSpotPayload } from './services/spots/exportSpecs';
 import { buildSpotFindingEntries } from './services/spots/spotLog';
@@ -4872,7 +4872,6 @@ export default function App() {
     if (!pendingSpotDoc || pendingSpotDoc.bound) return;
     if (isHydrating || isProcessing || project.segments.length === 0) return;
     const { spots, findings } = bindSpotDoc(pendingSpotDoc.blocks, project.segments, project.assets, {
-      defaultSpotAssetId: project.defaultSpotAssetId,
       now: Date.now(),
     });
     setSpotFindings(findings);
@@ -4884,7 +4883,7 @@ export default function App() {
       },
       { label: 'Bind Layer 2 doc' },
     );
-  }, [pendingSpotDoc, isHydrating, isProcessing, project.segments, project.assets, project.defaultSpotAssetId, setProject]);
+  }, [pendingSpotDoc, isHydrating, isProcessing, project.segments, project.assets, setProject]);
 
   const voiceoverEndSec = useMemo(
     () => project.segments.reduce((m, s) => Math.max(m, s.startTime + s.duration), 0),
@@ -4928,19 +4927,7 @@ export default function App() {
     setProject(p => ({ ...p, spots: deleteSpot(p.spots ?? [], id) }), { label: 'Delete Layer 2 spot' });
   }, [setProject]);
   const handleAddManualSpot = useCallback((segmentId: string) => {
-    setProject(p => ({ ...p, spots: addManualSpot(p.spots ?? [], segmentId, p.defaultSpotAssetId, Date.now()) }), { label: 'Add Layer 2 spot' });
-  }, [setProject]);
-  const handleSetDefaultSpotAsset = useCallback((assetId: string | undefined) => {
-    setProject(p => {
-      const { defaultSpotAssetId: _old, ...rest } = p;
-      return assetId ? { ...rest, defaultSpotAssetId: assetId } : rest;
-    }, { label: 'Set default Layer 2 clip' });
-  }, [setProject]);
-  const handleSprinkleSpots = useCallback(() => {
-    setProject(p => {
-      const next = sprinkleSpots(p.spots ?? [], p.segments, p.assets, p.defaultSpotAssetId, Date.now());
-      return next === (p.spots ?? []) ? p : { ...p, spots: next };
-    }, { label: 'Sprinkle Layer 2 spots' });
+    setProject(p => ({ ...p, spots: addManualSpot(p.spots ?? [], segmentId, undefined, Date.now()) }), { label: 'Add Layer 2 spot' });
   }, [setProject]);
 
   // Media workflow Unit 3 — a Media block tile dropped on a timeline
@@ -6814,7 +6801,6 @@ export default function App() {
               segments: project.segments,
               assets: project.assets,
               spots: project.spots ?? [],
-              defaultSpotAssetId: project.defaultSpotAssetId,
               resolved: resolvedSpotMap,
               pendingDoc: pendingSpotDoc ? { name: pendingSpotDoc.name, errors: pendingSpotDoc.errors } : null,
               findings: spotFindings,
@@ -6823,8 +6809,6 @@ export default function App() {
               onPatchSpot: handlePatchSpot,
               onDeleteSpot: handleDeleteSpot,
               onAddManual: handleAddManualSpot,
-              onSetDefaultAsset: handleSetDefaultSpotAsset,
-              onSprinkle: handleSprinkleSpots,
             }}
             isPlaying={isPlaying}
           />

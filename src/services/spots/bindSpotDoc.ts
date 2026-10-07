@@ -8,8 +8,10 @@
  * Tag -> segment: normalized exact match on the segment's tag, else a UNIQUE
  * contiguous-word match of the tag inside segment text (ambiguous = unmatched;
  * never guess). Clip: body name via `pickAssetByName` over video/image assets;
- * no name -> the project's default spot asset. An unmatched clip keeps the
- * spot (unbound, shown [NO CLIP]) and reports `spot-clip-unmatched`.
+ * no name -> an UNBOUND spot (honest [NO CLIP]; bound later via the row
+ * dropdown or the wand — never guessed, never dropped). A named clip that
+ * matches nothing keeps the spot unbound, records `clipName` for the wand, and
+ * reports `spot-clip-unmatched`.
  */
 
 import type { Asset, Spot, VideoSegment } from '../../types';
@@ -19,7 +21,6 @@ import type { SpotDocBlock } from './parseSpotDoc';
 import type { SpotFinding } from './spotFinding';
 
 export interface BindSpotDocOptions {
-  defaultSpotAssetId?: string;
   now: number;
   newId?: () => string;
 }
@@ -45,35 +46,27 @@ export function bindSpotDoc(
       findings.push({
         kind: 'spot-segment-unmatched',
         blockIndex: block.index,
-        message: `Layer 2 block ${block.index + 1} [${block.tag}] matched no scene (no tag match, and no unique match inside scene text).`,
+        message: `[${block.tag}]: No scene found for block ${block.index + 1}.`,
       });
       continue;
     }
 
     let assetId: string | undefined;
     if (block.body) {
-      const pick = pickAssetByName(block.body, candidates);
-      assetId = pick.asset?.id;
+      assetId = pickAssetByName(block.body, candidates).asset?.id;
       if (!assetId) {
         findings.push({
           kind: 'spot-clip-unmatched',
           blockIndex: block.index,
-          message: `Layer 2 block ${block.index + 1} [${block.tag}]: no video/image named "${block.body}" in the vault.`,
+          message: `[${block.tag}]: No asset named "${block.body}" found for block ${block.index + 1}.`,
         });
       }
-    } else if (opts.defaultSpotAssetId && candidates.some(a => a.id === opts.defaultSpotAssetId)) {
-      assetId = opts.defaultSpotAssetId;
-    } else {
-      findings.push({
-        kind: 'spot-clip-unmatched',
-        blockIndex: block.index,
-        message: `Layer 2 block ${block.index + 1} [${block.tag}] names no clip and no default Layer-2 asset is set.`,
-      });
     }
 
     spots.push({
       id: newId(),
       ...(assetId ? { assetId } : {}),
+      ...(block.body ? { clipName: block.body } : {}),
       anchorSegmentId: segment.id,
       offsetSec: 0,
       corner: 'top-right',
