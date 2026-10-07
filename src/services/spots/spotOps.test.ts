@@ -61,3 +61,25 @@ describe('spotOps', () => {
   });
 });
 
+
+describe('mergeDocSpots — id-stamped merge (R8)', () => {
+  const doc = (o: Partial<Spot> & { id: string }) => spot({ source: 'doc', ...o });
+  it('replace: doc spots are replaced by the new doc, but same-id spots KEEP their stamps (duration, geometry)', () => {
+    const G = { xPct: 1, yPct: 2, wPct: 3, hPct: 4 };
+    const existing = [doc({ id: 'a', durOverrideSec: 5, geometry: G, lastKnownStartSec: 7 }), doc({ id: 'gone' }), spot({ id: 'm', source: 'manual' })];
+    const r = mergeDocSpots(existing, [doc({ id: 'a' }), doc({ id: 'new' })], 'replace');
+    expect(r.map(s => s.id)).toEqual(['m', 'a', 'new']);
+    expect(r.find(s => s.id === 'a')).toMatchObject({ durOverrideSec: 5, geometry: G, lastKnownStartSec: 7 });
+  });
+  it('rebind (auto on reopen): never drops an existing doc spot the binder could not re-anchor', () => {
+    const r = mergeDocSpots([doc({ id: 'a' }), doc({ id: 'orphan', durOverrideSec: 2 })], [doc({ id: 'a' })], 'rebind');
+    expect(r.map(s => s.id)).toEqual(['a', 'orphan']);
+  });
+  it('keeps an existing clip choice that is still valid; takes the new binding when it is not', () => {
+    const exist = [doc({ id: 'a', assetId: 'picked', clipName: 'picked.mp4' }), doc({ id: 'b', assetId: 'old' })];
+    const bound = [doc({ id: 'a', assetId: 'fromdoc' }), doc({ id: 'b', assetId: 'fresh' })];
+    const r = mergeDocSpots(exist, bound, 'rebind', new Set(['picked']));
+    expect(r.find(s => s.id === 'a')!.assetId).toBe('picked');
+    expect(r.find(s => s.id === 'b')!.assetId).toBe('fresh');
+  });
+});

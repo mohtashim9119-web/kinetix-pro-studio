@@ -17,6 +17,8 @@ export interface SpotMatchResult {
   matched: number;
   /** Spots still unbound after this pass (unmatched name OR nameless). */
   unmatched: number;
+  /** Of the unmatched, how many have NO recorded clip name (skipped, never guessed). */
+  nameless: number;
   ambiguous: { name: string; count: number }[];
 }
 
@@ -25,11 +27,13 @@ export function matchSpotsToMedia(assets: readonly Asset[], spots: readonly Spot
   const ambiguous: { name: string; count: number }[] = [];
   let matched = 0;
   let unmatched = 0;
+  let nameless = 0;
   const next = spots.map(sp => {
     if (sp.assetId) return sp;
     const name = sp.clipName?.trim();
     if (!name) {
       unmatched += 1;
+      nameless += 1;
       return sp;
     }
     const { asset, conflict } = pickAssetByName(name, candidates);
@@ -41,5 +45,5 @@ export function matchSpotsToMedia(assets: readonly Asset[], spots: readonly Spot
     matched += 1;
     return { ...sp, assetId: asset.id };
   });
-  return { spots: next, matched, unmatched, ambiguous };
+  return { spots: next, matched, unmatched, nameless, ambiguous };
 }

@@ -5,6 +5,7 @@
 
 import { requireGl } from '../gl/glContext';
 import type { UploadSource } from '../gl/glCompositor';
+import { coverUv } from '../spots/spotGeometry';
 import {
   SPOT_BORDER_RGBA,
   spotBorderRect,
@@ -16,9 +17,11 @@ const QUAD_VERTEX_SHADER = `#version 300 es
 layout(location = 0) in vec2 a_uv;
 uniform vec4 u_rectPx;
 uniform vec2 u_canvasSize;
+// (u0, v0, u1, v1): the center-crop "cover" window of the source texture.
+uniform vec4 u_uvWin;
 out vec2 v_uv;
 void main() {
-  v_uv = a_uv;
+  v_uv = mix(u_uvWin.xy, u_uvWin.zw, a_uv);
   vec2 pixelPos = u_rectPx.xy + a_uv * u_rectPx.zw;
   vec2 ndc = vec2(
     pixelPos.x / u_canvasSize.x * 2.0 - 1.0,
@@ -87,6 +90,8 @@ export class SpotLayerRenderer {
   private readonly uTexRect: WebGLUniformLocation | null;
   private readonly uTexCanvas: WebGLUniformLocation | null;
   private readonly uTex: WebGLUniformLocation | null;
+  private readonly uTexUvWin: WebGLUniformLocation | null;
+  private readonly uSolidUvWin: WebGLUniformLocation | null;
   private readonly uSolidRect: WebGLUniformLocation | null;
   private readonly uSolidCanvas: WebGLUniformLocation | null;
   private readonly uColor: WebGLUniformLocation | null;
@@ -101,6 +106,8 @@ export class SpotLayerRenderer {
     this.uTexRect = gl.getUniformLocation(this.texProgram, 'u_rectPx');
     this.uTexCanvas = gl.getUniformLocation(this.texProgram, 'u_canvasSize');
     this.uTex = gl.getUniformLocation(this.texProgram, 'u_tex');
+    this.uTexUvWin = gl.getUniformLocation(this.texProgram, 'u_uvWin');
+    this.uSolidUvWin = gl.getUniformLocation(this.solidProgram, 'u_uvWin');
     this.uSolidRect = gl.getUniformLocation(this.solidProgram, 'u_rectPx');
     this.uSolidCanvas = gl.getUniformLocation(this.solidProgram, 'u_canvasSize');
     this.uColor = gl.getUniformLocation(this.solidProgram, 'u_color');
@@ -136,6 +143,9 @@ export class SpotLayerRenderer {
       gl.useProgram(this.texProgram);
       gl.uniform4f(this.uTexRect, quad.x, quad.y, quad.w, quad.h);
       gl.uniform2f(this.uTexCanvas, frameW, frameH);
+      // Cover (center-crop) — the same crop the preview's object-cover shows.
+      const win = coverUv(quad.w / quad.h, draw.nativeW, draw.nativeH);
+      gl.uniform4f(this.uTexUvWin, win.u0, win.v0, win.u1, win.v1);
       gl.activeTexture(gl.TEXTURE0);
       gl.uniform1i(this.uTex, 0);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
@@ -154,6 +164,7 @@ export class SpotLayerRenderer {
     gl.useProgram(this.solidProgram);
     gl.uniform4f(this.uSolidRect, rect.x, rect.y, rect.w, rect.h);
     gl.uniform2f(this.uSolidCanvas, frameW, frameH);
+    gl.uniform4f(this.uSolidUvWin, 0, 0, 1, 1);
     gl.uniform4f(this.uColor, rgba[0], rgba[1], rgba[2], rgba[3]);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   }

@@ -4833,7 +4833,7 @@ export default function App() {
     const spotLive = hasSpots ? matchSpotsToMedia(live.assets, live.spots!) : null;
     const digest: MediaMatchSummary = {
       ...summarizeMediaMatch(matchMediaToScenes(live.assets, live.segments)),
-      ...(spotLive ? { layer2: { matched: spotLive.matched, unmatched: spotLive.unmatched, conflicts: spotLive.ambiguous.length } } : {}),
+      ...(spotLive ? { layer2: { matched: spotLive.matched, unmatched: spotLive.unmatched, conflicts: spotLive.ambiguous.length, nameless: spotLive.nameless } } : {}),
     };
     setProject(prev => {
       const result = matchMediaToScenes(prev.assets, prev.segments);
@@ -4861,43 +4861,65 @@ export default function App() {
   // content-derived scene id; nothing absolute is stored except lastKnownStartSec).
   // ---------------------------------------------------------------------------
   const [pendingSpotDoc, setPendingSpotDoc] = useState<
-    { name: string; blocks: SpotDocBlock[]; errors: SpotDocError[]; bound: boolean } | null
+    { name: string; blocks: SpotDocBlock[]; errors: SpotDocError[]; bound: boolean; mode: 'replace' | 'rebind' } | null
   >(null);
   const [spotFindings, setSpotFindings] = useState<SpotFinding[]>([]);
 
+  // R8 — the raw doc is persisted WITH the project record (so the atomic save,
+  // delete tombstones and mirror/backup all apply); reopen re-parses and rebinds.
   const handleDropSpotDoc = useCallback(async (file: File): Promise<void> => {
     try {
-      const text = stripRtfIfNeeded(await file.text());
-      const { blocks, errors } = parseSpotDoc(text);
+      const raw = await file.text();
+      const { blocks, errors } = parseSpotDoc(stripRtfIfNeeded(raw));
       setSpotFindings([]);
-      setPendingSpotDoc({ name: file.name, blocks, errors, bound: false });
+      setPendingSpotDoc({ name: file.name, blocks, errors, bound: false, mode: 'replace' });
+      setProjectSilent(p => ({ ...p, spotDoc: { name: file.name, text: raw, droppedAt: Date.now() } }));
     } catch (err) {
       showToast(`Could not read Layer 2 doc "${file.name}": ${err instanceof Error ? err.message : String(err)}`);
     }
-  }, [showToast]);
+  }, [showToast, setProjectSilent]);
 
-  // A different project never inherits the previous project's queued doc.
+  // Flush the project right after a doc lands (past the autosave debounce) so a crash
+  // right after the drop leaves the whole doc, never a gap.
+  const spotDocDroppedAt = project.spotDoc?.droppedAt;
   useEffect(() => {
-    setPendingSpotDoc(null);
+    if (spotDocDroppedAt === undefined || isHydrating) return;
+    void saveNow();
+  }, [spotDocDroppedAt, isHydrating, saveNow]);
+
+  // Project open: a different project never inherits the previous project's queued
+  // doc; a project that has a saved doc re-parses it and REBINDS (same binder, same
+  // honest per-block errors, same content-derived ids).
+  const spotDocScheduledForRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (isHydrating) return;
+    if (spotDocScheduledForRef.current === project.id) return;
+    spotDocScheduledForRef.current = project.id;
     setSpotFindings([]);
-  }, [project.id]);
+    const doc = project.spotDoc;
+    if (!doc) { setPendingSpotDoc(null); return; }
+    const { blocks, errors } = parseSpotDoc(stripRtfIfNeeded(doc.text));
+    setPendingSpotDoc({ name: doc.name, blocks, errors, bound: false, mode: 'rebind' });
+  }, [project.id, project.spotDoc, isHydrating]);
 
   useEffect(() => {
     if (!pendingSpotDoc || pendingSpotDoc.bound) return;
     if (isHydrating || isProcessing || project.segments.length === 0) return;
-    const { spots, findings } = bindSpotDoc(pendingSpotDoc.blocks, project.segments, project.assets, {
-      now: Date.now(),
-    });
+    const { spots, findings } = bindSpotDoc(pendingSpotDoc.blocks, project.segments, project.assets, { now: Date.now() });
     setSpotFindings(findings);
     setPendingSpotDoc({ ...pendingSpotDoc, bound: true });
-    setProject(
-      prev => {
-        const merged = mergeDocSpots(prev.spots ?? [], spots);
-        return appendSyncLogEntries({ ...prev, spots: merged }, buildSpotFindingEntries(mintSyncLogId(), findings));
-      },
-      { label: 'Bind Layer 2 doc' },
-    );
-  }, [pendingSpotDoc, isHydrating, isProcessing, project.segments, project.assets, setProject]);
+    const mode = pendingSpotDoc.mode;
+    const valid = new Set(project.assets.map(a => a.id));
+    const apply = (prev: Project): Project => {
+      const merged = mergeDocSpots(prev.spots ?? [], spots, mode, valid);
+      // A reopen rebind re-reports its findings in the panel only (no log noise per open).
+      const next = { ...prev, spots: merged };
+      return mode === 'rebind' ? next : appendSyncLogEntries(next, buildSpotFindingEntries(mintSyncLogId(), findings));
+    };
+    // A reopen rebind is a machine write (silent); an explicit drop is an undoable edit.
+    if (mode === 'rebind') setProjectSilent(apply);
+    else setProject(apply, { label: 'Bind Layer 2 doc' });
+  }, [pendingSpotDoc, isHydrating, isProcessing, project.segments, project.assets, setProject, setProjectSilent]);
 
   const voiceoverEndSec = useMemo(
     () => project.segments.reduce((m, s) => Math.max(m, s.startTime + s.duration), 0),
@@ -4943,6 +4965,7 @@ export default function App() {
         startSec: placed.startSec,
         durSec: placed.durSec,
         label: bound ? (project.assets.find(a => a.id === sp.assetId)?.name ?? '') : '',
+        ...(bound ? (() => { const a = project.assets.find(x => x.id === sp.assetId); return a?.url ? { assetUrl: a.url, assetType: a.type === 'video' ? 'video' as const : 'image' as const } : {}; })() : {}),
         noClip: !bound,
         needsReview: !!sp.needsReview,
       });

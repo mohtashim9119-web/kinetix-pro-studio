@@ -126,6 +126,17 @@ body.resizing * {
   user-select: none;
 }
 
+/* Honest-empty placeholder — the dashboard's `.kxd-art-empty` discipline (hatch +
+   soft radial, never blank) rebuilt on the app's --kx tokens, because the --kxd
+   tokens are scoped to the dashboard root. Used by the Layer-2 [NO CLIP] tile. */
+.kx-art-empty {
+  display: flex; align-items: center; justify-content: center; width: 100%; height: 100%;
+  color: var(--kx-faint);
+  background-image:
+    repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.025) 0px, rgba(255, 255, 255, 0.025) 1px, transparent 1px, transparent 14px),
+    radial-gradient(circle at 50% 40%, var(--kx-surface-2), var(--kx-surface) 70%);
+}
+
 /* Bulk drawer row — tokened orange border glow (dark + hover). */
 .kx-bulk-row {
   box-shadow: 0 0 0 1px rgba(255, 138, 60, .22), 0 0 8px rgba(255, 138, 60, .12);

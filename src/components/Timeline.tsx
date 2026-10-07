@@ -110,6 +110,9 @@ export interface TimelineSpotBlock {
   durSec: number;
   /** Clip name ('' when none). */
   label: string;
+  /** The bound clip's thumbnail source (segment-card pattern). */
+  assetUrl?: string;
+  assetType?: 'video' | 'image';
   noClip: boolean;
   needsReview: boolean;
 }
@@ -680,44 +683,65 @@ export function Timeline({
           {isSynced && spotBlocks && spotBlocks.length > 0 && (
             <div
               data-spot-lane
-              className="relative h-10 flex-shrink-0 bg-[#0A0A0A] rounded-lg"
+              className="relative h-20 flex-shrink-0 bg-[#0A0A0A] rounded-lg"
               style={{ width: `${totalDuration * pixelsPerSecond}px` }}
             >
-              {spotBlocks.map((b) => (
+              {/* Blocks use the SEGMENT card pattern (same 80px lane, rounded-lg, the
+                  segments' own idle / hover / active fills and borders, thumbnail at the
+                  segments' opacity, #n badge, and the segments' w-2 edge handle). */}
+              {spotBlocks.map((b, i) => {
+                const selected = selectedSpotId === b.id;
+                return (
                 <div
                   key={b.id}
                   data-spot-block-id={b.id}
-                  data-selected={selectedSpotId === b.id ? 'true' : undefined}
-                  className={`absolute top-1 bottom-1 z-30 rounded-md border flex items-center overflow-hidden cursor-pointer ${
-                    b.noClip
-                      ? 'border-dashed border-yellow-400/70 bg-yellow-400/10 text-yellow-300'
-                      : 'border-[#3b82f6]/70 bg-[#3b82f6]/15 text-[#93c5fd]'
-                  } ${selectedSpotId === b.id ? 'ring-2 ring-[#F27D26]' : ''}`}
+                  data-selected={selected ? 'true' : undefined}
+                  className={`absolute top-0 bottom-0 z-30 rounded-lg border transition-[box-shadow,border-color,background-color] duration-300 cursor-pointer flex flex-col group overflow-hidden ${selected ? 'bg-[#151515] border-[#F27D26]' : 'bg-[#080808] border-[#1A1A1A] hover:bg-[#0C0C0C]'}`}
                   style={{ left: `${b.startSec * pixelsPerSecond}px`, width: `${b.durSec * pixelsPerSecond}px` }}
                   onMouseDown={(e) => { e.stopPropagation(); onSelectSpot?.(b.id); }}
                 >
-                  <span className="px-3 text-[9px] font-bold tracking-wide truncate pointer-events-none">
-                    {b.noClip ? 'NO CLIP' : b.label}
-                  </span>
-                  {b.needsReview && (
-                    <span className="ml-auto mr-3 text-[9px] text-[#ffc107] pointer-events-none" title="Its scene is gone — review its position">!</span>
-                  )}
-                  {/* Anchor notch: the scene boundary this spot is pinned to. */}
+                  <div className="flex-1 relative bg-black/50">
+                    {b.assetUrl && b.assetType === 'video' ? (
+                      <video src={b.assetUrl} className={`w-full h-full object-cover opacity-40 ${selected ? 'opacity-80' : ''}`} />
+                    ) : b.assetUrl ? (
+                      <img src={b.assetUrl} draggable={false} className={`w-full h-full object-cover opacity-30 ${selected ? 'opacity-70' : ''}`} alt={b.label} />
+                    ) : (
+                      <div className="kx-art-empty">
+                        <AlertCircle size={14} className="opacity-70" />
+                      </div>
+                    )}
+                    <div className="absolute inset-0 p-2 flex flex-col justify-between pointer-events-none">
+                      <div className="flex justify-between items-start">
+                        <span className="px-1 py-0.5 bg-black/60 rounded-sm text-[7px] font-mono text-[#F27D26]">L2 #{i + 1}</span>
+                        {b.needsReview && (
+                          <span className="flex items-center px-1 py-0.5 rounded-[4px] bg-[rgba(255,193,7,0.15)]" title="Its scene is gone — review its position">
+                            <AlertCircle size={9} className="text-[#ffc107]" />
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[8px] font-black text-white/90 uppercase tracking-tight truncate">
+                        {b.noClip ? 'NO CLIP' : b.label}
+                      </p>
+                    </div>
+                  </div>
+                  {/* Anchor notch: the scene boundary this spot is pinned to. Same w-2
+                      handle footprint as a segment's start edge, but it refuses. */}
                   <div
                     data-spot-anchor-notch
-                    className="absolute left-0 top-0 bottom-0 w-1.5 bg-[#F27D26] cursor-not-allowed pointer-events-auto"
                     data-spot-edge="start"
+                    className="absolute left-0 top-0 bottom-0 w-2 bg-[#F27D26]/30 cursor-not-allowed z-20 hover:bg-[#F27D26]/40 transition-colors"
                     title={SPOT_START_ANCHORED_MESSAGE}
                     onMouseDown={(e) => handleSpotEdgeStart(e, b, 'start')}
                   />
                   <div
                     data-spot-edge="end"
-                    className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize pointer-events-auto hover:bg-white/30"
+                    className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize z-20 hover:bg-[#F27D26]/20 transition-colors"
                     onMouseDown={(e) => handleSpotEdgeStart(e, b, 'end')}
                   />
                 </div>
-              ))}
-              <div className="absolute inset-0 z-40 border border-[rgba(59,130,246,0.3)] rounded-lg pointer-events-none" />
+                );
+              })}
+              <div className="absolute inset-0 z-40 border border-[rgba(242,125,38,0.3)] rounded-lg pointer-events-none" />
             </div>
           )}
 

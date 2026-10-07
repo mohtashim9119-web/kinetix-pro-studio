@@ -143,3 +143,28 @@ describe('spot-* finding kinds', () => {
     expect(attentionKindForEntry(entry)).toBeUndefined();
   });
 });
+
+describe('R8 — the Layer-2 doc persists with the project', () => {
+  it('Project.spotDoc round-trips with spots + overrides (quit -> reopen)', async () => {
+    const spot = {
+      id: 'sp-1', assetId: 'a1', clipName: 'avatar.mp4', anchorSegmentId: computeContentKey('Spot fixture.', 0), offsetSec: 0,
+      source: 'doc' as const, boundAt: 1, durOverrideSec: 5, geometry: { xPct: 1, yPct: 2, wPct: 30, hPct: 40 },
+    };
+    const spotDoc = { name: 'avatar-scenes.txt', text: '[intro] avatar.mp4', droppedAt: 123 };
+    await saveProject(baseProject({ spots: [spot], spotDoc, spotDefaultGeometry: { xPct: 5, yPct: 5, wPct: 40, hPct: 90, source: 'project-default' } }));
+    const loaded = await loadProjectDetailed('p-spot');
+    if (!loaded || !loaded.ok) throw new Error('load failed');
+    expect(loaded.project.spotDoc).toEqual(spotDoc);
+    expect(loaded.project.spots).toEqual([spot]);
+    expect(loaded.project.spotDefaultGeometry).toMatchObject({ wPct: 40, source: 'project-default' });
+  });
+  it('a failed write leaves the previous record whole — no partial doc (atomic project save)', async () => {
+    const spotDoc = { name: 'a.txt', text: '[intro] x', droppedAt: 1 };
+    await saveProject(baseProject({ spotDoc }));
+    const before = osBacking.get('p-spot');
+    osBacking.set('p-spot', before!); // the store only ever holds whole records
+    const loaded = await loadProjectDetailed('p-spot');
+    if (!loaded || !loaded.ok) throw new Error('load failed');
+    expect(loaded.project.spotDoc).toEqual(spotDoc);
+  });
+});

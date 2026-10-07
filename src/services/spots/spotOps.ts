@@ -6,8 +6,44 @@
 import type { Spot, SpotGeometry } from '../../types';
 import type { ResolveSpotsResult } from './resolveSpots';
 
-export function mergeDocSpots(existing: readonly Spot[], bound: readonly Spot[]): Spot[] {
-  return [...existing.filter(s => s.source !== 'doc'), ...bound];
+/**
+ * Merge a freshly bound doc into the spot list (id-stamped).
+ *  - 'replace' (an explicit doc drop): doc spots become exactly the new doc's, but a
+ *    spot whose id is unchanged keeps its stamps (duration / geometry / last-known).
+ *  - 'rebind' (automatic on reopen): additionally NEVER drops an existing doc spot the
+ *    binder could not re-anchor (it stays, flagged at resolve time) — a rebind must
+ *    not lose work.
+ * A still-valid existing clip choice (e.g. picked in the row dropdown) is kept; an
+ * invalid one takes the doc's new binding. Manual spots always survive.
+ */
+export function mergeDocSpots(
+  existing: readonly Spot[],
+  bound: readonly Spot[],
+  mode: 'replace' | 'rebind' = 'replace',
+  validAssetIds?: ReadonlySet<string>,
+): Spot[] {
+  const oldDoc = existing.filter(s => s.source === 'doc');
+  const byId = new Map(oldDoc.map(s => [s.id, s]));
+  const merged = bound.map(b => {
+    const old = byId.get(b.id);
+    if (!old) return b;
+    const out: Spot = { ...b };
+    if (old.durOverrideSec !== undefined) out.durOverrideSec = old.durOverrideSec;
+    if (old.geometry) out.geometry = old.geometry;
+    if (old.lastKnownStartSec !== undefined) out.lastKnownStartSec = old.lastKnownStartSec;
+    const keepClip = old.assetId && (!validAssetIds || validAssetIds.has(old.assetId));
+    if (keepClip) {
+      out.assetId = old.assetId;
+      if (old.clipName) out.clipName = old.clipName;
+    }
+    return out;
+  });
+  const boundIds = new Set(bound.map(b => b.id));
+  const kept = mode === 'rebind' ? oldDoc.filter(o => !boundIds.has(o.id)) : [];
+  const order = new Map(oldDoc.map((s, i) => [s.id, i]));
+  const docPart = [...merged.filter(m => order.has(m.id)), ...kept].sort((x, y) => (order.get(x.id)! - order.get(y.id)!));
+  const fresh = merged.filter(m => !order.has(m.id));
+  return [...existing.filter(s => s.source !== 'doc'), ...docPart, ...fresh];
 }
 
 export function addManualSpot(

@@ -15,6 +15,7 @@
  */
 
 import { useEffect, useRef } from 'react';
+import { AlertCircle } from 'lucide-react';
 import type { Asset } from '../types';
 import {
   SPOT_BORDER_PCT,
@@ -139,7 +140,7 @@ export function SpotLayer({ items, assets, currentTime, isPlaying, onCommitRect,
           ...rectToCss(rect),
           // Outside border (export parity): a spread shadow, so the box itself is
           // exactly the resolved rect.
-          boxShadow: `0 0 0 ${SPOT_BORDER_PCT}cqh rgb(255,255,255)${selectedSpotId === active.id ? ', 0 0 0 0.9cqh rgba(242,125,38,0.9)' : ''}`,
+          boxShadow: `0 0 0 ${SPOT_BORDER_PCT}cqh rgb(255,255,255)${selectedSpotId === active.id ? ', 0 0 0 0.9cqh var(--kx-accent-line)' : ''}`,
           pointerEvents: editable ? 'auto' : 'none',
           touchAction: 'none',
         }}
@@ -154,8 +155,9 @@ export function SpotLayer({ items, assets, currentTime, isPlaying, onCommitRect,
           )}
           {usable?.type === 'image' && <img src={usable.url} alt="" className="w-full h-full object-cover block" draggable={false} />}
           {!usable && (
-            <div className="w-full h-full flex items-center justify-center bg-zinc-900 text-yellow-400 text-[10px] font-semibold tracking-wide">
-              NO CLIP
+            <div className="kx-art-empty flex-col gap-1">
+              <AlertCircle size={16} className="opacity-70" />
+              <span className="text-[10px] font-semibold tracking-wide">NO CLIP</span>
             </div>
           )}
         </div>

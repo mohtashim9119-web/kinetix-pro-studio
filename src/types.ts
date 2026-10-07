@@ -560,6 +560,10 @@ export interface Project {
    *  segment). Additive, headings pattern: treat as `[]` when absent; the store
    *  defaults it to `[]` on load. Resolution lives in `services/spots/`. */
   spots?: Spot[];
+  /** R8 — the raw Layer-2 doc, persisted with the project record (atomic save,
+   *  delete tombstones, mirror/backup all inherited). Reopen re-parses it and
+   *  rebinds (id-stamped merge: the doc rebinds anchors, the record keeps overrides). */
+  spotDoc?: { name: string; text: string; droppedAt: number };
   /** R7 — per-project default box for Layer-2 blocks (see `SpotDefaultGeometry`). */
   spotDefaultGeometry?: SpotDefaultGeometry;
   assets: Asset[];

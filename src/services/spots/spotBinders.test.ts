@@ -90,3 +90,22 @@ describe('bindSpotDoc', () => {
     expect(r.findings[0]!.message).toBe('[city]: No asset named "avatar01" found for block 2.');
   });
 });
+
+describe('bindSpotDoc — stable content-derived ids (R8: same doc -> same ids across reopen)', () => {
+  const segments = [seg('s1', 'intro', 'Welcome', 0), seg('s2', 'city', 'The city', 2)];
+  const assets = [asset('v1', 'avatar1.mp4', 1, 'video')];
+  const blocks = parseSpotDoc('[intro] avatar1.mp4\n[city]\n[city]').blocks;
+
+  it('without an injected newId, ids are deterministic from (tag, clip name, occurrence)', () => {
+    const a = bindSpotDoc(blocks, segments, assets, { now: 1 });
+    const b = bindSpotDoc(blocks, segments, assets, { now: 999 });
+    expect(a.spots.map(s => s.id)).toEqual(b.spots.map(s => s.id));
+    expect(new Set(a.spots.map(s => s.id)).size).toBe(3); // identical [city] blocks still distinct
+  });
+  it('inserting an unrelated block earlier does not change the other blocks\' ids', () => {
+    const before = bindSpotDoc(blocks, segments, assets, { now: 1 }).spots.map(s => s.id);
+    const more = parseSpotDoc('[intro] avatar1.mp4\n[city]\n[city]\n[intro]').blocks;
+    const after = bindSpotDoc(more, segments, assets, { now: 1 }).spots.map(s => s.id);
+    expect(after.slice(0, 3)).toEqual(before);
+  });
+});

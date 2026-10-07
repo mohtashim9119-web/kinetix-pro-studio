@@ -101,7 +101,7 @@ function SpotMediaPicker({ spotId, current, assets, onPick }: {
         <div
           data-testid={`layer2-media-menu-${spotId}`}
           role="listbox"
-          className="absolute left-0 right-0 top-full mt-1 z-10 rounded-lg border border-[var(--kx-line)] bg-[var(--kx-panel)] shadow-xl p-1.5"
+          className="absolute left-0 right-0 top-full mt-1 z-10 rounded-[13px] border border-[var(--kx-line-2)] bg-[var(--kx-surface)] shadow-xl p-1.5"
           onClick={e => e.stopPropagation()}
         >
           <div className="flex items-center gap-1.5 bg-[var(--kx-surface-2)] rounded-lg px-2 py-1 mb-1">
@@ -134,7 +134,7 @@ function SpotMediaPicker({ spotId, current, assets, onPick }: {
                 onMouseEnter={() => setActive(i)}
                 onClick={() => pick(a)}
                 className={`w-full flex items-center gap-1.5 px-2 py-1 rounded-md text-[11px] text-left text-[var(--kx-text)] ${
-                  i === active ? 'bg-[var(--kx-surface-2)]' : ''
+                  i === active ? 'bg-[var(--kx-hover)]' : ''
                 }`}
               >
                 {a.type === 'image' ? <ImageIcon size={11} className="shrink-0 text-[var(--kx-faint)]" /> : <Film size={11} className="shrink-0 text-[var(--kx-faint)]" />}
@@ -160,8 +160,8 @@ export function Layer2Panel(p: Layer2PanelProps) {
       {/* Dedicated field */}
       <div
         data-testid="layer2-dropfield"
-        className={`rounded-lg border border-dashed px-3 py-4 text-center text-[12px] transition-colors ${
-          isDragOver ? 'border-[var(--kx-accent)] bg-[var(--kx-line)]' : 'border-[var(--kx-line)]'
+        className={`rounded-[13px] border border-dashed px-3 py-4 text-center text-[12.5px] transition-colors bg-[var(--kx-surface)] ${
+          isDragOver ? 'border-[var(--kx-accent-line)] bg-[var(--kx-accent-soft)]' : 'border-[var(--kx-line)] hover:border-[var(--kx-line-2)]'
         }`}
         onDragOver={e => { e.preventDefault(); setIsDragOver(true); }}
         onDragLeave={() => setIsDragOver(false)}
@@ -180,7 +180,7 @@ export function Layer2Panel(p: Layer2PanelProps) {
         <button
           type="button"
           onClick={() => inputRef.current?.click()}
-          className="mt-2 px-2 py-1 rounded bg-[var(--kx-line)] text-[var(--kx-text)] hover:opacity-80"
+          className="mt-2 px-2.5 py-1 rounded-[8px] bg-[var(--kx-surface-2)] border border-[var(--kx-line)] text-[var(--kx-muted)] hover:text-[var(--kx-text)] hover:border-[var(--kx-line-2)] transition-colors"
         >
           Choose file…
         </button>
@@ -198,7 +198,7 @@ export function Layer2Panel(p: Layer2PanelProps) {
       </div>
 
       {!hasTimeline && (
-        <div className="flex items-start gap-2 text-[12px] text-[var(--kx-muted)]" data-testid="layer2-prebuild">
+        <div className="flex items-start gap-2 text-[12.5px] text-[var(--kx-muted)]" data-testid="layer2-prebuild">
           <AlertCircle size={14} className="shrink-0 mt-0.5" />
           <span>
             Waiting for first Build Timeline — Layer-2 docs bind to scenes once the timeline exists.
@@ -208,7 +208,7 @@ export function Layer2Panel(p: Layer2PanelProps) {
       )}
 
       {p.pendingDoc && (
-        <div className="text-[12px] rounded border border-[var(--kx-line)] p-2" data-testid="layer2-pending">
+        <div className="px-3 py-2 rounded-[9px] bg-[var(--kx-surface)] border border-[var(--kx-line)] text-[12.5px]" data-testid="layer2-pending">
           <div className="flex items-center justify-between">
             <span className="text-[var(--kx-text)] truncate">{p.pendingDoc.name}</span>
             <button type="button" onClick={p.onClearPending} className="text-[var(--kx-faint)] hover:text-[var(--kx-text)]" aria-label="Dismiss Layer 2 doc notes">
@@ -216,19 +216,19 @@ export function Layer2Panel(p: Layer2PanelProps) {
             </button>
           </div>
           {p.pendingDoc.errors.map((e, i) => (
-            <div key={i} className="text-amber-400 mt-1">{e.message}</div>
+            <div key={i} className="text-[var(--kx-warning)] mt-1">{e.message}</div>
           ))}
         </div>
       )}
 
       {p.findings.length > 0 && (
-        <ul className="text-[12px] text-amber-400 list-disc pl-4" data-testid="layer2-findings">
+        <ul className="px-3 py-2 pl-7 rounded-[9px] bg-[rgba(251,191,36,.12)] border border-[rgba(251,191,36,.35)] text-[var(--kx-warning)] text-[12.5px] list-disc" data-testid="layer2-findings">
           {p.findings.map((f, i) => <li key={i}>{f.message}</li>)}
         </ul>
       )}
 
       {/* Project default box (R7 level 2) */}
-      <div className="text-[11px] flex flex-col gap-1" data-testid="layer2-project-default">
+      <div className="rounded-[13px] border border-[var(--kx-line)] bg-[var(--kx-surface)] px-3 py-2 text-[11px] flex flex-col gap-1" data-testid="layer2-project-default">
         <div className="flex items-center justify-between gap-2">
           <span className="text-[var(--kx-faint)]">Default box · {p.projectDefault ? 'Project' : 'Left half'}</span>
           {p.projectDefault && (
@@ -243,7 +243,7 @@ export function Layer2Panel(p: Layer2PanelProps) {
 
       {/* Spot list */}
       <div className="flex flex-col gap-2" data-testid="layer2-list">
-        {p.spots.length === 0 && <div className="text-[12px] text-[var(--kx-faint)]">No Layer-2 spots yet.</div>}
+        {p.spots.length === 0 && <div className="text-[11px] text-[var(--kx-faint)] px-1">No Layer-2 spots yet.</div>}
         {p.spots.map(s => {
           const r = p.resolved[s.id];
           const label = sceneLabel(p.segments, s.anchorSegmentId);
@@ -259,8 +259,10 @@ export function Layer2Panel(p: Layer2PanelProps) {
               data-testid={`layer2-spot-${s.id}`}
               data-selected={selected ? 'true' : undefined}
               onClick={() => p.onSelectSpot(s.id)}
-              className={`rounded border p-2 text-[12px] flex flex-col gap-1.5 cursor-pointer ${
-                selected ? 'border-[var(--kx-accent)] bg-[var(--kx-surface-2)]' : 'border-[var(--kx-line)] hover:bg-[var(--kx-surface-2)]'
+              className={`rounded-[13px] border px-3 py-2.5 text-[12px] flex flex-col gap-1.5 cursor-pointer transition-colors ${
+                selected
+                  ? 'border-[var(--kx-accent-line)] bg-[var(--kx-accent-soft)]'
+                  : 'bg-[var(--kx-surface)] border-[var(--kx-line)] hover:border-[var(--kx-line-2)]'
               }`}
             >
               {/* (a) scene number + tag, (d) bin */}
@@ -270,7 +272,7 @@ export function Layer2Panel(p: Layer2PanelProps) {
                   type="button"
                   onClick={e => { e.stopPropagation(); setConfirmDeleteId(s.id); }}
                   aria-label="Delete spot"
-                  className="text-[var(--kx-faint)] hover:text-red-400"
+                  className="text-[var(--kx-faint)] hover:text-[var(--kx-danger)] transition-colors"
                 >
                   <Trash2 size={13} />
                 </button>
@@ -282,9 +284,9 @@ export function Layer2Panel(p: Layer2PanelProps) {
                 assets={p.assets}
                 onPick={a => p.onPatchSpot(s.id, { assetId: a.id, clipName: a.name })}
               />
-              {s.assetId && !asset && <div className="text-red-400">Clip deleted — pick another</div>}
+              {s.assetId && !asset && <div className="text-[var(--kx-danger)]">Clip deleted — pick another</div>}
               {s.needsReview && (
-                <div className="text-amber-400">Needs review — its scene is gone; kept at {formatTime(s.lastKnownStartSec ?? 0)}.</div>
+                <div className="text-[var(--kx-warning)]">Needs review — its scene is gone; kept at {formatTime(s.lastKnownStartSec ?? 0)}.</div>
               )}
               {/* timing */}
               <div className="flex items-center justify-between gap-2 text-[var(--kx-faint)] tabular-nums">
@@ -302,7 +304,7 @@ export function Layer2Panel(p: Layer2PanelProps) {
                     const n = Number(v);
                     p.onPatchSpot(s.id, { durOverrideSec: v === '' || !(n > 0) ? null : n });
                   }}
-                  className="w-16 bg-[var(--kx-surface-2)] text-[var(--kx-text)] rounded px-1 py-0.5"
+                  className="w-16 bg-[var(--kx-surface-2)] text-[var(--kx-text)] rounded-lg px-1.5 py-0.5 outline-none tabular-nums"
                 />
               </div>
               {/* (c) geometry */}
@@ -333,7 +335,7 @@ export function Layer2Panel(p: Layer2PanelProps) {
             value={addSegId}
             onChange={e => setAddSegId(e.target.value)}
             aria-label="Scene for new spot"
-            className="bg-[var(--kx-line)] text-[var(--kx-text)] rounded px-1.5 py-1 flex-1 min-w-0"
+            className="bg-[var(--kx-surface-2)] text-[var(--kx-text)] rounded-lg px-1.5 py-1 flex-1 min-w-0 outline-none"
           >
             <option value="">Add at scene…</option>
             {p.segments.map((s, i) => <option key={s.id} value={s.id}>{`Scene ${i + 1}${s.tag ? ` · ${s.tag}` : ''}`}</option>)}
@@ -342,7 +344,7 @@ export function Layer2Panel(p: Layer2PanelProps) {
             type="button"
             disabled={!addSegId}
             onClick={() => { p.onAddManual(addSegId); setAddSegId(''); }}
-            className="px-2 rounded bg-[var(--kx-line)] text-[var(--kx-text)] disabled:opacity-40"
+            className="px-2 rounded-[8px] bg-[var(--kx-surface-2)] border border-[var(--kx-line)] text-[var(--kx-muted)] hover:text-[var(--kx-text)] hover:border-[var(--kx-line-2)] transition-colors disabled:opacity-40"
             aria-label="Add spot"
           >
             <Plus size={13} />

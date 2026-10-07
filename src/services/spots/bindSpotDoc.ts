@@ -20,6 +20,16 @@ import { pickAssetByName } from '../pickAssetByName';
 import type { SpotDocBlock } from './parseSpotDoc';
 import type { SpotFinding } from './spotFinding';
 
+/** FNV-1a 32-bit, hex — a small stable hash for content-derived spot ids. */
+function fnv1a(str: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h.toString(16).padStart(8, '0');
+}
+
 export interface BindSpotDocOptions {
   now: number;
   newId?: () => string;
@@ -31,7 +41,15 @@ export function bindSpotDoc(
   assets: readonly Asset[],
   opts: BindSpotDocOptions,
 ): { spots: Spot[]; findings: SpotFinding[] } {
-  const newId = opts.newId ?? (() => crypto.randomUUID());
+  const seen = new Map<string, number>();
+  // Content-derived by default (tag + clip name + occurrence) so the SAME doc always
+  // yields the SAME ids across reopen — overrides stamped on a spot stay attached.
+  const contentId = (b: SpotDocBlock): string => {
+    const key = `${b.tag}\u0001${b.body}`;
+    const n = (seen.get(key) ?? 0) + 1;
+    seen.set(key, n);
+    return `sp-${fnv1a(`${key}\u0001${n}`)}`;
+  };
   const candidates = assets.filter(a => a.type === 'video' || a.type === 'image');
   const spots: Spot[] = [];
   const findings: SpotFinding[] = [];
@@ -64,7 +82,7 @@ export function bindSpotDoc(
     }
 
     spots.push({
-      id: newId(),
+      id: opts.newId ? opts.newId() : contentId(block),
       ...(assetId ? { assetId } : {}),
       ...(block.body ? { clipName: block.body } : {}),
       anchorSegmentId: segment.id,
