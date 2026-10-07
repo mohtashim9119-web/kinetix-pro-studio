@@ -43,6 +43,8 @@ export interface EncodeSegmentOptions {
    *  past this segment's own nominal end (see resolveBlendFrameParams).
    *  Default 0. */
   trailingExtension?: number;
+  /** If any specs are present, this path must refuse — it cannot draw spots. */
+  spotRenderSpecs?: import('./webcodecsExport/spotRenderSpec').SpotRenderSpec[];
 }
 
 /**
@@ -105,6 +107,11 @@ export async function encodeSegment(
   globalConfig: FrameGlobalConfig,
   options: EncodeSegmentOptions = {},
 ): Promise<Uint8Array> {
+  if (options.spotRenderSpecs && options.spotRenderSpecs.length > 0) {
+    throw new Error(
+      `Export refused: canvas/legacy segmentEncoder cannot render ${options.spotRenderSpecs.length} spot(s) (would silently drop them).`,
+    );
+  }
   const fps = options.fps ?? 30;
   const width = options.width ?? 1920;
   const height = options.height ?? 1080;

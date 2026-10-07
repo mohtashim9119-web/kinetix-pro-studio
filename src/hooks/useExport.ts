@@ -26,7 +26,8 @@ import { isTauri } from '../services/tauriFfmpeg';
 import { createTauriBackend, type TauriBackend } from '../services/ffmpegBackend';
 import { diagnoseWebGL2Support } from '../services/gl/glContext';
 import type { WebCodecsCapabilityFailureCode, WebCodecsCapabilityDiagnosis } from '../services/webcodecsExport/exportPathSelectionTypes';
-import { evaluateGradeLossRefusal, type ExportPathSelectionDiagnostics } from '../services/webcodecsExport/exportPathSelection';
+import { evaluateGradeLossRefusal, evaluateSpotPathRefusal, type ExportPathSelectionDiagnostics } from '../services/webcodecsExport/exportPathSelection';
+import { hasSpotRenderWork, type SpotRenderSpec } from '../services/webcodecsExport/spotRenderSpec';
 import { probeGpuCapabilities, type GpuCapabilityReport } from '../services/webcodecsExport/gpuCapabilityProbe';
 import { readUiState, patchUiState } from '../services/uiStateStore';
 import { resolveDimensions, DEFAULT_ASPECT_RATIO } from '../services/resolutionConfig';
@@ -284,7 +285,7 @@ export interface UseExportState {
 
 export interface UseExportApi {
   state: UseExportState;
-  startExport: () => void;
+  startExport: (request?: { spotRenderSpecs?: SpotRenderSpec[] }) => void;
   cancelExport: () => void;
   retryExport: () => void;
   dismissSuccess: () => void;
@@ -300,6 +301,7 @@ interface ExportSnapshot {
   resolution: ExportResolution;
   fps: ExportFps;
   savedPath: string;
+  spotRenderSpecs?: SpotRenderSpec[];
 }
 
 const IDLE_STATE: UseExportState = {
@@ -627,6 +629,30 @@ export function useExport(
       capabilityFailures: capabilityDiagnosis.failures,
       routing: routingForDiagnostics,
     });
+    const specs = snapshot.spotRenderSpecs;
+    const spotPathRefusal = evaluateSpotPathRefusal(snap, specs, {
+      gateOpen: useWebCodecsPath,
+      routing: routingForDiagnostics,
+    });
+    if (spotPathRefusal) {
+      stopElapsedTimer();
+      await teardown(false, 'spot_path_refused');
+      setState(prev => ({
+        isExporting: false,
+        stage: null,
+        progress: 0,
+        stageLabel: '',
+        pendingSealConsent: null,
+        pendingResumeOffer: null,
+        resumeRefusalNotice: null,
+        orphanSweepNotice: null,
+        cleanupNotices: [],
+        error: { kind: 'spot_path_refused', message: spotPathRefusal.message, spotPathRefusal },
+        elapsedSec: prev.elapsedSec,
+      }));
+      return;
+    }
+
     if (gradeLossRefusal) {
       const segmentList = gradeLossRefusal.affectedSegmentIndices.map((i) => i + 1).join(', ');
       const plural = gradeLossRefusal.affectedSegmentIndices.length > 1 ? 's' : '';
@@ -729,6 +755,7 @@ export function useExport(
             height: resHeight,
             pieceExpectedFrames,
             inUseSessionId: freshSessionId,
+            spotRenderSpecs: specs,
           });
       if (generationRef.current !== gen) return;
       if (notice) setState(prev => ({ ...prev, resumeRefusalNotice: notice }));
@@ -819,13 +846,13 @@ export function useExport(
           // WebCodecsFfmpeg even though TauriBackend's own field type doesn't
           // declare those extra members.
           resumeFfmpeg ?? (tauriBackendRef.current.ffmpeg as WebCodecsFfmpeg),
-          { fps, width: resWidth, height: resHeight, requestForcedSealConsent, ...(resumePlan ? { resume: resumePlan } : {}) },
+          { fps, width: resWidth, height: resHeight, requestForcedSealConsent, ...(resumePlan ? { resume: resumePlan } : {}), ...(hasSpotRenderWork(specs) ? { spotRenderSpecs: specs } : {}) },
           onProgress,
         )
       : await exportProject(
           snap,
           tauriBackendRef.current.ffmpeg,
-          { fps, width: resWidth, height: resHeight },
+          { fps, width: resWidth, height: resHeight, ...(hasSpotRenderWork(specs) ? { spotRenderSpecs: specs } : {}) },
           onProgress,
         );
 
@@ -1057,7 +1084,7 @@ export function useExport(
     void playExportCompleteChime();
   }, [teardown, startElapsedTimer, stopElapsedTimer]);
 
-  const startExport = useCallback((): void => {
+  const startExport = useCallback((request?: { spotRenderSpecs?: SpotRenderSpec[] }): void => {
     if (!isTauri()) {
       throw new Error('Export is only available in the desktop app.');
     }
@@ -1098,6 +1125,7 @@ export function useExport(
         resolution: exportResolution,
         fps: exportFps,
         savedPath,
+        spotRenderSpecs: request?.spotRenderSpecs,
       };
       lastSnapshotRef.current = snapshot;
       void runExport(snapshot);

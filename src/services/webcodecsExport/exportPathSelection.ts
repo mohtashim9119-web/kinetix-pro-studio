@@ -18,6 +18,7 @@ import type {
   GradeLossRefusal,
   WebCodecsCapabilityFailureCode,
 } from './exportPathSelectionTypes';
+export { evaluateSpotPathRefusal } from './spotRenderSpec';
 
 /** `0`/`undefined` on every channel is the neutral grade — matches
  *  `compositeParams.ts`'s own `NEUTRAL_GRADE` fallback semantics without

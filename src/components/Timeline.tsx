@@ -11,6 +11,7 @@ import {
 import { VideoSegment, Asset, HeadingOverlay } from '../types';
 import { patchUiState } from '../services/uiStateStore';
 import { resizeHeading } from '../services/headingLayer';
+import { resizeSpotBlock, moveSpotBlock } from '../services/spots/spotLaneMath';
 import { isDragEdgeLocked } from '../services/dragCascade';
 import { WaveformSource } from '../services/waveformPeaks';
 import { useTimelineWaveform } from './TimelineWaveform';
@@ -92,6 +93,27 @@ interface Props {
   onClipClick?: (id: string) => void;
   onHeadingResizeCommit?: (id: string, next: { time: number; duration: number }) => void;
   initialScrollLeft?: number;
+  /** Layer 2 lane: one block per spot at its RESOLVED start/duration. Absent or
+   *  empty -> no lane (the timeline's markup is unchanged). */
+  spotBlocks?: TimelineSpotBlock[];
+  selectedSpotId?: string | null;
+  onSelectSpot?: (id: string) => void;
+  /** Drag release: the user's new timing. `startDeltaSec` moves the start (offset from
+   *  its scene anchor); `durSec` is stamped as durOverrideSec. */
+  onSpotTimingCommit?: (id: string, change: { startDeltaSec?: number; durSec?: number }) => void;
+}
+
+export interface TimelineSpotBlock {
+  id: string;
+  startSec: number;
+  durSec: number;
+  /** Clip name ('' when none). */
+  label: string;
+  /** The bound clip's thumbnail source (segment-card pattern). */
+  assetUrl?: string;
+  assetType?: 'video' | 'image';
+  noClip: boolean;
+  needsReview: boolean;
 }
 
 export function Timeline({
@@ -120,6 +142,10 @@ export function Timeline({
   onClipClick,
   onHeadingResizeCommit,
   initialScrollLeft,
+  spotBlocks,
+  selectedSpotId,
+  onSelectSpot,
+  onSpotTimingCommit,
 }: Props) {
   const totalDuration = useMemo(() => computeTotalDuration(segments), [segments]);
 
@@ -432,6 +458,59 @@ export function Timeline({
     window.addEventListener('mouseup', handleUp);
   };
 
+  // Layer 2 lane drags (heading-lane pattern: rAF live DOM write, one commit on mouseup).
+  // right edge = duration; left edge = start (end held); body = slide the block.
+  // The START is the user's to move; it is stored as an offset from the scene anchor.
+  const handleSpotDragStart = (e: React.MouseEvent, block: TimelineSpotBlock, mode: 'start' | 'end' | 'move'): void => {
+    e.stopPropagation();
+    e.preventDefault();
+    onSelectSpot?.(block.id);
+    const el = document.querySelector<HTMLElement>(`[data-spot-block-id="${block.id}"]`);
+    if (!el) return;
+    const startClientX = e.clientX;
+    const pps = pixelsPerSecond;
+    let pendingClientX: number | null = null;
+    let rafId: number | null = null;
+    const compute = (clientX: number): { startDeltaSec?: number; durSec: number; startSec: number } => {
+      const deltaSec = (clientX - startClientX) / pps;
+      if (mode === 'move') {
+        const m = moveSpotBlock({ startSec: block.startSec, durSec: block.durSec, deltaSec, maxEndSec: totalDuration });
+        return { startDeltaSec: m.startDeltaSec, durSec: block.durSec, startSec: block.startSec + m.startDeltaSec };
+      }
+      const r = resizeSpotBlock({ edge: mode, startSec: block.startSec, durSec: block.durSec, deltaSec, maxEndSec: totalDuration });
+      return { ...r, startSec: block.startSec + (r.startDeltaSec ?? 0) };
+    };
+    const applyFrame = (): void => {
+      rafId = null;
+      if (pendingClientX === null) return;
+      const c = compute(pendingClientX);
+      el.style.left = `${c.startSec * pps}px`;
+      el.style.width = `${c.durSec * pps}px`;
+    };
+    const handleMove = (m: MouseEvent): void => {
+      pendingClientX = m.clientX;
+      if (rafId === null) rafId = requestAnimationFrame(applyFrame);
+    };
+    const handleUp = (): void => {
+      if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null; }
+      window.removeEventListener('mousemove', handleMove);
+      window.removeEventListener('mouseup', handleUp);
+      if (pendingClientX === null) return;
+      const c = compute(pendingClientX);
+      const change: { startDeltaSec?: number; durSec?: number } = {};
+      if (c.startDeltaSec) change.startDeltaSec = c.startDeltaSec;
+      if (mode !== 'move' && c.durSec !== block.durSec) change.durSec = c.durSec;
+      if (change.startDeltaSec === undefined && change.durSec === undefined) {
+        el.style.left = `${block.startSec * pps}px`;
+        el.style.width = `${block.durSec * pps}px`;
+        return;
+      }
+      onSpotTimingCommit?.(block.id, change);
+    };
+    window.addEventListener('mousemove', handleMove);
+    window.addEventListener('mouseup', handleUp);
+  };
+
   return (
     <div className="h-full flex flex-col bg-[#050505] overflow-hidden relative">
       {/* Timeline Tracks Area */}
@@ -606,6 +685,74 @@ export function Timeline({
                   order), or each badge's opaque body covers this border
                   wherever it sits, leaving only the gaps between badges
                   showing it — a dashed-looking line instead of a solid one. */}
+              <div className="absolute inset-0 z-40 border border-[rgba(242,125,38,0.3)] rounded-lg pointer-events-none" />
+            </div>
+          )}
+
+          {/* Layer 2 lane — one block per spot at its resolved start/duration. The
+              block's LEFT edge is the scene anchor (notch); only the right edge
+              changes duration. Same horizontal scale/scroll/zoom as the other lanes. */}
+          {isSynced && spotBlocks && spotBlocks.length > 0 && (
+            <div
+              data-spot-lane
+              className="relative h-20 flex-shrink-0 bg-[#0A0A0A] rounded-lg"
+              style={{ width: `${totalDuration * pixelsPerSecond}px` }}
+            >
+              {/* The block's start is the USER's: drag the body to slide it, the left edge to
+                  move the start (end held), the right edge for the duration. */}
+              {/* Blocks use the SEGMENT card pattern (same 80px lane, rounded-lg, the
+                  segments' own idle / hover / active fills and borders, thumbnail at the
+                  segments' opacity, #n badge, and the segments' w-2 edge handle). */}
+              {spotBlocks.map((b, i) => {
+                const selected = selectedSpotId === b.id;
+                return (
+                <div
+                  key={b.id}
+                  data-spot-block-id={b.id}
+                  data-selected={selected ? 'true' : undefined}
+                  className={`absolute top-0 bottom-0 z-30 rounded-lg border transition-[box-shadow,border-color,background-color] duration-300 cursor-pointer flex flex-col group overflow-hidden ${selected ? 'bg-[#151515] border-[#F27D26]' : 'bg-[#080808] border-[#1A1A1A] hover:bg-[#0C0C0C]'}`}
+                  style={{ left: `${b.startSec * pixelsPerSecond}px`, width: `${b.durSec * pixelsPerSecond}px` }}
+                  onMouseDown={(e) => handleSpotDragStart(e, b, 'move')}
+                >
+                  <div className="flex-1 relative bg-black/50">
+                    {b.assetUrl && b.assetType === 'video' ? (
+                      <video src={b.assetUrl} className={`w-full h-full object-cover opacity-40 ${selected ? 'opacity-80' : ''}`} />
+                    ) : b.assetUrl ? (
+                      <img src={b.assetUrl} draggable={false} className={`w-full h-full object-cover opacity-30 ${selected ? 'opacity-70' : ''}`} alt={b.label} />
+                    ) : (
+                      <div className="kx-art-empty">
+                        <AlertCircle size={14} className="opacity-70" />
+                      </div>
+                    )}
+                    <div className="absolute inset-0 p-2 flex flex-col justify-between pointer-events-none">
+                      <div className="flex justify-between items-start">
+                        <span className="px-1 py-0.5 bg-black/60 rounded-sm text-[7px] font-mono text-[#F27D26]">L2 #{i + 1}</span>
+                        {b.needsReview && (
+                          <span className="flex items-center px-1 py-0.5 rounded-[4px] bg-[rgba(255,193,7,0.15)]" title="Its scene is gone — review its position">
+                            <AlertCircle size={9} className="text-[#ffc107]" />
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[8px] font-black text-white/90 uppercase tracking-tight truncate">
+                        {b.noClip ? 'NO CLIP' : b.label}
+                      </p>
+                    </div>
+                  </div>
+                  {/* Edge handles — the segments' own w-2 footprint. Left edge moves the start
+                      (end held); right edge sets the duration. */}
+                  <div
+                    data-spot-edge="start"
+                    className="absolute left-0 top-0 bottom-0 w-2 cursor-col-resize z-20 hover:bg-[#F27D26]/20 transition-colors"
+                    onMouseDown={(e) => handleSpotDragStart(e, b, 'start')}
+                  />
+                  <div
+                    data-spot-edge="end"
+                    className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize z-20 hover:bg-[#F27D26]/20 transition-colors"
+                    onMouseDown={(e) => handleSpotDragStart(e, b, 'end')}
+                  />
+                </div>
+                );
+              })}
               <div className="absolute inset-0 z-40 border border-[rgba(242,125,38,0.3)] rounded-lg pointer-events-none" />
             </div>
           )}

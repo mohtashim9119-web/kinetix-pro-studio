@@ -483,6 +483,61 @@ export interface TranscriptToken {
   needsReview?: boolean;
 }
 
+/** Layer 2 spot — the CC->export seam (structural typing; keep in sync with the
+ *  export lane's `SpotRenderSpec` consumer). Anchored to a main segment by its
+ *  content-derived id; `startSec = anchorSegment.startTime + offsetSec`;
+ *  `durSec = durOverrideSec ?? (video ? asset.duration : 3)`. No end sec is
+ *  ever stored — only an explicit user override (`durOverrideSec`). */
+/** Freeform box in percent of the FRAME (x/y top-left; w/h size). A STAMPED manual
+ *  override: written by a preview drag/resize, preserved across re-sync. */
+export interface SpotGeometry {
+  xPct: number;
+  yPct: number;
+  wPct: number;
+  hPct: number;
+}
+/** The per-project default box: one stored geometry every block WITHOUT an
+ *  individual override follows (live). Stamped; preserved across re-sync. */
+export interface SpotDefaultGeometry extends SpotGeometry {
+  source: 'project-default';
+}
+export interface Spot {
+  id: string;
+  assetId?: string;
+  anchorSegmentId: string;
+  /** Default 0. */
+  offsetSec: number;
+  /** Stamped by a manual edge-drag / panel edit; preserved across re-sync. */
+  durOverrideSec?: number;
+  /** Default 'top-right'. */
+  /** Stamped individual box (see `SpotGeometry`); absent = the project default,
+   *  else the built-in LEFT HALF (R7 cascade). */
+  geometry?: SpotGeometry;
+  source: 'doc' | 'manual';
+  /** The clip name the doc block (or user) asked for — what the wand binds by when
+   *  `assetId` is unset. Absent = nameless: never guessed. */
+  clipName?: string;
+  boundAt: number;
+  /** Absolute start the resolver last computed from a LIVE anchor; if the anchor
+   *  segment is later deleted the spot keeps this time (never deleted). */
+  lastKnownStartSec?: number;
+  /** Anchor segment no longer exists — spot kept at `lastKnownStartSec`, flagged. */
+  needsReview?: boolean;
+}
+
+/** What export consumes (payload field `spotRenderSpecs`), built by the resolver. */
+export interface SpotRenderSpec {
+  assetId: string;
+  startSec: number;
+  durSec: number;
+  /** The RESOLVED box in percent of the frame (geometry override, else the
+   *  individual → project default → left half) — the worker renders this rect directly. */
+  xPct: number;
+  yPct: number;
+  wPct: number;
+  hPct: number;
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -501,6 +556,16 @@ export interface Project {
    *  Optional at the type level so existing Project literals (dev fixtures, older
    *  persisted projects) remain valid; treat as `[]` when absent (Decision 5). */
   headings?: HeadingOverlay[];
+  /** Layer 2 spots (generic picture-in-picture clips/images anchored to a main
+   *  segment). Additive, headings pattern: treat as `[]` when absent; the store
+   *  defaults it to `[]` on load. Resolution lives in `services/spots/`. */
+  spots?: Spot[];
+  /** R8 — the raw Layer-2 doc, persisted with the project record (atomic save,
+   *  delete tombstones, mirror/backup all inherited). Reopen re-parses it and
+   *  rebinds (id-stamped merge: the doc rebinds anchors, the record keeps overrides). */
+  spotDoc?: { name: string; text: string; droppedAt: number };
+  /** R7 — per-project default box for Layer-2 blocks (see `SpotDefaultGeometry`). */
+  spotDefaultGeometry?: SpotDefaultGeometry;
   assets: Asset[];
   voiceoverId?: string;
   lastExportPath?: string;
@@ -916,7 +981,16 @@ export type SyncLogFindingKind =
   | 'asset-missing'
   | 'asset-unverified'
   | 'asset-corrupt'
-  | 'asset-replaced';
+  | 'asset-replaced'
+  /** Layer 2 spots — all details-only. A doc block whose tag matched no main
+   *  segment; a block whose clip name matched no vault asset (and no default);
+   *  a spot clamped at the voiceover end; two spots overlapping (last wins);
+   *  a spot whose asset is gone / skipped at export. */
+  | 'spot-segment-unmatched'
+  | 'spot-clip-unmatched'
+  | 'spot-past-voiceover'
+  | 'spot-overlap'
+  | 'spot-clip-missing';
 
 export interface SyncLogEntry {
   id: string;

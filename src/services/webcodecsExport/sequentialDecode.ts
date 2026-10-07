@@ -7,6 +7,10 @@
  * that plan — a standalone decode source, not yet wired to any worker or
  * compositor.
  *
+ * Layer-2 video spots MUST call this generator from a dedicated session per
+ * active spot window (`spotPlayback.ts`) — never `videoDecoderPool` (eviction
+ * hazard vs the main timeline) and never the shared run `DecodeCursorRegistry`.
+ *
  * Deliberately NOT a retrofit of videoDecoderPool.ts. That module's
  * windowed decode-ahead / LRU-across-sessions / decoder-handle-reuse
  * machinery exists to serve a scrubbable, randomly-seekable PREVIEW

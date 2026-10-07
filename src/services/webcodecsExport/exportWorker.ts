@@ -50,6 +50,9 @@ import { deriveCompositeParams, deriveSlotPlan, type ProjectEffectConfig } from 
 import { acquireOffscreenGlContext, GlContextLostError } from '../gl/glContext';
 import { computeObjectCoverUvRect } from '../gl/uvRect';
 import { decodeSegmentFrames, decodeResourceCounts } from './sequentialDecode';
+import { hasSpotRenderWork, type SpotRenderSpec } from './spotRenderSpec';
+import { SpotAssetError, SpotPlaybackController } from './spotPlayback';
+import { SpotLayerRenderer } from './spotLayerRenderer';
 import { DecodeCursorRegistry, assetLastNeededSecByAsset } from './decodeCursorLifetime';
 import { FrameContentDigest } from './frameContentDigest';
 import { GLTextRenderer, type FontConfig, type TextRenderGlobalConfig } from './textRenderer';
@@ -186,6 +189,11 @@ export interface ExportWorkerInitMessage {
    * omitted.
    */
   pinnedCodec?: string;
+  /**
+   * Optional resolved Layer-2 spots. Absent or empty = today's path with no
+   * extra decode/draw (zero-drift). Never decode spot audio.
+   */
+  spotRenderSpecs?: SpotRenderSpec[];
 }
 
 export type ExportWorkerInboundMessage =
@@ -366,6 +374,8 @@ function buildDiagnostics(
     frameContentDigest: activeFrameDigest ? activeFrameDigest.digestHex() : null,
     frameContentDigestFrames: activeFrameDigest ? activeFrameDigest.frameCount : null,
     encodeQueueHighWater: activeEncodeQueueHighWater,
+    spotPeakVideoDecoders: activeSpotPlayback?.peakOpenVideoDecoders ?? 0,
+    spotFindings: activeSpotPlayback ? [...activeSpotPlayback.snapshotFindings()] : [],
   };
 }
 
@@ -419,6 +429,7 @@ let activeFlushExpiryQueueSize: number | null = null;
 let activeSessionIndex = 0;
 let activeSessionCount = 1;
 let activeRunState: RunState | null = null;
+let activeSpotPlayback: SpotPlaybackController | null = null;
 /** WS3 salvage-runtime round — see `ExportWorkerDiagnosticsPayload.selectedHardwareRung`.
  *  Set by `createEncoder` on every successful build (initial session and
  *  every rotation), mirroring `activeSessionIndex`'s "module scope so a
@@ -1449,6 +1460,8 @@ interface FrameLoopTickContext {
   isKeyFrame?: (i: number) => boolean;
   onFrameEncoded?: () => void;
   frameDigest?: FrameContentDigest | null;
+  spotPlayback?: SpotPlaybackController | null;
+  spotRenderer?: SpotLayerRenderer | null;
 }
 
 /** One frame-loop iteration — export and vitest probe share this finally block. */
@@ -1529,6 +1542,25 @@ async function runFrameLoopTick(ctx: FrameLoopTickContext): Promise<boolean> {
     const renderFrameMs = performance.now() - compositeStarted;
     compositeMs += renderFrameMs;
     textureUploadAndDrawMs += renderFrameMs;
+
+    // Layering: scene < spots < captions. Skip entirely when specs are absent.
+    if (ctx.spotPlayback && ctx.spotRenderer) {
+      const spotStarted = performance.now();
+      let draws;
+      try {
+        draws = await ctx.spotPlayback.sampleAt(currentTime);
+      } catch (e) {
+        failState.setFailure(
+          e instanceof SpotAssetError ? 'spot-asset-missing' : 'init-error',
+          e,
+        );
+        return false;
+      }
+      ctx.spotRenderer.render(draws, width, height);
+      const spotMs = performance.now() - spotStarted;
+      compositeMs += spotMs;
+      textureUploadAndDrawMs += spotMs;
+    }
 
     compositeStarted = performance.now();
     const textSegment = resolveTextSegment(plan, rawParams.transition);
@@ -1814,6 +1846,22 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
 
   const runState = new RunState(assets, tracker, startIndex, segments, config);
   activeRunState = runState;
+  const spotSpecs = hasSpotRenderWork(payload.spotRenderSpecs) ? payload.spotRenderSpecs! : null;
+  let spotPlayback: SpotPlaybackController | null = null;
+  let spotRenderer: SpotLayerRenderer | null = null;
+  if (spotSpecs) {
+    try {
+      spotRenderer = new SpotLayerRenderer(gl);
+      spotPlayback = new SpotPlaybackController(assets, spotSpecs);
+      activeSpotPlayback = spotPlayback;
+    } catch (e) {
+      failState.setFailure('init-error', e);
+      postTerminal('error', 0);
+      try { compositor.dispose(); } catch { /* best-effort */ }
+      try { textRenderer.dispose(); } catch { /* best-effort */ }
+      return;
+    }
+  }
   endFlushObservation();
   activeFlushChunksSinceEntry = 0;
   activeFlushBytesSinceEntry = 0;
@@ -1898,6 +1946,9 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
       } catch {
         // best-effort
       }
+      try { await spotPlayback?.dispose(); } catch { /* best-effort */ }
+      try { spotRenderer?.dispose(); } catch { /* best-effort */ }
+      activeSpotPlayback = null;
       return;
     }
   }
@@ -1924,6 +1975,9 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
     } catch {
       // best-effort
     }
+    try { await spotPlayback?.dispose(); } catch { /* best-effort */ }
+    try { spotRenderer?.dispose(); } catch { /* best-effort */ }
+    activeSpotPlayback = null;
     return;
   }
 
@@ -2075,6 +2129,8 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
           frameDurUs,
           isKeyFrame,
           frameDigest,
+          spotPlayback,
+          spotRenderer,
           onFrameEncoded: () => {
             framesEmitted++;
             tracker.setFramesEncoded(framesEmitted);
@@ -2163,7 +2219,13 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
     activeFailure = null;
     activeEncodeStats = null;
     activeRunState = null;
+    activeSpotPlayback = null;
     await runState.disposeAll();
+    try {
+      await spotPlayback?.dispose();
+    } catch {
+      // best-effort
+    }
     // Single close point for every path (success, error, cancel already
     // closed it itself and this is then a guarded no-op) — flush() does not
     // close the encoder, so the success path still needs this.
@@ -2187,6 +2249,11 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
       textRenderer.dispose();
     } catch {
       // best-effort — a dispose failure must not mask whatever error/result already posted above
+    }
+    try {
+      spotRenderer?.dispose();
+    } catch {
+      // best-effort
     }
   }
 }

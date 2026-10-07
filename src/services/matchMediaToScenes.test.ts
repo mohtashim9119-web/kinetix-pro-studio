@@ -162,6 +162,8 @@ describe('App wiring — handleMatchMedia', () => {
     expect(body).toContain('matchMediaToScenes(prev.assets, prev.segments)');
     expect(body).toContain('{ ...prev, segments: result.segments }');
     expect(body).toContain('buildMediaMatchEntry(');
+    // Layer 2 second pass: binds spots by recorded clipName only (never touches segments).
+    expect(body).toContain('matchSpotsToMedia(prev.assets, prev.spots!)');
     expect(body).not.toMatch(/timingProvenance|lastSyncSpine|handleApplySync|startTime|duration/);
     expect(src).toContain('onMatchMedia={handleMatchMedia}');
   });

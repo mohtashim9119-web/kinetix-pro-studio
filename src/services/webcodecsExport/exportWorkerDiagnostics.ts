@@ -129,7 +129,8 @@ export type ExportFailureVia =
    *  `ShortAppendError` in exportPipelineWebCodecs.ts) rather than waiting for
    *  the concat/frame-count guard to notice the file is short — this fires at
    *  the batch that lost bytes, naming it. */
-  | 'append-short-write';
+  | 'append-short-write'
+  | 'spot-asset-missing';
 
 /**
  * WS3 item F — exhaustive `ExportFailureVia` -> `ExportErrorKind` policy
@@ -173,6 +174,7 @@ export const FAILURE_VIA_TO_KIND = {
   'append-drain-stall': 'encode',
   'append-queue-overflow': 'encode',
   'append-short-write': 'encode',
+  'spot-asset-missing': 'spot_asset_missing',
 } as const satisfies Record<ExportFailureVia, ExportErrorKind>;
 
 export interface ExportFailureIdentity {
@@ -306,6 +308,10 @@ export interface ExportWorkerDiagnosticsPayload {
    *  reconstruction that has no live encoder to have sampled. See
    *  docs/ws3-export-pipeline/windows-throughput-audit.md §2/§6. */
   encodeQueueHighWater?: number;
+  /** High-water of concurrently open dedicated video-spot decoders. */
+  spotPeakVideoDecoders?: number;
+  /** Clamp / non-fatal spot notes (e.g. short-clip-past-spec-end). */
+  spotFindings?: string[];
 }
 
 /**

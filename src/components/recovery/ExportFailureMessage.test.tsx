@@ -278,7 +278,7 @@ describe('ExportFailureMessage — Ruling A primary-slot ladder (a remedy for th
     const kinds: ExportErrorKind[] = [
       'disk_full', 'encode', 'concat', 'mux', 'unknown', 'destination_path',
       'asset_missing', 'timeline_gap', 'ffmpeg_load', 'grade_loss_refused',
-      'resume_adoption_failed', 'cancelled',
+      'resume_adoption_failed', 'cancelled', 'spot_asset_missing', 'spot_path_refused',
     ];
     for (const kind of kinds) {
       await renderMessage({ kind, ...ELIGIBLE });

@@ -10,6 +10,7 @@ export interface ExportOptions {
   width?: number;
   height?: number;
   fps?: number;
+  spotRenderSpecs?: import('./webcodecsExport/spotRenderSpec').SpotRenderSpec[];
 }
 
 export type ExportStage =
@@ -64,6 +65,8 @@ export type ExportErrorKind =
    * `webcodecsExport/exportPathSelection.ts`.
    */
   | 'grade_loss_refused'
+  | 'spot_asset_missing'
+  | 'spot_path_refused'
   /**
    * WS3 Round 28 (D1) — the operator explicitly chose "Resume" on a
    * discovered offer, but adopting that session (re-entering it a second
@@ -322,6 +325,7 @@ export interface ExportError {
    * See `webcodecsExport/exportPathSelectionTypes.ts`'s `GradeLossRefusal`.
    */
   gradeLossRefusal?: GradeLossRefusal;
+  spotPathRefusal?: import('./webcodecsExport/spotRenderSpec').SpotPathRefusal;
   /** Typed failure route — also in `liveness.failureVia` for diagnostics. */
   failureVia?: string | null;
   /** One-shot hardware→software failover used during this run. */
@@ -384,6 +388,19 @@ export async function exportProject(
   const fps = options.fps ?? 30;
   const width = options.width ?? 1920;
   const height = options.height ?? 1080;
+  if (options.spotRenderSpecs && options.spotRenderSpecs.length > 0) {
+    return {
+      ok: false,
+      error: {
+        kind: 'spot_path_refused',
+        message: `Export refused: ${options.spotRenderSpecs.length} spot(s) cannot render on the legacy export path, so they would be silently dropped.`,
+        spotPathRefusal: {
+          path: 'legacy',
+          message: `Export refused: ${options.spotRenderSpecs.length} spot(s) cannot render on the legacy export path, so they would be silently dropped.`,
+        },
+      },
+    };
+  }
 
   const globalConfig: FrameGlobalConfig = {
     overlayConfig: project.globalOverlayConfig,

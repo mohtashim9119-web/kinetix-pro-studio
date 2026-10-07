@@ -10,6 +10,7 @@
 
 import { sha256Hex } from './annexbChunkCompare';
 import type { Asset, HeadingOverlay, Project, SegmentGrade, TextOverlay, VideoSegment } from '../../types';
+import { canonicalSpotRenderSpecs, type SpotRenderSpec } from './spotRenderSpec';
 
 export const EXPORT_STATE_SCHEMA_VERSION = 1;
 export const EXPORT_STATE_FILENAME = 'export_state.json';
@@ -21,8 +22,11 @@ export const EXPORT_STATE_FILENAME = 'export_state.json';
  *  freshly reconstructed with a volatile `lastModified` on every reload —
  *  see that function's own comment), so an old manifest's hash was computed
  *  under semantics that could never match a resume-time recomputation and
- *  must invalidate rather than be compared against the new logic. */
-export const EXPORT_TIMELINE_IDENTITY_VERSION = 3;
+ *  must invalidate rather than be compared against the new logic.
+ *  4 (Layer 2 spots) — `spotRenderSpecs` joined the identity so a resume
+ *  cannot splice pre/post-spot-edit pieces. One-time invalidation of every
+ *  in-flight v3 checkpoint is acceptable (hash never matches v4). */
+export const EXPORT_TIMELINE_IDENTITY_VERSION = 4;
 
 /** In-process recovery bounds from `exportPipelineWebCodecs.ts` (dedc3bf). */
 export const MAX_BOUNDARY_REWINDS_PER_EXPORT = 2;
@@ -128,6 +132,9 @@ export interface ExportTimelineIdentity {
     text: string;
     hiddenOnSegments: string[] | null;
   }>;
+  /** Canonical resolved spots (empty when absent). Changing this set MUST
+   *  invalidate resume — never mix pre/post-spot-edit annexb pieces. */
+  spotRenderSpecs: ReturnType<typeof canonicalSpotRenderSpecs>;
 }
 
 export interface ExportCheckpointRecord {
@@ -405,6 +412,7 @@ export function timelineIdentityFromProject(
     | 'assets'
   >,
   dims: { fps: number; width: number; height: number },
+  extras?: { spotRenderSpecs?: readonly SpotRenderSpec[] | null },
 ): ExportTimelineIdentity {
   return {
     schema: 1,
@@ -431,6 +439,7 @@ export function timelineIdentityFromProject(
     segments: project.segments.map(segmentIdentity),
     headings: (project.headings ?? []).map(headingIdentity),
     textLayers: (project.textLayers ?? []).map(textLayerIdentity),
+    spotRenderSpecs: canonicalSpotRenderSpecs(extras?.spotRenderSpecs),
   };
 }
 

@@ -355,6 +355,17 @@ import { applyAssetRename } from './services/mediaRename';
 import { buildAssetHealthEntry, repointFromCorrupt } from './services/assetHealth';
 import { vaultHashesToUnreference } from './services/vaultUnreferencePlan';
 import { unbindDeletedAssets } from './services/unbindDeletedAssets';
+import { parseSpotDoc, type SpotDocBlock, type SpotDocError } from './services/spots/parseSpotDoc';
+import { bindSpotDoc } from './services/spots/bindSpotDoc';
+import { resolveSpots } from './services/spots/resolveSpots';
+import type { PctRect } from './services/spots/spotGeometry';
+import { matchSpotsToMedia } from './services/spots/matchSpotsToMedia';
+import { mergeDocSpots, patchSpot, deleteSpot, stampResolution, type SpotPatch } from './services/spots/spotOps';
+import type { TimelineSpotBlock } from './components/Timeline';
+import type { PreviewSpotItem } from './services/spots/spotPreviewMath';
+import { buildExportSpotPayload } from './services/spots/exportSpecs';
+import { buildSpotFindingEntries } from './services/spots/spotLog';
+import type { SpotFinding } from './services/spots/spotFinding';
 import { matchMediaToScenes, summarizeMediaMatch, type MediaMatchSummary } from './services/matchMediaToScenes';
 import { assignAssetToSegment } from './services/assetDragChannel';
 import { reconnectOfflineAssets } from './services/reconnectOfflineAssets';
@@ -382,7 +393,7 @@ import { ensureStagedSnapshotReady } from './services/stagedSyncRetry';
 import { armRecoveryBannerFromPersistedProject } from './services/recoveryBannerVisibility';
 import { useFocusTrap } from './hooks/useFocusTrap';
 import { FONT_FAMILIES, FILTERS, TEXT_ANIMATIONS, getFilterStyle, getMotionProps, SUPPORTED_LANGUAGE_CODES } from './constants';
-import { DropZonePanel, EMPTY_STAGED, type StagedFiles } from './components/DropZonePanel';
+import { DropZonePanel, EMPTY_STAGED, type StagedFiles, type LeftTab } from './components/DropZonePanel';
 import { canAdoptRestoredVoiceover, stagedVoiceoverNeedsExplicitTranscribe } from './services/stagedFilesPersist';
 import { NEUTRAL_GRADE, type ApplyEvent, type ApplyScope, type AutoGradeResult } from './components/EffectsPanel';
 import { capRateForDuration } from './services/zoomScale';
@@ -2072,8 +2083,8 @@ export default function App() {
     try { return (readUiState().previewHeight as number) ?? Math.floor((window.innerHeight - 4) / 2); }
     catch { return Math.floor((window.innerHeight - 4) / 2); }
   });
-  const [activeLeftTab, setActiveLeftTab] = useState<'files' | 'segments' | 'effects'>(() => {
-    try { return (readUiState().activeLeftTab as 'files' | 'segments' | 'effects') ?? 'files'; }
+  const [activeLeftTab, setActiveLeftTab] = useState<LeftTab>(() => {
+    try { return (readUiState().activeLeftTab as LeftTab) ?? 'files'; }
     catch { return 'files'; }
   });
 
@@ -3426,6 +3437,23 @@ export default function App() {
   }, []);
   const exportApi = useExport(project, exportResolution, exportFps, onExportSavePath);
   const { state: exportState, startExport, cancelExport, retryExport, dismissSuccess, resolveSealConsent, resolveResumeChoice } = exportApi;
+
+  // Layer 2 spots — THE export wiring seam. At every export kickoff the project's
+  // spots are resolved by `resolveSpots` (never recomputed by the export lane) and
+  // handed to `startExport({ spotRenderSpecs })`. Missing-clip entries are dropped
+  // here with `spot-clip-missing` findings (sync log) and an honest "N spots
+  // skipped" toast; a project with nothing to render passes no request at all, so
+  // the export is byte-identical to a no-spots export. The export lane's own
+  // refusals (spot_path_refused / spot_asset_missing) surface through the export
+  // error UI — never silent.
+  const startExportWithSpots = useCallback((): void => {
+    const payload = buildExportSpotPayload(projectRef.current, { projectDefault: projectRef.current.spotDefaultGeometry });
+    if (payload.findings.length > 0) {
+      setProjectSilent(prev => appendSyncLogEntries(prev, buildSpotFindingEntries(mintSyncLogId(), payload.findings)));
+    }
+    if (payload.summary) showToast(`${payload.summary} — see the sync log (Layer 2) for why.`);
+    startExport(payload.request);
+  }, [startExport, setProjectSilent, showToast]);
   const [exportReclaimableBytes, setExportReclaimableBytes] = useState<number | undefined>(undefined);
   // Ruling B (WS3 Batch 2) — distinct from `exportReclaimableBytes === undefined`,
   // which is ambiguous between "not queried" and "resolved to nothing". The
@@ -3584,8 +3612,8 @@ export default function App() {
     setExportResolution(project.resolutionTier);
     pendingReexportAutoResumeSessionId.current = sessionId;
     setReexportOffer(null);
-    startExport();
-  }, [reexportOffer, project.resolutionTier, startExport]);
+    startExportWithSpots();
+  }, [reexportOffer, project.resolutionTier, startExportWithSpots]);
 
   // ExportSettingsModal's Continue commits exportResolution/exportFps via
   // setState, then must call startExport — but startExport is a useCallback
@@ -3598,7 +3626,7 @@ export default function App() {
   const [exportTriggerCount, setExportTriggerCount] = useState(0);
   useEffect(() => {
     if (exportTriggerCount === 0) return;
-    startExport();
+    startExportWithSpots();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [exportTriggerCount]);
 
@@ -4800,16 +4828,226 @@ export default function App() {
     // below recomputes against `prev` so a racing edit is never overwritten
     // with a stale segment list. Wave 3 U9: unbound scenes (a 0-media build's
     // [NO ASSET] placeholders) are filled by the same name-tag tiers.
-    const digest = summarizeMediaMatch(matchMediaToScenes(projectRef.current.assets, projectRef.current.segments));
+    const live = projectRef.current;
+    const hasSpots = (live.spots?.length ?? 0) > 0;
+    const spotLive = hasSpots ? matchSpotsToMedia(live.assets, live.spots!) : null;
+    const digest: MediaMatchSummary = {
+      ...summarizeMediaMatch(matchMediaToScenes(live.assets, live.segments)),
+      ...(spotLive ? { layer2: { matched: spotLive.matched, unmatched: spotLive.unmatched, conflicts: spotLive.ambiguous.length, nameless: spotLive.nameless } } : {}),
+    };
     setProject(prev => {
       const result = matchMediaToScenes(prev.assets, prev.segments);
+      const spotPass = (prev.spots?.length ?? 0) > 0 ? matchSpotsToMedia(prev.assets, prev.spots!) : null;
+      const withSpots = (p: Project): Project => (spotPass ? { ...p, spots: spotPass.spots } : p);
       return appendSyncLogEntries(
-        { ...prev, segments: result.segments },
-        [buildMediaMatchEntry(mintSyncLogId(), result)],
+        withSpots({ ...prev, segments: result.segments }),
+        [buildMediaMatchEntry(mintSyncLogId(), {
+          ...result,
+          ...(spotPass ? { layer2: { matched: spotPass.matched, unmatched: spotPass.unmatched } } : {}),
+        })],
       );
     });
     return digest;
   }, []);
+
+
+  // ---------------------------------------------------------------------------
+  // LAYER 2 SPOTS (App lane). The dedicated Layer-2 field hands a file here; it
+  // is parsed immediately (honest per-block errors) and BOUND by the effect
+  // below once a timeline exists — an App-level post-finish effect that reads
+  // committed segments after BOTH doors (file Apply Sync and bundle) finish. It
+  // is never inside finishPipeline / parseProjectData. After binding, spots
+  // follow their anchor segments at resolve time (anchorSegmentId is a
+  // content-derived scene id; nothing absolute is stored except lastKnownStartSec).
+  // ---------------------------------------------------------------------------
+  const [pendingSpotDoc, setPendingSpotDoc] = useState<
+    { name: string; blocks: SpotDocBlock[]; errors: SpotDocError[]; bound: boolean; mode: 'replace' | 'rebind' } | null
+  >(null);
+  const [spotFindings, setSpotFindings] = useState<SpotFinding[]>([]);
+
+  // R8 — the raw doc is persisted WITH the project record (so the atomic save,
+  // delete tombstones and mirror/backup all apply); reopen re-parses and rebinds.
+  const handleDropSpotDoc = useCallback(async (file: File): Promise<void> => {
+    try {
+      const raw = await file.text();
+      const { blocks, errors } = parseSpotDoc(stripRtfIfNeeded(raw));
+      setSpotFindings([]);
+      setPendingSpotDoc({ name: file.name, blocks, errors, bound: false, mode: 'replace' });
+      setProjectSilent(p => ({ ...p, spotDoc: { name: file.name, text: raw, droppedAt: Date.now() } }));
+    } catch (err) {
+      showToast(`Could not read Layer 2 doc "${file.name}": ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }, [showToast, setProjectSilent]);
+
+  // Flush the project right after a doc lands (past the autosave debounce) so a crash
+  // right after the drop leaves the whole doc, never a gap.
+  const spotDocDroppedAt = project.spotDoc?.droppedAt;
+  useEffect(() => {
+    if (spotDocDroppedAt === undefined || isHydrating) return;
+    void saveNow();
+  }, [spotDocDroppedAt, isHydrating, saveNow]);
+
+  // Project open: a different project never inherits the previous project's queued
+  // doc; a project that has a saved doc re-parses it and REBINDS (same binder, same
+  // honest per-block errors, same content-derived ids).
+  const spotDocScheduledForRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (isHydrating) return;
+    if (spotDocScheduledForRef.current === project.id) return;
+    spotDocScheduledForRef.current = project.id;
+    setSpotFindings([]);
+    const doc = project.spotDoc;
+    if (!doc) { setPendingSpotDoc(null); return; }
+    const { blocks, errors } = parseSpotDoc(stripRtfIfNeeded(doc.text));
+    setPendingSpotDoc({ name: doc.name, blocks, errors, bound: false, mode: 'rebind' });
+  }, [project.id, project.spotDoc, isHydrating]);
+
+  useEffect(() => {
+    if (!pendingSpotDoc || pendingSpotDoc.bound) return;
+    if (isHydrating || isProcessing || project.segments.length === 0) return;
+    const { spots, findings } = bindSpotDoc(pendingSpotDoc.blocks, project.segments, project.assets, { now: Date.now() });
+    setSpotFindings(findings);
+    setPendingSpotDoc({ ...pendingSpotDoc, bound: true });
+    const mode = pendingSpotDoc.mode;
+    const valid = new Set(project.assets.map(a => a.id));
+    const apply = (prev: Project): Project => {
+      const merged = mergeDocSpots(prev.spots ?? [], spots, mode, valid);
+      // A reopen rebind re-reports its findings in the panel only (no log noise per open).
+      const next = { ...prev, spots: merged };
+      return mode === 'rebind' ? next : appendSyncLogEntries(next, buildSpotFindingEntries(mintSyncLogId(), findings));
+    };
+    // A reopen rebind is a machine write (silent); an explicit drop is an undoable edit.
+    if (mode === 'rebind') setProjectSilent(apply);
+    else setProject(apply, { label: 'Bind Layer 2 doc' });
+  }, [pendingSpotDoc, isHydrating, isProcessing, project.segments, project.assets, setProject, setProjectSilent]);
+
+  const voiceoverEndSec = useMemo(
+    () => project.segments.reduce((m, s) => Math.max(m, s.startTime + s.duration), 0),
+    [project.segments],
+  );
+  const spotLayout = useMemo(
+    () => ({ projectDefault: project.spotDefaultGeometry }),
+    [project.spotDefaultGeometry],
+  );
+  const spotResolution = useMemo(
+    () => resolveSpots(project.spots ?? [], project.segments, project.assets, voiceoverEndSec, spotLayout),
+    [project.spots, project.segments, project.assets, voiceoverEndSec, spotLayout],
+  );
+  const spotResolutionRef = useRef(spotResolution);
+  useEffect(() => { spotResolutionRef.current = spotResolution; }, [spotResolution]);
+  const [selectedSpotId, setSelectedSpotId] = useState<string | null>(null);
+  const [liveSpotRect, setLiveSpotRect] = useState<{ id: string; rect: PctRect; scope: 'project' | 'block' } | null>(null);
+  const resolvedSpotMap = spotResolution.bySpot;
+
+  const previewSpotItems = useMemo<PreviewSpotItem[]>(() => {
+    const items: PreviewSpotItem[] = [];
+    for (const sp of project.spots ?? []) {
+      const placed = spotResolution.bySpot[sp.id] ?? spotResolution.noClip[sp.id];
+      if (!placed) continue;
+      items.push({
+        id: sp.id,
+        ...(spotResolution.bySpot[sp.id] && sp.assetId ? { assetId: sp.assetId } : {}),
+        startSec: placed.startSec,
+        durSec: placed.durSec,
+        rect: placed.rect,
+        custom: !!sp.geometry,
+      });
+    }
+    return items.sort((a, b) => a.startSec - b.startSec);
+  }, [project.spots, spotResolution]);
+
+  const timelineSpotBlocks = useMemo<TimelineSpotBlock[]>(() => {
+    const out: TimelineSpotBlock[] = [];
+    for (const sp of project.spots ?? []) {
+      const bound = spotResolution.bySpot[sp.id];
+      const placed = bound ?? spotResolution.noClip[sp.id];
+      if (!placed) continue;
+      out.push({
+        id: sp.id,
+        startSec: placed.startSec,
+        durSec: placed.durSec,
+        label: bound ? (project.assets.find(a => a.id === sp.assetId)?.name ?? '') : '',
+        ...(bound ? (() => { const a = project.assets.find(x => x.id === sp.assetId); return a?.url ? { assetUrl: a.url, assetType: a.type === 'video' ? 'video' as const : 'image' as const } : {}; })() : {}),
+        noClip: !bound,
+        needsReview: !!sp.needsReview,
+      });
+    }
+    return out.sort((a, b) => a.startSec - b.startSec);
+  }, [project.spots, project.assets, spotResolution]);
+
+  // Persist last-known absolute starts + needs-review flags (machine write: silent).
+  useEffect(() => {
+    const spots = project.spots;
+    if (!spots || spots.length === 0 || isHydrating || isProcessing) return;
+    const next = stampResolution(spots, spotResolution, project.segments.length > 0);
+    if (next !== spots) setProjectSilent(p => (p.spots === spots ? { ...p, spots: next } : p));
+  }, [project.spots, project.segments, spotResolution, isHydrating, isProcessing, setProjectSilent]);
+
+  const handlePatchSpot = useCallback((id: string, patch: SpotPatch) => {
+    setProject(p => ({ ...p, spots: patchSpot(p.spots ?? [], id, patch) }), { label: 'Edit Layer 2 spot' });
+  }, [setProject]);
+  // R7 cascade. A drag of a block with NO individual override writes the PROJECT
+  // default (every un-dragged block follows, live); Alt-drag — or a drag of a block
+  // that already has its own box — writes that block's individual geometry.
+  const handleCommitSpotRect = useCallback((id: string, rect: PctRect, individual: boolean) => {
+    setProject(p => {
+      const sp = (p.spots ?? []).find(x => x.id === id);
+      if (individual || sp?.geometry) {
+        return { ...p, spots: patchSpot(p.spots ?? [], id, { geometry: rect }) };
+      }
+      return { ...p, spotDefaultGeometry: { ...rect, source: 'project-default' as const } };
+    }, { label: 'Move/resize Layer 2 box' });
+  }, [setProject]);
+  const handleLiveSpotRect = useCallback((id: string, rect: PctRect | null, individual: boolean) => {
+    if (!rect) { setLiveSpotRect(null); return; }
+    const own = !!projectRef.current.spots?.find(x => x.id === id)?.geometry;
+    setLiveSpotRect({ id, rect, scope: individual || own ? 'block' : 'project' });
+  }, []);
+  const handleResetSpotGeometry = useCallback((id: string) => {
+    setProject(p => ({ ...p, spots: patchSpot(p.spots ?? [], id, { geometry: null }) }), { label: 'Reset Layer 2 box to default' });
+  }, [setProject]);
+  const handleCustomizeSpotGeometry = useCallback((id: string, rect: PctRect) => {
+    setProject(p => ({ ...p, spots: patchSpot(p.spots ?? [], id, { geometry: rect }) }), { label: 'Customize Layer 2 box' });
+  }, [setProject]);
+  const handleResetProjectSpotDefault = useCallback(() => {
+    setProject(p => { const { spotDefaultGeometry: _d, ...rest } = p; return rest; }, { label: 'Reset Layer 2 default box' });
+  }, [setProject]);
+  // The user's timing wins: a moved start is stored as an offset from the scene anchor
+  // (so the spot still follows its scene through re-sync); a stretched/shrunk block
+  // stamps durOverrideSec. An orphaned spot (its scene is gone) moves its last-known time.
+  const handleSpotTimingCommit = useCallback((id: string, change: { startDeltaSec?: number; durSec?: number }) => {
+    setProject(p => ({
+      ...p,
+      spots: (p.spots ?? []).map(sp => {
+        if (sp.id !== id) return sp;
+        const next = { ...sp };
+        if (change.startDeltaSec) {
+          const anchored = p.segments.some(seg => seg.id === sp.anchorSegmentId);
+          if (anchored) next.offsetSec = Math.round((sp.offsetSec + change.startDeltaSec) * 1000) / 1000;
+          else if (sp.lastKnownStartSec !== undefined) next.lastKnownStartSec = Math.max(0, Math.round((sp.lastKnownStartSec + change.startDeltaSec) * 1000) / 1000);
+        }
+        if (change.durSec !== undefined) next.durOverrideSec = change.durSec;
+        return next;
+      }),
+    }), { label: 'Set Layer 2 spot timing' });
+  }, [setProject]);
+
+  // Clicking a block in the Layer-2 list jumps the preview and timeline to it, instantly.
+  const handleSelectSpotFromPanel = useCallback((id: string) => {
+    setSelectedSpotId(id);
+    const placed = spotResolutionRef.current.bySpot[id] ?? spotResolutionRef.current.noClip[id];
+    if (!placed) return;
+    setCurrentTime(placed.startSec);
+    if (audioRef.current) audioRef.current.currentTime = placed.startSec;
+    const container = document.getElementById('timeline-scroll-area');
+    if (container) {
+      const x = placed.startSec * pixelsPerSecondRef.current;
+      container.scrollLeft = Math.max(0, x - Math.min(48, container.clientWidth / 4));
+    }
+  }, []);
+  const handleDeleteSpot = useCallback((id: string) => {
+    setProject(p => ({ ...p, spots: deleteSpot(p.spots ?? [], id) }), { label: 'Delete Layer 2 spot' });
+  }, [setProject]);
 
   // Media workflow Unit 3 — a Media block tile dropped on a timeline
   // segment. The user's pick is authoritative (no name logic); assignment
@@ -6678,6 +6916,25 @@ export default function App() {
             onRename={(name) => setProject(p => ({ ...p, name }))}
             activeLeftTab={activeLeftTab}
             onActiveLeftTabChange={setActiveLeftTab}
+            layer2={{
+              segments: project.segments,
+              assets: project.assets,
+              spots: project.spots ?? [],
+              resolved: resolvedSpotMap,
+              projectDefault: project.spotDefaultGeometry,
+              liveRect: liveSpotRect,
+              selectedSpotId,
+              onSelectSpot: handleSelectSpotFromPanel,
+              onResetSpotGeometry: handleResetSpotGeometry,
+              onCustomizeSpotGeometry: handleCustomizeSpotGeometry,
+              onResetProjectDefault: handleResetProjectSpotDefault,
+              pendingDoc: pendingSpotDoc ? { name: pendingSpotDoc.name, errors: pendingSpotDoc.errors } : null,
+              findings: spotFindings,
+              onDropDoc: (f: File) => { void handleDropSpotDoc(f); },
+              onClearPending: () => { setPendingSpotDoc(null); setSpotFindings([]); },
+              onPatchSpot: handlePatchSpot,
+              onDeleteSpot: handleDeleteSpot,
+            }}
             isPlaying={isPlaying}
           />
           {transcriptionStatus.phase !== 'idle' && transcriptionStatus.phase !== 'transcribing' && whisperModelFailureKind === null && cloudTranscriptionPause === null && (
@@ -6777,6 +7034,12 @@ export default function App() {
                   onUpdateExtraOverlayPosition={updateExtraOverlayPosition}
                   textLayers={project.textLayers ?? []}
                   headings={project.headings ?? []}
+                  spotItems={previewSpotItems}
+                  onSpotRectCommit={handleCommitSpotRect}
+                  onSpotRectLive={handleLiveSpotRect}
+                  liveSpotRect={liveSpotRect}
+                  onSpotSelect={setSelectedSpotId}
+                  selectedSpotId={selectedSpotId}
                   autoGradeSamplerRef={autoGradeSamplerRef}
                   onTogglePlay={togglePlay}
                   onSpeedCycle={handleSpeedClick}
@@ -6894,6 +7157,10 @@ export default function App() {
                 segments={project.segments}
                 assets={project.assets}
                 headings={project.headings ?? []}
+                spotBlocks={timelineSpotBlocks}
+                selectedSpotId={selectedSpotId}
+                onSelectSpot={setSelectedSpotId}
+                onSpotTimingCommit={handleSpotTimingCommit}
                 currentSegmentId={currentSegment?.id}
                 currentTime={currentTime}
                 isPlaying={isPlaying}

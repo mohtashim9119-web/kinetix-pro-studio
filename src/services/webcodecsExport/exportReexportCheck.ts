@@ -81,6 +81,7 @@ function decodeManifest(bytes: number[]): ExportStateManifest | null {
 export async function checkExistingCheckpoint(
   project: Project,
   io: ReexportCheckIo,
+  extras?: { spotRenderSpecs?: import('./spotRenderSpec').SpotRenderSpec[] | null },
 ): Promise<ReexportCheckOutcome> {
   let ids: string[] = [];
   try {
@@ -103,7 +104,11 @@ export async function checkExistingCheckpoint(
   if (manifest === null) return { kind: 'no-checkpoint' };
 
   const currentHash = await buildSourceTimelineHash(
-    timelineIdentityFromProject(project, { fps: manifest.fps, width: manifest.width, height: manifest.height }),
+    timelineIdentityFromProject(
+      project,
+      { fps: manifest.fps, width: manifest.width, height: manifest.height },
+      extras,
+    ),
   );
 
   return currentHash === manifest.sourceTimelineHash

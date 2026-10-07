@@ -50,6 +50,7 @@ import { ZIP_MAX_ENTRIES, ZIP_MAX_ENTRY_BYTES, ZIP_MAX_TOTAL_BYTES, ZipTooLargeE
 import { isMacOSMetadataPath } from './macosMetadata';
 import { timedIngest } from './ingestTiming';
 import { withAudioMimeType } from './audioFormats';
+import { isLayer2Filename } from './spots/spotRouting';
 import type { Asset } from '../types';
 
 export interface BundleIngestSuccess {
@@ -65,6 +66,11 @@ export interface BundleIngestSuccess {
   nestedZipsSkipped: string[];
   /** Media workflow Unit 4 — present only when `offlineHashes` was passed. */
   reconnected?: OfflineReconnect[];
+  /** Layer 2 — present only when EXACTLY ONE text entry's filename carries a
+   *  layer-2 keyword (avatar|overlay|layer2). Never required by validation. */
+  spotDocFile?: File;
+  /** Honest bulk note when 2+ keyword files made routing ambiguous (none routed). */
+  spotDocNotes?: string[];
 }
 
 export type BundleZipOutcome =
@@ -122,6 +128,7 @@ export async function classifyAndIngestBundleZip(
 
   // ---- Pass 1: classify. No persistence happens in this pass. ----
   const textEntries: ClassifiedTextEntry[] = [];
+  const spotTextEntries: { name: string; text: string }[] = [];
   const audioNames: { entry: (typeof entries)[number]; name: string }[] = [];
   const mediaNames: { entry: (typeof entries)[number]; name: string; type: Asset['type'] }[] = [];
   const innerZips: { entry: (typeof entries)[number]; name: string }[] = [];
@@ -141,6 +148,13 @@ export async function classifyAndIngestBundleZip(
     if (ext === 'txt' || ext === 'rtf') {
       const raw = await entry.async('string');
       const stripped = stripRtfIfNeeded(raw);
+      // Layer 2 hook — BEFORE detectTextFileRole. By filename only (the sole
+      // mechanism inside a zip); a keyword doc is bracket-tagged, so classifying
+      // it first would let it steal the scene-details slot from the real one.
+      if (isLayer2Filename(name)) {
+        spotTextEntries.push({ name, text: stripped });
+        continue;
+      }
       textEntries.push({ name, text: stripped, role: detectTextFileRole(stripped) });
       continue;
     }
@@ -264,5 +278,15 @@ export async function classifyAndIngestBundleZip(
     duplicateNames,
     nestedZipsSkipped,
     ...(offline ? { reconnected: offline.found } : {}),
+    ...(spotTextEntries.length === 1
+      ? { spotDocFile: new File([spotTextEntries[0]!.text], spotTextEntries[0]!.name, { type: 'text/plain' }) }
+      : {}),
+    ...(spotTextEntries.length > 1
+      ? {
+          spotDocNotes: [
+            `${spotTextEntries.length} files look like Layer-2 docs (${spotTextEntries.map(e => `"${e.name}"`).join(', ')}) — none were routed automatically. Drop the right one into the Layer 2 field.`,
+          ],
+        }
+      : {}),
   };
 }
