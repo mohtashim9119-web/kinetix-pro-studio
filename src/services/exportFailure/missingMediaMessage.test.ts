@@ -3,7 +3,9 @@ import { TransitionType, AnimationType } from '../../types';
 import type { Asset, Project, VideoSegment } from '../../types';
 import {
   buildMissingMediaMessage,
+  buildUnassignedMediaWarning,
   findMissingMediaSegmentNumbers,
+  findUnassignedSegmentNumbers,
 } from './missingMediaMessage';
 
 vi.mock('../segmentEncoder', () => ({
@@ -60,5 +62,26 @@ describe('exportProject — missing media', () => {
     expect(r.error.kind).toBe('asset_missing');
     expect(r.error.message).toBe('Export blocked: media is missing for segments 1, 3. Add it to unblock export.');
     expect(r.error.cause ?? '').not.toContain('seg-uuid');
+  });
+});
+
+describe('unassigned-media pre-export warning', () => {
+  it('finds 1-based numbers of segments with no assetId only', () => {
+    expect(findUnassignedSegmentNumbers([seg(0, 'a'), seg(1), seg(2, 'gone'), seg(3)])).toEqual([2, 4]);
+    expect(findUnassignedSegmentNumbers([seg(0, 'a'), seg(1, 'b')])).toEqual([]);
+  });
+  it('uses the exact plural copy', () => {
+    expect(buildUnassignedMediaWarning([3, 7])).toBe(
+      'Segments 3, 7 have no media and will export as black frames, using slower export path. Add media or continue.',
+    );
+  });
+  it('uses singular for one segment', () => {
+    expect(buildUnassignedMediaWarning([3])).toBe(
+      'Segment 3 has no media and will export as black frames, using slower export path. Add media or continue.',
+    );
+  });
+  it('caps at 10 then "+N more"', () => {
+    const nums = Array.from({ length: 12 }, (_, i) => i + 1);
+    expect(buildUnassignedMediaWarning(nums)).toContain('1, 2, 3, 4, 5, 6, 7, 8, 9, 10 +2 more have no media');
   });
 });

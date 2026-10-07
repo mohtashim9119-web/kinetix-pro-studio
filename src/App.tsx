@@ -445,6 +445,8 @@ import { useExport, formatElapsed, formatElapsedLong, formatFrameSpanDuration, t
 import { buildExportDiagnosticsBlob } from './services/exportDiagnosticsBlob';
 import { ExportFailureMessage } from './components/recovery/ExportFailureMessage';
 import { ReexportCheckpointModal } from './components/ReexportCheckpointModal';
+import { MissingMediaExportWarning } from './components/MissingMediaExportWarning';
+import { findMediaIssues, hasMediaIssues, type MediaIssues } from './services/exportFailure/missingMediaMessage';
 import { StorageRootRelocationView } from './components/recovery/StorageRootRelocationView';
 import { useStorageRootRelocation } from './hooks/useStorageRootRelocation';
 import { checkExistingCheckpoint, type ReexportCheckOutcome } from './services/webcodecsExport/exportReexportCheck';
@@ -3549,7 +3551,11 @@ export default function App() {
     }
   }, []);
 
-  const handleExportButtonClick = useCallback(async (): Promise<void> => {
+  // Segments with no media export as black frames on the slower canvas path;
+  // the user is asked once per Export click, and re-checked on the next click.
+  const [missingMediaWarning, setMissingMediaWarning] = useState<MediaIssues | null>(null);
+
+  const proceedToExportSettings = useCallback(async (): Promise<void> => {
     if (!isTauri()) {
       setShowExportSettingsModal(true);
       return;
@@ -3578,6 +3584,15 @@ export default function App() {
     setReexportEditedNotice(true);
     setShowExportSettingsModal(true);
   }, [project, purgeCheckpointSession]);
+
+  const handleExportButtonClick = useCallback(async (): Promise<void> => {
+    const issues = findMediaIssues(project.segments, project.assets);
+    if (hasMediaIssues(issues)) {
+      setMissingMediaWarning(issues);
+      return;
+    }
+    await proceedToExportSettings();
+  }, [project.segments, project.assets, proceedToExportSettings]);
 
   const handleReexportStartFresh = useCallback(async (): Promise<void> => {
     if (!reexportOffer) return;
@@ -5179,6 +5194,13 @@ export default function App() {
   const offlineAssetNames = useMemo(
     () => project.assets.filter(a => a.unresolved).map(a => a.name),
     [project.assets],
+  );
+
+  // Sync-log summary: scenes with no media right now, live, so the "no media"
+  // block shrinks and clears as the user adds media.
+  const unassignedSegmentsForLog = useMemo(
+    () => project.segments.flatMap((seg, i) => (seg.assetId ? [] : [{ id: seg.id, number: i + 1 }])),
+    [project.segments],
   );
 
   // Media-library recovery notice — an event, not a sync-log category (the
@@ -7316,6 +7338,8 @@ export default function App() {
               syncRunSummaries={project.syncRunSummaries}
               offlineAssetNames={offlineAssetNames}
               segments={project.segments}
+              unassignedSegments={unassignedSegmentsForLog}
+              onRelinkOffline={() => setActiveLeftTab('files')}
               onClearLog={handleClearSyncLog}
               onOpenModelsModal={() => setShowManageModelsModal(true)}
               onSeekToSegment={handleSegmentClick}
@@ -7544,6 +7568,14 @@ export default function App() {
             })();
           }}
           projectLanguage={project.language}
+        />
+      )}
+
+      {missingMediaWarning && (
+        <MissingMediaExportWarning
+          issues={missingMediaWarning}
+          onCancel={() => setMissingMediaWarning(null)}
+          onContinue={() => { setMissingMediaWarning(null); void proceedToExportSettings(); }}
         />
       )}
 

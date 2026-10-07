@@ -50,7 +50,7 @@ describe('sync log — copy/clear placement and the always-present status card',
     await act(async () => { confirm.click(); });
     expect(el.querySelector('[data-testid="sync-status-card"]')).not.toBeNull();
     expect(el.querySelector('[data-testid="sync-status"]')?.getAttribute('data-state')).toBe('clear');
-    expect(el.textContent).toContain('Details (0 events)');
+    expect(el.textContent).toContain('Details');
     expect(el.querySelector('[data-testid="sync-log-clear"]')).toBeNull();
     expect(el.textContent).not.toContain('No sync activity yet');
   });

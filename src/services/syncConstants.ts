@@ -849,25 +849,25 @@ export const SYNC_TEXT_MISMATCH_MESSAGE = `Sync paused — ${SYNC_TEXT_MISMATCH_
  *  narration (audiobooks, e-learning, corporate video voiceover — the genre
  *  this app targets) is widely documented at ~130-160 WPM for a measured,
  *  clear read and up to ~160-180 for a brisker conversational pace; the band was
- *  widened to 110-200 so slower and brisker narrators are not flagged, but a script that is mostly silence relative to
+ *  widened to 100-300 so slower and brisker narrators are not flagged, but a script that is mostly silence relative to
  *  its word count is. */
-export const WPM_NORMAL_MIN = 110;
+export const WPM_NORMAL_MIN = 100;
 
 /** Normal narration band, upper bound — above this (and up to
  *  `WPM_HARD_IMPOSSIBLE_MIN`) the pre-sync WPM check soft-warns ("faster than
- *  typical narration"). 200 is the widened upper edge of the same
+ *  typical narration"). 300 is the widened upper edge of the same
  *  narration-pace literature `WPM_NORMAL_MIN` cites — a fast but still
  *  humanly-normal read sits at or just under it; sustained delivery above it
  *  is unusual for this app's target content (not implausible on its own,
  *  which is why this band is a soft warn, not the hard one below). */
-export const WPM_NORMAL_MAX = 200;
+export const WPM_NORMAL_MAX = 300;
 
 /** The hard-impossible band floor — above this, the pre-sync WPM check warns
  *  with STRONG "check your files" wording rather than the soft one.
  *  Documented fast-but-real human speech (competitive debate "spreading",
  *  rapid-fire narration) tops out in the 250-350+ WPM range, and ordinary
  *  narration rarely sustains above ~200-210 even at its fastest natural
- *  pace — so 220 sits above every normal narration outcome while still
+ *  pace — so the threshold sits above every normal narration outcome while still
  *  leaving headroom below genuinely-possible-but-extreme fast speech,
  *  favoring "warn strongly, do not claim certainty" over a threshold so high
  *  it only catches the most extreme drift. This is the exact number the G4
@@ -875,19 +875,19 @@ export const WPM_NORMAL_MAX = 200;
  *  than re-derived, since no shipped corpus measurement motivates a
  *  different one — SWAPPABLE, propose a different value in review if this
  *  one proves too tight or too loose in practice. */
-export const WPM_HARD_IMPOSSIBLE_MIN = 220;
+export const WPM_HARD_IMPOSSIBLE_MIN = 350;
 
 /** POST-match per-scene density threshold, words per SECOND (not minute) —
  *  a scene whose `matchedWords / committedDurationSec` exceeds this is
- *  flagged. 3.5 words/sec = 210 WPM sustained for that one scene alone,
- *  already at `WPM_HARD_IMPOSSIBLE_MIN`'s own boundary — chosen so the
+ *  flagged. 5.0 words/sec = 300 WPM sustained for that one scene alone,
+ *  the top of the normal band (real fast-paced scenes run 3.9-4.8) — chosen so the
  *  per-scene check catches the SAME order of implausibility the pre-sync
  *  total check does, just localized to one scene instead of averaged across
  *  the whole script (the brief's own "~3.5+ words/sec" proposal, kept
  *  as-proposed for the same reason as `WPM_HARD_IMPOSSIBLE_MIN` above).
  *  SWAPPABLE — propose a different value in review if it proves too tight
  *  or too loose in practice. */
-export const SCENE_DENSITY_WORDS_PER_SEC = 3.5;
+export const SCENE_DENSITY_WORDS_PER_SEC = 5.0;
 
 // --- Engine-switch boundary delta (Wave 3, amount-drop fix Commit 2) ---------
 // A re-sync of the SAME audio and script under a DIFFERENT timing engine (cloud

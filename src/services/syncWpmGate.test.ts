@@ -46,20 +46,20 @@ describe('classifyScriptWpm', () => {
 
   it('OLD BUG scenario: a planted 100 extra words on a short, normal-length scene pushes a plausible 300-word/2-minute script into the hard-impossible band', () => {
     // 300 words over 120s = 150 WPM, dead center of normal. +100 planted
-    // words (420 total, 120 planted) over the SAME unchanged audio = 210 WPM — already
+    // words (700 total, 400 planted) over the SAME unchanged audio = 350 WPM — already
     // soft-fast, and closer to the exact shape a shorter or more heavily
     // padded script pushes into hard-fast (verified explicitly below).
     const before = classifyScriptWpm(300, 120);
-    const after = classifyScriptWpm(420, 120);
+    const after = classifyScriptWpm(700, 120);
     expect(before.band).toBe('normal');
     expect(after.band).toBe('soft-fast');
   });
 
   it('OLD BUG scenario, hard-impossible variant: the same +100-word plant on a shorter script crosses into hard-fast', () => {
-    // 150 words over 60s = 150 WPM, normal. +100 planted words (250 total)
-    // over the same audio = 250 WPM — past WPM_HARD_IMPOSSIBLE_MIN (220).
+    // 150 words over 60s = 150 WPM, normal. +300 planted words (450 total)
+    // over the same audio = 450 WPM — past WPM_HARD_IMPOSSIBLE_MIN (350).
     const before = classifyScriptWpm(150, 60);
-    const after = classifyScriptWpm(250, 60);
+    const after = classifyScriptWpm(450, 60);
     expect(before.band).toBe('normal');
     expect(after.band).toBe('hard-fast');
   });
@@ -109,11 +109,11 @@ describe('buildWpmCheckLogEntry', () => {
   });
 });
 
-describe('WPM range 110–200 (explicit boundaries)', () => {
-  it('109 warns, 110 passes, 200 passes, 201 warns', () => {
-    expect(classifyScriptWpm(109, 60).band).toBe('soft-slow');
-    expect(classifyScriptWpm(110, 60).band).toBe('normal');
-    expect(classifyScriptWpm(200, 60).band).toBe('normal');
-    expect(classifyScriptWpm(201, 60).band).toBe('soft-fast');
+describe('WPM range 100–300 (explicit boundaries)', () => {
+  it('99 warns, 100 passes, 300 passes, 301 warns', () => {
+    expect(classifyScriptWpm(99, 60).band).toBe('soft-slow');
+    expect(classifyScriptWpm(100, 60).band).toBe('normal');
+    expect(classifyScriptWpm(300, 60).band).toBe('normal');
+    expect(classifyScriptWpm(301, 60).band).toBe('soft-fast');
   });
 });

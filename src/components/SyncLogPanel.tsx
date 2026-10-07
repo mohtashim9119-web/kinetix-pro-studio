@@ -6,7 +6,7 @@
 // (App.tsx), so this file holds no log policy and no persistence of its own —
 // the log rides along on the Project blob the existing projectStore already saves.
 import React, { useState } from 'react';
-import { ChevronDown, ChevronRight, Trash2, Copy, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, Trash2, Copy, Check } from 'lucide-react';
 import type { SyncLogEntry, SyncLogEntryType, SyncRunSummary } from '../types';
 import { SKIPPED_SCENE_COPY } from '../services/skippedScenePlaceholders';
 import {
@@ -14,9 +14,16 @@ import {
   resolveAttentionItemSegmentId,
   skipEntryLabel,
   SYNC_LOG_USER_COPY,
-  type AttentionLine,
   type SyncLogHeadline,
 } from '../services/syncLogUserView';
+import {
+  buildRunSections,
+  buildSummaryBlocks,
+  summaryHeader,
+  summaryLine2,
+  SUMMARY_COPY,
+  type BlockId,
+} from '../services/syncLogSummary';
 import { Z } from './overlayLayers';
 
 // Operator ruling (sync-log user view) — the default view is headline +
@@ -89,6 +96,12 @@ interface Props {
   /** The live timeline (`project.segments`), used only to resolve a grouped
    *  finding's scene to a jump target (`resolveAttentionItemSegmentId`). */
   segments?: { id: string; text?: string }[];
+  /** Scenes with no media right now (1-based timeline number) — live project
+   *  state. When given, the "no media" block follows it and clears itself as
+   *  media is added. */
+  unassignedSegments?: { id: string; number: number }[];
+  /** Relink button inside the offline-media block. */
+  onRelinkOffline?: () => void;
   onClearLog: () => void;
   /** WS2 Step 12 (A3) — opens ManageModelsModal. Optional so a caller that
    *  has no model UI wired (e.g. a future embedding) can omit it; the
@@ -501,13 +514,14 @@ export function formatHeadline(headline: SyncLogHeadline): string {
   return parts.join(' · ');
 }
 
-const TONE_CLASSES: Record<AttentionLine['tone'], { dot: string; text: string }> = {
-  red: { dot: 'bg-red-500', text: 'text-red-400' },
-  amber: { dot: 'bg-amber-500', text: 'text-amber-400' },
+const TONE_CLASSES: Record<'green' | 'amber' | 'red', { dot: string; ping: string }> = {
+  green: { dot: 'bg-emerald-400', ping: 'bg-emerald-400' },
+  amber: { dot: 'bg-amber-500', ping: 'bg-amber-500' },
+  red: { dot: 'bg-red-500', ping: 'bg-red-500' },
 };
 
 export function SyncLogPanel({
-  syncLog, syncRunSummaries, offlineAssetNames, segments = [], onClearLog, onOpenModelsModal, onSeekToSegment,
+  syncLog, syncRunSummaries, offlineAssetNames, segments = [], unassignedSegments, onRelinkOffline, onClearLog, onOpenModelsModal, onSeekToSegment,
 }: Props): React.ReactElement {
   // Collapsed by default only when there's nothing to show — an empty section
   // shouldn't occupy the panel, but a run that just skipped scenes should be
@@ -540,16 +554,24 @@ export function SyncLogPanel({
   const view = buildSyncLogUserView(syncLog, syncRunSummaries, offlineAssetNames);
 
   const [dismissed, setDismissed] = useState<Set<string>>(readStoredDismissed);
-  const dismissKey = (kind: string): string => `${kind}@${view.windowKey}`;
-  const dismissLine = (kind: string): void => {
+  const dismissKey = (id: string): string => `${id}@${view.windowKey}`;
+  const dismissBlock = (id: string): void => {
     setDismissed(prev => {
       const next = new Set(prev);
-      next.add(dismissKey(kind));
+      next.add(dismissKey(id));
       writeStoredDismissed(next);
       return next;
     });
   };
-  const visibleAttention = view.attention.filter(line => !dismissed.has(dismissKey(line.kind)));
+  const { blocks, autoResolved } = buildSummaryBlocks(view.attention, { unassigned: unassignedSegments });
+  const visibleBlocks = blocks.filter(b => !dismissed.has(dismissKey(b.id)));
+  const dismissedIds = new Set<BlockId>(blocks.filter(b => dismissed.has(dismissKey(b.id))).map(b => b.id));
+  const header = summaryHeader(visibleBlocks);
+  const line2 = summaryLine2(view.headline);
+  const runSections = buildRunSections(syncLog, syncRunSummaries ?? [], {
+    dismissed: dismissedIds,
+    autoResolved: new Set<BlockId>(autoResolved),
+  });
 
   const handleCopy = (e: React.MouseEvent): void => {
     e.stopPropagation();
@@ -599,41 +621,34 @@ export function SyncLogPanel({
       {!collapsed && (
         <div className="px-4 pb-3">
           <>
-              {/* 1. Status card — the one block the user reads. Green pulsing
-                  dot + "all clear" when nothing is flagged; red dot + count
-                  and the list of items to clear otherwise. Fixed width: it
-                  sits outside the scroller, so a scrollbar never narrows it.
-                  A degraded run always raises at least one line (placeholders
-                  → unmatched scene, estimated timing → estimated), so it can
-                  never read green — the honesty pin, carried by the status. */}
+              {/* Top summary: line 1 is the state (pulse + count, or "smoothly"),
+                  line 2 the quiet stats. Then a separator and the warning
+                  blocks, all drawn the same way. */}
               <div data-testid="sync-status-card">
-                <div className="flex items-center gap-2 min-w-0" data-testid="sync-status" data-state={visibleAttention.length === 0 ? 'clear' : 'attention'}>
-                  {/* The dot sits in a box exactly one text line tall (text-xs +
-                      leading-snug = 16.5px) and centres itself in it, so it is
-                      centred on the FIRST line whether the message wraps or not. */}
-                  <span className="flex-shrink-0 self-start flex items-center h-[16.5px]">
-                    <span className="relative flex w-1.5 h-1.5">
-                      {visibleAttention.length === 0 && (
-                        <span className="absolute inline-flex w-full h-full rounded-full bg-emerald-400 opacity-60 animate-ping" />
-                      )}
-                      <span className={`relative inline-flex w-1.5 h-1.5 rounded-full ${visibleAttention.length === 0 ? 'bg-emerald-400' : 'bg-red-500'}`} />
+                <div data-testid="sync-status" data-state={header.tone === 'green' ? 'clear' : 'attention'} data-tone={header.tone}>
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="flex-shrink-0 self-start flex items-center h-[16.5px]">
+                      <span className="relative flex w-1.5 h-1.5">
+                        <span className={`absolute inline-flex w-full h-full rounded-full opacity-60 animate-ping ${TONE_CLASSES[header.tone].ping}`} />
+                        <span className={`relative inline-flex w-1.5 h-1.5 rounded-full ${TONE_CLASSES[header.tone].dot}`} />
+                      </span>
                     </span>
-                  </span>
-                  <span className="text-xs text-gray-200 leading-snug break-words">
-                    {visibleAttention.length === 0
-                      ? SYNC_LOG_USER_COPY.status.clear
-                      : SYNC_LOG_USER_COPY.status.attention(visibleAttention.length)}
-                  </span>
+                    <span data-testid="sync-status-text" className="text-xs text-gray-200 leading-snug break-words">{header.text}</span>
+                  </div>
+                  {line2 && (
+                    <p data-testid="sync-summary-stats" className="mt-0.5 ml-3.5 text-[10px] text-gray-500 leading-snug break-words">
+                      {line2}
+                    </p>
+                  )}
                 </div>
 
-                {visibleAttention.length > 0 && (
-                  <div className="mt-2 space-y-0.5">
-                    {visibleAttention.map(line => {
-                      const sectionId = `attention:${line.kind}`;
+                {visibleBlocks.length > 0 && (
+                  <div className="mt-3 pt-2 border-t border-white/[0.06] space-y-0.5">
+                    {visibleBlocks.map(block => {
+                      const sectionId = `attention:${block.id}`;
                       const open = openSections.has(sectionId);
-                      const tone = TONE_CLASSES[line.tone];
                       return (
-                        <div key={line.kind} data-testid="sync-attention-line" data-kind={line.kind} data-tone={line.tone}>
+                        <div key={block.id} className="group" data-testid="sync-attention-line" data-kind={block.id} data-tone={block.tone}>
                           <div className="flex items-center gap-2 rounded-md hover:bg-white/[0.03]">
                             <button
                               type="button"
@@ -641,29 +656,29 @@ export function SyncLogPanel({
                               className="flex-1 min-w-0 flex items-center gap-2 py-1 text-left"
                               aria-expanded={open}
                             >
-                              <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${tone.dot}`} />
-                              <span className="text-xs text-gray-300 leading-snug break-words flex-1">
-                                {line.summary}
-                              </span>
+                              <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${TONE_CLASSES[block.tone].dot}`} />
+                              <span className="text-xs text-gray-300 leading-snug break-words flex-1">{block.title}</span>
                               {open
                                 ? <ChevronDown size={12} className="text-gray-500 flex-shrink-0" />
                                 : <ChevronRight size={12} className="text-gray-500 flex-shrink-0" />
                               }
                             </button>
-                            <button
-                              type="button"
-                              onClick={() => dismissLine(line.kind)}
-                              className="p-0.5 rounded text-gray-600 hover:text-gray-300 flex-shrink-0"
-                              title="Dismiss"
-                              aria-label={`Dismiss: ${line.summary}`}
-                              data-testid="sync-attention-dismiss"
-                            >
-                              <X size={11} />
-                            </button>
+                            {block.dismissable && (
+                              <button
+                                type="button"
+                                onClick={() => dismissBlock(block.id)}
+                                className="p-0.5 rounded text-gray-600 hover:text-emerald-400 flex-shrink-0 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity"
+                                title="Mark as handled"
+                                aria-label={`Mark as handled: ${block.title}`}
+                                data-testid="sync-attention-dismiss"
+                              >
+                                <Check size={12} />
+                              </button>
+                            )}
                           </div>
                           {open && (
                             <div className="pb-1 space-y-px">
-                              {line.items.map((item, idx) => {
+                              {block.items.map((item, idx) => {
                                 const targetId = onSeekToSegment ? resolveAttentionItemSegmentId(item, segments) : undefined;
                                 return targetId ? (
                                   <button
@@ -682,7 +697,17 @@ export function SyncLogPanel({
                                   </p>
                                 );
                               })}
-                              {line.offerManageModels && onOpenModelsModal && (
+                              {block.offerRelink && onRelinkOffline && (
+                                <button
+                                  type="button"
+                                  onClick={onRelinkOffline}
+                                  data-testid="sync-relink"
+                                  className="px-2 py-1 text-[11px] text-gray-400 hover:text-gray-100 underline underline-offset-2"
+                                >
+                                  Relink files
+                                </button>
+                              )}
+                              {block.offerManageModels && onOpenModelsModal && (
                                 <button
                                   type="button"
                                   onClick={onOpenModelsModal}
@@ -700,100 +725,117 @@ export function SyncLogPanel({
                 )}
               </div>
 
-              {/* 2. Details — outside the card, quiet, and the ONLY part that
-                  scrolls. The negative right margin + matching padding put
-                  the scrollbar in the panel gutter, so everything inside
-                  keeps the card's exact width. */}
+              {/* Details — quiet, collapsed, bottom. One section per sync, each
+                  with Actions (what was flagged and then handled) and Info. */}
               <div data-testid="sync-details-line" className="mt-3 pt-3 border-t border-white/[0.06]">
                 <div className="flex items-start gap-1">
-                <button
-                  type="button"
-                  onClick={() => toggleSection('details')}
-                  className="flex-1 min-w-0 flex items-start gap-1.5 py-0.5 text-left text-gray-700 hover:text-gray-500 transition-colors"
-                  aria-expanded={detailsOpen}
-                >
-                  {detailsOpen
-                    ? <ChevronDown size={11} className="flex-shrink-0 mt-[3px]" />
-                    : <ChevronRight size={11} className="flex-shrink-0 mt-[3px]" />
-                  }
-                  <span className="text-[11px] leading-snug break-words">
-                    {SYNC_LOG_USER_COPY.details(view.details.total)}
-                    {detailsCounts && ` · ${detailsCounts}`}
-                  </span>
-                </button>
-                {/* Copy / clear act on the LOG ENTRIES (Details) only. The status
-                    card above is never removed by clearing — it just reads green. */}
-                <div className="flex items-center gap-1 flex-shrink-0">
-                  {syncLog.length > 0 && (
-                    <button
-            type="button"
-            data-testid="sync-log-copy"
-            onClick={handleCopy}
-            className="p-1 rounded-lg hover:bg-zinc-800 text-gray-600 hover:text-gray-300 transition-colors flex items-center gap-1"
-            title="Copy sync log"
-            aria-label="Copy sync log"
-          >
-            {copied ? (
-              <span className="text-[8px] font-black uppercase tracking-wider">Copied!</span>
-            ) : (
-              <Copy size={12} />
-            )}
-          </button>
-        )}
-                  {syncLog.length > 0 && (
-                    <button
-            type="button"
-            data-testid="sync-log-clear"
-            onClick={(e) => { e.stopPropagation(); setShowClearConfirm(true); }}
-            className="p-1 rounded-lg hover:bg-red-900/40 text-gray-600 hover:text-red-400 transition-colors"
-            title="Clear sync log"
-            aria-label="Clear sync log"
-          >
-            <Trash2 size={12} />
-          </button>
-        )}
-                </div>
+                  <button
+                    type="button"
+                    onClick={() => toggleSection('details')}
+                    className="flex-1 min-w-0 flex items-start gap-1.5 py-0.5 text-left text-gray-700 hover:text-gray-500 transition-colors"
+                    aria-expanded={detailsOpen}
+                  >
+                    {detailsOpen
+                      ? <ChevronDown size={11} className="flex-shrink-0 mt-[3px]" />
+                      : <ChevronRight size={11} className="flex-shrink-0 mt-[3px]" />
+                    }
+                    <span className="text-[11px] leading-snug break-words">Details</span>
+                  </button>
+                  <div className="flex items-center gap-1 flex-shrink-0">
+                    {syncLog.length > 0 && (
+                      <button
+                        type="button"
+                        data-testid="sync-log-copy"
+                        onClick={handleCopy}
+                        className="p-1 rounded-lg hover:bg-zinc-800 text-gray-600 hover:text-gray-300 transition-colors flex items-center gap-1"
+                        title="Copy sync log"
+                        aria-label="Copy sync log"
+                      >
+                        {copied ? (
+                          <span className="text-[8px] font-black uppercase tracking-wider">Copied!</span>
+                        ) : (
+                          <Copy size={12} />
+                        )}
+                      </button>
+                    )}
+                    {syncLog.length > 0 && (
+                      <button
+                        type="button"
+                        data-testid="sync-log-clear"
+                        onClick={(e) => { e.stopPropagation(); setShowClearConfirm(true); }}
+                        className="p-1 rounded-lg hover:bg-red-900/40 text-gray-600 hover:text-red-400 transition-colors"
+                        title="Clear sync log"
+                        aria-label="Clear sync log"
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    )}
+                  </div>
                 </div>
                 {detailsOpen && (
-                  <div
-                    // Always-on track (overflow-y: scroll, transparent until
-                    // there is something to scroll), so the rows' width never
-                    // changes. WKWebView draws the thumb OVER the content, so
-                    // the rows stop 16px short of the track: the thumb gets
-                    // its own lane (9px into the panel gutter + pr-4) instead
-                    // of covering text.
-                    className="mt-1 max-h-72 overflow-y-scroll custom-scrollbar -mr-[9px] pr-4 divide-y divide-white/[0.06]"
-                  >
-                    {/* The run summary lives here now, out of the way. */}
-                    <p data-testid="sync-headline" className="text-[11px] text-gray-600 py-1.5 leading-snug break-words">
-                      {formatHeadline(view.headline)}
-                    </p>
-                    {view.details.counts.map(({ category, count, entries: categoryEntries }) => {
-                      const sectionId = `details:${category}`;
-                      const open = openSections.has(sectionId);
+                  <div className="mt-1 max-h-72 overflow-y-scroll custom-scrollbar -mr-[9px] pr-4 divide-y divide-white/[0.06]">
+                    {runSections.map(section => {
+                      const runId = `run:${section.key}`;
+                      const runOpen = openSections.has(runId);
                       return (
-                        <div key={category} data-testid="sync-details-count" data-category={category}>
+                        <div key={section.key} data-testid="sync-run-section" data-run={section.key}>
                           <button
                             type="button"
-                            onClick={() => toggleSection(sectionId)}
+                            onClick={() => toggleSection(runId)}
                             className="w-full flex items-center gap-1.5 py-1.5 text-left text-gray-600 hover:text-gray-400 transition-colors"
-                            aria-expanded={open}
+                            aria-expanded={runOpen}
                           >
-                            {open
+                            {runOpen
                               ? <ChevronDown size={11} className="flex-shrink-0" />
                               : <ChevronRight size={11} className="flex-shrink-0" />
                             }
-                            <span className="text-[11px]">
-                              {count} {SYNC_LOG_USER_COPY.categories[category]}
-                            </span>
+                            <span className="text-[11px]">{section.title}</span>
                           </button>
-                          {open && (
-                            <div className="pb-1">
-                              <SyncLogRawEntries
-                                entries={categoryEntries}
-                                onOpenModelsModal={onOpenModelsModal}
-                                onSeekToSegment={onSeekToSegment}
-                              />
+                          {runOpen && (
+                            <div className="pb-1 pl-3 space-y-1">
+                              {([['actions', 'Actions', section.actions.length], ['info', 'Info', section.info.length]] as const)
+                                .filter(([, , n]) => n > 0)
+                                .map(([listId, label, n]) => {
+                                  const listKey = `${runId}:${listId}`;
+                                  const listOpen = openSections.has(listKey);
+                                  return (
+                                    <div key={listId} data-testid={`sync-details-${listId}`}>
+                                      <button
+                                        type="button"
+                                        onClick={() => toggleSection(listKey)}
+                                        className="w-full flex items-center gap-1.5 py-1 text-left text-gray-600 hover:text-gray-400 transition-colors"
+                                        aria-expanded={listOpen}
+                                      >
+                                        {listOpen
+                                          ? <ChevronDown size={10} className="flex-shrink-0" />
+                                          : <ChevronRight size={10} className="flex-shrink-0" />
+                                        }
+                                        <span className="text-[11px]">{label} ({n})</span>
+                                      </button>
+                                      {listOpen && listId === 'info' && (
+                                        <SyncLogRawEntries
+                                          entries={section.info}
+                                          onOpenModelsModal={onOpenModelsModal}
+                                          onSeekToSegment={onSeekToSegment}
+                                        />
+                                      )}
+                                      {listOpen && listId === 'actions' && section.actions.map(a => (
+                                        <div key={a.entry.id} data-testid="sync-action-record">
+                                          {a.status && (
+                                            <span className="text-[9px] uppercase tracking-wider text-emerald-500/80 px-2">
+                                              {SUMMARY_COPY.statusLabel[a.status]}
+                                            </span>
+                                          )}
+                                          <SyncLogRawEntries
+                                            entries={[a.entry]}
+                                            onOpenModelsModal={onOpenModelsModal}
+                                            onSeekToSegment={onSeekToSegment}
+                                          />
+                                        </div>
+                                      ))}
+                                    </div>
+                                  );
+                                })}
                             </div>
                           )}
                         </div>
