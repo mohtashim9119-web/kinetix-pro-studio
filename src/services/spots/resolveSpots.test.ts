@@ -42,6 +42,8 @@ describe('resolveSpots', () => {
       ['spot-overlap', 'B'],
     ]);
     expect(r.lastKnown).toEqual({ A: 0, B: 5, C: 6, D: 0 });
+    // Deleted clip: timing kept (start + default 3s) so the preview can show [NO CLIP] in place.
+    expect(r.noClip).toEqual({ D: { startSec: 0, durSec: 3 } });
     expect(r.bySpot).toEqual({ A: { startSec: 0, durSec: 4 }, B: { startSec: 5, durSec: 1 }, C: { startSec: 6, durSec: 2 } });
   });
 
@@ -76,6 +78,7 @@ describe('resolveSpots', () => {
     const r = resolveSpots([spot({ id: 'U', anchorSegmentId: 's1' })], segs, assets, 10);
     expect(r.specs).toEqual([]);
     expect(r.findings).toEqual([]);
+    expect(r.noClip).toEqual({ U: { startSec: 0, durSec: 3 } });
   });
 
   it('video with unknown length is not guessed: dropped + spot-clip-missing', () => {

@@ -29,6 +29,9 @@ export interface ResolveSpotsResult {
   lastKnown: Record<string, number>;
   /** spotId -> final placement (after clamp/overlap); absent = not rendered. */
   bySpot: Record<string, { startSec: number; durSec: number }>;
+  /** Placement of spots with no usable clip (unbound, or clip deleted/offline) so
+   *  the preview can show a [NO CLIP] tile with the timing kept. Never exported. */
+  noClip: Record<string, { startSec: number; durSec: number }>;
   /** Spots whose anchor segment no longer exists. */
   needsReview: string[];
 }
@@ -44,6 +47,7 @@ export function resolveSpots(
   const findings: SpotFinding[] = [];
   const lastKnown: Record<string, number> = {};
   const needsReview: string[] = [];
+  const noClip: Record<string, { startSec: number; durSec: number }> = {};
   const live: { spotId: string; spot: Spot; startSec: number; durSec: number; order: number }[] = [];
 
   spots.forEach((spot, order) => {
@@ -56,7 +60,10 @@ export function resolveSpots(
       needsReview.push(spot.id);
       startSec = spot.lastKnownStartSec;
     }
-    if (!spot.assetId) return;
+    const ghost = () => {
+      if (startSec !== undefined) noClip[spot.id] = { startSec, durSec: spot.durOverrideSec ?? IMAGE_SPOT_SEC };
+    };
+    if (!spot.assetId) { ghost(); return; }
     const asset = assets.find(a => a.id === spot.assetId);
     if (!asset || asset.unresolved) {
       findings.push({
@@ -64,6 +71,7 @@ export function resolveSpots(
         spotId: spot.id,
         message: `Layer 2 spot ${spot.id}: its clip is ${asset ? 'offline' : 'no longer in the vault'} — skipped.`,
       });
+      ghost();
       return;
     }
     let durSec = spot.durOverrideSec;
@@ -128,5 +136,5 @@ export function resolveSpots(
   }));
   const bySpot: Record<string, { startSec: number; durSec: number }> = {};
   out.forEach(l => { bySpot[l.spotId] = { startSec: l.startSec, durSec: r3(l.durSec) }; });
-  return { specs, findings, lastKnown, bySpot, needsReview };
+  return { specs, findings, lastKnown, bySpot, noClip, needsReview };
 }

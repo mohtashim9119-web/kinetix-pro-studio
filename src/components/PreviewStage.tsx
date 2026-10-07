@@ -33,6 +33,8 @@ import { isWebGL2Supported } from '../services/gl/glContext';
 import { useGlPreview } from '../hooks/useGlPreview';
 import { computeAutoGrade } from '../services/gl/autoGrade';
 import { Z } from './overlayLayers';
+import { SpotLayer } from './SpotLayer';
+import type { PreviewSpotItem } from '../services/spots/spotPreviewMath';
 
 // Live-preview side of the animation pipeline. The export side lives in
 // src/services/canvasAnimations.ts (applySegmentAnimation) — every case
@@ -252,6 +254,9 @@ interface Props {
   /** Path B heading layer (docs/archive/history/history.md ("Path B — Separate Heading Layer — Design Decisions", archived)) — composited on
    *  top of the frame via getActiveHeadingAt(headings, currentTime). */
   headings?: HeadingOverlay[];
+  /** Layer 2 spots, already resolved to absolute time by `resolveSpots` — drawn as a
+   *  DOM rectangle at stage z 35 (see `spotPreviewMath`). */
+  spotItems?: PreviewSpotItem[];
   /** WebGL2 Phase 4 auto-grade: PreviewStage owns the decode pool + assets, so
    *  it populates this ref with a per-segment sampler that App's handleAutoGrade
    *  calls. Assigned on mount, cleared on unmount. */
@@ -352,6 +357,7 @@ export const PreviewStage = forwardRef<PreviewStageHandle, Props>(function Previ
   onUpdateExtraOverlayPosition,
   textLayers,
   headings,
+  spotItems,
   autoGradeSamplerRef,
   onTogglePlay,
   onSpeedCycle,
@@ -1335,6 +1341,11 @@ export const PreviewStage = forwardRef<PreviewStageHandle, Props>(function Previ
                   );
                 })()}
               </motion.div>
+
+              {/* Layer 2 spots — DOM rectangle above the media, below every text layer. */}
+              {spotItems && spotItems.length > 0 && (
+                <SpotLayer items={spotItems} assets={assets} currentTime={currentTime} isPlaying={isPlaying} />
+              )}
 
               {/* Extra Overlays Rendering — draggable when onUpdateExtraOverlayPosition is provided.
                   Phase 5 cutover: this wrapper used to fade to opacity 0 for the life of the

@@ -359,6 +359,7 @@ import { parseSpotDoc, type SpotDocBlock, type SpotDocError } from './services/s
 import { bindSpotDoc } from './services/spots/bindSpotDoc';
 import { resolveSpots } from './services/spots/resolveSpots';
 import { mergeDocSpots, addManualSpot, patchSpot, deleteSpot, stampResolution, type SpotPatch } from './services/spots/spotOps';
+import type { PreviewSpotItem } from './services/spots/spotPreviewMath';
 import { buildSpotFindingEntries } from './services/spots/spotLog';
 import type { SpotFinding } from './services/spots/spotFinding';
 import { matchMediaToScenes, summarizeMediaMatch, type MediaMatchSummary } from './services/matchMediaToScenes';
@@ -4877,6 +4878,23 @@ export default function App() {
   );
   const resolvedSpotMap = spotResolution.bySpot;
 
+  const previewSpotItems = useMemo<PreviewSpotItem[]>(() => {
+    const items: PreviewSpotItem[] = [];
+    for (const sp of project.spots ?? []) {
+      const placed = spotResolution.bySpot[sp.id] ?? spotResolution.noClip[sp.id];
+      if (!placed) continue;
+      items.push({
+        id: sp.id,
+        ...(spotResolution.bySpot[sp.id] && sp.assetId ? { assetId: sp.assetId } : {}),
+        startSec: placed.startSec,
+        durSec: placed.durSec,
+        corner: sp.corner,
+        heightPct: sp.heightPct,
+      });
+    }
+    return items.sort((a, b) => a.startSec - b.startSec);
+  }, [project.spots, spotResolution]);
+
   // Persist last-known absolute starts + needs-review flags (machine write: silent).
   useEffect(() => {
     const spots = project.spots;
@@ -6886,6 +6904,7 @@ export default function App() {
                   onUpdateExtraOverlayPosition={updateExtraOverlayPosition}
                   textLayers={project.textLayers ?? []}
                   headings={project.headings ?? []}
+                  spotItems={previewSpotItems}
                   autoGradeSamplerRef={autoGradeSamplerRef}
                   onTogglePlay={togglePlay}
                   onSpeedCycle={handleSpeedClick}
