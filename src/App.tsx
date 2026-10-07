@@ -358,6 +358,7 @@ import { unbindDeletedAssets } from './services/unbindDeletedAssets';
 import { parseSpotDoc, type SpotDocBlock, type SpotDocError } from './services/spots/parseSpotDoc';
 import { bindSpotDoc } from './services/spots/bindSpotDoc';
 import { resolveSpots } from './services/spots/resolveSpots';
+import { matchSpotsToMedia } from './services/spots/matchSpotsToMedia';
 import { mergeDocSpots, addManualSpot, patchSpot, deleteSpot, stampResolution, type SpotPatch } from './services/spots/spotOps';
 import type { PreviewSpotItem } from './services/spots/spotPreviewMath';
 import { buildExportSpotPayload } from './services/spots/exportSpecs';
@@ -4825,12 +4826,23 @@ export default function App() {
     // below recomputes against `prev` so a racing edit is never overwritten
     // with a stale segment list. Wave 3 U9: unbound scenes (a 0-media build's
     // [NO ASSET] placeholders) are filled by the same name-tag tiers.
-    const digest = summarizeMediaMatch(matchMediaToScenes(projectRef.current.assets, projectRef.current.segments));
+    const live = projectRef.current;
+    const hasSpots = (live.spots?.length ?? 0) > 0;
+    const spotLive = hasSpots ? matchSpotsToMedia(live.assets, live.spots!) : null;
+    const digest: MediaMatchSummary = {
+      ...summarizeMediaMatch(matchMediaToScenes(live.assets, live.segments)),
+      ...(spotLive ? { layer2: { matched: spotLive.matched, unmatched: spotLive.unmatched, conflicts: spotLive.ambiguous.length } } : {}),
+    };
     setProject(prev => {
       const result = matchMediaToScenes(prev.assets, prev.segments);
+      const spotPass = (prev.spots?.length ?? 0) > 0 ? matchSpotsToMedia(prev.assets, prev.spots!) : null;
+      const withSpots = (p: Project): Project => (spotPass ? { ...p, spots: spotPass.spots } : p);
       return appendSyncLogEntries(
-        { ...prev, segments: result.segments },
-        [buildMediaMatchEntry(mintSyncLogId(), result)],
+        withSpots({ ...prev, segments: result.segments }),
+        [buildMediaMatchEntry(mintSyncLogId(), {
+          ...result,
+          ...(spotPass ? { layer2: { matched: spotPass.matched, unmatched: spotPass.unmatched } } : {}),
+        })],
       );
     });
     return digest;

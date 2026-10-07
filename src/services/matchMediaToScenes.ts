@@ -36,6 +36,8 @@ export interface MediaMatchSummary {
   conflicts: number;
   /** Scenes holding a manual (drag-assigned) pick — never overwritten. */
   manualKept: number;
+  /** Layer 2 pass (present only when the project has spots). */
+  layer2?: { matched: number; unmatched: number; conflicts: number };
 }
 
 export function summarizeMediaMatch(result: MediaMatchResult): MediaMatchSummary {

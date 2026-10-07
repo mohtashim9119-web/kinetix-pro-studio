@@ -1379,7 +1379,7 @@ export function buildMediaNameCollisionEntry(
  */
 export function buildMediaMatchEntry(
   syncRunId: string,
-  outcome: { matched: number; unmatched: string[]; ambiguous: { name: string; count: number }[]; placeholders?: number; manualKept?: number },
+  outcome: { matched: number; unmatched: string[]; ambiguous: { name: string; count: number }[]; placeholders?: number; manualKept?: number; layer2?: { matched: number; unmatched: number } },
   timestamp: number = Date.now(),
 ): SyncLogEntry {
   const { matched, unmatched, ambiguous, placeholders = 0, manualKept = 0 } = outcome;
@@ -1393,6 +1393,9 @@ export function buildMediaMatchEntry(
   }
   if (placeholders > 0) {
     message += ` ${placeholders} scene${placeholders === 1 ? '' : 's'} still show${placeholders === 1 ? 's' : ''} a [NO ASSET] placeholder — add media named for ${placeholders === 1 ? 'it' : 'them'}, then Match again.`;
+  }
+  if (outcome.layer2) {
+    message += ` Layer 2: matched ${outcome.layer2.matched} · ${outcome.layer2.unmatched} unmatched.`;
   }
   return makeSyncLogEntry(
     syncRunId,

@@ -207,6 +207,7 @@ export const MEDIA_COPY = {
     if (s.filled > 0) msg += ` · ${s.filled} placeholder${s.filled === 1 ? '' : 's'} filled`;
     if (s.conflicts > 0) msg += ` · ${s.conflicts} name conflict${s.conflicts === 1 ? '' : 's'} (oldest used)`;
     if (s.manualKept > 0) msg += ` · ${s.manualKept} manual pick${s.manualKept === 1 ? '' : 's'} kept`;
+    if (s.layer2) msg += `\nLayer 2: matched ${s.layer2.matched} · ${s.layer2.unmatched} unmatched`;
     return msg;
   },
 } as const;
@@ -769,7 +770,7 @@ export const MediaBlock = forwardRef<MediaBlockHandle, MediaBlockProps>(function
           role="status"
           className="mx-1 mb-2 flex items-start gap-1.5 rounded-lg bg-[var(--kx-surface-2)] px-2 py-1 text-[11px] text-[var(--kx-muted)]"
         >
-          <span className="flex-1 min-w-0">{MEDIA_COPY.matchSummary(matchSummary)}</span>
+          <span className="flex-1 min-w-0 whitespace-pre-line">{MEDIA_COPY.matchSummary(matchSummary)}</span>
           <button
             type="button"
             aria-label="Dismiss match result"
