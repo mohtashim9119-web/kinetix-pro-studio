@@ -396,3 +396,49 @@ describe('DropZonePanel static markup — undo/redo buttons', () => {
     expect(redoOnly).toContain('Redo y');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Layer 2 spots R2 — the Layer-2 lane: blocks at resolved start/dur, an anchor
+// notch at the scene boundary, [NO CLIP] styling, selection highlight.
+// ---------------------------------------------------------------------------
+describe('Timeline static markup — Layer 2 lane (R2)', () => {
+  const segments = [makeSeg('s1', 0, 5), makeSeg('s2', 5, 5)];
+  const blocks = [
+    { id: 'a', startSec: 0, durSec: 4, label: 'avatar.mp4', noClip: false, needsReview: false },
+    { id: 'b', startSec: 5, durSec: 3, label: '', noClip: true, needsReview: false },
+  ];
+  const render = (extra: Partial<TimelineProps> = {}) =>
+    renderToStaticMarkup(<Timeline {...makeTimelineProps({ segments, sliderT: 1, ...extra })} />);
+
+  it('no spots -> no lane (existing timeline markup is unchanged)', () => {
+    expect(render()).not.toContain('data-spot-lane');
+    expect(render({ spotBlocks: [] })).not.toContain('data-spot-lane');
+  });
+  it('renders a lane with one block per spot at start*pps / dur*pps', () => {
+    const html = render({ spotBlocks: blocks });
+    expect(html).toContain('data-spot-lane');
+    expect((html.match(/data-spot-block-id="/g) ?? []).length).toBe(2);
+    expect(html).toContain('left:0px;width:400px');   // a: 0s, 4s @100pps
+    expect(html).toContain('left:500px;width:300px'); // b: 5s, 3s
+  });
+  it('anchor notch on every block\'s left edge (discoverable, refuses to move)', () => {
+    const html = render({ spotBlocks: blocks });
+    expect((html.match(/data-spot-anchor-notch/g) ?? []).length).toBe(2);
+  });
+  it('unbound block is styled [NO CLIP]; bound shows its clip name', () => {
+    const html = render({ spotBlocks: blocks });
+    expect(html).toContain('NO CLIP');
+    expect(html).toContain('avatar.mp4');
+  });
+  it('selected block is highlighted', () => {
+    const html = render({ spotBlocks: blocks, selectedSpotId: 'b' });
+    const sel = html.match(/data-spot-block-id="b"[^>]*>/)?.[0] ?? '';
+    expect(sel).toContain('data-selected="true"');
+    expect(html.match(/data-spot-block-id="a"[^>]*>/)?.[0]).not.toContain('data-selected="true"');
+  });
+  it('only the RIGHT edge has a duration handle; the left edge is the anchor', () => {
+    const html = render({ spotBlocks: [blocks[0]!] });
+    expect((html.match(/data-spot-edge="end"/g) ?? []).length).toBe(1);
+    expect(html).toContain('data-spot-edge="start"'); // present, but refuses (honest gesture)
+  });
+});

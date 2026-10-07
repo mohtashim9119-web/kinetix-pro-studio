@@ -362,6 +362,7 @@ import { probeClipAspect } from './services/spots/probeClipAspect';
 import type { PctRect } from './services/spots/spotGeometry';
 import { matchSpotsToMedia } from './services/spots/matchSpotsToMedia';
 import { mergeDocSpots, addManualSpot, patchSpot, deleteSpot, stampResolution, type SpotPatch } from './services/spots/spotOps';
+import type { TimelineSpotBlock } from './components/Timeline';
 import type { PreviewSpotItem } from './services/spots/spotPreviewMath';
 import { buildExportSpotPayload } from './services/spots/exportSpecs';
 import { buildSpotFindingEntries } from './services/spots/spotLog';
@@ -4956,6 +4957,24 @@ export default function App() {
     return items.sort((a, b) => a.startSec - b.startSec);
   }, [project.spots, spotResolution]);
 
+  const timelineSpotBlocks = useMemo<TimelineSpotBlock[]>(() => {
+    const out: TimelineSpotBlock[] = [];
+    for (const sp of project.spots ?? []) {
+      const bound = spotResolution.bySpot[sp.id];
+      const placed = bound ?? spotResolution.noClip[sp.id];
+      if (!placed) continue;
+      out.push({
+        id: sp.id,
+        startSec: placed.startSec,
+        durSec: placed.durSec,
+        label: bound ? (project.assets.find(a => a.id === sp.assetId)?.name ?? '') : '',
+        noClip: !bound,
+        needsReview: !!sp.needsReview,
+      });
+    }
+    return out.sort((a, b) => a.startSec - b.startSec);
+  }, [project.spots, project.assets, spotResolution]);
+
   // Persist last-known absolute starts + needs-review flags (machine write: silent).
   useEffect(() => {
     const spots = project.spots;
@@ -4973,6 +4992,9 @@ export default function App() {
   const handleLiveSpotRect = useCallback((id: string, rect: PctRect | null) => {
     setLiveSpotRect(rect ? { id, rect } : null);
   }, []);
+  const handleSpotDurationCommit = useCallback((id: string, durSec: number) => {
+    setProject(p => ({ ...p, spots: patchSpot(p.spots ?? [], id, { durOverrideSec: durSec }) }), { label: 'Set Layer 2 spot duration' });
+  }, [setProject]);
   const handleDeleteSpot = useCallback((id: string) => {
     setProject(p => ({ ...p, spots: deleteSpot(p.spots ?? [], id) }), { label: 'Delete Layer 2 spot' });
   }, [setProject]);
@@ -7082,6 +7104,11 @@ export default function App() {
                 segments={project.segments}
                 assets={project.assets}
                 headings={project.headings ?? []}
+                spotBlocks={timelineSpotBlocks}
+                selectedSpotId={selectedSpotId}
+                onSelectSpot={setSelectedSpotId}
+                onSpotDurationCommit={handleSpotDurationCommit}
+                onSpotStartRefused={showToast}
                 currentSegmentId={currentSegment?.id}
                 currentTime={currentTime}
                 isPlaying={isPlaying}

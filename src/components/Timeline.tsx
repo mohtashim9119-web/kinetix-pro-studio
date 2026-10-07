@@ -11,6 +11,7 @@ import {
 import { VideoSegment, Asset, HeadingOverlay } from '../types';
 import { patchUiState } from '../services/uiStateStore';
 import { resizeHeading } from '../services/headingLayer';
+import { resizeSpotBlock, SPOT_START_ANCHORED_MESSAGE } from '../services/spots/spotLaneMath';
 import { isDragEdgeLocked } from '../services/dragCascade';
 import { WaveformSource } from '../services/waveformPeaks';
 import { useTimelineWaveform } from './TimelineWaveform';
@@ -92,6 +93,25 @@ interface Props {
   onClipClick?: (id: string) => void;
   onHeadingResizeCommit?: (id: string, next: { time: number; duration: number }) => void;
   initialScrollLeft?: number;
+  /** Layer 2 lane: one block per spot at its RESOLVED start/duration. Absent or
+   *  empty -> no lane (the timeline's markup is unchanged). */
+  spotBlocks?: TimelineSpotBlock[];
+  selectedSpotId?: string | null;
+  onSelectSpot?: (id: string) => void;
+  /** Right-edge drag release -> the new duration, stamped as durOverrideSec. */
+  onSpotDurationCommit?: (id: string, durSec: number) => void;
+  /** Left-edge drag: the start is anchored to its scene — refuse, honestly. */
+  onSpotStartRefused?: (message: string) => void;
+}
+
+export interface TimelineSpotBlock {
+  id: string;
+  startSec: number;
+  durSec: number;
+  /** Clip name ('' when none). */
+  label: string;
+  noClip: boolean;
+  needsReview: boolean;
 }
 
 export function Timeline({
@@ -120,6 +140,11 @@ export function Timeline({
   onClipClick,
   onHeadingResizeCommit,
   initialScrollLeft,
+  spotBlocks,
+  selectedSpotId,
+  onSelectSpot,
+  onSpotDurationCommit,
+  onSpotStartRefused,
 }: Props) {
   const totalDuration = useMemo(() => computeTotalDuration(segments), [segments]);
 
@@ -432,6 +457,45 @@ export function Timeline({
     window.addEventListener('mouseup', handleUp);
   };
 
+  // Layer 2 lane — right-edge duration drag (heading-lane pattern: rAF live DOM
+  // write, one commit on mouseup). The left edge never moves the start.
+  const handleSpotEdgeStart = (e: React.MouseEvent, block: TimelineSpotBlock, edge: 'start' | 'end'): void => {
+    e.stopPropagation();
+    e.preventDefault();
+    if (edge === 'start') {
+      onSpotStartRefused?.(SPOT_START_ANCHORED_MESSAGE);
+      return;
+    }
+    const el = document.querySelector<HTMLElement>(`[data-spot-block-id="${block.id}"]`);
+    if (!el) return;
+    const startClientX = e.clientX;
+    const pps = pixelsPerSecond;
+    let pendingClientX: number | null = null;
+    let rafId: number | null = null;
+    const next = (clientX: number) =>
+      resizeSpotBlock({ edge: 'end', startSec: block.startSec, durSec: block.durSec, deltaSec: (clientX - startClientX) / pps, maxEndSec: totalDuration }).durSec;
+    const applyFrame = (): void => {
+      rafId = null;
+      if (pendingClientX === null) return;
+      el.style.width = `${next(pendingClientX) * pps}px`;
+    };
+    const handleMove = (m: MouseEvent): void => {
+      pendingClientX = m.clientX;
+      if (rafId === null) rafId = requestAnimationFrame(applyFrame);
+    };
+    const handleUp = (): void => {
+      if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null; }
+      window.removeEventListener('mousemove', handleMove);
+      window.removeEventListener('mouseup', handleUp);
+      if (pendingClientX === null) return;
+      const dur = next(pendingClientX);
+      if (dur !== block.durSec) onSpotDurationCommit?.(block.id, dur);
+      else el.style.width = `${block.durSec * pps}px`;
+    };
+    window.addEventListener('mousemove', handleMove);
+    window.addEventListener('mouseup', handleUp);
+  };
+
   return (
     <div className="h-full flex flex-col bg-[#050505] overflow-hidden relative">
       {/* Timeline Tracks Area */}
@@ -607,6 +671,53 @@ export function Timeline({
                   wherever it sits, leaving only the gaps between badges
                   showing it — a dashed-looking line instead of a solid one. */}
               <div className="absolute inset-0 z-40 border border-[rgba(242,125,38,0.3)] rounded-lg pointer-events-none" />
+            </div>
+          )}
+
+          {/* Layer 2 lane — one block per spot at its resolved start/duration. The
+              block's LEFT edge is the scene anchor (notch); only the right edge
+              changes duration. Same horizontal scale/scroll/zoom as the other lanes. */}
+          {isSynced && spotBlocks && spotBlocks.length > 0 && (
+            <div
+              data-spot-lane
+              className="relative h-10 flex-shrink-0 bg-[#0A0A0A] rounded-lg"
+              style={{ width: `${totalDuration * pixelsPerSecond}px` }}
+            >
+              {spotBlocks.map((b) => (
+                <div
+                  key={b.id}
+                  data-spot-block-id={b.id}
+                  data-selected={selectedSpotId === b.id ? 'true' : undefined}
+                  className={`absolute top-1 bottom-1 z-30 rounded-md border flex items-center overflow-hidden cursor-pointer ${
+                    b.noClip
+                      ? 'border-dashed border-yellow-400/70 bg-yellow-400/10 text-yellow-300'
+                      : 'border-[#3b82f6]/70 bg-[#3b82f6]/15 text-[#93c5fd]'
+                  } ${selectedSpotId === b.id ? 'ring-2 ring-[#F27D26]' : ''}`}
+                  style={{ left: `${b.startSec * pixelsPerSecond}px`, width: `${b.durSec * pixelsPerSecond}px` }}
+                  onMouseDown={(e) => { e.stopPropagation(); onSelectSpot?.(b.id); }}
+                >
+                  <span className="px-3 text-[9px] font-bold tracking-wide truncate pointer-events-none">
+                    {b.noClip ? 'NO CLIP' : b.label}
+                  </span>
+                  {b.needsReview && (
+                    <span className="ml-auto mr-3 text-[9px] text-[#ffc107] pointer-events-none" title="Its scene is gone — review its position">!</span>
+                  )}
+                  {/* Anchor notch: the scene boundary this spot is pinned to. */}
+                  <div
+                    data-spot-anchor-notch
+                    className="absolute left-0 top-0 bottom-0 w-1.5 bg-[#F27D26] cursor-not-allowed pointer-events-auto"
+                    data-spot-edge="start"
+                    title={SPOT_START_ANCHORED_MESSAGE}
+                    onMouseDown={(e) => handleSpotEdgeStart(e, b, 'start')}
+                  />
+                  <div
+                    data-spot-edge="end"
+                    className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize pointer-events-auto hover:bg-white/30"
+                    onMouseDown={(e) => handleSpotEdgeStart(e, b, 'end')}
+                  />
+                </div>
+              ))}
+              <div className="absolute inset-0 z-40 border border-[rgba(59,130,246,0.3)] rounded-lg pointer-events-none" />
             </div>
           )}
 
