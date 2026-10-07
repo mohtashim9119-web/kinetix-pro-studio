@@ -5,10 +5,10 @@
 
 // Layer 2 spots U5 — pure preview math (the DOM rectangle's brain).
 import { describe, it, expect } from 'vitest';
-import { activeSpotAt, computeSpotSync, spotBoxStyle, SPOT_Z_INDEX, type PreviewSpotItem } from './spotPreviewMath';
+import { activeSpotAt, computeSpotSync, SPOT_Z_INDEX, type PreviewSpotItem } from './spotPreviewMath';
 
 const item = (o: Partial<PreviewSpotItem> & { id: string; startSec: number; durSec: number }): PreviewSpotItem => ({
-  corner: 'top-right', heightPct: 40, ...o,
+  rect: { xPct: 58.875, yPct: 2, wPct: 40, hPct: 40 }, ...o,
 });
 
 describe('activeSpotAt', () => {
@@ -38,23 +38,6 @@ describe('computeSpotSync', () => {
   it('override longer than the clip: holds the last frame (no play past clip end)', () => {
     const long = item({ id: 'l', startSec: 0, durSec: 9 });
     expect(computeSpotSync({ t: 6, item: long, clipDuration: 4, elTime: 4, isPlaying: true })).toEqual({ shouldPlay: false });
-  });
-});
-
-describe('spotBoxStyle', () => {
-  it('top-right 40% defaults: container-relative height, native aspect, margin from top/right', () => {
-    const st = spotBoxStyle('top-right', 40, 16 / 9);
-    expect(st.height).toBe('40cqh');
-    expect(st.aspectRatio).toBe(String(16 / 9));
-    expect(st.top).toBe('2cqh');
-    expect(st.right).toBe('2cqh');
-    expect(st.left).toBeUndefined();
-    expect(st.bottom).toBeUndefined();
-  });
-  it('bottom-left anchors bottom/left', () => {
-    const st = spotBoxStyle('bottom-left', 25, 1);
-    expect(st.bottom).toBe('2cqh');
-    expect(st.left).toBe('2cqh');
   });
 });
 

@@ -27,15 +27,21 @@ const VIDEO_SPOT: SpotRenderSpec = {
   assetId: 'spot-vid',
   startSec: 5,
   durSec: 8,
-  corner: 'top-right',
-  heightPct: 40,
+  // top-right, 40% height, 16:9 clip in a 16:9 frame (resolved app-side).
+  xPct: 58.875,
+  yPct: 2,
+  wPct: 40,
+  hPct: 40,
 };
 const IMAGE_SPOT: SpotRenderSpec = {
   assetId: 'spot-img',
   startSec: 20,
   durSec: 3,
-  corner: 'bottom-left',
-  heightPct: 40,
+  // bottom-left, 40% height, 4:3 clip in a 16:9 frame.
+  xPct: 1.125,
+  yPct: 58,
+  wPct: 30,
+  hPct: 40,
 };
 
 function stubProject(overrides: Partial<Project> = {}): Project {
@@ -113,8 +119,8 @@ describe('U2 — layout, timing, layering', () => {
   });
 
   it('percentage layout is frame-size independent (720 vs 1080)', () => {
-    const a = spotQuadRect(VIDEO_SPOT, 1280, 720, 1920, 1080);
-    const b = spotQuadRect(VIDEO_SPOT, 1920, 1080, 1920, 1080);
+    const a = spotQuadRect(VIDEO_SPOT, 1280, 720);
+    const b = spotQuadRect(VIDEO_SPOT, 1920, 1080);
     expect(a.h / 720).toBeCloseTo(b.h / 1080, 10);
     expect(a.w / 1280).toBeCloseTo(b.w / 1920, 10);
     expect(a.y / 720).toBeCloseTo(b.y / 1080, 10);
@@ -129,7 +135,7 @@ describe('U2 — layout, timing, layering', () => {
     expect(specActiveAt(IMAGE_SPOT, 20)).toBe(true);
     expect(specActiveAt(IMAGE_SPOT, 22.99)).toBe(true);
     expect(specActiveAt(IMAGE_SPOT, 23)).toBe(false);
-    const imgRect = spotQuadRect(IMAGE_SPOT, 1920, 1080, 800, 600);
+    const imgRect = spotQuadRect(IMAGE_SPOT, 1920, 1080);
     expect(imgRect.h).toBeCloseTo(432);
     expect(imgRect.x).toBeCloseTo(0.02 * 1080);
     expect(imgRect.y).toBeCloseTo(1080 - imgRect.h - 0.02 * 1080);

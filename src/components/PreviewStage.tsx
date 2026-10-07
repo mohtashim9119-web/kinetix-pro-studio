@@ -35,6 +35,7 @@ import { computeAutoGrade } from '../services/gl/autoGrade';
 import { Z } from './overlayLayers';
 import { SpotLayer } from './SpotLayer';
 import type { PreviewSpotItem } from '../services/spots/spotPreviewMath';
+import type { PctRect } from '../services/spots/spotGeometry';
 
 // Live-preview side of the animation pipeline. The export side lives in
 // src/services/canvasAnimations.ts (applySegmentAnimation) — every case
@@ -257,6 +258,11 @@ interface Props {
   /** Layer 2 spots, already resolved to absolute time by `resolveSpots` — drawn as a
    *  DOM rectangle at stage z 35 (see `spotPreviewMath`). */
   spotItems?: PreviewSpotItem[];
+  onSpotRectCommit?: (spotId: string, rect: PctRect) => void;
+  onSpotRectLive?: (spotId: string, rect: PctRect | null) => void;
+  liveSpotRect?: { id: string; rect: PctRect } | null;
+  onSpotSelect?: (spotId: string) => void;
+  selectedSpotId?: string | null;
   /** WebGL2 Phase 4 auto-grade: PreviewStage owns the decode pool + assets, so
    *  it populates this ref with a per-segment sampler that App's handleAutoGrade
    *  calls. Assigned on mount, cleared on unmount. */
@@ -358,6 +364,11 @@ export const PreviewStage = forwardRef<PreviewStageHandle, Props>(function Previ
   textLayers,
   headings,
   spotItems,
+  onSpotRectCommit,
+  onSpotRectLive,
+  liveSpotRect,
+  onSpotSelect,
+  selectedSpotId,
   autoGradeSamplerRef,
   onTogglePlay,
   onSpeedCycle,
@@ -1344,7 +1355,17 @@ export const PreviewStage = forwardRef<PreviewStageHandle, Props>(function Previ
 
               {/* Layer 2 spots — DOM rectangle above the media, below every text layer. */}
               {spotItems && spotItems.length > 0 && (
-                <SpotLayer items={spotItems} assets={assets} currentTime={currentTime} isPlaying={isPlaying} />
+                <SpotLayer
+                  items={spotItems}
+                  assets={assets}
+                  currentTime={currentTime}
+                  isPlaying={isPlaying}
+                  onCommitRect={onSpotRectCommit}
+                  onLiveRect={onSpotRectLive}
+                  liveRect={liveSpotRect}
+                  onSelect={onSpotSelect}
+                  selectedSpotId={selectedSpotId}
+                />
               )}
 
               {/* Extra Overlays Rendering — draggable when onUpdateExtraOverlayPosition is provided.

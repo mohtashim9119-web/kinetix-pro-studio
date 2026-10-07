@@ -32,6 +32,15 @@ describe('spotOps', () => {
     const cleared = patchSpot(r, 'a', { durOverrideSec: null });
     expect('durOverrideSec' in cleared[0]!).toBe(false);
   });
+  it('patchSpot stamps geometry; null clears it; a clip change records the new clipName', () => {
+    const a = spot({ id: 'a' });
+    const g = { xPct: 1, yPct: 2, wPct: 30, hPct: 20 };
+    const r = patchSpot([a], 'a', { geometry: g });
+    expect(r[0]!.geometry).toEqual(g);
+    expect('geometry' in patchSpot(r, 'a', { geometry: null })[0]!).toBe(false);
+    const c = patchSpot([a], 'a', { assetId: 'v2', clipName: 'new.mp4' });
+    expect(c[0]).toMatchObject({ assetId: 'v2', clipName: 'new.mp4' });
+  });
   it('deleteSpot removes by id', () => {
     expect(deleteSpot([spot({ id: 'a' }), spot({ id: 'b' })], 'a').map(s => s.id)).toEqual(['b']);
   });

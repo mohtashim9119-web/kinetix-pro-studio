@@ -14,7 +14,7 @@
  */
 
 import type { Project, SpotRenderSpec } from '../../types';
-import { resolveSpots } from './resolveSpots';
+import { resolveSpots, type SpotLayout } from './resolveSpots';
 import type { SpotFinding } from './spotFinding';
 
 export interface ExportSpotPayload {
@@ -26,11 +26,11 @@ export interface ExportSpotPayload {
   request?: { spotRenderSpecs: SpotRenderSpec[] };
 }
 
-export function buildExportSpotPayload(project: Pick<Project, 'spots' | 'segments' | 'assets'>): ExportSpotPayload {
+export function buildExportSpotPayload(project: Pick<Project, 'spots' | 'segments' | 'assets'>, layout: SpotLayout = {}): ExportSpotPayload {
   const spots = project.spots ?? [];
   if (spots.length === 0) return { specs: [], findings: [], skipped: 0 };
   const end = project.segments.reduce((m, s) => Math.max(m, s.startTime + s.duration), 0);
-  const { specs, findings } = resolveSpots(spots, project.segments, project.assets, end);
+  const { specs, findings } = resolveSpots(spots, project.segments, project.assets, end, layout);
   const skipped = spots.length - specs.length;
   return {
     specs,

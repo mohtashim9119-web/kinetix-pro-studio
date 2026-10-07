@@ -489,6 +489,14 @@ export interface TranscriptToken {
  *  `durSec = durOverrideSec ?? (video ? asset.duration : 3)`. No end sec is
  *  ever stored — only an explicit user override (`durOverrideSec`). */
 export type SpotCorner = 'top-right' | 'top-left' | 'bottom-right' | 'bottom-left';
+/** Freeform box in percent of the FRAME (x/y top-left; w/h size). A STAMPED manual
+ *  override: written by a preview drag/resize, preserved across re-sync. */
+export interface SpotGeometry {
+  xPct: number;
+  yPct: number;
+  wPct: number;
+  hPct: number;
+}
 export interface Spot {
   id: string;
   assetId?: string;
@@ -501,6 +509,8 @@ export interface Spot {
   corner: SpotCorner;
   /** Percent of frame height, default 40; width = native aspect. */
   heightPct: number;
+  /** Stamped manual box (see `SpotGeometry`); absent = corner + heightPct default. */
+  geometry?: SpotGeometry;
   source: 'doc' | 'manual';
   /** The clip name the doc block (or user) asked for — what the wand binds by when
    *  `assetId` is unset. Absent = nameless: never guessed. */
@@ -518,8 +528,12 @@ export interface SpotRenderSpec {
   assetId: string;
   startSec: number;
   durSec: number;
-  corner: SpotCorner;
-  heightPct: number;
+  /** The RESOLVED box in percent of the frame (geometry override, else the
+   *  corner/heightPct default) — the worker renders this rect directly. */
+  xPct: number;
+  yPct: number;
+  wPct: number;
+  hPct: number;
 }
 
 export interface Project {

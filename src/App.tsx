@@ -358,6 +358,8 @@ import { unbindDeletedAssets } from './services/unbindDeletedAssets';
 import { parseSpotDoc, type SpotDocBlock, type SpotDocError } from './services/spots/parseSpotDoc';
 import { bindSpotDoc } from './services/spots/bindSpotDoc';
 import { resolveSpots } from './services/spots/resolveSpots';
+import { probeClipAspect } from './services/spots/probeClipAspect';
+import type { PctRect } from './services/spots/spotGeometry';
 import { matchSpotsToMedia } from './services/spots/matchSpotsToMedia';
 import { mergeDocSpots, addManualSpot, patchSpot, deleteSpot, stampResolution, type SpotPatch } from './services/spots/spotOps';
 import type { PreviewSpotItem } from './services/spots/spotPreviewMath';
@@ -3444,13 +3446,24 @@ export default function App() {
   // the export is byte-identical to a no-spots export. The export lane's own
   // refusals (spot_path_refused / spot_asset_missing) surface through the export
   // error UI — never silent.
+  const clipAspectsRef = useRef<Record<string, number>>({});
   const startExportWithSpots = useCallback((): void => {
-    const payload = buildExportSpotPayload(projectRef.current);
+    void (async () => {
+    // Make sure every spot clip's native aspect is known before the rect is baked.
+    const live = projectRef.current;
+    const aspects: Record<string, number> = { ...clipAspectsRef.current };
+    await Promise.all((live.spots ?? []).map(async sp => {
+      const a = sp.assetId ? live.assets.find(x => x.id === sp.assetId) : undefined;
+      if (a && !aspects[a.id]) { const v = await probeClipAspect(a); if (v) aspects[a.id] = v; }
+    }));
+    const d = resolveDimensions(live.aspectRatio ?? DEFAULT_ASPECT_RATIO, live.resolutionTier ?? DEFAULT_RESOLUTION_TIER);
+    const payload = buildExportSpotPayload(projectRef.current, { frameAspect: d.width / d.height, clipAspects: aspects });
     if (payload.findings.length > 0) {
       setProjectSilent(prev => appendSyncLogEntries(prev, buildSpotFindingEntries(mintSyncLogId(), payload.findings)));
     }
     if (payload.summary) showToast(`${payload.summary} — see the sync log (Layer 2) for why.`);
     startExport(payload.request);
+    })();
   }, [startExport, setProjectSilent, showToast]);
   const [exportReclaimableBytes, setExportReclaimableBytes] = useState<number | undefined>(undefined);
   // Ruling B (WS3 Batch 2) — distinct from `exportReclaimableBytes === undefined`,
@@ -4901,10 +4914,30 @@ export default function App() {
     () => project.segments.reduce((m, s) => Math.max(m, s.startTime + s.duration), 0),
     [project.segments],
   );
+  // Native aspect of each spot clip (probed lazily, in memory): lets the resolver
+  // turn the corner default into the SAME percent rect for preview and export.
+  const [clipAspects, setClipAspects] = useState<Record<string, number>>({});
+  const probedClipRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    for (const sp of project.spots ?? []) {
+      const a = sp.assetId ? project.assets.find(x => x.id === sp.assetId) : undefined;
+      if (!a || probedClipRef.current.has(a.id) || !a.url) continue;
+      probedClipRef.current.add(a.id);
+      void probeClipAspect(a).then(v => { if (v) setClipAspects(prev => (prev[a.id] === v ? prev : { ...prev, [a.id]: v })); });
+    }
+  }, [project.spots, project.assets]);
+  const spotFrameAspect = useMemo(() => {
+    const d = resolveDimensions(project.aspectRatio ?? DEFAULT_ASPECT_RATIO, project.resolutionTier ?? DEFAULT_RESOLUTION_TIER);
+    return d.width / d.height;
+  }, [project.aspectRatio, project.resolutionTier]);
+  useEffect(() => { clipAspectsRef.current = clipAspects; }, [clipAspects]);
+  const spotLayout = useMemo(() => ({ frameAspect: spotFrameAspect, clipAspects }), [spotFrameAspect, clipAspects]);
   const spotResolution = useMemo(
-    () => resolveSpots(project.spots ?? [], project.segments, project.assets, voiceoverEndSec),
-    [project.spots, project.segments, project.assets, voiceoverEndSec],
+    () => resolveSpots(project.spots ?? [], project.segments, project.assets, voiceoverEndSec, spotLayout),
+    [project.spots, project.segments, project.assets, voiceoverEndSec, spotLayout],
   );
+  const [selectedSpotId, setSelectedSpotId] = useState<string | null>(null);
+  const [liveSpotRect, setLiveSpotRect] = useState<{ id: string; rect: PctRect } | null>(null);
   const resolvedSpotMap = spotResolution.bySpot;
 
   const previewSpotItems = useMemo<PreviewSpotItem[]>(() => {
@@ -4917,8 +4950,7 @@ export default function App() {
         ...(spotResolution.bySpot[sp.id] && sp.assetId ? { assetId: sp.assetId } : {}),
         startSec: placed.startSec,
         durSec: placed.durSec,
-        corner: sp.corner,
-        heightPct: sp.heightPct,
+        rect: placed.rect,
       });
     }
     return items.sort((a, b) => a.startSec - b.startSec);
@@ -4935,6 +4967,12 @@ export default function App() {
   const handlePatchSpot = useCallback((id: string, patch: SpotPatch) => {
     setProject(p => ({ ...p, spots: patchSpot(p.spots ?? [], id, patch) }), { label: 'Edit Layer 2 spot' });
   }, [setProject]);
+  const handleCommitSpotRect = useCallback((id: string, rect: PctRect) => {
+    setProject(p => ({ ...p, spots: patchSpot(p.spots ?? [], id, { geometry: rect }) }), { label: 'Move/resize Layer 2 box' });
+  }, [setProject]);
+  const handleLiveSpotRect = useCallback((id: string, rect: PctRect | null) => {
+    setLiveSpotRect(rect ? { id, rect } : null);
+  }, []);
   const handleDeleteSpot = useCallback((id: string) => {
     setProject(p => ({ ...p, spots: deleteSpot(p.spots ?? [], id) }), { label: 'Delete Layer 2 spot' });
   }, [setProject]);
@@ -6922,6 +6960,11 @@ export default function App() {
                   textLayers={project.textLayers ?? []}
                   headings={project.headings ?? []}
                   spotItems={previewSpotItems}
+                  onSpotRectCommit={handleCommitSpotRect}
+                  onSpotRectLive={handleLiveSpotRect}
+                  liveSpotRect={liveSpotRect}
+                  onSpotSelect={setSelectedSpotId}
+                  selectedSpotId={selectedSpotId}
                   autoGradeSamplerRef={autoGradeSamplerRef}
                   onTogglePlay={togglePlay}
                   onSpeedCycle={handleSpeedClick}

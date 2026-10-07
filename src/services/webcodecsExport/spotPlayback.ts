@@ -114,7 +114,7 @@ export class SpotPlaybackController {
   }
 
   private sessionKey(spec: SpotRenderSpec): string {
-    return `${spec.assetId}|${spec.startSec}|${spec.durSec}|${spec.corner}|${spec.heightPct}`;
+    return `${spec.assetId}|${spec.startSec}|${spec.durSec}|${spec.xPct}|${spec.yPct}|${spec.wPct}|${spec.hPct}`;
   }
 
   private async ensureSession(spec: SpotRenderSpec): Promise<SpotSession> {

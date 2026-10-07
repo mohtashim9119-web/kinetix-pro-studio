@@ -14,9 +14,10 @@ import {
   canonicalSpotRenderSpecs, hasSpotRenderWork, specActiveAt, spotQuadRect, spotBorderRect,
   SPOT_MARGIN_HEIGHT_FRAC, SPOT_BORDER_HEIGHT_FRAC, SPOT_LAYER_ORDER, type SpotRenderSpec as ExportSpec,
 } from '../webcodecsExport/spotRenderSpec';
+import * as geom from './spotGeometry';
 import { validateSpotAssets } from '../webcodecsExport/spotAssetGuard';
 import { buildSourceTimelineHash, timelineIdentityFromProject } from '../webcodecsExport/exportCheckpoint';
-import { activeSpotAt, spotBoxStyle, SPOT_MARGIN_PCT, SPOT_BORDER_PCT, SPOT_Z_INDEX, type PreviewSpotItem } from './spotPreviewMath';
+import { activeSpotAt, SPOT_BORDER_PCT, SPOT_Z_INDEX, type PreviewSpotItem } from './spotPreviewMath';
 import { resolveSpots } from './resolveSpots';
 import { AnimationType, TransitionType, type Asset, type Project, type Spot, type SpotRenderSpec, type VideoSegment } from '../../types';
 
@@ -47,8 +48,8 @@ describe('buildExportSpotPayload', () => {
 
   it('drops missing-clip entries at build, with a spot-clip-missing finding and an honest summary', () => {
     expect(r.specs).toEqual([
-      { assetId: 'vid', startSec: 0, durSec: 8, corner: 'top-right', heightPct: 40 },
-      { assetId: 'img', startSec: 30, durSec: 3, corner: 'bottom-left', heightPct: 40 },
+      { assetId: 'vid', startSec: 0, durSec: 8, xPct: 58.875, yPct: 2, wPct: 40, hPct: 40 },
+      { assetId: 'img', startSec: 30, durSec: 3, xPct: 1.125, yPct: 58, wPct: 40, hPct: 40 },
     ]);
     expect(r.findings.map(f => f.kind)).toEqual(['spot-clip-missing']);
     expect(r.skipped).toBe(1);
@@ -88,17 +89,19 @@ describe('contract: resolver output is structurally the export lane SpotRenderSp
 });
 
 describe('export vs preview parity', () => {
-  const p = project(SPOTS);
-  const res = resolveSpots(p.spots!, p.segments, p.assets, 60);
-  const specs = buildExportSpotPayload(p).specs;
-  // Preview items exactly as App builds them (bound specs only here; no ghosts in this fixture's rendered set).
+  const GEOM = { xPct: 20, yPct: 30, wPct: 25, hPct: 35 };
+  const p = project([SPOTS[0]!, { ...SPOTS[1]!, geometry: GEOM }, SPOTS[2]!]);
+  const layout = { frameAspect: 16 / 9, clipAspects: { vid: 16 / 9, img: 4 / 3 } };
+  const res = resolveSpots(p.spots!, p.segments, p.assets, 60, layout);
+  const specs = buildExportSpotPayload(p, layout).specs;
   const items: PreviewSpotItem[] = (p.spots ?? []).flatMap(s => {
     const pl = res.bySpot[s.id];
-    return pl ? [{ id: s.id, assetId: s.assetId, startSec: pl.startSec, durSec: pl.durSec, corner: s.corner, heightPct: s.heightPct }] : [];
+    return pl ? [{ id: s.id, assetId: s.assetId, startSec: pl.startSec, durSec: pl.durSec, rect: pl.rect }] : [];
   });
 
-  it('same constants: margin, border, z below text (scene < spots < captions)', () => {
-    expect(SPOT_MARGIN_PCT / 100).toBeCloseTo(SPOT_MARGIN_HEIGHT_FRAC, 10);
+  it('same constants (defined once in spotGeometry): margin, border; z below text', () => {
+    expect(SPOT_MARGIN_HEIGHT_FRAC).toBe(geom.SPOT_MARGIN_HEIGHT_FRAC);
+    expect(SPOT_BORDER_HEIGHT_FRAC).toBe(geom.SPOT_BORDER_HEIGHT_FRAC);
     expect(SPOT_BORDER_PCT / 100).toBeCloseTo(SPOT_BORDER_HEIGHT_FRAC, 10);
     expect([...SPOT_LAYER_ORDER]).toEqual(['scene', 'spots', 'captions']);
     expect(SPOT_Z_INDEX).toBeLessThan(40);
@@ -111,24 +114,30 @@ describe('export vs preview parity', () => {
       if (preview) expect([exported[0]!.startSec, exported[0]!.durSec]).toEqual([preview.startSec, preview.durSec]);
     }
   });
-  it('identical box: preview CSS (cqh of frame) == export quad (fractions of frame height)', () => {
-    const FRAME_H = 1080;
-    const FRAME_W = 1920;
-    for (const [spec, aspect, [nw, nh]] of [
-      [specs[0]!, 16 / 9, [1920, 1080]],
-      [specs[1]!, 4 / 3, [800, 600]],
-    ] as const) {
-      const q = spotQuadRect(spec, FRAME_W, FRAME_H, nw, nh);
-      const css = spotBoxStyle(spec.corner, spec.heightPct, aspect);
-      const cqh = (v: string) => (parseFloat(v) / 100) * FRAME_H;
-      expect(cqh(css.height!)).toBeCloseTo(q.h, 6);
-      expect(cqh(css.height!) * aspect).toBeCloseTo(q.w, 6);
-      const margin = cqh(spec.corner.startsWith('top') ? css.top! : css.bottom!);
-      expect(spec.corner.startsWith('top') ? q.y : FRAME_H - q.y - q.h).toBeCloseTo(margin, 6);
-      const hMargin = cqh(spec.corner.endsWith('right') ? css.right! : css.left!);
-      expect(spec.corner.endsWith('right') ? FRAME_W - q.x - q.w : q.x).toBeCloseTo(hMargin, 6);
-      // border drawn OUTSIDE the quad by the same thickness
-      expect(spotBorderRect(q, FRAME_H).w - q.w).toBeCloseTo(2 * (SPOT_BORDER_PCT / 100) * FRAME_H, 6);
+  it('identical rect: the preview item rect IS the export spec rect (default AND a stamped manual geometry)', () => {
+    expect(specs).toHaveLength(2);
+    for (const spec of specs) {
+      const item = items.find(i => i.assetId === spec.assetId)!;
+      expect({ xPct: spec.xPct, yPct: spec.yPct, wPct: spec.wPct, hPct: spec.hPct }).toEqual(item.rect);
     }
+    expect(specs[1]).toMatchObject(GEOM);
+  });
+  it('export px quad == CSS % of the same frame; border drawn outside by the shared thickness', () => {
+    for (const spec of specs) {
+      const q = spotQuadRect(spec, 1920, 1080);
+      const css = geom.rectToCss(spec);
+      expect(q.x).toBeCloseTo((parseFloat(css.left) / 100) * 1920, 6);
+      expect(q.y).toBeCloseTo((parseFloat(css.top) / 100) * 1080, 6);
+      expect(q.w).toBeCloseTo((parseFloat(css.width) / 100) * 1920, 6);
+      expect(q.h).toBeCloseTo((parseFloat(css.height) / 100) * 1080, 6);
+      expect(spotBorderRect(q, 1080).w - q.w).toBeCloseTo(2 * (SPOT_BORDER_PCT / 100) * 1080, 6);
+    }
+  });
+  it('a manual geometry edit changes the resume hash (export re-bakes it)', async () => {
+    const dims = { fps: 30, width: 1920, height: 1080 };
+    const base = await buildSourceTimelineHash(timelineIdentityFromProject(p, dims, { spotRenderSpecs: specs }));
+    const moved = buildExportSpotPayload(
+      project([SPOTS[0]!, { ...SPOTS[1]!, geometry: { ...GEOM, xPct: 21 } }, SPOTS[2]!]), layout).specs;
+    expect(await buildSourceTimelineHash(timelineIdentityFromProject(p, dims, { spotRenderSpecs: moved }))).not.toBe(base);
   });
 });

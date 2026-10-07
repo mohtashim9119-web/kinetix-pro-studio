@@ -9,23 +9,28 @@
  * byte-identical to today's export (no renderer, no extra decode).
  */
 
+import { rectToPx, SPOT_BORDER_HEIGHT_FRAC, SPOT_MARGIN_HEIGHT_FRAC } from '../spots/spotGeometry';
+
 export type SpotCorner = 'top-right' | 'top-left' | 'bottom-right' | 'bottom-left';
 
+/** The RESOLVED box in percent of the frame (geometry override, else the
+ *  corner/heightPct default) — resolved app-side by the shared `spotGeometry`
+ *  helper; the worker renders this rect directly. */
 export interface SpotRenderSpec {
   assetId: string;
   startSec: number;
   durSec: number;
-  corner: SpotCorner;
-  heightPct: number;
+  xPct: number;
+  yPct: number;
+  wPct: number;
+  hPct: number;
 }
 
 /** scene < spots < captions/headings — pin against preview layering. */
 export const SPOT_LAYER_ORDER = ['scene', 'spots', 'captions'] as const;
 
-/** Inset from the chosen corner, as a fraction of frame height (size-independent). */
-export const SPOT_MARGIN_HEIGHT_FRAC = 0.02;
-/** Border thickness as a fraction of frame height. */
-export const SPOT_BORDER_HEIGHT_FRAC = 0.006;
+// Defined ONCE in the shared geometry helper (preview + export cannot drift).
+export { SPOT_MARGIN_HEIGHT_FRAC, SPOT_BORDER_HEIGHT_FRAC };
 export const SPOT_BORDER_RGBA: readonly [number, number, number, number] = [1, 1, 1, 1];
 
 export function hasSpotRenderWork(specs: readonly SpotRenderSpec[] | null | undefined): boolean {
@@ -51,32 +56,13 @@ export interface SpotQuadRect {
   h: number;
 }
 
-/**
- * Percentage-based PiP quad: height = heightPct of frame height; width follows
- * the clip's native aspect. Margin/border scale with frame height so 720p and
- * 1080p land on the same relative corner.
- */
+/** The spec's rect in output pixels (shared helper — identical to the preview's). */
 export function spotQuadRect(
-  spec: Pick<SpotRenderSpec, 'corner' | 'heightPct'>,
+  spec: Pick<SpotRenderSpec, 'xPct' | 'yPct' | 'wPct' | 'hPct'>,
   frameW: number,
   frameH: number,
-  nativeW: number,
-  nativeH: number,
 ): SpotQuadRect {
-  const h = (spec.heightPct / 100) * frameH;
-  const aspect = nativeH === 0 ? 1 : nativeW / nativeH;
-  const w = h * aspect;
-  const margin = SPOT_MARGIN_HEIGHT_FRAC * frameH;
-  switch (spec.corner) {
-    case 'top-left':
-      return { x: margin, y: margin, w, h };
-    case 'top-right':
-      return { x: frameW - w - margin, y: margin, w, h };
-    case 'bottom-left':
-      return { x: margin, y: frameH - h - margin, w, h };
-    case 'bottom-right':
-      return { x: frameW - w - margin, y: frameH - h - margin, w, h };
-  }
+  return rectToPx(spec, frameW, frameH);
 }
 
 export function spotBorderRect(quad: SpotQuadRect, frameH: number): SpotQuadRect {
@@ -90,18 +76,22 @@ export function canonicalSpotRenderSpecs(
   assetId: string;
   startSec: number;
   durSec: number;
-  corner: SpotCorner;
-  heightPct: number;
+  xPct: number;
+  yPct: number;
+  wPct: number;
+  hPct: number;
 }> {
   return [...(specs ?? [])]
     .map((s) => ({
       assetId: s.assetId,
       startSec: s.startSec,
       durSec: s.durSec,
-      corner: s.corner,
-      heightPct: s.heightPct,
+      xPct: s.xPct,
+      yPct: s.yPct,
+      wPct: s.wPct,
+      hPct: s.hPct,
     }))
-    .sort((a, b) => a.startSec - b.startSec || a.assetId.localeCompare(b.assetId) || a.corner.localeCompare(b.corner));
+    .sort((a, b) => a.startSec - b.startSec || a.assetId.localeCompare(b.assetId) || a.xPct - b.xPct || a.yPct - b.yPct);
 }
 
 export interface SpotPathRefusal {

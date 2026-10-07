@@ -17,6 +17,14 @@
 
 import type { Asset, Spot, SpotRenderSpec, VideoSegment } from '../../types';
 import type { SpotFinding } from './spotFinding';
+import { resolveSpotRect, type PctRect } from './spotGeometry';
+
+export interface SpotLayout {
+  /** Frame width / height (default 16:9). */
+  frameAspect?: number;
+  /** assetId -> native width / height, when known (default 16:9). */
+  clipAspects?: Readonly<Record<string, number>>;
+}
 
 export const IMAGE_SPOT_SEC = 3;
 
@@ -28,10 +36,10 @@ export interface ResolveSpotsResult {
    *  as `Spot.lastKnownStartSec`. */
   lastKnown: Record<string, number>;
   /** spotId -> final placement (after clamp/overlap); absent = not rendered. */
-  bySpot: Record<string, { startSec: number; durSec: number }>;
+  bySpot: Record<string, { startSec: number; durSec: number; rect: PctRect }>;
   /** Placement of spots with no usable clip (unbound, or clip deleted/offline) so
    *  the preview can show a [NO CLIP] tile with the timing kept. Never exported. */
-  noClip: Record<string, { startSec: number; durSec: number }>;
+  noClip: Record<string, { startSec: number; durSec: number; rect: PctRect }>;
   /** Spots whose anchor segment no longer exists. */
   needsReview: string[];
 }
@@ -50,11 +58,14 @@ export function resolveSpots(
   segments: readonly VideoSegment[],
   assets: readonly Asset[],
   voiceoverDur: number,
+  layout: SpotLayout = {},
 ): ResolveSpotsResult {
+  const frameAspect = layout.frameAspect ?? 16 / 9;
+  const aspectOf = (assetId?: string): number => (assetId && layout.clipAspects?.[assetId]) || 16 / 9;
   const findings: SpotFinding[] = [];
   const lastKnown: Record<string, number> = {};
   const needsReview: string[] = [];
-  const noClip: Record<string, { startSec: number; durSec: number }> = {};
+  const noClip: Record<string, { startSec: number; durSec: number; rect: PctRect }> = {};
   const live: { spotId: string; spot: Spot; startSec: number; durSec: number; order: number }[] = [];
 
   spots.forEach((spot, order) => {
@@ -68,7 +79,7 @@ export function resolveSpots(
       startSec = spot.lastKnownStartSec;
     }
     const ghost = () => {
-      if (startSec !== undefined) noClip[spot.id] = { startSec, durSec: spot.durOverrideSec ?? IMAGE_SPOT_SEC };
+      if (startSec !== undefined) noClip[spot.id] = { startSec, durSec: spot.durOverrideSec ?? IMAGE_SPOT_SEC, rect: resolveSpotRect(spot, aspectOf(spot.assetId), frameAspect) };
     };
     if (!spot.assetId) { ghost(); return; }
     const asset = assets.find(a => a.id === spot.assetId);
@@ -134,14 +145,12 @@ export function resolveSpots(
     out.push(cur);
   }
 
-  const specs: SpotRenderSpec[] = out.map(l => ({
-    assetId: l.spot.assetId!,
-    startSec: l.startSec,
-    durSec: r3(l.durSec),
-    corner: l.spot.corner,
-    heightPct: l.spot.heightPct,
-  }));
-  const bySpot: Record<string, { startSec: number; durSec: number }> = {};
-  out.forEach(l => { bySpot[l.spotId] = { startSec: l.startSec, durSec: r3(l.durSec) }; });
+  const rectOf = (l: (typeof out)[number]): PctRect => resolveSpotRect(l.spot, aspectOf(l.spot.assetId), frameAspect);
+  const specs: SpotRenderSpec[] = out.map(l => {
+    const rect = rectOf(l);
+    return { assetId: l.spot.assetId!, startSec: l.startSec, durSec: r3(l.durSec), ...rect };
+  });
+  const bySpot: Record<string, { startSec: number; durSec: number; rect: PctRect }> = {};
+  out.forEach(l => { bySpot[l.spotId] = { startSec: l.startSec, durSec: r3(l.durSec), rect: rectOf(l) }; });
   return { specs, findings, lastKnown, bySpot, noClip, needsReview };
 }

@@ -33,9 +33,9 @@ describe('resolveSpots', () => {
     ];
     const r = resolveSpots(spots, segs, assets, 10);
     expect(r.specs).toEqual([
-      { assetId: 'v', startSec: 0, durSec: 4, corner: 'top-right', heightPct: 40 },
-      { assetId: 'i', startSec: 5, durSec: 1, corner: 'top-right', heightPct: 40 },   // B truncated by C (last wins)
-      { assetId: 'i', startSec: 6, durSec: 2, corner: 'bottom-left', heightPct: 40 },
+      { assetId: 'v', startSec: 0, durSec: 4, xPct: 58.875, yPct: 2, wPct: 40, hPct: 40 },
+      { assetId: 'i', startSec: 5, durSec: 1, xPct: 58.875, yPct: 2, wPct: 40, hPct: 40 },   // B truncated by C (last wins)
+      { assetId: 'i', startSec: 6, durSec: 2, xPct: 1.125, yPct: 58, wPct: 40, hPct: 40 },
     ]);
     expect(r.findings.map(f => [f.kind, f.spotId])).toEqual([
       ['spot-clip-missing', 'D'],
@@ -47,8 +47,8 @@ describe('resolveSpots', () => {
     ]);
     expect(r.lastKnown).toEqual({ A: 0, B: 5, C: 6, D: 0 });
     // Deleted clip: timing kept (start + default 3s) so the preview can show [NO CLIP] in place.
-    expect(r.noClip).toEqual({ D: { startSec: 0, durSec: 3 } });
-    expect(r.bySpot).toEqual({ A: { startSec: 0, durSec: 4 }, B: { startSec: 5, durSec: 1 }, C: { startSec: 6, durSec: 2 } });
+    expect(r.noClip.D).toMatchObject({ startSec: 0, durSec: 3 });
+    expect(Object.fromEntries(Object.entries(r.bySpot).map(([k, v]) => [k, [v.startSec, v.durSec]]))).toEqual({ A: [0, 4], B: [5, 1], C: [6, 2] });
   });
 
   it('clamps at the voiceover end with a finding; fully past -> dropped + finding', () => {
@@ -59,7 +59,7 @@ describe('resolveSpots', () => {
       ],
       segs, assets, 10,
     );
-    expect(r.specs).toEqual([{ assetId: 'vl', startSec: 9, durSec: 1, corner: 'top-right', heightPct: 40 }]);
+    expect(r.specs).toEqual([{ assetId: 'vl', startSec: 9, durSec: 1, xPct: 58.875, yPct: 2, wPct: 40, hPct: 40 }]);
     expect(r.findings.map(f => [f.kind, f.spotId])).toEqual([['spot-past-voiceover', 'E'], ['spot-past-voiceover', 'F']]);
     expect(r.findings.map(f => f.message)).toEqual([
       'Scene 2: Spot runs past the voiceover — trimmed.',
@@ -72,7 +72,7 @@ describe('resolveSpots', () => {
       [spot({ id: 'G', anchorSegmentId: 'deleted', assetId: 'i', lastKnownStartSec: 7 })],
       segs, assets, 10,
     );
-    expect(r.specs).toEqual([{ assetId: 'i', startSec: 7, durSec: 3, corner: 'top-right', heightPct: 40 }]);
+    expect(r.specs).toEqual([{ assetId: 'i', startSec: 7, durSec: 3, xPct: 58.875, yPct: 2, wPct: 40, hPct: 40 }]);
     expect(r.needsReview).toEqual(['G']);
   });
 
@@ -86,7 +86,7 @@ describe('resolveSpots', () => {
     const r = resolveSpots([spot({ id: 'U', anchorSegmentId: 's1' })], segs, assets, 10);
     expect(r.specs).toEqual([]);
     expect(r.findings).toEqual([]);
-    expect(r.noClip).toEqual({ U: { startSec: 0, durSec: 3 } });
+    expect(r.noClip.U).toMatchObject({ startSec: 0, durSec: 3 });
   });
 
   it('video with unknown length is not guessed: dropped + spot-clip-missing', () => {
@@ -96,5 +96,19 @@ describe('resolveSpots', () => {
     );
     expect(r.specs).toEqual([]);
     expect(r.findings.map(f => f.kind)).toEqual(['spot-clip-missing']);
+  });
+});
+
+describe('resolved rect (geometry + layout)', () => {
+  it('a stamped geometry override wins and is carried verbatim into the spec', () => {
+    const g = { xPct: 10, yPct: 20, wPct: 30, hPct: 25 };
+    const r = resolveSpots([spot({ id: 'G', anchorSegmentId: 's1', assetId: 'i', geometry: g })], segs, assets, 10);
+    expect(r.specs[0]).toMatchObject(g);
+    expect(r.bySpot.G!.rect).toEqual(g);
+  });
+  it('default rect uses the clip aspect + frame aspect when known (portrait clip is narrower)', () => {
+    const r = resolveSpots([spot({ id: 'P', anchorSegmentId: 's1', assetId: 'i' })], segs, assets, 10, { frameAspect: 16 / 9, clipAspects: { i: 9 / 16 } });
+    expect(r.specs[0]!.wPct).toBeCloseTo(40 * (9 / 16) / (16 / 9), 6);
+    expect(r.specs[0]!.hPct).toBe(40);
   });
 });

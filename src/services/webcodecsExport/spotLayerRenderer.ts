@@ -128,7 +128,7 @@ export class SpotLayerRenderer {
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     for (const draw of draws) {
-      const quad = spotQuadRect(draw.spec, frameW, frameH, draw.nativeW, draw.nativeH);
+      const quad = spotQuadRect(draw.spec, frameW, frameH);
       const border = spotBorderRect(quad, frameH);
       this.drawSolid(border, frameW, frameH, SPOT_BORDER_RGBA);
       gl.bindTexture(gl.TEXTURE_2D, this.texture);

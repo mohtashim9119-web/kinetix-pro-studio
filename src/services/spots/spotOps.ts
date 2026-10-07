@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import type { Spot, SpotCorner } from '../../types';
+import type { Spot, SpotCorner, SpotGeometry } from '../../types';
 import type { ResolveSpotsResult } from './resolveSpots';
 
 export function mergeDocSpots(existing: readonly Spot[], bound: readonly Spot[]): Spot[] {
@@ -37,17 +37,23 @@ export interface SpotPatch {
   heightPct?: number;
   offsetSec?: number;
   assetId?: string | null;
+  /** The name this clip was chosen by (what the wand would re-bind by). */
+  clipName?: string;
   /** A number stamps the manual override; null clears it (back to full clip / 3s). */
   durOverrideSec?: number | null;
+  /** A stamped manual box; null clears it (back to the corner default). */
+  geometry?: SpotGeometry | null;
 }
 
 export function patchSpot(spots: readonly Spot[], id: string, patch: SpotPatch): Spot[] {
   return spots.map(s => {
     if (s.id !== id) return s;
-    const { durOverrideSec, assetId, ...rest } = patch;
+    const { durOverrideSec, assetId, geometry, ...rest } = patch;
     const next: Spot = { ...s, ...rest };
     if (durOverrideSec === null) delete next.durOverrideSec;
     else if (durOverrideSec !== undefined) next.durOverrideSec = durOverrideSec;
+    if (geometry === null) delete next.geometry;
+    else if (geometry !== undefined) next.geometry = geometry;
     if (assetId === null) delete next.assetId;
     else if (assetId !== undefined) next.assetId = assetId;
     return next;

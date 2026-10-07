@@ -7,19 +7,16 @@
  * Pure math for the Layer-2 preview rectangle. The master <audio> is the only
  * clock: everything here is a function of the stage's `currentTime`.
  *
- * LAYOUT CONTRACT (export parity): the box is `heightPct`% of FRAME height tall,
- * width = native aspect, inset `SPOT_MARGIN_PCT`% of frame height from BOTH of
- * its anchor edges, with a `SPOT_BORDER_PCT`% (of frame height) white border
- * drawn outside the box (as the export quad's border rect).
+ * LAYOUT CONTRACT (export parity): the box is the resolved percent rect from
+ * `spotGeometry` (the same rect the export bakes), with a `SPOT_BORDER_PCT`% (of
+ * frame height) white border drawn outside the box.
  */
 
-import type { SpotCorner } from '../../types';
 
-import { SPOT_BORDER_HEIGHT_FRAC, SPOT_MARGIN_HEIGHT_FRAC } from '../webcodecsExport/spotRenderSpec';
+import { SPOT_BORDER_HEIGHT_FRAC, type PctRect } from './spotGeometry';
 
-/** Derived from the export lane's constants so preview and export cannot drift
- *  (rounded only to defeat float dust). The border is drawn OUTSIDE the box. */
-export const SPOT_MARGIN_PCT = +(SPOT_MARGIN_HEIGHT_FRAC * 100).toFixed(4);
+/** Derived from the shared geometry constants (defined once) so preview and
+ *  export cannot drift. The border is drawn OUTSIDE the box. */
 export const SPOT_BORDER_PCT = +(SPOT_BORDER_HEIGHT_FRAC * 100).toFixed(4);
 /** Stage-internal z scale: media (none) < SPOTS 35 < extra overlays 40 <
  *  text layers 45 < caption 46 < headings 47 < corner stats 50. */
@@ -30,8 +27,8 @@ export interface PreviewSpotItem {
   assetId?: string;
   startSec: number;
   durSec: number;
-  corner: SpotCorner;
-  heightPct: number;
+  /** The RESOLVED box (% of frame) from `resolveSpots` — the same rect export bakes. */
+  rect: PctRect;
 }
 
 export function activeSpotAt(items: readonly PreviewSpotItem[], t: number): PreviewSpotItem | undefined {
@@ -57,16 +54,4 @@ export function computeSpotSync(a: {
   const shouldPlay = a.isPlaying && !pastClip;
   const tol = shouldPlay ? PLAY_DRIFT_TOL : PAUSED_SEEK_TOL;
   return Math.abs(a.elTime - target) > tol ? { seekTo: target, shouldPlay } : { shouldPlay };
-}
-
-export function spotBoxStyle(corner: SpotCorner, heightPct: number, aspect: number): Partial<Record<'height' | 'aspectRatio' | 'top' | 'bottom' | 'left' | 'right', string>> {
-  const m = `${SPOT_MARGIN_PCT}cqh`;
-  const vertical = corner.startsWith('top') ? { top: m } : { bottom: m };
-  const horizontal = corner.endsWith('right') ? { right: m } : { left: m };
-  return {
-    height: `${heightPct}cqh`,
-    aspectRatio: String(aspect),
-    ...vertical,
-    ...horizontal,
-  };
 }
