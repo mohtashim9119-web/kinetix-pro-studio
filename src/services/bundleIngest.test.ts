@@ -255,3 +255,70 @@ describe('classifyAndIngestBundleZip — dedup against the project', () => {
     expect(outcome.mediaAssets).toHaveLength(0);
   });
 });
+
+describe('classifyAndIngestBundleZip — Layer 2 routing (filename keywords only)', () => {
+  const BASE = () => ({
+    'script.txt': fakeEntry('script.txt', SCRIPT_TEXT),
+    'scene.txt': fakeEntry('scene.txt', SCENE_TEXT),
+    'voice.mp3': fakeEntry('voice.mp3', new Uint8Array([9])),
+    'shot.jpg': fakeEntry('shot.jpg', new Uint8Array([1])),
+  });
+  const L2_TEXT = '[shot_one] avatar.mp4\n[shot_two]\n[shot_three]';
+
+  it('avatar-scenes.txt routes to layer 2 — and does NOT displace the main scene doc (old trap: detectTextFileRole)', async () => {
+    mockZipFiles = { ...BASE(), 'avatar-scenes.txt': fakeEntry('avatar-scenes.txt', L2_TEXT) };
+    const outcome = await classifyAndIngestBundleZip(PROJECT_ID, zipFile());
+    if (outcome.kind !== 'success') throw new Error('expected success');
+    expect(outcome.spotDocFile?.name).toBe('avatar-scenes.txt');
+    expect(await outcome.spotDocFile!.text()).toBe(L2_TEXT);
+    expect(outcome.sceneFile.name).toBe('scene.txt');
+    expect(outcome.scriptFile.name).toBe('script.txt');
+    expect(outcome.spotDocNotes ?? []).toEqual([]);
+  });
+
+  it('keywords are case-insensitive and filename-only (a folder name does not route)', async () => {
+    mockZipFiles = { ...BASE(), 'Overlay/notes.txt': fakeEntry('Overlay/notes.txt', 'plain script words') };
+    const a = await classifyAndIngestBundleZip(PROJECT_ID, zipFile());
+    if (a.kind !== 'success') throw new Error('expected success');
+    expect(a.spotDocFile).toBeUndefined();
+
+    mockZipFiles = { ...BASE(), 'LAYER2.TXT': fakeEntry('LAYER2.TXT', L2_TEXT) };
+    const b = await classifyAndIngestBundleZip(PROJECT_ID, zipFile());
+    if (b.kind !== 'success') throw new Error('expected success');
+    expect(b.spotDocFile?.name).toBe('LAYER2.TXT');
+  });
+
+  it('two keyword files are ambiguous: none routed, honest note naming both', async () => {
+    mockZipFiles = {
+      ...BASE(),
+      'avatar-a.txt': fakeEntry('avatar-a.txt', L2_TEXT),
+      'overlay-b.txt': fakeEntry('overlay-b.txt', L2_TEXT),
+    };
+    const outcome = await classifyAndIngestBundleZip(PROJECT_ID, zipFile());
+    if (outcome.kind !== 'success') throw new Error('expected success');
+    expect(outcome.spotDocFile).toBeUndefined();
+    expect(outcome.spotDocNotes).toHaveLength(1);
+    expect(outcome.spotDocNotes![0]).toContain('avatar-a.txt');
+    expect(outcome.spotDocNotes![0]).toContain('overlay-b.txt');
+  });
+
+  it('a layer-2 doc is never required: validation unchanged, field simply absent', async () => {
+    mockZipFiles = BASE();
+    const outcome = await classifyAndIngestBundleZip(PROJECT_ID, zipFile());
+    if (outcome.kind !== 'success') throw new Error('expected success');
+    expect('spotDocFile' in outcome).toBe(false);
+  });
+
+  it('macOS metadata twin of the layer-2 doc is filtered for free', async () => {
+    mockZipFiles = {
+      ...BASE(),
+      'avatar-scenes.txt': fakeEntry('avatar-scenes.txt', L2_TEXT),
+      '__MACOSX/._avatar-scenes.txt': fakeEntry('__MACOSX/._avatar-scenes.txt', 'junk'),
+      '._avatar-scenes.txt': fakeEntry('._avatar-scenes.txt', 'junk'),
+    };
+    const outcome = await classifyAndIngestBundleZip(PROJECT_ID, zipFile());
+    if (outcome.kind !== 'success') throw new Error('expected success');
+    expect(outcome.spotDocFile?.name).toBe('avatar-scenes.txt');
+    expect(outcome.spotDocNotes ?? []).toEqual([]);
+  });
+});

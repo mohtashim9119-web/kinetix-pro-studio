@@ -64,6 +64,7 @@ import { isMacOSMetadataPath } from '../services/macosMetadata';
 import type { MediaIngestCounts } from '../services/mediaIngest';
 import { Z } from './overlayLayers';
 import { Layer2Panel, type Layer2PanelProps } from './Layer2Panel';
+import { planLooseSceneDocs } from '../services/spots/spotRouting';
 
 // ---------------------------------------------------------------------------
 // Exported types (consumed by App.tsx)
@@ -616,6 +617,9 @@ export function DropZonePanel({
   // G5 — bundle ingest's own confirmation line (success only; a failure uses
   // `slotError` above, matching every other slot-drop error already does).
   const [bundleNotice, setBundleNotice] = useState<string | null>(null);
+  // Layer 2 — a SECOND scene-format doc dropped on this (spine-only) area is
+  // offered to Layer 2 once; never silently used as scene or script.
+  const [layer2Offers, setLayer2Offers] = useState<File[]>([]);
 
   // ── Staged file state ─────────────────────────────────────────────────────
   const [staged, setStaged] = useState<StagedFiles>(EMPTY_STAGED);
@@ -927,6 +931,19 @@ export function DropZonePanel({
       }
     }
 
+    // Layer 2 ask-once: among this drop's auto-detected scene-format docs only
+    // one may claim the scene slot; the rest are offered to Layer 2 instead of
+    // quietly becoming the script. (Only when the Layer 2 panel exists.)
+    if (layer2) {
+      const sceneIdx = textEntries.map((t, i) => (t.role === 'sceneDetails' ? i : -1)).filter(i => i >= 0);
+      const plan = planLooseSceneDocs(sceneIdx.map(i => textEntries[i]!.file.name));
+      if (plan.offerIndexes.length > 0) {
+        const drop = new Set(plan.offerIndexes.map(i => sceneIdx[i]!));
+        setLayer2Offers(prev => [...prev, ...textEntries.filter((_, i) => drop.has(i)).map(t => t.file)]);
+        for (let i = textEntries.length - 1; i >= 0; i--) if (drop.has(i)) textEntries.splice(i, 1);
+      }
+    }
+
     // G5 — classify every zip candidate: a bundle (script/scene-doc/
     // voiceover-pattern markers alongside media) is fully validated and
     // ingested right here (see `bundleIngest.ts`'s own doc comment for the
@@ -943,6 +960,8 @@ export function DropZonePanel({
     let bundleNestedZipsSkipped: string[] = [];
     let bundleZipNames: string[] = [];
     let bundleReconnected: NonNullable<MediaIngestOutcome['reconnected']> = [];
+    const bundleSpotRouted: string[] = [];
+    const bundleSpotNotes: string[] = [];
 
     for (const z of zipCandidates) {
       const existingHashes = assets.map(a => a.contentHash).filter((h): h is string => !!h);
@@ -970,6 +989,11 @@ export function DropZonePanel({
         bundleNestedZipsSkipped = [...bundleNestedZipsSkipped, ...outcome.nestedZipsSkipped];
         bundleReconnected = [...bundleReconnected, ...(outcome.reconnected ?? [])];
         bundleZipNames = [...bundleZipNames, z.file.name];
+        if (outcome.spotDocFile && layer2) {
+          layer2.onDropDoc(outcome.spotDocFile);
+          bundleSpotRouted.push(outcome.spotDocFile.name);
+        }
+        if (outcome.spotDocNotes) bundleSpotNotes.push(...outcome.spotDocNotes);
       }
     }
 
@@ -985,7 +1009,9 @@ export function DropZonePanel({
       });
       setBundleNotice(
         `Imported bundle ${bundleZipNames.map(n => `"${n}"`).join(', ')}: script, scene details, ` +
-        `voiceover, and ${bundleMediaAssets.length} media file${bundleMediaAssets.length === 1 ? '' : 's'}.`,
+        `voiceover, and ${bundleMediaAssets.length} media file${bundleMediaAssets.length === 1 ? '' : 's'}.` +
+        (bundleSpotRouted.length > 0 ? ` Routed ${bundleSpotRouted.map(n => `"${n}"`).join(', ')} to Layer 2.` : '') +
+        (bundleSpotNotes.length > 0 ? ` ${bundleSpotNotes.join(' ')}` : ''),
       );
       setTimeout(() => setBundleNotice(null), 6000);
     }
@@ -1337,6 +1363,26 @@ export function DropZonePanel({
               <div className="mx-3 mb-2 px-3 py-2 rounded-[9px] bg-[rgba(80,200,120,.12)] border border-[rgba(80,200,120,.35)] text-[#50C878] text-[12.5px] flex items-center justify-between gap-2">
                 <span>{bundleNotice}</span>
                 <button onClick={() => setBundleNotice(null)} className="hover:opacity-70 shrink-0">✕</button>
+              </div>
+            )}
+
+            {layer2 && layer2Offers.length > 0 && (
+              <div
+                data-testid="layer2-offer"
+                className="mx-3 mb-2 px-3 py-2 rounded-[9px] bg-[rgba(242,125,38,.12)] border border-[rgba(242,125,38,.35)] text-[#F27D26] text-[12.5px] flex flex-col gap-1.5"
+              >
+                <span>"{layer2Offers[0]!.name}" looks like a Layer-2 doc — add to Layer 2?</span>
+                <div className="flex gap-2">
+                  <button
+                    className="px-2 py-0.5 rounded bg-[rgba(242,125,38,.25)] hover:opacity-80"
+                    onClick={() => { layer2.onDropDoc(layer2Offers[0]!); setLayer2Offers(p => p.slice(1)); }}
+                  >
+                    Add to Layer 2
+                  </button>
+                  <button className="px-2 py-0.5 rounded hover:opacity-80" onClick={() => setLayer2Offers(p => p.slice(1))}>
+                    No, ignore it
+                  </button>
+                </div>
               </div>
             )}
 
