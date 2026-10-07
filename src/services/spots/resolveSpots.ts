@@ -36,6 +36,13 @@ export interface ResolveSpotsResult {
   needsReview: string[];
 }
 
+function labelOf(segments: readonly VideoSegment[], anchorId: string): string {
+  const i = segments.findIndex(s => s.id === anchorId);
+  if (i < 0) return 'Spot';
+  const tag = segments[i]!.tag;
+  return tag ? `[${tag}]` : `Scene ${i + 1}`;
+}
+
 const r3 = (n: number) => Math.round(n * 1000) / 1000;
 
 export function resolveSpots(
@@ -69,7 +76,7 @@ export function resolveSpots(
       findings.push({
         kind: 'spot-clip-missing',
         spotId: spot.id,
-        message: `Layer 2 spot ${spot.id}: its clip is ${asset ? 'offline' : 'no longer in the vault'} — skipped.`,
+        message: `${labelOf(segments, spot.anchorSegmentId)}: Spot clip is ${asset ? 'offline' : 'no longer in the vault'} — skipped.`,
       });
       ghost();
       return;
@@ -81,7 +88,7 @@ export function resolveSpots(
           findings.push({
             kind: 'spot-clip-missing',
             spotId: spot.id,
-            message: `Layer 2 spot ${spot.id}: the length of "${asset.name}" is unknown — skipped rather than guessed.`,
+            message: `${labelOf(segments, spot.anchorSegmentId)}: Length of "${asset.name}" is unknown — skipped.`,
           });
           return;
         }
@@ -101,7 +108,7 @@ export function resolveSpots(
       findings.push({
         kind: 'spot-past-voiceover',
         spotId: l.spotId,
-        message: `Layer 2 spot ${l.spotId} runs past the voiceover end (${r3(voiceoverDur)}s) and was ${l.startSec >= voiceoverDur ? 'dropped' : 'clamped'}.`,
+        message: `${labelOf(segments, l.spot.anchorSegmentId)}: Spot ${l.startSec >= voiceoverDur ? 'starts after the voiceover — skipped' : 'runs past the voiceover — trimmed'}.`,
       });
       if (l.startSec >= voiceoverDur) continue;
       l.durSec = r3(voiceoverDur - l.startSec);
@@ -119,7 +126,7 @@ export function resolveSpots(
       findings.push({
         kind: 'spot-overlap',
         spotId: cur.spotId,
-        message: `Layer 2 spot ${cur.spotId} overlaps the next spot; the later one wins.`,
+        message: `${labelOf(segments, cur.spot.anchorSegmentId)}: Spot overlaps the next spot — the later one wins.`,
       });
       cur.durSec = r3(next.startSec - cur.startSec);
       if (cur.durSec <= 0) continue;

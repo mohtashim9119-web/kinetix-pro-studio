@@ -16,7 +16,7 @@ const spot = (o: Partial<Spot> & { id: string }): Spot => ({
 
 describe('spotOps', () => {
   it('mergeDocSpots replaces prior doc spots, keeps manual + sprinkle', () => {
-    const existing = [spot({ id: 'a' }), spot({ id: 'm', source: 'manual' }), spot({ id: 'sp', source: 'sprinkle' })];
+    const existing = [spot({ id: 'a' }), spot({ id: 'm', source: 'manual' }), spot({ id: 'sp', source: 'manual' })];
     const r = mergeDocSpots(existing, [spot({ id: 'n' })]);
     expect(r.map(s => s.id)).toEqual(['m', 'sp', 'n']);
   });

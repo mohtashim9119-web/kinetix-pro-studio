@@ -41,6 +41,10 @@ describe('resolveSpots', () => {
       ['spot-clip-missing', 'D'],
       ['spot-overlap', 'B'],
     ]);
+    expect(r.findings.map(f => f.message)).toEqual([
+      'Scene 1: Spot clip is no longer in the vault — skipped.',
+      'Scene 2: Spot overlaps the next spot — the later one wins.',
+    ]);
     expect(r.lastKnown).toEqual({ A: 0, B: 5, C: 6, D: 0 });
     // Deleted clip: timing kept (start + default 3s) so the preview can show [NO CLIP] in place.
     expect(r.noClip).toEqual({ D: { startSec: 0, durSec: 3 } });
@@ -57,6 +61,10 @@ describe('resolveSpots', () => {
     );
     expect(r.specs).toEqual([{ assetId: 'vl', startSec: 9, durSec: 1, corner: 'top-right', heightPct: 40 }]);
     expect(r.findings.map(f => [f.kind, f.spotId])).toEqual([['spot-past-voiceover', 'E'], ['spot-past-voiceover', 'F']]);
+    expect(r.findings.map(f => f.message)).toEqual([
+      'Scene 2: Spot runs past the voiceover — trimmed.',
+      'Scene 2: Spot starts after the voiceover — skipped.',
+    ]);
   });
 
   it('deleted anchor segment: keeps last-known absolute, flagged needsReview, never dropped', () => {
