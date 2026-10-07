@@ -51,3 +51,33 @@ describe('spotOps', () => {
     expect(stampResolution(spots, resolveSpots(spots, [], [], 0), false)).toBe(spots);
   });
 });
+
+import { sprinkleSpots } from './spotOps';
+
+describe('sprinkleSpots', () => {
+  const segs = [{ id: 's1' }, { id: 's2' }, { id: 's3' }] as unknown as VideoSegment[];
+  const assets: Asset[] = [
+    { id: 'v', name: 'a.mp4', url: '', type: 'video', duration: 4 },
+    { id: 'au', name: 'vo.mp3', url: '', type: 'audio' },
+  ];
+  let n = 0;
+  const newId = () => `n${++n}`;
+
+  it('every segment WITHOUT a spot gets one: sprinkle source, default asset, no duration override', () => {
+    const existing = [spot({ id: 'keep', anchorSegmentId: 's2', source: 'doc' })];
+    const r = sprinkleSpots(existing, segs, assets, 'v', 7, newId);
+    expect(r.map(s => [s.anchorSegmentId, s.source])).toEqual([['s2', 'doc'], ['s1', 'sprinkle'], ['s3', 'sprinkle']]);
+    expect(r[0]).toBe(existing[0]);
+    const added = r.slice(1);
+    expect(added.every(s => s.assetId === 'v' && s.durOverrideSec === undefined && s.corner === 'top-right' && s.heightPct === 40 && s.boundAt === 7)).toBe(true);
+  });
+  it('is idempotent: a second click adds nothing (same array back)', () => {
+    const once = sprinkleSpots([], segs, assets, 'v', 1, newId);
+    expect(sprinkleSpots(once, segs, assets, 'v', 2, newId)).toBe(once);
+  });
+  it('no usable default asset (unset, deleted, or audio) -> unchanged', () => {
+    expect(sprinkleSpots([], segs, assets, undefined, 1, newId)).toEqual([]);
+    expect(sprinkleSpots([], segs, assets, 'gone', 1, newId)).toEqual([]);
+    expect(sprinkleSpots([], segs, assets, 'au', 1, newId)).toEqual([]);
+  });
+});

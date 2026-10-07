@@ -358,7 +358,7 @@ import { unbindDeletedAssets } from './services/unbindDeletedAssets';
 import { parseSpotDoc, type SpotDocBlock, type SpotDocError } from './services/spots/parseSpotDoc';
 import { bindSpotDoc } from './services/spots/bindSpotDoc';
 import { resolveSpots } from './services/spots/resolveSpots';
-import { mergeDocSpots, addManualSpot, patchSpot, deleteSpot, stampResolution, type SpotPatch } from './services/spots/spotOps';
+import { sprinkleSpots, mergeDocSpots, addManualSpot, patchSpot, deleteSpot, stampResolution, type SpotPatch } from './services/spots/spotOps';
 import type { PreviewSpotItem } from './services/spots/spotPreviewMath';
 import { buildSpotFindingEntries } from './services/spots/spotLog';
 import type { SpotFinding } from './services/spots/spotFinding';
@@ -4919,8 +4919,11 @@ export default function App() {
     }, { label: 'Set default Layer 2 clip' });
   }, [setProject]);
   const handleSprinkleSpots = useCallback(() => {
-    // U7 wires this.
-  }, []);
+    setProject(p => {
+      const next = sprinkleSpots(p.spots ?? [], p.segments, p.assets, p.defaultSpotAssetId, Date.now());
+      return next === (p.spots ?? []) ? p : { ...p, spots: next };
+    }, { label: 'Sprinkle Layer 2 spots' });
+  }, [setProject]);
 
   // Media workflow Unit 3 — a Media block tile dropped on a timeline
   // segment. The user's pick is authoritative (no name logic); assignment

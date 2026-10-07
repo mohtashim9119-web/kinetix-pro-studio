@@ -79,3 +79,33 @@ export function stampResolution(spots: Spot[], result: ResolveSpotsResult, hasTi
   });
   return changed ? next : spots;
 }
+
+/** Sprinkle: every segment with NO spot anchored to it gets one carrying the
+ *  default Layer-2 asset. No duration is stamped — a video plays its full clip,
+ *  an image 3s, resolved at resolve time — so each is fully editable/deletable.
+ *  Returns the SAME array when nothing is added (idempotent). */
+export function sprinkleSpots(
+  spots: Spot[],
+  segments: readonly { id: string }[],
+  assets: readonly { id: string; type: string }[],
+  defaultAssetId: string | undefined,
+  now: number,
+  newId: () => string = () => crypto.randomUUID(),
+): Spot[] {
+  const usable = defaultAssetId && assets.some(a => a.id === defaultAssetId && (a.type === 'video' || a.type === 'image'));
+  if (!usable) return spots;
+  const anchored = new Set(spots.map(s => s.anchorSegmentId));
+  const added: Spot[] = segments
+    .filter(seg => !anchored.has(seg.id))
+    .map(seg => ({
+      id: newId(),
+      assetId: defaultAssetId,
+      anchorSegmentId: seg.id,
+      offsetSec: 0,
+      corner: 'top-right' as const,
+      heightPct: 40,
+      source: 'sprinkle' as const,
+      boundAt: now,
+    }));
+  return added.length > 0 ? [...spots, ...added] : spots;
+}
