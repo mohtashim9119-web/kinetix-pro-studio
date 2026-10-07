@@ -115,10 +115,11 @@ const countPictures = async (session: ResumeSessionHandle, path: string): Promis
 export async function buildExpectedIdentity(
   project: Project,
   dims: { fps: number; width: number; height: number },
+  extras?: { spotRenderSpecs?: import('./spotRenderSpec').SpotRenderSpec[] | null },
 ): Promise<ExportCheckpointExpectedIdentity> {
   return {
     projectId: project.id,
-    sourceTimelineHash: await buildSourceTimelineHash(timelineIdentityFromProject(project, dims)),
+    sourceTimelineHash: await buildSourceTimelineHash(timelineIdentityFromProject(project, dims, extras)),
     fps: dims.fps,
     width: dims.width,
     height: dims.height,
@@ -148,6 +149,7 @@ export async function findResumeOffer(params: {
   nowMs?: number;
   io?: ResumeDiscoveryIo;
   countPicturesImpl?: (session: ResumeSessionHandle, path: string) => Promise<number>;
+  spotRenderSpecs?: import('./spotRenderSpec').SpotRenderSpec[] | null;
 }): Promise<{ offer: ResumeOffer | null; notice: ResumeRefusalNotice | null }> {
   const io = params.io ?? tauriIo;
   const count = params.countPicturesImpl ?? countPictures;
@@ -177,7 +179,7 @@ export async function findResumeOffer(params: {
   try {
     const expected = await buildExpectedIdentity(params.project, {
       fps: params.fps, width: params.width, height: params.height,
-    });
+    }, { spotRenderSpecs: params.spotRenderSpecs });
     const found = await discoverResumableExport(
       io,
       { expected, pieceExpectedFrames: params.pieceExpectedFrames },

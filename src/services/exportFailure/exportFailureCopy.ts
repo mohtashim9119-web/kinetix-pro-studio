@@ -87,6 +87,14 @@ export const EXPORT_FAILURE_COPY = {
     title: 'Could not resume the saved session',
     body: 'The previous export session could not be reopened, so nothing was re-rendered and no new session was started in its place. Try again, or start a new export.',
   },
+  spot_asset_missing: {
+    title: 'Spot media is missing',
+    body: 'A picture-in-picture clip named for export could not be loaded. The export was refused rather than dropping the spot.',
+  },
+  spot_path_refused: {
+    title: 'Export refused to drop spots',
+    body: 'This export would skip picture-in-picture spots the selected path cannot render, so it was refused before encoding started.',
+  },
 } as const satisfies ExportFailureCopyMap;
 
 export const RESUME_UNAVAILABLE_COPY = {
