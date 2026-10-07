@@ -503,6 +503,11 @@ export interface Spot {
   heightPct: number;
   source: 'doc' | 'sprinkle' | 'manual';
   boundAt: number;
+  /** Absolute start the resolver last computed from a LIVE anchor; if the anchor
+   *  segment is later deleted the spot keeps this time (never deleted). */
+  lastKnownStartSec?: number;
+  /** Anchor segment no longer exists — spot kept at `lastKnownStartSec`, flagged. */
+  needsReview?: boolean;
 }
 
 /** What export consumes (payload field `spotRenderSpecs`), built by the resolver. */
