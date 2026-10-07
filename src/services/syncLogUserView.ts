@@ -221,6 +221,12 @@ const FINDING_ATTENTION: Record<SyncLogFindingKind, AttentionKind | undefined> =
   'asset-unverified': undefined,
   'asset-corrupt': undefined,
   'asset-replaced': undefined,
+  // Layer 2 spots: details only (the Layer-2 panel is their own surface).
+  'spot-segment-unmatched': undefined,
+  'spot-clip-unmatched': undefined,
+  'spot-past-voiceover': undefined,
+  'spot-overlap': undefined,
+  'spot-clip-missing': undefined,
 };
 
 /** The ten-kind mapping for ONE entry, independent of when it was logged.

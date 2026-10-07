@@ -483,6 +483,37 @@ export interface TranscriptToken {
   needsReview?: boolean;
 }
 
+/** Layer 2 spot — the CC->export seam (structural typing; keep in sync with the
+ *  export lane's `SpotRenderSpec` consumer). Anchored to a main segment by its
+ *  content-derived id; `startSec = anchorSegment.startTime + offsetSec`;
+ *  `durSec = durOverrideSec ?? (video ? asset.duration : 3)`. No end sec is
+ *  ever stored — only an explicit user override (`durOverrideSec`). */
+export type SpotCorner = 'top-right' | 'top-left' | 'bottom-right' | 'bottom-left';
+export interface Spot {
+  id: string;
+  assetId?: string;
+  anchorSegmentId: string;
+  /** Default 0. */
+  offsetSec: number;
+  /** Stamped by a manual edge-drag / panel edit; preserved across re-sync. */
+  durOverrideSec?: number;
+  /** Default 'top-right'. */
+  corner: SpotCorner;
+  /** Percent of frame height, default 40; width = native aspect. */
+  heightPct: number;
+  source: 'doc' | 'sprinkle' | 'manual';
+  boundAt: number;
+}
+
+/** What export consumes (payload field `spotRenderSpecs`), built by the resolver. */
+export interface SpotRenderSpec {
+  assetId: string;
+  startSec: number;
+  durSec: number;
+  corner: SpotCorner;
+  heightPct: number;
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -501,6 +532,13 @@ export interface Project {
    *  Optional at the type level so existing Project literals (dev fixtures, older
    *  persisted projects) remain valid; treat as `[]` when absent (Decision 5). */
   headings?: HeadingOverlay[];
+  /** Layer 2 spots (generic picture-in-picture clips/images anchored to a main
+   *  segment). Additive, headings pattern: treat as `[]` when absent; the store
+   *  defaults it to `[]` on load. Resolution lives in `services/spots/`. */
+  spots?: Spot[];
+  /** Per-project default Layer-2 asset (used when a doc block names no clip, and
+   *  by Sprinkle). Same per-project-seed discipline as `defaultTextOverlay`. */
+  defaultSpotAssetId?: string;
   assets: Asset[];
   voiceoverId?: string;
   lastExportPath?: string;
@@ -916,7 +954,16 @@ export type SyncLogFindingKind =
   | 'asset-missing'
   | 'asset-unverified'
   | 'asset-corrupt'
-  | 'asset-replaced';
+  | 'asset-replaced'
+  /** Layer 2 spots — all details-only. A doc block whose tag matched no main
+   *  segment; a block whose clip name matched no vault asset (and no default);
+   *  a spot clamped at the voiceover end; two spots overlapping (last wins);
+   *  a spot whose asset is gone / skipped at export. */
+  | 'spot-segment-unmatched'
+  | 'spot-clip-unmatched'
+  | 'spot-past-voiceover'
+  | 'spot-overlap'
+  | 'spot-clip-missing';
 
 export interface SyncLogEntry {
   id: string;

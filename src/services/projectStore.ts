@@ -558,8 +558,9 @@ export async function loadProjectDetailed(id: string): Promise<LoadOutcome | nul
   const storedProject = stored.project;
 
   // Path B heading layer (Decision 5): no migration — just default to [] when
-  // absent, for projects saved before the `headings` field existed.
-  const project = { headings: [], ...storedProject } as unknown as Project;
+  // absent, for projects saved before the `headings` field existed. Layer 2
+  // `spots` follows the same additive pattern.
+  const project = { headings: [], spots: [], ...storedProject } as unknown as Project;
   // WS3 Batch B, Piece 2 back-compat — `playbackSpeed` was removed as a
   // concept (a video clip always plays at its native rate). A project
   // saved before this change may still carry a per-segment value; strip it
