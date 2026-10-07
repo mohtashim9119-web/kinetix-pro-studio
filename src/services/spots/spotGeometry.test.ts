@@ -118,13 +118,13 @@ describe('one rect, two surfaces', () => {
 });
 
 describe('formatSpotGeometry (panel geometry row)', () => {
-  it('reads "x 72% · y 8% · 24% × 40%"', () => {
-    expect(formatSpotGeometry({ xPct: 72, yPct: 8, wPct: 24, hPct: 40 })).toBe('x 72% · y 8% · 24% × 40%');
+  it('reads "x 72% · y 8% · w 24% · h 40%"', () => {
+    expect(formatSpotGeometry({ xPct: 72, yPct: 8, wPct: 24, hPct: 40 })).toBe('x 72% · y 8% · w 24% · h 40%');
   });
   it('rounds to whole percents (live-updating without jitter)', () => {
-    expect(formatSpotGeometry({ xPct: 71.6, yPct: 7.5, wPct: 23.51, hPct: 39.49 })).toBe('x 72% · y 8% · 24% × 39%');
+    expect(formatSpotGeometry({ xPct: 71.6, yPct: 7.5, wPct: 23.51, hPct: 39.49 })).toBe('x 72% · y 8% · w 24% · h 39%');
   });
   it('the left-half default reads naturally', () => {
-    expect(formatSpotGeometry(GLOBAL_SPOT_GEOMETRY)).toBe('x 0% · y 0% · 50% × 100%');
+    expect(formatSpotGeometry(GLOBAL_SPOT_GEOMETRY)).toBe('x 0% · y 0% · w 50% · h 100%');
   });
 });

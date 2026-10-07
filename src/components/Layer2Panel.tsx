@@ -11,7 +11,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { Trash2, Upload, Plus, AlertCircle, Search, ChevronDown, Film, Image as ImageIcon } from 'lucide-react';
+import { Trash2, Upload, AlertCircle, Search, ChevronDown, Film, Image as ImageIcon } from 'lucide-react';
 import type { Asset, Spot, VideoSegment } from '../types';
 import type { SpotDocError } from '../services/spots/parseSpotDoc';
 import type { SpotFinding } from '../services/spots/spotFinding';
@@ -39,7 +39,6 @@ export interface Layer2PanelProps {
   onClearPending: () => void;
   onPatchSpot: (id: string, patch: SpotPatch) => void;
   onDeleteSpot: (id: string) => void;
-  onAddManual: (segmentId: string) => void;
   /** Clear a block's individual box -> falls back to the project default. */
   onResetSpotGeometry: (id: string) => void;
   /** Stamp the block's current box as its own individual geometry. */
@@ -150,7 +149,6 @@ function SpotMediaPicker({ spotId, current, assets, onPick }: {
 
 export function Layer2Panel(p: Layer2PanelProps) {
   const [isDragOver, setIsDragOver] = useState(false);
-  const [addSegId, setAddSegId] = useState('');
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const hasTimeline = p.segments.length > 0;
@@ -237,7 +235,7 @@ export function Layer2Panel(p: Layer2PanelProps) {
             </button>
           )}
         </div>
-        <div className="text-[var(--kx-text)] tabular-nums">{formatSpotGeometry(p.projectDefault ?? GLOBAL_SPOT_GEOMETRY)}</div>
+        <div className="text-[var(--kx-faint)] opacity-60 tabular-nums">{formatSpotGeometry(p.projectDefault ?? GLOBAL_SPOT_GEOMETRY)}</div>
         <div className="text-[var(--kx-faint)]">Drag the box in the preview to set it for every block · hold Alt to move just one.</div>
       </div>
 
@@ -309,7 +307,7 @@ export function Layer2Panel(p: Layer2PanelProps) {
               </div>
               {/* (c) geometry */}
               <div className="flex items-center justify-between gap-2" data-testid={`layer2-geometry-${s.id}`}>
-                <span className="text-[var(--kx-text)] tabular-nums">{formatSpotGeometry(rect)}</span>
+                <span className="text-[var(--kx-faint)] opacity-60 tabular-nums">{formatSpotGeometry(rect)}</span>
                 <span className="flex items-center gap-1.5 shrink-0">
                   <span data-level={level} className="text-[var(--kx-faint)]">{LEVEL_LABEL[level]}</span>
                   {level === 'custom' ? (
@@ -327,30 +325,6 @@ export function Layer2Panel(p: Layer2PanelProps) {
           );
         })}
       </div>
-
-      {/* Manual add */}
-      {hasTimeline && (
-        <div className="flex gap-1.5 text-[12px]">
-          <select
-            value={addSegId}
-            onChange={e => setAddSegId(e.target.value)}
-            aria-label="Scene for new spot"
-            className="bg-[var(--kx-surface-2)] text-[var(--kx-text)] rounded-lg px-1.5 py-1 flex-1 min-w-0 outline-none"
-          >
-            <option value="">Add at scene…</option>
-            {p.segments.map((s, i) => <option key={s.id} value={s.id}>{`Scene ${i + 1}${s.tag ? ` · ${s.tag}` : ''}`}</option>)}
-          </select>
-          <button
-            type="button"
-            disabled={!addSegId}
-            onClick={() => { p.onAddManual(addSegId); setAddSegId(''); }}
-            className="px-2 rounded-[8px] bg-[var(--kx-surface-2)] border border-[var(--kx-line)] text-[var(--kx-muted)] hover:text-[var(--kx-text)] hover:border-[var(--kx-line-2)] transition-colors disabled:opacity-40"
-            aria-label="Add spot"
-          >
-            <Plus size={13} />
-          </button>
-        </div>
-      )}
 
       {confirmDeleteId && (
         <ConfirmDialog

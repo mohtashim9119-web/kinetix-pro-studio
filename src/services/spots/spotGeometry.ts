@@ -144,8 +144,8 @@ export function rectToCss(r: PctRect): { left: string; top: string; width: strin
   return { left: `${r.xPct}%`, top: `${r.yPct}%`, width: `${r.wPct}%`, height: `${r.hPct}%` };
 }
 
-/** "x 72% · y 8% · 24% × 40%" — the panel's geometry row. Whole percents. */
+/** "x 72% · y 8% · w 24% · h 40%" — the panel's geometry row. Whole percents. */
 export function formatSpotGeometry(r: PctRect): string {
   const n = (v: number) => Math.round(v);
-  return `x ${n(r.xPct)}% · y ${n(r.yPct)}% · ${n(r.wPct)}% × ${n(r.hPct)}%`;
+  return `x ${n(r.xPct)}% · y ${n(r.yPct)}% · w ${n(r.wPct)}% · h ${n(r.hPct)}%`;
 }

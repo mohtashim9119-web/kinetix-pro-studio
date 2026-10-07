@@ -27,7 +27,7 @@ function mount(over: Partial<Layer2PanelProps> = {}) {
   const props: Layer2PanelProps = {
     segments: segs, assets, spots: [spot], resolved: { a: { startSec: 0, durSec: 3, rect: { xPct: 0, yPct: 0, wPct: 50, hPct: 100 } } },
     pendingDoc: null, findings: [], onDropDoc: noop, onClearPending: noop, onPatchSpot: noop, onDeleteSpot: noop,
-    onAddManual: noop, onSelectSpot: noop, onResetSpotGeometry: noop, onCustomizeSpotGeometry: noop, onResetProjectDefault: noop,
+    onSelectSpot: noop, onResetSpotGeometry: noop, onCustomizeSpotGeometry: noop, onResetProjectDefault: noop,
     ...over,
   };
   const container = document.createElement('div');

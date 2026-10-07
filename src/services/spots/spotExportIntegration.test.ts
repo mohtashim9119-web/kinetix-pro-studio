@@ -11,7 +11,7 @@
 import { describe, it, expect } from 'vitest';
 import { buildExportSpotPayload } from './exportSpecs';
 import {
-  canonicalSpotRenderSpecs, hasSpotRenderWork, specActiveAt, spotQuadRect, spotBorderRect,
+  canonicalSpotRenderSpecs, hasSpotRenderWork, specActiveAt, spotQuadRect, spotBorderRect, spotContentRect,
   SPOT_BORDER_HEIGHT_FRAC, SPOT_LAYER_ORDER, type SpotRenderSpec as ExportSpec,
 } from '../webcodecsExport/spotRenderSpec';
 import * as geom from './spotGeometry';
@@ -121,7 +121,7 @@ describe('export vs preview parity', () => {
     }
     expect(specs[1]).toMatchObject(GEOM);
   });
-  it('export px quad == CSS % of the same frame; border drawn outside by the shared thickness', () => {
+  it('export px quad == CSS % of the same frame; border is the outer edge; media inset by the shared thickness', () => {
     for (const spec of specs) {
       const q = spotQuadRect(spec, 1920, 1080);
       const css = geom.rectToCss(spec);
@@ -129,7 +129,9 @@ describe('export vs preview parity', () => {
       expect(q.y).toBeCloseTo((parseFloat(css.top) / 100) * 1080, 6);
       expect(q.w).toBeCloseTo((parseFloat(css.width) / 100) * 1920, 6);
       expect(q.h).toBeCloseTo((parseFloat(css.height) / 100) * 1080, 6);
-      expect(spotBorderRect(q, 1080).w - q.w).toBeCloseTo(2 * (SPOT_BORDER_PCT / 100) * 1080, 6);
+      // The border is the OUTER edge (== the rect); media is inset by the border thickness.
+      expect(spotBorderRect(q, 1080)).toEqual(q);
+      expect(q.w - spotContentRect(q, 1080).w).toBeCloseTo(2 * (SPOT_BORDER_PCT / 100) * 1080, 6);
     }
   });
   it('a manual geometry edit changes the resume hash (export re-bakes it)', async () => {

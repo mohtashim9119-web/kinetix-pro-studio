@@ -9,6 +9,7 @@ import { coverUv } from '../spots/spotGeometry';
 import {
   SPOT_BORDER_RGBA,
   spotBorderRect,
+  spotContentRect,
   spotQuadRect,
   type SpotRenderSpec,
 } from './spotRenderSpec';
@@ -137,14 +138,15 @@ export class SpotLayerRenderer {
     for (const draw of draws) {
       const quad = spotQuadRect(draw.spec, frameW, frameH);
       const border = spotBorderRect(quad, frameH);
+      const content = spotContentRect(quad, frameH);
       this.drawSolid(border, frameW, frameH, SPOT_BORDER_RGBA);
       gl.bindTexture(gl.TEXTURE_2D, this.texture);
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, draw.source as unknown as TexImageSource);
       gl.useProgram(this.texProgram);
-      gl.uniform4f(this.uTexRect, quad.x, quad.y, quad.w, quad.h);
+      gl.uniform4f(this.uTexRect, content.x, content.y, content.w, content.h);
       gl.uniform2f(this.uTexCanvas, frameW, frameH);
       // Cover (center-crop) — the same crop the preview's object-cover shows.
-      const win = coverUv(quad.w / quad.h, draw.nativeW, draw.nativeH);
+      const win = coverUv(content.w / content.h, draw.nativeW, draw.nativeH);
       gl.uniform4f(this.uTexUvWin, win.u0, win.v0, win.u1, win.v1);
       gl.activeTexture(gl.TEXTURE0);
       gl.uniform1i(this.uTex, 0);

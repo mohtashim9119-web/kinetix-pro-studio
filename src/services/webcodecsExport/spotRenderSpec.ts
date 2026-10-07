@@ -63,9 +63,16 @@ export function spotQuadRect(
   return rectToPx(spec, frameW, frameH);
 }
 
-export function spotBorderRect(quad: SpotQuadRect, frameH: number): SpotQuadRect {
+/** The border rect IS the spot's outer edge (the last edge — never drawn outside the
+ *  rect, so a box pushed to the frame edge keeps its whole border on screen). */
+export function spotBorderRect(quad: SpotQuadRect, _frameH: number): SpotQuadRect {
+  return quad;
+}
+
+/** The media's rect: the quad inset by the border thickness on every side. */
+export function spotContentRect(quad: SpotQuadRect, frameH: number): SpotQuadRect {
   const t = SPOT_BORDER_HEIGHT_FRAC * frameH;
-  return { x: quad.x - t, y: quad.y - t, w: quad.w + 2 * t, h: quad.h + 2 * t };
+  return { x: quad.x + t, y: quad.y + t, w: Math.max(0, quad.w - 2 * t), h: Math.max(0, quad.h - 2 * t) };
 }
 
 export function canonicalSpotRenderSpecs(

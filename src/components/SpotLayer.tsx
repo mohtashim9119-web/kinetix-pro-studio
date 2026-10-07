@@ -44,15 +44,16 @@ export interface SpotLayerProps {
   selectedSpotId?: string | null;
 }
 
+/** Invisible hit zones (no visible dots): thin edge strips + corner squares. */
 const HANDLES: { h: ResizeHandle; style: React.CSSProperties; cursor: string }[] = [
-  { h: 'nw', style: { left: -4, top: -4 }, cursor: 'nwse-resize' },
-  { h: 'n', style: { left: 'calc(50% - 4px)', top: -4 }, cursor: 'ns-resize' },
-  { h: 'ne', style: { right: -4, top: -4 }, cursor: 'nesw-resize' },
-  { h: 'e', style: { right: -4, top: 'calc(50% - 4px)' }, cursor: 'ew-resize' },
-  { h: 'se', style: { right: -4, bottom: -4 }, cursor: 'nwse-resize' },
-  { h: 's', style: { left: 'calc(50% - 4px)', bottom: -4 }, cursor: 'ns-resize' },
-  { h: 'sw', style: { left: -4, bottom: -4 }, cursor: 'nesw-resize' },
-  { h: 'w', style: { left: -4, top: 'calc(50% - 4px)' }, cursor: 'ew-resize' },
+  { h: 'nw', style: { left: 0, top: 0, width: 12, height: 12 }, cursor: 'nwse-resize' },
+  { h: 'ne', style: { right: 0, top: 0, width: 12, height: 12 }, cursor: 'nesw-resize' },
+  { h: 'se', style: { right: 0, bottom: 0, width: 12, height: 12 }, cursor: 'nwse-resize' },
+  { h: 'sw', style: { left: 0, bottom: 0, width: 12, height: 12 }, cursor: 'nesw-resize' },
+  { h: 'n', style: { left: 12, right: 12, top: 0, height: 6 }, cursor: 'ns-resize' },
+  { h: 's', style: { left: 12, right: 12, bottom: 0, height: 6 }, cursor: 'ns-resize' },
+  { h: 'e', style: { top: 12, bottom: 12, right: 0, width: 6 }, cursor: 'ew-resize' },
+  { h: 'w', style: { top: 12, bottom: 12, left: 0, width: 6 }, cursor: 'ew-resize' },
 ];
 
 function SpotVideo({ item, asset, currentTime, isPlaying }: {
@@ -134,13 +135,16 @@ export function SpotLayer({ items, assets, currentTime, isPlaying, onCommitRect,
       style={{ zIndex: SPOT_Z_INDEX, containerType: 'size' }}
       data-testid="spot-layer"
     >
+      {/* The white border is the box's OUTER edge (padding on a white box), so a box
+          pushed to the frame edge keeps its whole border on screen. Export insets its
+          media by the same thickness. */}
       <div
-        className={`absolute bg-black${editable ? ' cursor-move' : ''}`}
+        className={`absolute${editable ? ' cursor-move' : ''}`}
         style={{
           ...rectToCss(rect),
-          // Outside border (export parity): a spread shadow, so the box itself is
-          // exactly the resolved rect.
-          boxShadow: `0 0 0 ${SPOT_BORDER_PCT}cqh rgb(255,255,255)${selectedSpotId === active.id ? ', 0 0 0 0.9cqh var(--kx-accent-line)' : ''}`,
+          backgroundColor: '#fff',
+          padding: `${SPOT_BORDER_PCT}cqh`,
+          boxSizing: 'border-box',
           pointerEvents: editable ? 'auto' : 'none',
           touchAction: 'none',
         }}
@@ -149,7 +153,7 @@ export function SpotLayer({ items, assets, currentTime, isPlaying, onCommitRect,
         onPointerUp={editable ? end : undefined}
         onPointerCancel={editable ? end : undefined}
       >
-        <div className="absolute inset-0 overflow-hidden">
+        <div className="relative w-full h-full overflow-hidden bg-black">
           {usable?.type === 'video' && (
             <SpotVideo key={active.id} item={active} asset={usable} currentTime={currentTime} isPlaying={isPlaying} />
           )}
@@ -166,7 +170,7 @@ export function SpotLayer({ items, assets, currentTime, isPlaying, onCommitRect,
             <div
               key={h}
               data-spot-handle={h}
-              className="absolute w-2 h-2 bg-white border border-black/60 rounded-[2px]"
+              className="absolute"
               style={{ ...style, cursor }}
               onPointerDown={e => begin(e, h)}
               onPointerMove={move}

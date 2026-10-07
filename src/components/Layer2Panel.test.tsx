@@ -22,7 +22,7 @@ const spot = (o: Partial<Spot> & { id: string }): Spot => ({
 function props(o: Partial<Props> = {}): Props {
   return {
     segments: segs, assets, spots: [], resolved: {}, pendingDoc: null, findings: [],
-    onDropDoc: noop, onClearPending: noop, onPatchSpot: noop, onDeleteSpot: noop, onAddManual: noop,
+    onDropDoc: noop, onClearPending: noop, onPatchSpot: noop, onDeleteSpot: noop,
     onSelectSpot: noop, onResetSpotGeometry: noop, onCustomizeSpotGeometry: noop, onResetProjectDefault: noop,
     ...o,
   };
@@ -69,17 +69,17 @@ describe('Layer2Panel block rows (R6)', () => {
   });
   it('(c) geometry row: live display + active level badge', () => {
     const html = rows();
-    expect(html).toContain('x 0% · y 0% · 50% × 100%');
+    expect(html).toContain('x 0% · y 0% · w 50% · h 100%');
     expect(html).toContain('data-level="default"');
     const custom = render({ spots: [spot({ id: 'a', assetId: 'v', geometry: { xPct: 72, yPct: 8, wPct: 24, hPct: 40 } })], resolved: { a: R({}) && { startSec: 0, durSec: 4, rect: { xPct: 72, yPct: 8, wPct: 24, hPct: 40 } } } });
-    expect(custom).toContain('x 72% · y 8% · 24% × 40%');
+    expect(custom).toContain('x 72% · y 8% · w 24% · h 40%');
     expect(custom).toContain('data-level="custom"');
     const proj = render({ spots: [spot({ id: 'a', assetId: 'v' })], resolved: { a: R() }, projectDefault: { xPct: 60, yPct: 5, wPct: 35, hPct: 50 } });
     expect(proj).toContain('data-level="project"');
   });
   it('(c) live drag: the row shows the dragging rect in realtime (project scope reaches non-custom rows)', () => {
     const live = { id: 'zzz', rect: { xPct: 11, yPct: 12, wPct: 13, hPct: 14 }, scope: 'project' as const };
-    expect(rows({ liveRect: live })).toContain('x 11% · y 12% · 13% × 14%');
+    expect(rows({ liveRect: live })).toContain('x 11% · y 12% · w 13% · h 14%');
     const own = render({ spots: [spot({ id: 'a', assetId: 'v', geometry: LEFT })], resolved: { a: R() }, liveRect: live });
     expect(own).not.toContain('x 11%'); // a custom block ignores a project-scope drag
   });
@@ -95,7 +95,7 @@ describe('Layer2Panel block rows (R6)', () => {
   it('project default control states the cascade; hints Alt-drag for one block', () => {
     const html = rows({ projectDefault: { xPct: 60, yPct: 5, wPct: 35, hPct: 50 } });
     expect(html).toContain('data-testid="layer2-project-default"');
-    expect(html).toContain('x 60% · y 5% · 35% × 50%');
+    expect(html).toContain('x 60% · y 5% · w 35% · h 50%');
     expect(html).toMatch(/Alt/);
     expect(render({ spots: [spot({ id: 'a' })], resolved: { a: R() } })).toContain('Left half');
   });

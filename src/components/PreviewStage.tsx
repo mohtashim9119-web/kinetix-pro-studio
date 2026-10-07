@@ -1114,7 +1114,7 @@ export const PreviewStage = forwardRef<PreviewStageHandle, Props>(function Previ
         ref={stageRef}
         className={isFullscreen
           ? `fixed inset-0 ${Z.previewFullscreen} flex items-center justify-center bg-black overflow-hidden`
-          : 'relative bg-black overflow-hidden group w-full h-full'}
+          : 'relative isolate bg-black overflow-hidden group w-full h-full'}
       >
         {/* Floating Controls */}
         <div

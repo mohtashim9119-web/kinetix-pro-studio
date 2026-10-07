@@ -360,7 +360,7 @@ import { bindSpotDoc } from './services/spots/bindSpotDoc';
 import { resolveSpots } from './services/spots/resolveSpots';
 import type { PctRect } from './services/spots/spotGeometry';
 import { matchSpotsToMedia } from './services/spots/matchSpotsToMedia';
-import { mergeDocSpots, addManualSpot, patchSpot, deleteSpot, stampResolution, type SpotPatch } from './services/spots/spotOps';
+import { mergeDocSpots, patchSpot, deleteSpot, stampResolution, type SpotPatch } from './services/spots/spotOps';
 import type { TimelineSpotBlock } from './components/Timeline';
 import type { PreviewSpotItem } from './services/spots/spotPreviewMath';
 import { buildExportSpotPayload } from './services/spots/exportSpecs';
@@ -5016,9 +5016,6 @@ export default function App() {
   const handleDeleteSpot = useCallback((id: string) => {
     setProject(p => ({ ...p, spots: deleteSpot(p.spots ?? [], id) }), { label: 'Delete Layer 2 spot' });
   }, [setProject]);
-  const handleAddManualSpot = useCallback((segmentId: string) => {
-    setProject(p => ({ ...p, spots: addManualSpot(p.spots ?? [], segmentId, undefined, Date.now()) }), { label: 'Add Layer 2 spot' });
-  }, [setProject]);
 
   // Media workflow Unit 3 — a Media block tile dropped on a timeline
   // segment. The user's pick is authoritative (no name logic); assignment
@@ -6905,7 +6902,6 @@ export default function App() {
               onClearPending: () => { setPendingSpotDoc(null); setSpotFindings([]); },
               onPatchSpot: handlePatchSpot,
               onDeleteSpot: handleDeleteSpot,
-              onAddManual: handleAddManualSpot,
             }}
             isPlaying={isPlaying}
           />

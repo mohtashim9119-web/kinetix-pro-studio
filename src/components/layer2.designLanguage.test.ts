@@ -69,7 +69,12 @@ describe('Layer 2 — aligned to existing components', () => {
     expect(block).toContain('var(--kx-surface-2)');
     expect(block).not.toMatch(/#[0-9a-fA-F]{3,6}/);
   });
-  it('selection ring on the preview box derives from the accent token', () => {
-    expect(layer).toContain('var(--kx-accent-line)');
+  it('the preview box has ONE white border (no selection ring), as its outer edge', () => {
+    expect(layer).not.toContain('accent-line');
+    expect(layer).not.toContain('boxShadow');
+    expect(layer).toContain('padding');
+  });
+  it('resize handles are invisible hit zones (no visible dots)', () => {
+    expect(layer).not.toMatch(/bg-white border/);
   });
 });
