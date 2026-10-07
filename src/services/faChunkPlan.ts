@@ -47,6 +47,7 @@ import { alignQueryToSubjectAsync } from './hirschbergMatchClient';
 import { computeFaAnchors, type FaAnchor, type FaRun } from './faAnchors';
 import { normalizeForForcedAlignment, type FaLanguageCode, type FaCardinalData } from './faTextNormalize';
 import { MAX_RUN_SEC } from './syncConstants';
+import { SYNC_TEXT_MISMATCH_MESSAGE } from './syncConstants';
 
 /** One forced-alignment chunk: an audio time window (raw, unpadded — R.2
  *  padding is out of scope for this slice) and the script text to align
@@ -548,8 +549,7 @@ function exciseUnscriptedRuns(
 /** Per-token and whole-segment normalization must land on the same `qi` count —
  *  otherwise every downstream index cut in this segment is off by the
  *  difference. Throwing beats silently mis-attributing text. */
-export const SYNC_WORDS_MISMATCH_MESSAGE =
-  "Sync blocked: words don't match. Check your script or scene doc files, remove extra text (like titles), then retry.";
+export const SYNC_WORDS_MISMATCH_MESSAGE = SYNC_TEXT_MISMATCH_MESSAGE;
 
 export function assertQiMapConsistent(perTokenQi: number, wholeSegmentQi: number, segId: string): void {
   if (perTokenQi !== wholeSegmentQi) {

@@ -168,3 +168,27 @@ describe('SyncPausedDialog', () => {
     expect(container.textContent).not.toMatch(/turned off/i);
   });
 });
+
+describe('SyncPausedDialog — text mismatch', () => {
+  it('shows only the plain message, no engine jargon or raw detail', async () => {
+    root = createRoot(container);
+    await act(async () => {
+      root.render(
+        <SyncPausedDialog
+          reason="inference-failed"
+          detail="Sync paused — Text mismatch detected. Check your script or scenes file and retry."
+          timestamp={Date.now()}
+          onRetry={vi.fn()}
+          onCancel={vi.fn()}
+        />,
+      );
+    });
+    const text = container.textContent ?? '';
+    expect(text).toContain('Sync paused');
+    expect(text).toContain('Text mismatch detected. Check your script or scenes file and retry.');
+    expect(text).not.toContain('alignment engine reported an error');
+    expect(text).not.toContain('Build Timeline stopped');
+    expect(container.querySelector('p.font-mono')).toBeNull();
+    expect(container.querySelector('[data-testid="sync-paused-retry"]')).not.toBeNull();
+  });
+});

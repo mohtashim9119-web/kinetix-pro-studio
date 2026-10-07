@@ -31,6 +31,7 @@ import { useEffect } from 'react';
 import type { FaFailureKind } from '../services/forcedAlignmentRun';
 import type { FaVictimPauseReason } from '../services/faVictimGate';
 import { Z } from './overlayLayers';
+import { SYNC_TEXT_MISMATCH_BODY, SYNC_TEXT_MISMATCH_MESSAGE } from '../services/syncConstants';
 
 /** One line of plain-language cause per pause reason, for the dialog body.
  *  Exhaustive over `FaFailureKind | FaVictimPauseReason` by construction — a
@@ -116,21 +117,30 @@ export function SyncPausedDialog({
   }, [onCancel]);
 
   const minutesAgo = Math.max(0, Math.round((Date.now() - timestamp) / 60_000));
+  const isTextMismatch = !!detail && detail.includes(SYNC_TEXT_MISMATCH_MESSAGE);
 
   return (
     <div
       role="dialog"
       aria-modal="true"
-      aria-label={COPY.title}
+      aria-label={isTextMismatch ? 'Sync paused' : COPY.title}
       className={`fixed inset-0 ${Z.dialog} flex items-center justify-center bg-black/80 backdrop-blur-sm`}
     >
       <div className="bg-[#111] border border-[#282828] rounded-2xl p-8 w-full max-w-sm shadow-2xl">
-        <h2 className="text-sm font-black uppercase tracking-[0.2em] mb-4">{COPY.title}</h2>
+        <h2 className="text-sm font-black uppercase tracking-[0.2em] mb-4">
+          {isTextMismatch ? 'Sync paused' : COPY.title}
+        </h2>
 
-        <p className="text-sm text-gray-300 mb-2">{COPY.bodyPrefix}</p>
-        <p className="text-sm text-gray-300 mb-2">{PAUSE_COPY[reason]}</p>
-        {detail && (
-          <p className="text-xs text-gray-500 font-mono mb-2 break-words">{detail}</p>
+        {isTextMismatch ? (
+          <p className="text-sm text-gray-300 mb-2">{SYNC_TEXT_MISMATCH_BODY}</p>
+        ) : (
+          <>
+            <p className="text-sm text-gray-300 mb-2">{COPY.bodyPrefix}</p>
+            <p className="text-sm text-gray-300 mb-2">{PAUSE_COPY[reason]}</p>
+            {detail && (
+              <p className="text-xs text-gray-500 font-mono mb-2 break-words">{detail}</p>
+            )}
+          </>
         )}
         <p className="text-xs text-gray-500 mb-6">{COPY.staleHint(minutesAgo)}</p>
 

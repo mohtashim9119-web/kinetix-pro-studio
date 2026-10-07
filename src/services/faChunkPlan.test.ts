@@ -1276,7 +1276,7 @@ describe('computeRunContextAsync (WS2 Wave 2 Group 2, item 2 — worker migratio
 
 describe('assertQiMapConsistent — plain-language block', () => {
   it('throws the short plain message and keeps technical detail out of it', () => {
-    const msg = "Sync blocked: words don't match. Check your script or scene doc files, remove extra text (like titles), then retry.";
+    const msg = 'Sync paused — Text mismatch detected. Check your script or scenes file and retry.';
     expect(SYNC_WORDS_MISMATCH_MESSAGE).toBe(msg);
     expect(() => assertQiMapConsistent(15, 12, 'segv1_x')).toThrow(msg);
     try { assertQiMapConsistent(15, 12, 'segv1_x'); } catch (e) {
