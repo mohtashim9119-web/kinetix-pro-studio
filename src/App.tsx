@@ -360,6 +360,7 @@ import { bindSpotDoc } from './services/spots/bindSpotDoc';
 import { resolveSpots } from './services/spots/resolveSpots';
 import { sprinkleSpots, mergeDocSpots, addManualSpot, patchSpot, deleteSpot, stampResolution, type SpotPatch } from './services/spots/spotOps';
 import type { PreviewSpotItem } from './services/spots/spotPreviewMath';
+import { buildExportSpotPayload } from './services/spots/exportSpecs';
 import { buildSpotFindingEntries } from './services/spots/spotLog';
 import type { SpotFinding } from './services/spots/spotFinding';
 import { matchMediaToScenes, summarizeMediaMatch, type MediaMatchSummary } from './services/matchMediaToScenes';
@@ -3433,6 +3434,23 @@ export default function App() {
   }, []);
   const exportApi = useExport(project, exportResolution, exportFps, onExportSavePath);
   const { state: exportState, startExport, cancelExport, retryExport, dismissSuccess, resolveSealConsent, resolveResumeChoice } = exportApi;
+
+  // Layer 2 spots — THE export wiring seam. At every export kickoff the project's
+  // spots are resolved by `resolveSpots` (never recomputed by the export lane) and
+  // handed to `startExport({ spotRenderSpecs })`. Missing-clip entries are dropped
+  // here with `spot-clip-missing` findings (sync log) and an honest "N spots
+  // skipped" toast; a project with nothing to render passes no request at all, so
+  // the export is byte-identical to a no-spots export. The export lane's own
+  // refusals (spot_path_refused / spot_asset_missing) surface through the export
+  // error UI — never silent.
+  const startExportWithSpots = useCallback((): void => {
+    const payload = buildExportSpotPayload(projectRef.current);
+    if (payload.findings.length > 0) {
+      setProjectSilent(prev => appendSyncLogEntries(prev, buildSpotFindingEntries(mintSyncLogId(), payload.findings)));
+    }
+    if (payload.summary) showToast(`${payload.summary} — see the sync log (Layer 2) for why.`);
+    startExport(payload.request);
+  }, [startExport, setProjectSilent, showToast]);
   const [exportReclaimableBytes, setExportReclaimableBytes] = useState<number | undefined>(undefined);
   // Ruling B (WS3 Batch 2) — distinct from `exportReclaimableBytes === undefined`,
   // which is ambiguous between "not queried" and "resolved to nothing". The
@@ -3591,8 +3609,8 @@ export default function App() {
     setExportResolution(project.resolutionTier);
     pendingReexportAutoResumeSessionId.current = sessionId;
     setReexportOffer(null);
-    startExport();
-  }, [reexportOffer, project.resolutionTier, startExport]);
+    startExportWithSpots();
+  }, [reexportOffer, project.resolutionTier, startExportWithSpots]);
 
   // ExportSettingsModal's Continue commits exportResolution/exportFps via
   // setState, then must call startExport — but startExport is a useCallback
@@ -3605,7 +3623,7 @@ export default function App() {
   const [exportTriggerCount, setExportTriggerCount] = useState(0);
   useEffect(() => {
     if (exportTriggerCount === 0) return;
-    startExport();
+    startExportWithSpots();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [exportTriggerCount]);
 

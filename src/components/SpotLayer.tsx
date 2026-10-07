@@ -88,8 +88,9 @@ export function SpotLayer({ items, assets, currentTime, isPlaying }: SpotLayerPr
         className="absolute overflow-hidden bg-black"
         style={{
           ...spotBoxStyle(active.corner, active.heightPct, aspect),
-          border: `${SPOT_BORDER_PCT}cqh solid rgba(255,255,255,0.9)`,
-          boxSizing: 'border-box',
+          // Outside border (export parity): a spread shadow, so the box itself is
+          // exactly heightPct tall with the clip's native aspect.
+          boxShadow: `0 0 0 ${SPOT_BORDER_PCT}cqh rgb(255,255,255)`,
         }}
       >
         {usable?.type === 'video' && (

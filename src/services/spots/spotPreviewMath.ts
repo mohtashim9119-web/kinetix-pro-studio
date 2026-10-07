@@ -9,13 +9,18 @@
  *
  * LAYOUT CONTRACT (export parity): the box is `heightPct`% of FRAME height tall,
  * width = native aspect, inset `SPOT_MARGIN_PCT`% of frame height from BOTH of
- * its anchor edges, with a `SPOT_BORDER_PCT`% (of frame height) white border.
+ * its anchor edges, with a `SPOT_BORDER_PCT`% (of frame height) white border
+ * drawn outside the box (as the export quad's border rect).
  */
 
 import type { SpotCorner } from '../../types';
 
-export const SPOT_MARGIN_PCT = 2;
-export const SPOT_BORDER_PCT = 0.4;
+import { SPOT_BORDER_HEIGHT_FRAC, SPOT_MARGIN_HEIGHT_FRAC } from '../webcodecsExport/spotRenderSpec';
+
+/** Derived from the export lane's constants so preview and export cannot drift
+ *  (rounded only to defeat float dust). The border is drawn OUTSIDE the box. */
+export const SPOT_MARGIN_PCT = +(SPOT_MARGIN_HEIGHT_FRAC * 100).toFixed(4);
+export const SPOT_BORDER_PCT = +(SPOT_BORDER_HEIGHT_FRAC * 100).toFixed(4);
 /** Stage-internal z scale: media (none) < SPOTS 35 < extra overlays 40 <
  *  text layers 45 < caption 46 < headings 47 < corner stats 50. */
 export const SPOT_Z_INDEX = 35;
