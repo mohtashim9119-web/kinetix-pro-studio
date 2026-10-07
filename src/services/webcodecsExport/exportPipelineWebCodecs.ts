@@ -67,6 +67,8 @@
  */
 
 import type { Asset, HeadingOverlay, Project, TextOverlay, VideoSegment } from '../../types';
+import { validateSpotAssets } from './spotAssetGuard';
+import { evaluateSpotPathRefusal, hasSpotRenderWork, specEndSec, type SpotRenderSpec } from './spotRenderSpec';
 import {
   encodeSegment,
   encodePlainVideoSegment,
@@ -201,6 +203,8 @@ export interface ExportOptionsWebCodecs {
      */
     manifest?: ExportStateManifest;
   };
+  /** Resolved Layer-2 spots. Absent/empty = today's bytes. */
+  spotRenderSpecs?: import('./spotRenderSpec').SpotRenderSpec[];
 }
 
 /**
@@ -1343,6 +1347,7 @@ export interface DriveGlRunDeps {
    *  `EXPORT_CODEC_LADDER[0]` (High profile 4.0), reproducing the
    *  pre-STEP-5 fixed codec exactly when omitted. */
   pinnedCodec?: string;
+  spotRenderSpecs?: import('./spotRenderSpec').SpotRenderSpec[];
   /** WS3 Round 27 audit — read the export-scoped failover flag at failure
    *  snapshot time so GL encode failures surface `hardwareFailoverUsed`
    *  through `ExportError.liveness`, not only post-encode failures. */
@@ -2542,6 +2547,9 @@ export function driveGlRun(
       resumeFromFrameIndex: deps.resumeFromFrameIndex,
       forceSoftwareEncoder: deps.forceSoftwareEncoder,
       pinnedCodec: deps.pinnedCodec,
+      ...(deps.spotRenderSpecs && deps.spotRenderSpecs.length > 0
+        ? { spotRenderSpecs: deps.spotRenderSpecs }
+        : {}),
     };
     resetWatchdog();
     resetProgressBound();
@@ -2959,6 +2967,13 @@ export async function exportProjectWebCodecs(
   }
 
   const assetMap = new Map<string, Asset>(project.assets.map((a) => [a.id, a]));
+  const spotRenderSpecs: SpotRenderSpec[] = hasSpotRenderWork(options.spotRenderSpecs)
+    ? options.spotRenderSpecs!
+    : [];
+  const spotAssetErr = validateSpotAssets(project.assets, spotRenderSpecs);
+  if (spotAssetErr) {
+    return { ok: false, error: { kind: 'spot_asset_missing', message: spotAssetErr } };
+  }
 
   // Asset-presence check up front, matching exportPipeline.ts's own contract
   // exactly (lines ~99-113): a segment with NO assetId is allowed (rendered
@@ -3003,6 +3018,20 @@ export async function exportProjectWebCodecs(
     salvagedPieces: [],
   };
   lastWebCodecsRunDiagnostics = diag;
+  const spotPathRefusal = evaluateSpotPathRefusal(project, spotRenderSpecs, {
+    gateOpen: true,
+    routing: diag.routing,
+  });
+  if (spotPathRefusal) {
+    return {
+      ok: false,
+      error: {
+        kind: 'spot_path_refused',
+        message: spotPathRefusal.message,
+        spotPathRefusal,
+      },
+    };
+  }
   // eslint-disable-next-line no-console
   console.info('[ws3-liveness] routing', JSON.stringify(diag.routing));
 
@@ -3137,7 +3166,9 @@ export async function exportProjectWebCodecs(
     projectId: project.id,
     sourceTimelineHash: (async () => {
       try {
-        return await buildSourceTimelineHash(timelineIdentityFromProject(project, { fps, width, height }));
+        return await buildSourceTimelineHash(
+          timelineIdentityFromProject(project, { fps, width, height }, { spotRenderSpecs }),
+        );
       } catch (err) {
         // eslint-disable-next-line no-console
         console.warn('[ws3-resume] could not build the timeline identity — this export will not be resumable', causeString(err));
@@ -3307,6 +3338,19 @@ export async function exportProjectWebCodecs(
           referencedAssets.push(asset);
         }
       }
+      if (spotRenderSpecs.length > 0) {
+        const pieceStart = plan.segments[0]!.startTime;
+        const pieceLast = plan.segments[plan.segments.length - 1]!;
+        const pieceEnd = pieceLast.startTime + pieceLast.duration;
+        for (const spec of spotRenderSpecs) {
+          if (spec.startSec >= pieceEnd || specEndSec(spec) <= pieceStart) continue;
+          const asset = assetMap.get(spec.assetId);
+          if (asset && !seen.has(asset.id)) {
+            seen.add(asset.id);
+            referencedAssets.push(asset);
+          }
+        }
+      }
       const runFile = `piece_${pieceIndex}.h264`;
       // WS3 Round 14, STEP 5 (H2) — the codec this piece is pinned to, once
       // the FIRST worker built for it reports which one it selected
@@ -3377,6 +3421,7 @@ export async function exportProjectWebCodecs(
             forceSoftwareEncoder: forceSoftware,
             pinnedCodec: pinnedCodecForPiece,
             fileBaseByteOffset: baseByteOffset,
+            ...(spotRenderSpecs.length > 0 ? { spotRenderSpecs } : {}),
             hardwareFailoverUsed: () => hardwareFailoverUsed,
             onRotationCheckpoint: (row) => checkpointWriter.record(row),
             onSessionRotation: () => checkpointWriter.noteRotation(),

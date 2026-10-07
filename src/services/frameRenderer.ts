@@ -31,6 +31,15 @@ export interface TransitionBlendParams {
   type: TransitionType | string;
 }
 
+/**
+ * Layer-2 spots are GL-export-only. Callers that cannot draw spots MUST refuse
+ * before `renderSegmentFrame` rather than omit them (effectGrade CRITICAL
+ * precedent). This function has no spot renderer.
+ */
+export function canvasFrameRendererSpotCapability(): 'none' {
+  return 'none';
+}
+
 export interface FrameRenderParams {
   segment: VideoSegment;
   asset: Asset | undefined;
