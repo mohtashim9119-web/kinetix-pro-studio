@@ -4933,6 +4933,8 @@ export default function App() {
     () => resolveSpots(project.spots ?? [], project.segments, project.assets, voiceoverEndSec, spotLayout),
     [project.spots, project.segments, project.assets, voiceoverEndSec, spotLayout],
   );
+  const spotResolutionRef = useRef(spotResolution);
+  useEffect(() => { spotResolutionRef.current = spotResolution; }, [spotResolution]);
   const [selectedSpotId, setSelectedSpotId] = useState<string | null>(null);
   const [liveSpotRect, setLiveSpotRect] = useState<{ id: string; rect: PctRect; scope: 'project' | 'block' } | null>(null);
   const resolvedSpotMap = spotResolution.bySpot;
@@ -5010,9 +5012,39 @@ export default function App() {
   const handleResetProjectSpotDefault = useCallback(() => {
     setProject(p => { const { spotDefaultGeometry: _d, ...rest } = p; return rest; }, { label: 'Reset Layer 2 default box' });
   }, [setProject]);
-  const handleSpotDurationCommit = useCallback((id: string, durSec: number) => {
-    setProject(p => ({ ...p, spots: patchSpot(p.spots ?? [], id, { durOverrideSec: durSec }) }), { label: 'Set Layer 2 spot duration' });
+  // The user's timing wins: a moved start is stored as an offset from the scene anchor
+  // (so the spot still follows its scene through re-sync); a stretched/shrunk block
+  // stamps durOverrideSec. An orphaned spot (its scene is gone) moves its last-known time.
+  const handleSpotTimingCommit = useCallback((id: string, change: { startDeltaSec?: number; durSec?: number }) => {
+    setProject(p => ({
+      ...p,
+      spots: (p.spots ?? []).map(sp => {
+        if (sp.id !== id) return sp;
+        const next = { ...sp };
+        if (change.startDeltaSec) {
+          const anchored = p.segments.some(seg => seg.id === sp.anchorSegmentId);
+          if (anchored) next.offsetSec = Math.round((sp.offsetSec + change.startDeltaSec) * 1000) / 1000;
+          else if (sp.lastKnownStartSec !== undefined) next.lastKnownStartSec = Math.max(0, Math.round((sp.lastKnownStartSec + change.startDeltaSec) * 1000) / 1000);
+        }
+        if (change.durSec !== undefined) next.durOverrideSec = change.durSec;
+        return next;
+      }),
+    }), { label: 'Set Layer 2 spot timing' });
   }, [setProject]);
+
+  // Clicking a block in the Layer-2 list jumps the preview and timeline to it, instantly.
+  const handleSelectSpotFromPanel = useCallback((id: string) => {
+    setSelectedSpotId(id);
+    const placed = spotResolutionRef.current.bySpot[id] ?? spotResolutionRef.current.noClip[id];
+    if (!placed) return;
+    setCurrentTime(placed.startSec);
+    if (audioRef.current) audioRef.current.currentTime = placed.startSec;
+    const container = document.getElementById('timeline-scroll-area');
+    if (container) {
+      const x = placed.startSec * pixelsPerSecondRef.current;
+      container.scrollLeft = Math.max(0, x - Math.min(48, container.clientWidth / 4));
+    }
+  }, []);
   const handleDeleteSpot = useCallback((id: string) => {
     setProject(p => ({ ...p, spots: deleteSpot(p.spots ?? [], id) }), { label: 'Delete Layer 2 spot' });
   }, [setProject]);
@@ -6892,7 +6924,7 @@ export default function App() {
               projectDefault: project.spotDefaultGeometry,
               liveRect: liveSpotRect,
               selectedSpotId,
-              onSelectSpot: setSelectedSpotId,
+              onSelectSpot: handleSelectSpotFromPanel,
               onResetSpotGeometry: handleResetSpotGeometry,
               onCustomizeSpotGeometry: handleCustomizeSpotGeometry,
               onResetProjectDefault: handleResetProjectSpotDefault,
@@ -7128,8 +7160,7 @@ export default function App() {
                 spotBlocks={timelineSpotBlocks}
                 selectedSpotId={selectedSpotId}
                 onSelectSpot={setSelectedSpotId}
-                onSpotDurationCommit={handleSpotDurationCommit}
-                onSpotStartRefused={showToast}
+                onSpotTimingCommit={handleSpotTimingCommit}
                 currentSegmentId={currentSegment?.id}
                 currentTime={currentTime}
                 isPlaying={isPlaying}

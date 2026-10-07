@@ -226,7 +226,7 @@ export function Layer2Panel(p: Layer2PanelProps) {
       )}
 
       {/* Project default box (R7 level 2) */}
-      <div className="rounded-[13px] border border-[var(--kx-line)] bg-[var(--kx-surface)] px-3 py-2 text-[11px] flex flex-col gap-1" data-testid="layer2-project-default">
+      <div className={`rounded-[13px] border border-[var(--kx-line)] bg-[var(--kx-surface)] px-3 py-2 text-[11px] flex-col gap-1 ${p.projectDefault ? 'flex' : 'hidden'}`} data-testid="layer2-project-default">
         <div className="flex items-center justify-between gap-2">
           <span className="text-[var(--kx-faint)]">Default box · {p.projectDefault ? 'Project' : 'Left half'}</span>
           {p.projectDefault && (
@@ -235,8 +235,8 @@ export function Layer2Panel(p: Layer2PanelProps) {
             </button>
           )}
         </div>
-        <div className="text-[var(--kx-faint)] opacity-60 tabular-nums">{formatSpotGeometry(p.projectDefault ?? GLOBAL_SPOT_GEOMETRY)}</div>
-        <div className="text-[var(--kx-faint)]">Drag the box in the preview to set it for every block · hold Alt to move just one.</div>
+        <div className="hidden" aria-hidden="true">{formatSpotGeometry(p.projectDefault ?? GLOBAL_SPOT_GEOMETRY)}</div>
+        <div className="hidden" aria-hidden="true">Drag the box in the preview to set it for every block · hold Alt to move just one.</div>
       </div>
 
       {/* Spot list */}
@@ -280,7 +280,9 @@ export function Layer2Panel(p: Layer2PanelProps) {
                 spotId={s.id}
                 current={asset}
                 assets={p.assets}
-                onPick={a => p.onPatchSpot(s.id, { assetId: a.id, clipName: a.name })}
+                // A hand pick changes the clip only — never the doc's recorded name (what the wand
+                // re-binds by). A different media type drops a stale duration override.
+                onPick={a => p.onPatchSpot(s.id, { assetId: a.id, ...(asset && asset.type !== a.type ? { durOverrideSec: null } : {}) })}
               />
               {s.assetId && !asset && <div className="text-[var(--kx-danger)]">Clip deleted — pick another</div>}
               {s.needsReview && (
@@ -306,16 +308,16 @@ export function Layer2Panel(p: Layer2PanelProps) {
                 />
               </div>
               {/* (c) geometry */}
-              <div className="flex items-center justify-between gap-2" data-testid={`layer2-geometry-${s.id}`}>
-                <span className="text-[var(--kx-faint)] opacity-60 tabular-nums">{formatSpotGeometry(rect)}</span>
+              <div className={`items-center justify-between gap-2 ${level === 'custom' ? 'flex' : 'hidden'}`} data-testid={`layer2-geometry-${s.id}`}>
+                <span className="hidden" aria-hidden="true">{formatSpotGeometry(rect)}</span>
                 <span className="flex items-center gap-1.5 shrink-0">
-                  <span data-level={level} className="text-[var(--kx-faint)]">{LEVEL_LABEL[level]}</span>
+                  <span data-level={level} className={level === 'custom' ? 'text-[var(--kx-faint)]' : 'hidden'}>{LEVEL_LABEL[level]}</span>
                   {level === 'custom' ? (
                     <button type="button" onClick={e => { e.stopPropagation(); p.onResetSpotGeometry(s.id); }} className="text-[var(--kx-faint)] hover:text-[var(--kx-text)]">
                       Reset to default
                     </button>
                   ) : (
-                    <button type="button" onClick={e => { e.stopPropagation(); p.onCustomizeSpotGeometry(s.id, rect); }} className="text-[var(--kx-faint)] hover:text-[var(--kx-text)]">
+                    <button type="button" onClick={e => { e.stopPropagation(); p.onCustomizeSpotGeometry(s.id, rect); }} className="hidden">
                       Customize
                     </button>
                   )}

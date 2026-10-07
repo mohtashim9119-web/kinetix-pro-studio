@@ -421,9 +421,11 @@ describe('Timeline static markup — Layer 2 lane (R2)', () => {
     expect(html).toContain('left:0px;width:400px');   // a: 0s, 4s @100pps
     expect(html).toContain('left:500px;width:300px'); // b: 5s, 3s
   });
-  it('anchor notch on every block\'s left edge (discoverable, refuses to move)', () => {
+  it('every block has a left (start) and a right (duration) edge handle — the start is the user\'s to move', () => {
     const html = render({ spotBlocks: blocks });
-    expect((html.match(/data-spot-anchor-notch/g) ?? []).length).toBe(2);
+    expect((html.match(/data-spot-edge="start"/g) ?? []).length).toBe(2);
+    expect((html.match(/data-spot-edge="end"/g) ?? []).length).toBe(2);
+    expect(html).not.toContain('data-spot-anchor-notch');
   });
   it('unbound block is styled [NO CLIP]; bound shows its clip name', () => {
     const html = render({ spotBlocks: blocks });
@@ -436,7 +438,7 @@ describe('Timeline static markup — Layer 2 lane (R2)', () => {
     expect(sel).toContain('data-selected="true"');
     expect(html.match(/data-spot-block-id="a"[^>]*>/)?.[0]).not.toContain('data-selected="true"');
   });
-  it('only the RIGHT edge has a duration handle; the left edge is the anchor', () => {
+  it('edge handles: left = start, right = duration', () => {
     const html = render({ spotBlocks: [blocks[0]!] });
     expect((html.match(/data-spot-edge="end"/g) ?? []).length).toBe(1);
     expect(html).toContain('data-spot-edge="start"'); // present, but refuses (honest gesture)

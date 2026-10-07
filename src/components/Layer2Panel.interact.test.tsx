@@ -60,12 +60,12 @@ describe('media dropdown + search', () => {
     await act(async () => { setter.call(input, 'zzz'); input.dispatchEvent(new Event('input', { bubbles: true })); });
     expect(q(c, '[data-testid="layer2-media-menu-a"]')!.textContent).toContain('No media matches');
   });
-  it('click selects: binds assetId AND records clipName (what the wand re-binds by)', async () => {
+  it('click selects: binds assetId only — the doc\'s clipName (what the wand re-binds by) is untouched', async () => {
     const onPatchSpot = vi.fn();
     const c = mount({ onPatchSpot });
     await act(async () => { q(c, '[data-testid="layer2-media-a"]')!.click(); });
     await act(async () => { q(c, '[data-testid="layer2-media-option-i2"]')!.click(); });
-    expect(onPatchSpot).toHaveBeenCalledWith('a', { assetId: 'i2', clipName: 'badge.png' });
+    expect(onPatchSpot).toHaveBeenCalledWith('a', { assetId: 'i2' });
     expect(q(c, '[data-testid="layer2-media-menu-a"]')).toBeNull(); // closes
   });
   it('keyboard: ArrowDown + Enter selects; Escape closes without selecting', async () => {

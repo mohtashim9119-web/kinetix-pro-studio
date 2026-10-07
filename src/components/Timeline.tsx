@@ -11,7 +11,7 @@ import {
 import { VideoSegment, Asset, HeadingOverlay } from '../types';
 import { patchUiState } from '../services/uiStateStore';
 import { resizeHeading } from '../services/headingLayer';
-import { resizeSpotBlock, SPOT_START_ANCHORED_MESSAGE } from '../services/spots/spotLaneMath';
+import { resizeSpotBlock, moveSpotBlock } from '../services/spots/spotLaneMath';
 import { isDragEdgeLocked } from '../services/dragCascade';
 import { WaveformSource } from '../services/waveformPeaks';
 import { useTimelineWaveform } from './TimelineWaveform';
@@ -98,10 +98,9 @@ interface Props {
   spotBlocks?: TimelineSpotBlock[];
   selectedSpotId?: string | null;
   onSelectSpot?: (id: string) => void;
-  /** Right-edge drag release -> the new duration, stamped as durOverrideSec. */
-  onSpotDurationCommit?: (id: string, durSec: number) => void;
-  /** Left-edge drag: the start is anchored to its scene — refuse, honestly. */
-  onSpotStartRefused?: (message: string) => void;
+  /** Drag release: the user's new timing. `startDeltaSec` moves the start (offset from
+   *  its scene anchor); `durSec` is stamped as durOverrideSec. */
+  onSpotTimingCommit?: (id: string, change: { startDeltaSec?: number; durSec?: number }) => void;
 }
 
 export interface TimelineSpotBlock {
@@ -146,8 +145,7 @@ export function Timeline({
   spotBlocks,
   selectedSpotId,
   onSelectSpot,
-  onSpotDurationCommit,
-  onSpotStartRefused,
+  onSpotTimingCommit,
 }: Props) {
   const totalDuration = useMemo(() => computeTotalDuration(segments), [segments]);
 
@@ -460,27 +458,34 @@ export function Timeline({
     window.addEventListener('mouseup', handleUp);
   };
 
-  // Layer 2 lane — right-edge duration drag (heading-lane pattern: rAF live DOM
-  // write, one commit on mouseup). The left edge never moves the start.
-  const handleSpotEdgeStart = (e: React.MouseEvent, block: TimelineSpotBlock, edge: 'start' | 'end'): void => {
+  // Layer 2 lane drags (heading-lane pattern: rAF live DOM write, one commit on mouseup).
+  // right edge = duration; left edge = start (end held); body = slide the block.
+  // The START is the user's to move; it is stored as an offset from the scene anchor.
+  const handleSpotDragStart = (e: React.MouseEvent, block: TimelineSpotBlock, mode: 'start' | 'end' | 'move'): void => {
     e.stopPropagation();
     e.preventDefault();
-    if (edge === 'start') {
-      onSpotStartRefused?.(SPOT_START_ANCHORED_MESSAGE);
-      return;
-    }
+    onSelectSpot?.(block.id);
     const el = document.querySelector<HTMLElement>(`[data-spot-block-id="${block.id}"]`);
     if (!el) return;
     const startClientX = e.clientX;
     const pps = pixelsPerSecond;
     let pendingClientX: number | null = null;
     let rafId: number | null = null;
-    const next = (clientX: number) =>
-      resizeSpotBlock({ edge: 'end', startSec: block.startSec, durSec: block.durSec, deltaSec: (clientX - startClientX) / pps, maxEndSec: totalDuration }).durSec;
+    const compute = (clientX: number): { startDeltaSec?: number; durSec: number; startSec: number } => {
+      const deltaSec = (clientX - startClientX) / pps;
+      if (mode === 'move') {
+        const m = moveSpotBlock({ startSec: block.startSec, durSec: block.durSec, deltaSec, maxEndSec: totalDuration });
+        return { startDeltaSec: m.startDeltaSec, durSec: block.durSec, startSec: block.startSec + m.startDeltaSec };
+      }
+      const r = resizeSpotBlock({ edge: mode, startSec: block.startSec, durSec: block.durSec, deltaSec, maxEndSec: totalDuration });
+      return { ...r, startSec: block.startSec + (r.startDeltaSec ?? 0) };
+    };
     const applyFrame = (): void => {
       rafId = null;
       if (pendingClientX === null) return;
-      el.style.width = `${next(pendingClientX) * pps}px`;
+      const c = compute(pendingClientX);
+      el.style.left = `${c.startSec * pps}px`;
+      el.style.width = `${c.durSec * pps}px`;
     };
     const handleMove = (m: MouseEvent): void => {
       pendingClientX = m.clientX;
@@ -491,9 +496,16 @@ export function Timeline({
       window.removeEventListener('mousemove', handleMove);
       window.removeEventListener('mouseup', handleUp);
       if (pendingClientX === null) return;
-      const dur = next(pendingClientX);
-      if (dur !== block.durSec) onSpotDurationCommit?.(block.id, dur);
-      else el.style.width = `${block.durSec * pps}px`;
+      const c = compute(pendingClientX);
+      const change: { startDeltaSec?: number; durSec?: number } = {};
+      if (c.startDeltaSec) change.startDeltaSec = c.startDeltaSec;
+      if (mode !== 'move' && c.durSec !== block.durSec) change.durSec = c.durSec;
+      if (change.startDeltaSec === undefined && change.durSec === undefined) {
+        el.style.left = `${block.startSec * pps}px`;
+        el.style.width = `${block.durSec * pps}px`;
+        return;
+      }
+      onSpotTimingCommit?.(block.id, change);
     };
     window.addEventListener('mousemove', handleMove);
     window.addEventListener('mouseup', handleUp);
@@ -686,6 +698,8 @@ export function Timeline({
               className="relative h-20 flex-shrink-0 bg-[#0A0A0A] rounded-lg"
               style={{ width: `${totalDuration * pixelsPerSecond}px` }}
             >
+              {/* The block's start is the USER's: drag the body to slide it, the left edge to
+                  move the start (end held), the right edge for the duration. */}
               {/* Blocks use the SEGMENT card pattern (same 80px lane, rounded-lg, the
                   segments' own idle / hover / active fills and borders, thumbnail at the
                   segments' opacity, #n badge, and the segments' w-2 edge handle). */}
@@ -698,7 +712,7 @@ export function Timeline({
                   data-selected={selected ? 'true' : undefined}
                   className={`absolute top-0 bottom-0 z-30 rounded-lg border transition-[box-shadow,border-color,background-color] duration-300 cursor-pointer flex flex-col group overflow-hidden ${selected ? 'bg-[#151515] border-[#F27D26]' : 'bg-[#080808] border-[#1A1A1A] hover:bg-[#0C0C0C]'}`}
                   style={{ left: `${b.startSec * pixelsPerSecond}px`, width: `${b.durSec * pixelsPerSecond}px` }}
-                  onMouseDown={(e) => { e.stopPropagation(); onSelectSpot?.(b.id); }}
+                  onMouseDown={(e) => handleSpotDragStart(e, b, 'move')}
                 >
                   <div className="flex-1 relative bg-black/50">
                     {b.assetUrl && b.assetType === 'video' ? (
@@ -724,19 +738,17 @@ export function Timeline({
                       </p>
                     </div>
                   </div>
-                  {/* Anchor notch: the scene boundary this spot is pinned to. Same w-2
-                      handle footprint as a segment's start edge, but it refuses. */}
+                  {/* Edge handles — the segments' own w-2 footprint. Left edge moves the start
+                      (end held); right edge sets the duration. */}
                   <div
-                    data-spot-anchor-notch
                     data-spot-edge="start"
-                    className="absolute left-0 top-0 bottom-0 w-2 bg-[#F27D26]/30 cursor-not-allowed z-20 hover:bg-[#F27D26]/40 transition-colors"
-                    title={SPOT_START_ANCHORED_MESSAGE}
-                    onMouseDown={(e) => handleSpotEdgeStart(e, b, 'start')}
+                    className="absolute left-0 top-0 bottom-0 w-2 cursor-col-resize z-20 hover:bg-[#F27D26]/20 transition-colors"
+                    onMouseDown={(e) => handleSpotDragStart(e, b, 'start')}
                   />
                   <div
                     data-spot-edge="end"
                     className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize z-20 hover:bg-[#F27D26]/20 transition-colors"
-                    onMouseDown={(e) => handleSpotEdgeStart(e, b, 'end')}
+                    onMouseDown={(e) => handleSpotDragStart(e, b, 'end')}
                   />
                 </div>
                 );

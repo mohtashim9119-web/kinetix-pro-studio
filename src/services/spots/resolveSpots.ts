@@ -68,7 +68,7 @@ export function resolveSpots(
     const anchor = segments.find(s => s.id === spot.anchorSegmentId);
     let startSec: number | undefined;
     if (anchor) {
-      startSec = r3(anchor.startTime + spot.offsetSec);
+      startSec = r3(Math.max(0, anchor.startTime + spot.offsetSec));
       lastKnown[spot.id] = startSec;
     } else {
       needsReview.push(spot.id);

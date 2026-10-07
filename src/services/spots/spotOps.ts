@@ -32,10 +32,7 @@ export function mergeDocSpots(
     if (old.geometry) out.geometry = old.geometry;
     if (old.lastKnownStartSec !== undefined) out.lastKnownStartSec = old.lastKnownStartSec;
     const keepClip = old.assetId && (!validAssetIds || validAssetIds.has(old.assetId));
-    if (keepClip) {
-      out.assetId = old.assetId;
-      if (old.clipName) out.clipName = old.clipName;
-    }
+    if (keepClip) out.assetId = old.assetId; // clipName always comes from the doc
     return out;
   });
   const boundIds = new Set(bound.map(b => b.id));

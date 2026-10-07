@@ -33,11 +33,39 @@ describe('matchSpotsToMedia', () => {
     expect(r.matched).toBe(0);
     expect(r.unmatched).toBe(1);
   });
-  it('already-bound spots are left alone (by reference) and are not counted as unmatched', () => {
-    const bound = sp({ id: 'b', assetId: 'v', clipName: 'logo' });
-    const r = matchSpotsToMedia(assets, [bound]);
-    expect(r.spots[0]).toBe(bound);
-    expect(r.matched).toBe(0);
+  it('OVERRIDES a clip the user picked by hand: the wand re-binds to the name the doc asked for', () => {
+    const picked = sp({ id: 'b', assetId: 'i1', clipName: 'avatar01' });
+    const r = matchSpotsToMedia(assets, [picked]);
+    expect(r.spots[0]!.assetId).toBe('v');
+    expect(r.matched).toBe(1);
+    expect(r.unmatched).toBe(0);
+  });
+  it('an already-correct spot is returned by reference and still counts as matched', () => {
+    const ok = sp({ id: 'ok', assetId: 'v', clipName: 'avatar01' });
+    const r = matchSpotsToMedia(assets, [ok]);
+    expect(r.spots[0]).toBe(ok);
+    expect(r.matched).toBe(1);
+  });
+  it('a different media type drops a stale duration override (a 3s image override must not clip a video)', () => {
+    const r = matchSpotsToMedia(assets, [sp({ id: 'd', assetId: 'old', clipName: 'avatar01', durOverrideSec: 3 })]
+    );
+    expect(r.spots[0]!.assetId).toBe('v');
+    expect('durOverrideSec' in r.spots[0]!).toBe(true); // 'old' is unknown to the vault: type change cannot be proven
+    const withOld = matchSpotsToMedia([...assets, a('old', 'old.png', 5)], [sp({ id: 'd', assetId: 'old', clipName: 'avatar01', durOverrideSec: 3 })]);
+    expect('durOverrideSec' in withOld.spots[0]!).toBe(false);
+    const sameType = matchSpotsToMedia(assets, [sp({ id: 'e', assetId: 'old2', clipName: 'logo', durOverrideSec: 4 })]);
+    expect(sameType.spots[0]!.durOverrideSec).toBe(4);
+  });
+  it('a name that resolves to nothing leaves the current clip and counts unmatched', () => {
+    const keep = sp({ id: 'k', assetId: 'i1', clipName: 'nothing-like-this' });
+    const r = matchSpotsToMedia(assets, [keep]);
+    expect(r.spots[0]).toBe(keep);
+    expect(r.unmatched).toBe(1);
+  });
+  it('a nameless spot that already has a clip is left alone and not counted', () => {
+    const hand = sp({ id: 'h', assetId: 'i1' });
+    const r = matchSpotsToMedia(assets, [hand]);
+    expect(r.spots[0]).toBe(hand);
     expect(r.unmatched).toBe(0);
   });
   it('audio is never a candidate', () => {
