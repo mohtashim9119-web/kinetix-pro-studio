@@ -844,20 +844,20 @@ export const FA_FRAME_SEC = 0.02;
  *  soft-warns ("slower than typical narration"). Ordinary spoken-word
  *  narration (audiobooks, e-learning, corporate video voiceover — the genre
  *  this app targets) is widely documented at ~130-160 WPM for a measured,
- *  clear read and up to ~160-180 for a brisker conversational pace; 140 sits
- *  just inside that measured floor rather than at its edge, so a normal slow
+ *  clear read and up to ~160-180 for a brisker conversational pace; the band was
+ *  widened to 110-200 so slower and brisker narrators are not flagged, so a normal slow
  *  narrator is not flagged, but a script that is mostly silence relative to
  *  its word count is. */
-export const WPM_NORMAL_MIN = 140;
+export const WPM_NORMAL_MIN = 110;
 
 /** Normal narration band, upper bound — above this (and up to
  *  `WPM_HARD_IMPOSSIBLE_MIN`) the pre-sync WPM check soft-warns ("faster than
- *  typical narration"). 180 is the conventional upper edge of the same
+ *  typical narration"). 200 is the widened upper edge of the same
  *  narration-pace literature `WPM_NORMAL_MIN` cites — a fast but still
  *  humanly-normal read sits at or just under it; sustained delivery above it
  *  is unusual for this app's target content (not implausible on its own,
  *  which is why this band is a soft warn, not the hard one below). */
-export const WPM_NORMAL_MAX = 180;
+export const WPM_NORMAL_MAX = 200;
 
 /** The hard-impossible band floor — above this, the pre-sync WPM check warns
  *  with STRONG "check your files" wording rather than the soft one.

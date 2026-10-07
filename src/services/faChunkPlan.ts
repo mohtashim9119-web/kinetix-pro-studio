@@ -548,12 +548,17 @@ function exciseUnscriptedRuns(
 /** Per-token and whole-segment normalization must land on the same `qi` count —
  *  otherwise every downstream index cut in this segment is off by the
  *  difference. Throwing beats silently mis-attributing text. */
-function assertQiMapConsistent(perTokenQi: number, wholeSegmentQi: number, segId: string): void {
+export const SYNC_WORDS_MISMATCH_MESSAGE =
+  "Sync blocked: words don't match. Check your script or scene doc files, remove extra text (like titles), then retry.";
+
+export function assertQiMapConsistent(perTokenQi: number, wholeSegmentQi: number, segId: string): void {
   if (perTokenQi !== wholeSegmentQi) {
-    throw new Error(
+    // Technical detail stays in the log; the thrown message is the user-facing headline.
+    console.warn(
       `faChunkPlan: per-token normalization disagrees with whole-segment normalization for segment ${segId} ` +
         `(${perTokenQi} vs ${wholeSegmentQi} words) — index attribution cannot cut this segment's text safely.`,
     );
+    throw new Error(SYNC_WORDS_MISMATCH_MESSAGE);
   }
 }
 

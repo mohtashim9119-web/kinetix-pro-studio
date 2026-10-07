@@ -46,11 +46,11 @@ describe('classifyScriptWpm', () => {
 
   it('OLD BUG scenario: a planted 100 extra words on a short, normal-length scene pushes a plausible 300-word/2-minute script into the hard-impossible band', () => {
     // 300 words over 120s = 150 WPM, dead center of normal. +100 planted
-    // words (400 total) over the SAME unchanged audio = 200 WPM — already
+    // words (420 total, 120 planted) over the SAME unchanged audio = 210 WPM — already
     // soft-fast, and closer to the exact shape a shorter or more heavily
     // padded script pushes into hard-fast (verified explicitly below).
     const before = classifyScriptWpm(300, 120);
-    const after = classifyScriptWpm(400, 120);
+    const after = classifyScriptWpm(420, 120);
     expect(before.band).toBe('normal');
     expect(after.band).toBe('soft-fast');
   });
@@ -106,5 +106,14 @@ describe('buildWpmCheckLogEntry', () => {
     // that could gate control flow at its call site.
     const result = buildWpmCheckLogEntry('run1', WPM_HARD_IMPOSSIBLE_MIN + 500, 1);
     expect(result === undefined || typeof result === 'object').toBe(true);
+  });
+});
+
+describe('WPM range 110–200 (explicit boundaries)', () => {
+  it('109 warns, 110 passes, 200 passes, 201 warns', () => {
+    expect(classifyScriptWpm(109, 60).band).toBe('soft-slow');
+    expect(classifyScriptWpm(110, 60).band).toBe('normal');
+    expect(classifyScriptWpm(200, 60).band).toBe('normal');
+    expect(classifyScriptWpm(201, 60).band).toBe('soft-fast');
   });
 });
