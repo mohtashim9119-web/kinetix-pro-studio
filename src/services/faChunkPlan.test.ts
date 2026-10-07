@@ -22,6 +22,8 @@ import {
   computeUnscriptedRuns,
   detectUnscriptedRuns,
   enforceAlignWindowCap,
+  assertQiMapConsistent,
+  SYNC_WORDS_MISMATCH_MESSAGE,
 } from './faChunkPlan';
 import type { FaRun } from './faAnchors';
 import { MAX_RUN_SEC } from './syncConstants';
@@ -1269,5 +1271,20 @@ describe('computeRunContextAsync (WS2 Wave 2 Group 2, item 2 — worker migratio
     // call must not leave the module in a broken state.
     const chunks = computeFaChunkPlan(segments, tokens, [], 2);
     expect(chunks.length).toBeGreaterThan(0);
+  });
+});
+
+describe('assertQiMapConsistent — plain-language block', () => {
+  it('throws the short plain message and keeps technical detail out of it', () => {
+    const msg = "Sync blocked: words don't match. Check your script or scene doc files, remove extra text (like titles), then retry.";
+    expect(SYNC_WORDS_MISMATCH_MESSAGE).toBe(msg);
+    expect(() => assertQiMapConsistent(15, 12, 'segv1_x')).toThrow(msg);
+    try { assertQiMapConsistent(15, 12, 'segv1_x'); } catch (e) {
+      expect((e as Error).message).not.toContain('faChunkPlan');
+      expect((e as Error).message).not.toContain('segv1_x');
+    }
+  });
+  it('does not throw when counts agree', () => {
+    expect(() => assertQiMapConsistent(12, 12, 's')).not.toThrow();
   });
 });

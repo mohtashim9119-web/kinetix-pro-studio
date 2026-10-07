@@ -4,6 +4,7 @@ import { FrameGlobalConfig } from './frameRenderer';
 import { resolveEffectiveTransition } from './transitionResolver';
 import { isPlainVideoSegment, isPlainImageSegment } from './plainSegment';
 import { checkTimelineIsGapless } from './timelinePartition';
+import { buildMissingMediaError } from './exportFailure/missingMediaMessage';
 import type { GradeLossRefusal } from './webcodecsExport/exportPathSelectionTypes';
 
 export interface ExportOptions {
@@ -433,8 +434,7 @@ export async function exportProject(
     // both mean no visual content is available for this segment.
     const asset = segment.assetId ? assetMap.get(segment.assetId) : undefined;
     if (segment.assetId && !asset?.url) {
-      return { ok: false, error: { kind: 'asset_missing',
-        message: `Segment "${segment.id}" has no asset` } };
+      return { ok: false, error: buildMissingMediaError(segments, assetMap) };
     }
     if (!segment.assetId) {
       // No asset assigned — encode black frames with text overlays only.

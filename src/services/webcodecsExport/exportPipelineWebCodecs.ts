@@ -79,6 +79,7 @@ import type { FrameGlobalConfig } from '../frameRenderer';
 import { resolveEffectiveTransition } from '../transitionResolver';
 import { isPlainVideoSegment, isPlainImageSegment } from '../plainSegment';
 import { checkTimelineIsGapless } from '../timelinePartition';
+import { buildMissingMediaError } from '../exportFailure/missingMediaMessage';
 import { isGlCompositableSegment, GL_TRANSITION_SLUGS } from './glCompositable';
 import type { ExportAppendLedger, ExportError, ExportLivenessSnapshot, ExportPhaseLogTailEntry, ExportResult, ProgressCallback } from '../exportPipeline';
 import type { DestroySessionOutcome, SaveSessionFileResult } from '../tauriFfmpeg';
@@ -2984,7 +2985,7 @@ export async function exportProjectWebCodecs(
     if (!segment.assetId) continue;
     const asset = assetMap.get(segment.assetId);
     if (!asset?.url) {
-      return { ok: false, error: { kind: 'asset_missing', message: `Segment "${segment.id}" has no asset` } };
+      return { ok: false, error: buildMissingMediaError(segments, assetMap) };
     }
   }
 
