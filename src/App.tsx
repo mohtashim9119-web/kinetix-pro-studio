@@ -355,6 +355,12 @@ import { applyAssetRename } from './services/mediaRename';
 import { buildAssetHealthEntry, repointFromCorrupt } from './services/assetHealth';
 import { vaultHashesToUnreference } from './services/vaultUnreferencePlan';
 import { unbindDeletedAssets } from './services/unbindDeletedAssets';
+import { parseSpotDoc, type SpotDocBlock, type SpotDocError } from './services/spots/parseSpotDoc';
+import { bindSpotDoc } from './services/spots/bindSpotDoc';
+import { resolveSpots } from './services/spots/resolveSpots';
+import { mergeDocSpots, addManualSpot, patchSpot, deleteSpot, stampResolution, type SpotPatch } from './services/spots/spotOps';
+import { buildSpotFindingEntries } from './services/spots/spotLog';
+import type { SpotFinding } from './services/spots/spotFinding';
 import { matchMediaToScenes, summarizeMediaMatch, type MediaMatchSummary } from './services/matchMediaToScenes';
 import { assignAssetToSegment } from './services/assetDragChannel';
 import { reconnectOfflineAssets } from './services/reconnectOfflineAssets';
@@ -382,7 +388,7 @@ import { ensureStagedSnapshotReady } from './services/stagedSyncRetry';
 import { armRecoveryBannerFromPersistedProject } from './services/recoveryBannerVisibility';
 import { useFocusTrap } from './hooks/useFocusTrap';
 import { FONT_FAMILIES, FILTERS, TEXT_ANIMATIONS, getFilterStyle, getMotionProps, SUPPORTED_LANGUAGE_CODES } from './constants';
-import { DropZonePanel, EMPTY_STAGED, type StagedFiles } from './components/DropZonePanel';
+import { DropZonePanel, EMPTY_STAGED, type StagedFiles, type LeftTab } from './components/DropZonePanel';
 import { canAdoptRestoredVoiceover, stagedVoiceoverNeedsExplicitTranscribe } from './services/stagedFilesPersist';
 import { NEUTRAL_GRADE, type ApplyEvent, type ApplyScope, type AutoGradeResult } from './components/EffectsPanel';
 import { capRateForDuration } from './services/zoomScale';
@@ -2072,8 +2078,8 @@ export default function App() {
     try { return (readUiState().previewHeight as number) ?? Math.floor((window.innerHeight - 4) / 2); }
     catch { return Math.floor((window.innerHeight - 4) / 2); }
   });
-  const [activeLeftTab, setActiveLeftTab] = useState<'files' | 'segments' | 'effects'>(() => {
-    try { return (readUiState().activeLeftTab as 'files' | 'segments' | 'effects') ?? 'files'; }
+  const [activeLeftTab, setActiveLeftTab] = useState<LeftTab>(() => {
+    try { return (readUiState().activeLeftTab as LeftTab) ?? 'files'; }
     catch { return 'files'; }
   });
 
@@ -4811,6 +4817,93 @@ export default function App() {
     return digest;
   }, []);
 
+
+  // ---------------------------------------------------------------------------
+  // LAYER 2 SPOTS (App lane). The dedicated Layer-2 field hands a file here; it
+  // is parsed immediately (honest per-block errors) and BOUND by the effect
+  // below once a timeline exists — an App-level post-finish effect that reads
+  // committed segments after BOTH doors (file Apply Sync and bundle) finish. It
+  // is never inside finishPipeline / parseProjectData. After binding, spots
+  // follow their anchor segments at resolve time (anchorSegmentId is a
+  // content-derived scene id; nothing absolute is stored except lastKnownStartSec).
+  // ---------------------------------------------------------------------------
+  const [pendingSpotDoc, setPendingSpotDoc] = useState<
+    { name: string; blocks: SpotDocBlock[]; errors: SpotDocError[]; bound: boolean } | null
+  >(null);
+  const [spotFindings, setSpotFindings] = useState<SpotFinding[]>([]);
+
+  const handleDropSpotDoc = useCallback(async (file: File): Promise<void> => {
+    try {
+      const text = stripRtfIfNeeded(await file.text());
+      const { blocks, errors } = parseSpotDoc(text);
+      setSpotFindings([]);
+      setPendingSpotDoc({ name: file.name, blocks, errors, bound: false });
+    } catch (err) {
+      showToast(`Could not read Layer 2 doc "${file.name}": ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }, [showToast]);
+
+  // A different project never inherits the previous project's queued doc.
+  useEffect(() => {
+    setPendingSpotDoc(null);
+    setSpotFindings([]);
+  }, [project.id]);
+
+  useEffect(() => {
+    if (!pendingSpotDoc || pendingSpotDoc.bound) return;
+    if (isHydrating || isProcessing || project.segments.length === 0) return;
+    const { spots, findings } = bindSpotDoc(pendingSpotDoc.blocks, project.segments, project.assets, {
+      defaultSpotAssetId: project.defaultSpotAssetId,
+      now: Date.now(),
+    });
+    setSpotFindings(findings);
+    setPendingSpotDoc({ ...pendingSpotDoc, bound: true });
+    setProject(
+      prev => {
+        const merged = mergeDocSpots(prev.spots ?? [], spots);
+        return appendSyncLogEntries({ ...prev, spots: merged }, buildSpotFindingEntries(mintSyncLogId(), findings));
+      },
+      { label: 'Bind Layer 2 doc' },
+    );
+  }, [pendingSpotDoc, isHydrating, isProcessing, project.segments, project.assets, project.defaultSpotAssetId, setProject]);
+
+  const voiceoverEndSec = useMemo(
+    () => project.segments.reduce((m, s) => Math.max(m, s.startTime + s.duration), 0),
+    [project.segments],
+  );
+  const spotResolution = useMemo(
+    () => resolveSpots(project.spots ?? [], project.segments, project.assets, voiceoverEndSec),
+    [project.spots, project.segments, project.assets, voiceoverEndSec],
+  );
+  const resolvedSpotMap = spotResolution.bySpot;
+
+  // Persist last-known absolute starts + needs-review flags (machine write: silent).
+  useEffect(() => {
+    const spots = project.spots;
+    if (!spots || spots.length === 0 || isHydrating || isProcessing) return;
+    const next = stampResolution(spots, spotResolution, project.segments.length > 0);
+    if (next !== spots) setProjectSilent(p => (p.spots === spots ? { ...p, spots: next } : p));
+  }, [project.spots, project.segments, spotResolution, isHydrating, isProcessing, setProjectSilent]);
+
+  const handlePatchSpot = useCallback((id: string, patch: SpotPatch) => {
+    setProject(p => ({ ...p, spots: patchSpot(p.spots ?? [], id, patch) }), { label: 'Edit Layer 2 spot' });
+  }, [setProject]);
+  const handleDeleteSpot = useCallback((id: string) => {
+    setProject(p => ({ ...p, spots: deleteSpot(p.spots ?? [], id) }), { label: 'Delete Layer 2 spot' });
+  }, [setProject]);
+  const handleAddManualSpot = useCallback((segmentId: string) => {
+    setProject(p => ({ ...p, spots: addManualSpot(p.spots ?? [], segmentId, p.defaultSpotAssetId, Date.now()) }), { label: 'Add Layer 2 spot' });
+  }, [setProject]);
+  const handleSetDefaultSpotAsset = useCallback((assetId: string | undefined) => {
+    setProject(p => {
+      const { defaultSpotAssetId: _old, ...rest } = p;
+      return assetId ? { ...rest, defaultSpotAssetId: assetId } : rest;
+    }, { label: 'Set default Layer 2 clip' });
+  }, [setProject]);
+  const handleSprinkleSpots = useCallback(() => {
+    // U7 wires this.
+  }, []);
+
   // Media workflow Unit 3 — a Media block tile dropped on a timeline
   // segment. The user's pick is authoritative (no name logic); assignment
   // only, persisted by the ordinary autosave — no sync, timings untouched.
@@ -6678,6 +6771,22 @@ export default function App() {
             onRename={(name) => setProject(p => ({ ...p, name }))}
             activeLeftTab={activeLeftTab}
             onActiveLeftTabChange={setActiveLeftTab}
+            layer2={{
+              segments: project.segments,
+              assets: project.assets,
+              spots: project.spots ?? [],
+              defaultSpotAssetId: project.defaultSpotAssetId,
+              resolved: resolvedSpotMap,
+              pendingDoc: pendingSpotDoc ? { name: pendingSpotDoc.name, errors: pendingSpotDoc.errors } : null,
+              findings: spotFindings,
+              onDropDoc: (f: File) => { void handleDropSpotDoc(f); },
+              onClearPending: () => { setPendingSpotDoc(null); setSpotFindings([]); },
+              onPatchSpot: handlePatchSpot,
+              onDeleteSpot: handleDeleteSpot,
+              onAddManual: handleAddManualSpot,
+              onSetDefaultAsset: handleSetDefaultSpotAsset,
+              onSprinkle: handleSprinkleSpots,
+            }}
             isPlaying={isPlaying}
           />
           {transcriptionStatus.phase !== 'idle' && transcriptionStatus.phase !== 'transcribing' && whisperModelFailureKind === null && cloudTranscriptionPause === null && (

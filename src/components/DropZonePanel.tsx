@@ -63,10 +63,13 @@ import { classifyAndIngestBundleZip } from '../services/bundleIngest';
 import { isMacOSMetadataPath } from '../services/macosMetadata';
 import type { MediaIngestCounts } from '../services/mediaIngest';
 import { Z } from './overlayLayers';
+import { Layer2Panel, type Layer2PanelProps } from './Layer2Panel';
 
 // ---------------------------------------------------------------------------
 // Exported types (consumed by App.tsx)
 // ---------------------------------------------------------------------------
+
+export type LeftTab = 'files' | 'segments' | 'effects' | 'layer2';
 
 export interface StagedFile {
   file: File;
@@ -485,8 +488,10 @@ interface Props {
   onBackToProjects: () => void;
   projectName: string;
   onRename: (name: string) => void;
-  activeLeftTab: 'files' | 'segments' | 'effects';
-  onActiveLeftTabChange: (tab: 'files' | 'segments' | 'effects') => void;
+  activeLeftTab: LeftTab;
+  onActiveLeftTabChange: (tab: LeftTab) => void;
+  /** Layer 2 spots — the dedicated-field panel (4th tab). Omitted = tab hidden. */
+  layer2?: Layer2PanelProps;
   isPlaying: boolean;
 }
 
@@ -589,6 +594,7 @@ export function DropZonePanel({
   onRename,
   activeLeftTab,
   onActiveLeftTabChange,
+  layer2,
   isPlaying,
 }: Props) {
   // ── Tab state (controlled from App.tsx for persistence) ───────────────────
@@ -1235,7 +1241,7 @@ export function DropZonePanel({
 
       {/* ── Tab bar ─────────────────────────────────────────────────────────── */}
       <div className="flex flex-shrink-0 border-b border-[var(--kx-line)]">
-        {(['files', 'segments', 'effects'] as const).map((tab) => (
+        {((layer2 ? ['files', 'segments', 'effects', 'layer2'] : ['files', 'segments', 'effects']) as readonly LeftTab[]).map((tab) => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
@@ -1244,7 +1250,7 @@ export function DropZonePanel({
                           ? 'text-[var(--kx-text)] border-b-2 border-[var(--kx-accent)] -mb-px'
                           : 'text-[var(--kx-faint)] hover:text-[var(--kx-muted)]'}`}
           >
-            {tab}
+            {tab === 'layer2' ? 'Layer 2' : tab}
           </button>
         ))}
       </div>
@@ -2007,6 +2013,9 @@ export function DropZonePanel({
 
         </div>
       )}
+
+      {/* ── LAYER 2 TAB ─────────────────────────────────────────────────────── */}
+      {activeTab === 'layer2' && layer2 && <Layer2Panel {...layer2} />}
 
       {showSaveConfirm && (
         <SaveConfirmDialog

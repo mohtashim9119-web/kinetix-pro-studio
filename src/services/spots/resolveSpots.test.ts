@@ -42,6 +42,7 @@ describe('resolveSpots', () => {
       ['spot-overlap', 'B'],
     ]);
     expect(r.lastKnown).toEqual({ A: 0, B: 5, C: 6, D: 0 });
+    expect(r.bySpot).toEqual({ A: { startSec: 0, durSec: 4 }, B: { startSec: 5, durSec: 1 }, C: { startSec: 6, durSec: 2 } });
   });
 
   it('clamps at the voiceover end with a finding; fully past -> dropped + finding', () => {

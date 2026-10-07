@@ -27,6 +27,8 @@ export interface ResolveSpotsResult {
   /** spotId -> absolute start from a LIVE anchor, for the caller to persist
    *  as `Spot.lastKnownStartSec`. */
   lastKnown: Record<string, number>;
+  /** spotId -> final placement (after clamp/overlap); absent = not rendered. */
+  bySpot: Record<string, { startSec: number; durSec: number }>;
   /** Spots whose anchor segment no longer exists. */
   needsReview: string[];
 }
@@ -124,5 +126,7 @@ export function resolveSpots(
     corner: l.spot.corner,
     heightPct: l.spot.heightPct,
   }));
-  return { specs, findings, lastKnown, needsReview };
+  const bySpot: Record<string, { startSec: number; durSec: number }> = {};
+  out.forEach(l => { bySpot[l.spotId] = { startSec: l.startSec, durSec: r3(l.durSec) }; });
+  return { specs, findings, lastKnown, bySpot, needsReview };
 }
