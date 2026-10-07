@@ -59,6 +59,6 @@ describe('exportProject — missing media', () => {
     if (r.ok) return;
     expect(r.error.kind).toBe('asset_missing');
     expect(r.error.message).toBe('Export blocked: media is missing for segments 1, 3. Add it to unblock export.');
-    expect(r.error.cause).toContain('seg-uuid-0');
+    expect(r.error.cause ?? '').not.toContain('seg-uuid');
   });
 });

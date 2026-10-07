@@ -176,7 +176,7 @@ function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFi
     : phase === 'cloud-done' || phase === 'finishing' ? BULK_COPY.building
     : phase === 'done' ? 'Ready'
     : phase === 'finish-failed' ? BULK_COPY.finishFailed(record.message ?? '')
-    : phase === 'paused' ? `Paused — ${record.message ?? 'open the project to answer'}`
+    : phase === 'paused' ? (record.message?.startsWith('Sync paused') ? record.message : `Paused — ${record.message ?? 'open the project to answer'}`)
     : phase === 'failed' ? (record.message ? `Failed — Retry — ${record.message}` : 'Failed — Retry')
     : phase === 'cancelled' ? 'Cancelled — Retry'
     : BULK_COPY.skipped(record.message ?? '')

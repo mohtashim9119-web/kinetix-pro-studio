@@ -22,15 +22,15 @@ export function buildMissingMediaMessage(numbers: readonly number[]): string {
   return `Export blocked: media is missing for ${noun} ${shown}${more}. Add it to unblock export.`;
 }
 
-/** Headline is plain; the technical segment ids ride in `cause` (expandable details). */
+/** Headline is plain; segment ids are logged, never shown to the user. */
 export function buildMissingMediaError(
   segments: readonly VideoSegment[],
   assetMap: ReadonlyMap<string, Asset>,
-): { kind: 'asset_missing'; message: string; cause: string } {
+): { kind: 'asset_missing'; message: string } {
   const numbers = findMissingMediaSegmentNumbers(segments, assetMap);
-  const detail = numbers.map((n) => {
-    const s = segments[n - 1]!;
-    return `#${n} segment "${s.id}" assetId "${s.assetId}" has no asset`;
-  });
-  return { kind: 'asset_missing', message: buildMissingMediaMessage(numbers), cause: detail.join('\n') };
+  console.warn(
+    '[export] missing media: ' +
+      numbers.map((n) => `#${n} segment "${segments[n - 1]!.id}" assetId "${segments[n - 1]!.assetId}"`).join('; '),
+  );
+  return { kind: 'asset_missing', message: buildMissingMediaMessage(numbers) };
 }

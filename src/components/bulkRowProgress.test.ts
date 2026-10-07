@@ -179,3 +179,11 @@ describe('log-title truncation', () => {
     expect(up.title).toBe('Upload failed');
   });
 });
+
+describe('shortLogTitle — text mismatch', () => {
+  it('fits the row; full text stays in the popover', () => {
+    const r = shortLogTitle('Sync paused — Text mismatch detected. Check your script or scenes file and retry.');
+    expect(r.title).toBe('Sync paused — text mismatch');
+    expect(r.truncated).toBe(true);
+  });
+});

@@ -201,7 +201,7 @@ export function ExportFailureMessage({
 
       <details data-testid="export-failure-technical" className="text-left">
         <summary className="text-[9px] font-black uppercase tracking-widest text-gray-600 cursor-pointer">
-          Technical details
+          Details
         </summary>
         <pre
           data-testid="export-failure-technical-body"

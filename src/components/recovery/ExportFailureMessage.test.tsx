@@ -400,3 +400,10 @@ describe('ExportFailureMessage — diagnostics live only inside Technical detail
     expect(container.querySelector('[data-testid="export-failure-primary"] [data-testid="export-failure-copy-diagnostics"]')).toBeNull();
   });
 });
+
+describe('ExportFailureMessage — disclosure label', () => {
+  it('is labelled just "Details"', async () => {
+    await renderMessage({ kind: 'mux', ...ELIGIBLE });
+    expect(container.querySelector('[data-testid="export-failure-technical"] summary')?.textContent?.trim()).toBe('Details');
+  });
+});

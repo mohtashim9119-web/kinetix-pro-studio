@@ -840,13 +840,16 @@ export const FA_FRAME_SEC = 0.02;
 //      ones averaging out to a normal total WPM).
 // ---------------------------------------------------------------------------
 
+/** User-facing text for the sync text-mismatch pause (single-project dialog and bulk row). */
+export const SYNC_TEXT_MISMATCH_BODY = 'Text mismatch detected. Check your script or scenes file and retry.';
+export const SYNC_TEXT_MISMATCH_MESSAGE = `Sync paused — ${SYNC_TEXT_MISMATCH_BODY}`;
+
 /** Normal narration band, lower bound — below this the pre-sync WPM check
  *  soft-warns ("slower than typical narration"). Ordinary spoken-word
  *  narration (audiobooks, e-learning, corporate video voiceover — the genre
  *  this app targets) is widely documented at ~130-160 WPM for a measured,
  *  clear read and up to ~160-180 for a brisker conversational pace; the band was
- *  widened to 110-200 so slower and brisker narrators are not flagged, so a normal slow
- *  narrator is not flagged, but a script that is mostly silence relative to
+ *  widened to 110-200 so slower and brisker narrators are not flagged, but a script that is mostly silence relative to
  *  its word count is. */
 export const WPM_NORMAL_MIN = 110;
 

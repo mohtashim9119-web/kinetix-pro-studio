@@ -12,6 +12,7 @@ export function shortLogTitle(text: string, maxChars: number = MAX): { title: st
   const t = text.trim();
   if (t.length <= maxChars) return { title: t, truncated: false };
 
+  if (/^sync paused — text mismatch/i.test(t)) return { title: 'Sync paused — text mismatch', truncated: true };
   if (/^paused\b/i.test(t)) return { title: 'Paused — inference', truncated: true };
   if (/^failed\b/i.test(t)) return { title: 'Failed — Retry', truncated: true };
   if (/^cancelled\b/i.test(t)) return { title: 'Cancelled', truncated: true };
