@@ -1,0 +1,86 @@
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/**
+ * Binds parsed Layer-2 blocks to MAIN segments and vault assets. Pure.
+ * Tag -> segment: normalized exact match on the segment's tag, else a UNIQUE
+ * contiguous-word match of the tag inside segment text (ambiguous = unmatched;
+ * never guess). Clip: body name via `pickAssetByName` over video/image assets;
+ * no name -> the project's default spot asset. An unmatched clip keeps the
+ * spot (unbound, shown [NO CLIP]) and reports `spot-clip-unmatched`.
+ */
+
+import type { Asset, Spot, VideoSegment } from '../../types';
+import { contiguousWordMatch, isExactFilenameMatch } from '../syncEngine';
+import { pickAssetByName } from '../pickAssetByName';
+import type { SpotDocBlock } from './parseSpotDoc';
+import type { SpotFinding } from './spotFinding';
+
+export interface BindSpotDocOptions {
+  defaultSpotAssetId?: string;
+  now: number;
+  newId?: () => string;
+}
+
+export function bindSpotDoc(
+  blocks: readonly SpotDocBlock[],
+  segments: readonly VideoSegment[],
+  assets: readonly Asset[],
+  opts: BindSpotDocOptions,
+): { spots: Spot[]; findings: SpotFinding[] } {
+  const newId = opts.newId ?? (() => crypto.randomUUID());
+  const candidates = assets.filter(a => a.type === 'video' || a.type === 'image');
+  const spots: Spot[] = [];
+  const findings: SpotFinding[] = [];
+
+  for (const block of blocks) {
+    let segment = segments.find(s => s.tag && isExactFilenameMatch(block.tag, s.tag));
+    if (!segment) {
+      const words = segments.filter(s => contiguousWordMatch(block.tag, s.text));
+      if (words.length === 1) segment = words[0];
+    }
+    if (!segment) {
+      findings.push({
+        kind: 'spot-segment-unmatched',
+        blockIndex: block.index,
+        message: `Layer 2 block ${block.index + 1} [${block.tag}] matched no scene (no tag match, and no unique match inside scene text).`,
+      });
+      continue;
+    }
+
+    let assetId: string | undefined;
+    if (block.body) {
+      const pick = pickAssetByName(block.body, candidates);
+      assetId = pick.asset?.id;
+      if (!assetId) {
+        findings.push({
+          kind: 'spot-clip-unmatched',
+          blockIndex: block.index,
+          message: `Layer 2 block ${block.index + 1} [${block.tag}]: no video/image named "${block.body}" in the vault.`,
+        });
+      }
+    } else if (opts.defaultSpotAssetId && candidates.some(a => a.id === opts.defaultSpotAssetId)) {
+      assetId = opts.defaultSpotAssetId;
+    } else {
+      findings.push({
+        kind: 'spot-clip-unmatched',
+        blockIndex: block.index,
+        message: `Layer 2 block ${block.index + 1} [${block.tag}] names no clip and no default Layer-2 asset is set.`,
+      });
+    }
+
+    spots.push({
+      id: newId(),
+      ...(assetId ? { assetId } : {}),
+      anchorSegmentId: segment.id,
+      offsetSec: 0,
+      corner: 'top-right',
+      heightPct: 40,
+      source: 'doc',
+      boundAt: opts.now,
+    });
+  }
+  return { spots, findings };
+}

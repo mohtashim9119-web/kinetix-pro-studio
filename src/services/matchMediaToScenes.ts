@@ -21,7 +21,7 @@
  */
 
 import type { Asset, VideoSegment } from '../types';
-import { contiguousWordMatch, isExactFilenameMatch } from './syncEngine';
+import { pickAssetByName } from './pickAssetByName';
 
 /** The block-facing digest of one Match run (N matched / M unmatched /
  *  conflicts), surfaced visibly in the Media block rather than only logged. */
@@ -64,13 +64,9 @@ export interface MediaMatchResult {
   ambiguous: { name: string; count: number }[];
 }
 
-function oldestFirst(a: { asset: Asset; index: number }, b: { asset: Asset; index: number }): number {
-  return (a.asset.addedAt ?? 0) - (b.asset.addedAt ?? 0) || a.index - b.index;
-}
-
 export function matchMediaToScenes(assets: readonly Asset[], segments: readonly VideoSegment[]): MediaMatchResult {
   const candidates = assets
-    .map((asset, index) => ({ asset, index }))
+    .map(asset => ({ asset }))
     .filter(({ asset }) => asset.type !== 'audio');
   const unmatched: string[] = [];
   const ambiguous: { name: string; count: number }[] = [];
@@ -90,15 +86,8 @@ export function matchMediaToScenes(assets: readonly Asset[], segments: readonly 
       return s;
     }
 
-    let pick: Asset | undefined;
-    const exact = candidates.filter(({ asset }) => isExactFilenameMatch(name, asset.name)).sort(oldestFirst);
-    if (exact.length > 0) {
-      pick = exact[0]!.asset;
-      if (exact.length > 1 && !ambiguous.some(a => a.name === name)) ambiguous.push({ name, count: exact.length });
-    } else {
-      const words = candidates.filter(({ asset }) => contiguousWordMatch(name, asset.name));
-      if (words.length === 1) pick = words[0]!.asset;
-    }
+    const { asset: pick, conflict } = pickAssetByName(name, candidates.map(c => c.asset));
+    if (conflict && !ambiguous.some(a => a.name === name)) ambiguous.push({ name, count: conflict });
 
     if (!pick) {
       unmatched.push(name);
