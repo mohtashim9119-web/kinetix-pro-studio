@@ -62,8 +62,8 @@ describe('bindSpotDoc', () => {
     const blocks = parseSpotDoc('[intro] avatar1.mp4\n[night] logo').blocks;
     const r = bindSpotDoc(blocks, segments, assets, opts());
     expect(r.spots).toEqual([
-      { id: 'sp1', assetId: 'v1', clipName: 'avatar1.mp4', anchorSegmentId: 's1', offsetSec: 0, corner: 'top-right', heightPct: 40, source: 'doc', boundAt: 100 },
-      { id: 'sp2', assetId: 'i1', clipName: 'logo', anchorSegmentId: 's2', offsetSec: 0, corner: 'top-right', heightPct: 40, source: 'doc', boundAt: 100 },
+      { id: 'sp1', assetId: 'v1', clipName: 'avatar1.mp4', anchorSegmentId: 's1', offsetSec: 0, source: 'doc', boundAt: 100 },
+      { id: 'sp2', assetId: 'i1', clipName: 'logo', anchorSegmentId: 's2', offsetSec: 0, source: 'doc', boundAt: 100 },
     ]);
     expect(r.findings).toEqual([]);
   });

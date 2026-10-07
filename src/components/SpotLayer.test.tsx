@@ -50,7 +50,7 @@ describe('SpotLayer', () => {
     expect(html([item({ id: 'a', assetId: 'i' })], 1)).not.toContain('data-spot-handle');
   });
   it('a live (dragging) rect overrides the resolved one for display', () => {
-    const h = html([item({ id: 'a', assetId: 'i' })], 1, { liveRect: { id: 'a', rect: { xPct: 10, yPct: 11, wPct: 12, hPct: 13 } } });
+    const h = html([item({ id: 'a', assetId: 'i' })], 1, { liveRect: { id: 'a', scope: 'block', rect: { xPct: 10, yPct: 11, wPct: 12, hPct: 13 } } });
     expect(h).toContain('left:10%');
     expect(h).toContain('height:13%');
   });

@@ -6,37 +6,66 @@
 // Layer 2 spots R5 — the ONE shared rect-math helper (preview + resolver + export).
 import { describe, it, expect } from 'vitest';
 import {
-  defaultSpotRect, resolveSpotRect, clampRect, moveRect, resizeRect, rectToPx, rectToCss,
-  SPOT_MARGIN_HEIGHT_FRAC, SPOT_BORDER_HEIGHT_FRAC, MIN_SPOT_PCT, type PctRect,
+  GLOBAL_SPOT_GEOMETRY, spotGeometryLevel, coverUv, formatSpotGeometry, resolveSpotRect, clampRect, moveRect, resizeRect, rectToPx, rectToCss,
+  SPOT_BORDER_HEIGHT_FRAC, MIN_SPOT_PCT, type PctRect,
 } from './spotGeometry';
 
 const F169 = 16 / 9;
 
-describe('defaultSpotRect', () => {
-  it('top-right 40% height, 16:9 clip in a 16:9 frame: w=40%, inset 2% of frame HEIGHT from each edge', () => {
-    const r = defaultSpotRect('top-right', 40, F169, F169);
-    expect(r.hPct).toBeCloseTo(40, 9);
-    expect(r.wPct).toBeCloseTo(40, 9);
-    expect(r.yPct).toBeCloseTo(2, 9);
-    // margin is 2% of frame height = 2/ (16/9) % of width
-    expect(r.xPct).toBeCloseTo(100 - 40 - 2 / F169, 9);
+describe('R7 default cascade: block.geometry ?? project default ?? GLOBAL left half', () => {
+  const G: PctRect = { xPct: 10, yPct: 20, wPct: 30, hPct: 25 };
+  const P: PctRect = { xPct: 60, yPct: 5, wPct: 35, hPct: 50 };
+
+  it('the built-in global default is the LEFT HALF screen (0,0 · 50% × 100%)', () => {
+    expect(GLOBAL_SPOT_GEOMETRY).toEqual({ xPct: 0, yPct: 0, wPct: 50, hPct: 100 });
   });
-  it('portrait clip in a 16:9 frame is narrower; other corners anchor correctly', () => {
-    const r = defaultSpotRect('bottom-left', 40, 9 / 16, F169);
-    expect(r.wPct).toBeCloseTo(40 * (9 / 16) / F169, 9);
-    expect(r.xPct).toBeCloseTo(2 / F169, 9);
-    expect(r.yPct).toBeCloseTo(100 - 40 - 2, 9);
+  it('a new block (no geometry, no project default) resolves to the left half', () => {
+    expect(resolveSpotRect({}, undefined)).toEqual(GLOBAL_SPOT_GEOMETRY);
+  });
+  it('a project default moves every block that has no individual override', () => {
+    expect(resolveSpotRect({}, P)).toEqual(P);
+    expect(resolveSpotRect({}, { ...P, source: 'project-default' })).toEqual(P); // stamp is not geometry
+  });
+  it('an individual override WINS over the project default and never gets overwritten by it', () => {
+    expect(resolveSpotRect({ geometry: G }, P)).toEqual(G);
+  });
+  it('clearing the individual override falls back to the project default (then the global)', () => {
+    expect(resolveSpotRect({}, P)).toEqual(P);
+    expect(resolveSpotRect({}, undefined)).toEqual(GLOBAL_SPOT_GEOMETRY);
+  });
+  it('level reported for the panel: default / project / custom', () => {
+    expect(spotGeometryLevel({}, undefined)).toBe('default');
+    expect(spotGeometryLevel({}, P)).toBe('project');
+    expect(spotGeometryLevel({ geometry: G }, P)).toBe('custom');
+    expect(spotGeometryLevel({ geometry: G }, undefined)).toBe('custom');
+  });
+  it('always clamped inside the frame', () => {
+    const off = resolveSpotRect({ geometry: { xPct: 90, yPct: 90, wPct: 30, hPct: 30 } }, undefined);
+    expect(off.xPct + off.wPct).toBeLessThanOrEqual(100 + 1e-9);
+    expect(off.yPct + off.hPct).toBeLessThanOrEqual(100 + 1e-9);
   });
 });
 
-describe('resolveSpotRect', () => {
-  it('geometry override wins over corner/heightPct; absent -> default; always clamped', () => {
-    const g: PctRect = { xPct: 10, yPct: 20, wPct: 30, hPct: 25 };
-    expect(resolveSpotRect({ corner: 'top-right', heightPct: 40, geometry: g }, F169, F169)).toEqual(g);
-    expect(resolveSpotRect({ corner: 'top-right', heightPct: 40 }, F169, F169)).toEqual(defaultSpotRect('top-right', 40, F169, F169));
-    const off = resolveSpotRect({ corner: 'top-right', heightPct: 40, geometry: { xPct: 90, yPct: 90, wPct: 30, hPct: 30 } }, F169, F169);
-    expect(off.xPct + off.wPct).toBeLessThanOrEqual(100 + 1e-9);
-    expect(off.yPct + off.hPct).toBeLessThanOrEqual(100 + 1e-9);
+describe('coverUv — center-crop to fill (preview object-cover == export UV crop)', () => {
+  it('same aspect: full texture', () => {
+    expect(coverUv(16 / 9, 1920, 1080)).toEqual({ u0: 0, v0: 0, u1: 1, v1: 1 });
+  });
+  it('wider source than the box: crops left/right equally', () => {
+    const c = coverUv(0.5, 1920, 1080); // box is tall; source is wide
+    expect(c.v0).toBe(0);
+    expect(c.v1).toBe(1);
+    expect(c.u0).toBeCloseTo((1 - 0.5 / (16 / 9)) / 2, 9);
+    expect(c.u1).toBeCloseTo(1 - c.u0, 9);
+  });
+  it('taller source than the box: crops top/bottom equally', () => {
+    const c = coverUv(2, 900, 1200);
+    expect(c.u0).toBe(0);
+    expect(c.u1).toBe(1);
+    expect(c.v0).toBeCloseTo((1 - (900 / 1200) / 2) / 2, 9);
+    expect(c.v1).toBeCloseTo(1 - c.v0, 9);
+  });
+  it('unknown native size: full texture (no crop)', () => {
+    expect(coverUv(1, 0, 0)).toEqual({ u0: 0, v0: 0, u1: 1, v1: 1 });
   });
 });
 
@@ -84,7 +113,18 @@ describe('one rect, two surfaces', () => {
     expect(rectToCss(r)).toEqual({ left: '72%', top: '8%', width: '24%', height: '40%' });
   });
   it('shared constants are defined once', () => {
-    expect(SPOT_MARGIN_HEIGHT_FRAC).toBe(0.02);
     expect(SPOT_BORDER_HEIGHT_FRAC).toBe(0.006);
+  });
+});
+
+describe('formatSpotGeometry (panel geometry row)', () => {
+  it('reads "x 72% · y 8% · 24% × 40%"', () => {
+    expect(formatSpotGeometry({ xPct: 72, yPct: 8, wPct: 24, hPct: 40 })).toBe('x 72% · y 8% · 24% × 40%');
+  });
+  it('rounds to whole percents (live-updating without jitter)', () => {
+    expect(formatSpotGeometry({ xPct: 71.6, yPct: 7.5, wPct: 23.51, hPct: 39.49 })).toBe('x 72% · y 8% · 24% × 39%');
+  });
+  it('the left-half default reads naturally', () => {
+    expect(formatSpotGeometry(GLOBAL_SPOT_GEOMETRY)).toBe('x 0% · y 0% · 50% × 100%');
   });
 });

@@ -12,7 +12,7 @@ import type { Asset, Spot } from '../../types';
 
 const a = (id: string, name: string, addedAt: number, type: Asset['type'] = 'image'): Asset => ({ id, name, url: '', type, addedAt });
 const sp = (o: Partial<Spot> & { id: string }): Spot => ({
-  anchorSegmentId: 's1', offsetSec: 0, corner: 'top-right', heightPct: 40, source: 'doc', boundAt: 0, ...o,
+  anchorSegmentId: 's1', offsetSec: 0, source: 'doc', boundAt: 0, ...o,
 });
 
 describe('matchSpotsToMedia', () => {

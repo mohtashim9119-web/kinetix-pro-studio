@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-// Layer 2 spots U4 — static-markup coverage of the Layer-2 panel (same pattern
-// as timeline.render.test.tsx: renderToStaticMarkup, no DOM library).
+// Layer 2 spots U4 + R6 — static-markup coverage of the Layer-2 panel (same
+// pattern as timeline.render.test.tsx: renderToStaticMarkup, no DOM library).
 import { describe, it, expect } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { ComponentProps } from 'react';
@@ -15,17 +15,20 @@ type Props = ComponentProps<typeof Layer2Panel>;
 const noop = () => {};
 const segs = [{ id: 's1', text: 'Hello there', tag: 'intro', startTime: 0, duration: 4 }] as unknown as VideoSegment[];
 const assets: Asset[] = [{ id: 'v', name: 'avatar.mp4', url: '', type: 'video', duration: 4 }];
+const LEFT = { xPct: 0, yPct: 0, wPct: 50, hPct: 100 };
 const spot = (o: Partial<Spot> & { id: string }): Spot => ({
-  anchorSegmentId: 's1', offsetSec: 0, corner: 'top-right', heightPct: 40, source: 'doc', boundAt: 0, ...o,
+  anchorSegmentId: 's1', offsetSec: 0, source: 'doc', boundAt: 0, ...o,
 });
 function props(o: Partial<Props> = {}): Props {
   return {
     segments: segs, assets, spots: [], resolved: {}, pendingDoc: null, findings: [],
     onDropDoc: noop, onClearPending: noop, onPatchSpot: noop, onDeleteSpot: noop, onAddManual: noop,
+    onSelectSpot: noop, onResetSpotGeometry: noop, onCustomizeSpotGeometry: noop, onResetProjectDefault: noop,
     ...o,
   };
 }
 const render = (o?: Partial<Props>) => renderToStaticMarkup(<Layer2Panel {...props(o)} />);
+const R = (o: Partial<{ startSec: number; durSec: number }> = {}) => ({ startSec: 0, durSec: 4, rect: LEFT, ...o });
 
 describe('Layer2Panel', () => {
   it('shows its own dedicated drop field', () => {
@@ -41,26 +44,64 @@ describe('Layer2Panel', () => {
   it('surfaces honest per-block parse errors and bind findings', () => {
     const html = render({
       pendingDoc: { name: 'd.txt', errors: [{ index: 1, reason: 'empty-tag', message: 'Block 2 has an empty [] tag — skipped.' }] },
-      findings: [{ kind: 'spot-segment-unmatched', message: 'Layer 2 block 3 [zzz] matched no scene' }],
+      findings: [{ kind: 'spot-clip-unmatched', message: '[intro]: No asset named "avatar01" found for block 1.' }],
     });
     expect(html).toContain('Block 2 has an empty [] tag');
-    expect(html).toContain('matched no scene');
-  });
-  it('lists spots with scene, resolved time, NO CLIP tile, and needs-review flag', () => {
-    const html = render({
-      spots: [spot({ id: 'a', assetId: 'v' }), spot({ id: 'b', needsReview: true })],
-      resolved: { a: { startSec: 0, durSec: 4 } },
-    });
-    expect(html).toContain('data-testid="layer2-spot-a"');
-    expect(html).toContain('avatar.mp4');
-    expect(html).toContain('NO CLIP');
-    expect(html).toContain('Needs review');
+    expect(html).toContain('[intro]: No asset named &quot;avatar01&quot; found for block 1.');
   });
   it('has NO default-clip picker and NO sprinkle anywhere', () => {
     const html = render({ assets: [...assets, { id: 'au', name: 'vo.mp3', url: '', type: 'audio' }] });
-    expect(html).not.toContain('layer2-default-asset');
-    expect(html).not.toContain('Default Layer-2 clip');
-    expect(html).not.toContain('Sprinkle');
-    expect(html).not.toContain('layer2-sprinkle');
+    for (const bad of ['layer2-default-asset', 'Default Layer-2 clip', 'Sprinkle', 'layer2-sprinkle']) expect(html).not.toContain(bad);
+  });
+});
+
+describe('Layer2Panel block rows (R6)', () => {
+  const rows = (o: Partial<Props> = {}) =>
+    render({ spots: [spot({ id: 'a', assetId: 'v' }), spot({ id: 'b' })], resolved: { a: R(), b: R({ startSec: 0 }) }, ...o });
+
+  it('(a) scene number + tag row', () => {
+    expect(rows()).toContain('Scene 1 · intro');
+  });
+  it('(b) media row: selected clip name, or "Not set" for an unbound spot', () => {
+    const html = rows();
+    expect(html).toMatch(/data-testid="layer2-media-a"[^>]*>[^]*?avatar\.mp4/);
+    expect(html).toMatch(/data-testid="layer2-media-b"[^>]*>[^]*?Not set/);
+  });
+  it('(c) geometry row: live display + active level badge', () => {
+    const html = rows();
+    expect(html).toContain('x 0% · y 0% · 50% × 100%');
+    expect(html).toContain('data-level="default"');
+    const custom = render({ spots: [spot({ id: 'a', assetId: 'v', geometry: { xPct: 72, yPct: 8, wPct: 24, hPct: 40 } })], resolved: { a: R({}) && { startSec: 0, durSec: 4, rect: { xPct: 72, yPct: 8, wPct: 24, hPct: 40 } } } });
+    expect(custom).toContain('x 72% · y 8% · 24% × 40%');
+    expect(custom).toContain('data-level="custom"');
+    const proj = render({ spots: [spot({ id: 'a', assetId: 'v' })], resolved: { a: R() }, projectDefault: { xPct: 60, yPct: 5, wPct: 35, hPct: 50 } });
+    expect(proj).toContain('data-level="project"');
+  });
+  it('(c) live drag: the row shows the dragging rect in realtime (project scope reaches non-custom rows)', () => {
+    const live = { id: 'zzz', rect: { xPct: 11, yPct: 12, wPct: 13, hPct: 14 }, scope: 'project' as const };
+    expect(rows({ liveRect: live })).toContain('x 11% · y 12% · 13% × 14%');
+    const own = render({ spots: [spot({ id: 'a', assetId: 'v', geometry: LEFT })], resolved: { a: R() }, liveRect: live });
+    expect(own).not.toContain('x 11%'); // a custom block ignores a project-scope drag
+  });
+  it('(d) bin icon per row; selected row is marked', () => {
+    const html = rows({ selectedSpotId: 'a' });
+    expect((html.match(/aria-label="Delete spot"/g) ?? []).length).toBe(2);
+    expect(html.match(/data-testid="layer2-spot-a"[^>]*>/)?.[0]).toContain('data-selected="true"');
+    expect(html.match(/data-testid="layer2-spot-b"[^>]*>/)?.[0]).not.toContain('data-selected="true"');
+  });
+  it('no corner picker any more', () => {
+    expect(rows()).not.toContain('Top right');
+  });
+  it('project default control states the cascade; hints Alt-drag for one block', () => {
+    const html = rows({ projectDefault: { xPct: 60, yPct: 5, wPct: 35, hPct: 50 } });
+    expect(html).toContain('data-testid="layer2-project-default"');
+    expect(html).toContain('x 60% · y 5% · 35% × 50%');
+    expect(html).toMatch(/Alt/);
+    expect(render({ spots: [spot({ id: 'a' })], resolved: { a: R() } })).toContain('Left half');
+  });
+  it('NO CLIP + needs-review flags still honest', () => {
+    const html = render({ spots: [spot({ id: 'n', needsReview: true, lastKnownStartSec: 3 })], resolved: {} });
+    expect(html).toContain('Not set');
+    expect(html).toContain('Needs review');
   });
 });

@@ -9,12 +9,10 @@
  * byte-identical to today's export (no renderer, no extra decode).
  */
 
-import { rectToPx, SPOT_BORDER_HEIGHT_FRAC, SPOT_MARGIN_HEIGHT_FRAC } from '../spots/spotGeometry';
+import { rectToPx, SPOT_BORDER_HEIGHT_FRAC } from '../spots/spotGeometry';
 
-export type SpotCorner = 'top-right' | 'top-left' | 'bottom-right' | 'bottom-left';
-
-/** The RESOLVED box in percent of the frame (geometry override, else the
- *  corner/heightPct default) — resolved app-side by the shared `spotGeometry`
+/** The RESOLVED box in percent of the frame (individual override, else the
+ *  project default, else the built-in left half) — resolved app-side by the shared `spotGeometry`
  *  helper; the worker renders this rect directly. */
 export interface SpotRenderSpec {
   assetId: string;
@@ -30,7 +28,7 @@ export interface SpotRenderSpec {
 export const SPOT_LAYER_ORDER = ['scene', 'spots', 'captions'] as const;
 
 // Defined ONCE in the shared geometry helper (preview + export cannot drift).
-export { SPOT_MARGIN_HEIGHT_FRAC, SPOT_BORDER_HEIGHT_FRAC };
+export { SPOT_BORDER_HEIGHT_FRAC };
 export const SPOT_BORDER_RGBA: readonly [number, number, number, number] = [1, 1, 1, 1];
 
 export function hasSpotRenderWork(specs: readonly SpotRenderSpec[] | null | undefined): boolean {

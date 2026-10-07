@@ -12,7 +12,7 @@ import { describe, it, expect } from 'vitest';
 import { buildExportSpotPayload } from './exportSpecs';
 import {
   canonicalSpotRenderSpecs, hasSpotRenderWork, specActiveAt, spotQuadRect, spotBorderRect,
-  SPOT_MARGIN_HEIGHT_FRAC, SPOT_BORDER_HEIGHT_FRAC, SPOT_LAYER_ORDER, type SpotRenderSpec as ExportSpec,
+  SPOT_BORDER_HEIGHT_FRAC, SPOT_LAYER_ORDER, type SpotRenderSpec as ExportSpec,
 } from '../webcodecsExport/spotRenderSpec';
 import * as geom from './spotGeometry';
 import { validateSpotAssets } from '../webcodecsExport/spotAssetGuard';
@@ -28,7 +28,7 @@ const assets: Asset[] = [
   { id: 'img', name: 'logo.png', url: 'blob:i', type: 'image' },
 ];
 const spot = (o: Partial<Spot> & { id: string }): Spot => ({
-  anchorSegmentId: 's1', offsetSec: 0, corner: 'top-right', heightPct: 40, source: 'doc', boundAt: 0, ...o,
+  anchorSegmentId: 's1', offsetSec: 0, source: 'doc', boundAt: 0, ...o,
 });
 const project = (spots: Spot[]): Project => ({
   id: 'p', name: 'n', script: '', sceneDetails: '', segments: [seg('s1', 0, 30), seg('s2', 30, 30)],
@@ -38,7 +38,7 @@ const project = (spots: Spot[]): Project => ({
 
 const SPOTS = [
   spot({ id: 'A', anchorSegmentId: 's1', assetId: 'vid' }),                 // full clip 0..8
-  spot({ id: 'B', anchorSegmentId: 's2', assetId: 'img', corner: 'bottom-left' }), // 30..33
+  spot({ id: 'B', anchorSegmentId: 's2', assetId: 'img' }), // 30..33
   spot({ id: 'M', anchorSegmentId: 's2', assetId: 'gone', offsetSec: 10 }), // missing clip
 ];
 
@@ -48,8 +48,8 @@ describe('buildExportSpotPayload', () => {
 
   it('drops missing-clip entries at build, with a spot-clip-missing finding and an honest summary', () => {
     expect(r.specs).toEqual([
-      { assetId: 'vid', startSec: 0, durSec: 8, xPct: 58.875, yPct: 2, wPct: 40, hPct: 40 },
-      { assetId: 'img', startSec: 30, durSec: 3, xPct: 1.125, yPct: 58, wPct: 40, hPct: 40 },
+      { assetId: 'vid', startSec: 0, durSec: 8, xPct: 0, yPct: 0, wPct: 50, hPct: 100 },
+      { assetId: 'img', startSec: 30, durSec: 3, xPct: 0, yPct: 0, wPct: 50, hPct: 100 },
     ]);
     expect(r.findings.map(f => f.kind)).toEqual(['spot-clip-missing']);
     expect(r.skipped).toBe(1);
@@ -91,7 +91,7 @@ describe('contract: resolver output is structurally the export lane SpotRenderSp
 describe('export vs preview parity', () => {
   const GEOM = { xPct: 20, yPct: 30, wPct: 25, hPct: 35 };
   const p = project([SPOTS[0]!, { ...SPOTS[1]!, geometry: GEOM }, SPOTS[2]!]);
-  const layout = { frameAspect: 16 / 9, clipAspects: { vid: 16 / 9, img: 4 / 3 } };
+  const layout = {};
   const res = resolveSpots(p.spots!, p.segments, p.assets, 60, layout);
   const specs = buildExportSpotPayload(p, layout).specs;
   const items: PreviewSpotItem[] = (p.spots ?? []).flatMap(s => {
@@ -100,7 +100,6 @@ describe('export vs preview parity', () => {
   });
 
   it('same constants (defined once in spotGeometry): margin, border; z below text', () => {
-    expect(SPOT_MARGIN_HEIGHT_FRAC).toBe(geom.SPOT_MARGIN_HEIGHT_FRAC);
     expect(SPOT_BORDER_HEIGHT_FRAC).toBe(geom.SPOT_BORDER_HEIGHT_FRAC);
     expect(SPOT_BORDER_PCT / 100).toBeCloseTo(SPOT_BORDER_HEIGHT_FRAC, 10);
     expect([...SPOT_LAYER_ORDER]).toEqual(['scene', 'spots', 'captions']);

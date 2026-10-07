@@ -20,10 +20,8 @@ import type { SpotFinding } from './spotFinding';
 import { resolveSpotRect, type PctRect } from './spotGeometry';
 
 export interface SpotLayout {
-  /** Frame width / height (default 16:9). */
-  frameAspect?: number;
-  /** assetId -> native width / height, when known (default 16:9). */
-  clipAspects?: Readonly<Record<string, number>>;
+  /** The project's default box (R7 cascade level 2); absent -> built-in left half. */
+  projectDefault?: PctRect;
 }
 
 export const IMAGE_SPOT_SEC = 3;
@@ -60,8 +58,6 @@ export function resolveSpots(
   voiceoverDur: number,
   layout: SpotLayout = {},
 ): ResolveSpotsResult {
-  const frameAspect = layout.frameAspect ?? 16 / 9;
-  const aspectOf = (assetId?: string): number => (assetId && layout.clipAspects?.[assetId]) || 16 / 9;
   const findings: SpotFinding[] = [];
   const lastKnown: Record<string, number> = {};
   const needsReview: string[] = [];
@@ -79,7 +75,7 @@ export function resolveSpots(
       startSec = spot.lastKnownStartSec;
     }
     const ghost = () => {
-      if (startSec !== undefined) noClip[spot.id] = { startSec, durSec: spot.durOverrideSec ?? IMAGE_SPOT_SEC, rect: resolveSpotRect(spot, aspectOf(spot.assetId), frameAspect) };
+      if (startSec !== undefined) noClip[spot.id] = { startSec, durSec: spot.durOverrideSec ?? IMAGE_SPOT_SEC, rect: resolveSpotRect(spot, layout.projectDefault) };
     };
     if (!spot.assetId) { ghost(); return; }
     const asset = assets.find(a => a.id === spot.assetId);
@@ -145,7 +141,7 @@ export function resolveSpots(
     out.push(cur);
   }
 
-  const rectOf = (l: (typeof out)[number]): PctRect => resolveSpotRect(l.spot, aspectOf(l.spot.assetId), frameAspect);
+  const rectOf = (l: (typeof out)[number]): PctRect => resolveSpotRect(l.spot, layout.projectDefault);
   const specs: SpotRenderSpec[] = out.map(l => {
     const rect = rectOf(l);
     return { assetId: l.spot.assetId!, startSec: l.startSec, durSec: r3(l.durSec), ...rect };

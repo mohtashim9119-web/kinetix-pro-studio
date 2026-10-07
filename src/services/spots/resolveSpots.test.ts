@@ -20,7 +20,7 @@ const assets: Asset[] = [
   { id: 'vl', name: 'long.mp4', url: '', type: 'video', duration: 30 },
 ];
 const spot = (o: Partial<Spot> & { id: string; anchorSegmentId: string }): Spot => ({
-  offsetSec: 0, corner: 'top-right', heightPct: 40, source: 'doc', boundAt: 0, ...o,
+  offsetSec: 0, source: 'doc', boundAt: 0, ...o,
 });
 
 describe('resolveSpots', () => {
@@ -28,14 +28,14 @@ describe('resolveSpots', () => {
     const spots = [
       spot({ id: 'A', anchorSegmentId: 's1', assetId: 'v' }),                         // full clip: 0..4
       spot({ id: 'B', anchorSegmentId: 's2', assetId: 'i' }),                         // image 3s: 5..8
-      spot({ id: 'C', anchorSegmentId: 's2', assetId: 'i', offsetSec: 1, durOverrideSec: 2, corner: 'bottom-left' }), // 6..8 override, overlaps B
+      spot({ id: 'C', anchorSegmentId: 's2', assetId: 'i', offsetSec: 1, durOverrideSec: 2 }), // 6..8 override, overlaps B
       spot({ id: 'D', anchorSegmentId: 's1', assetId: 'gone' }),                      // deleted asset
     ];
     const r = resolveSpots(spots, segs, assets, 10);
     expect(r.specs).toEqual([
-      { assetId: 'v', startSec: 0, durSec: 4, xPct: 58.875, yPct: 2, wPct: 40, hPct: 40 },
-      { assetId: 'i', startSec: 5, durSec: 1, xPct: 58.875, yPct: 2, wPct: 40, hPct: 40 },   // B truncated by C (last wins)
-      { assetId: 'i', startSec: 6, durSec: 2, xPct: 1.125, yPct: 58, wPct: 40, hPct: 40 },
+      { assetId: 'v', startSec: 0, durSec: 4, xPct: 0, yPct: 0, wPct: 50, hPct: 100 },
+      { assetId: 'i', startSec: 5, durSec: 1, xPct: 0, yPct: 0, wPct: 50, hPct: 100 },   // B truncated by C (last wins)
+      { assetId: 'i', startSec: 6, durSec: 2, xPct: 0, yPct: 0, wPct: 50, hPct: 100 },
     ]);
     expect(r.findings.map(f => [f.kind, f.spotId])).toEqual([
       ['spot-clip-missing', 'D'],
@@ -59,7 +59,7 @@ describe('resolveSpots', () => {
       ],
       segs, assets, 10,
     );
-    expect(r.specs).toEqual([{ assetId: 'vl', startSec: 9, durSec: 1, xPct: 58.875, yPct: 2, wPct: 40, hPct: 40 }]);
+    expect(r.specs).toEqual([{ assetId: 'vl', startSec: 9, durSec: 1, xPct: 0, yPct: 0, wPct: 50, hPct: 100 }]);
     expect(r.findings.map(f => [f.kind, f.spotId])).toEqual([['spot-past-voiceover', 'E'], ['spot-past-voiceover', 'F']]);
     expect(r.findings.map(f => f.message)).toEqual([
       'Scene 2: Spot runs past the voiceover — trimmed.',
@@ -72,7 +72,7 @@ describe('resolveSpots', () => {
       [spot({ id: 'G', anchorSegmentId: 'deleted', assetId: 'i', lastKnownStartSec: 7 })],
       segs, assets, 10,
     );
-    expect(r.specs).toEqual([{ assetId: 'i', startSec: 7, durSec: 3, xPct: 58.875, yPct: 2, wPct: 40, hPct: 40 }]);
+    expect(r.specs).toEqual([{ assetId: 'i', startSec: 7, durSec: 3, xPct: 0, yPct: 0, wPct: 50, hPct: 100 }]);
     expect(r.needsReview).toEqual(['G']);
   });
 
@@ -106,9 +106,22 @@ describe('resolved rect (geometry + layout)', () => {
     expect(r.specs[0]).toMatchObject(g);
     expect(r.bySpot.G!.rect).toEqual(g);
   });
-  it('default rect uses the clip aspect + frame aspect when known (portrait clip is narrower)', () => {
-    const r = resolveSpots([spot({ id: 'P', anchorSegmentId: 's1', assetId: 'i' })], segs, assets, 10, { frameAspect: 16 / 9, clipAspects: { i: 9 / 16 } });
-    expect(r.specs[0]!.wPct).toBeCloseTo(40 * (9 / 16) / (16 / 9), 6);
-    expect(r.specs[0]!.hPct).toBe(40);
+  it('R7 cascade: no geometry -> LEFT HALF; project default moves un-dragged spots only; individual wins', () => {
+    const G = { xPct: 10, yPct: 20, wPct: 30, hPct: 25 };
+    const P = { xPct: 60, yPct: 5, wPct: 35, hPct: 50 };
+    const spots = [
+      spot({ id: 'A', anchorSegmentId: 's1', assetId: 'i' }),
+      spot({ id: 'B', anchorSegmentId: 's2', assetId: 'i', geometry: G }),
+    ];
+    const none = resolveSpots(spots, segs, assets, 10);
+    expect(none.bySpot.A!.rect).toEqual({ xPct: 0, yPct: 0, wPct: 50, hPct: 100 });
+    expect(none.bySpot.B!.rect).toEqual(G);
+    const withDefault = resolveSpots(spots, segs, assets, 10, { projectDefault: P });
+    expect(withDefault.bySpot.A!.rect).toEqual(P);   // un-dragged follows the project default
+    expect(withDefault.bySpot.B!.rect).toEqual(G);   // dragged keeps its own
+    expect(withDefault.specs.map(x => [x.xPct, x.yPct, x.wPct, x.hPct])).toEqual([[60, 5, 35, 50], [10, 20, 30, 25]]);
+    // reset B -> falls to the project default
+    const reset = resolveSpots([spots[0]!, { ...spots[1]!, geometry: undefined }], segs, assets, 10, { projectDefault: P });
+    expect(reset.bySpot.B!.rect).toEqual(P);
   });
 });

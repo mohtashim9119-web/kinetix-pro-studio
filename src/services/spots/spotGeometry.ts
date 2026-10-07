@@ -12,8 +12,6 @@
  * frame width (x, w) or frame height (y, h). Pure; no DOM, no GL.
  */
 
-import type { SpotCorner } from '../../types';
-
 export interface PctRect {
   xPct: number;
   yPct: number;
@@ -21,8 +19,9 @@ export interface PctRect {
   hPct: number;
 }
 
-/** Default inset from the chosen corner, as a fraction of frame HEIGHT. */
-export const SPOT_MARGIN_HEIGHT_FRAC = 0.02;
+/** Built-in default for every new block: the LEFT HALF of the screen, full height. */
+export const GLOBAL_SPOT_GEOMETRY: PctRect = { xPct: 0, yPct: 0, wPct: 50, hPct: 100 };
+
 /** Border thickness (drawn OUTSIDE the rect), as a fraction of frame height. */
 export const SPOT_BORDER_HEIGHT_FRAC = 0.006;
 /** Smallest a spot box may be, per axis, in percent of the frame. */
@@ -30,7 +29,6 @@ export const MIN_SPOT_PCT = 5;
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), hi);
 /** Defeats float dust so equal inputs hash/compare equal everywhere. */
-const r6 = (n: number) => Math.round(n * 1e6) / 1e6;
 
 /** Keep a rect inside the frame and above the minimum size. */
 export function clampRect(r: PctRect): PctRect {
@@ -44,29 +42,39 @@ export function clampRect(r: PctRect): PctRect {
   };
 }
 
-/** The corner/height default: height = heightPct of the frame, width follows
- *  the clip's native aspect; inset 2% of frame height from both anchor edges. */
-export function defaultSpotRect(corner: SpotCorner, heightPct: number, clipAspect: number, frameAspect: number): PctRect {
-  const hPct = heightPct;
-  const wPct = (heightPct * clipAspect) / frameAspect;
-  const marginY = SPOT_MARGIN_HEIGHT_FRAC * 100;
-  const marginX = marginY / frameAspect;
-  const c = clampRect({
-    xPct: corner.endsWith('right') ? 100 - wPct - marginX : marginX,
-    yPct: corner.startsWith('top') ? marginY : 100 - hPct - marginY,
-    wPct,
-    hPct,
-  });
-  return { xPct: r6(c.xPct), yPct: r6(c.yPct), wPct: r6(c.wPct), hPct: r6(c.hPct) };
+/**
+ * The three-level default cascade, most-specific-wins, all percentages:
+ *   block.geometry (individual override) ?? project default ?? GLOBAL left half.
+ * Defaults only flow DOWNWARD: a project default never overwrites an override.
+ * The stamp on a project default (`source`) is metadata, not geometry.
+ */
+export function resolveSpotRect(spot: { geometry?: PctRect }, projectDefault?: PctRect & { source?: string }): PctRect {
+  const g = spot.geometry ?? projectDefault ?? GLOBAL_SPOT_GEOMETRY;
+  return clampRect({ xPct: g.xPct, yPct: g.yPct, wPct: g.wPct, hPct: g.hPct });
 }
 
-/** The stamped manual geometry when present, else the corner default. Clamped. */
-export function resolveSpotRect(
-  spot: { corner: SpotCorner; heightPct: number; geometry?: PctRect },
-  clipAspect: number,
-  frameAspect: number,
-): PctRect {
-  return spot.geometry ? clampRect(spot.geometry) : defaultSpotRect(spot.corner, spot.heightPct, clipAspect, frameAspect);
+export type SpotGeometryLevel = 'default' | 'project' | 'custom';
+export function spotGeometryLevel(spot: { geometry?: PctRect }, projectDefault?: PctRect): SpotGeometryLevel {
+  return spot.geometry ? 'custom' : projectDefault ? 'project' : 'default';
+}
+
+/**
+ * Center-crop ("cover") UV window so a clip fills a box without distortion.
+ * `boxAspectPx` = box width / box height in OUTPUT pixels. Preview uses CSS
+ * object-cover and export samples this window — the same crop on both surfaces.
+ */
+export function coverUv(boxAspectPx: number, nativeW: number, nativeH: number): { u0: number; v0: number; u1: number; v1: number } {
+  if (!(nativeW > 0) || !(nativeH > 0) || !(boxAspectPx > 0)) return { u0: 0, v0: 0, u1: 1, v1: 1 };
+  const src = nativeW / nativeH;
+  if (src > boxAspectPx) {
+    const vis = boxAspectPx / src;
+    return { u0: (1 - vis) / 2, v0: 0, u1: 1 - (1 - vis) / 2, v1: 1 };
+  }
+  if (src < boxAspectPx) {
+    const vis = src / boxAspectPx;
+    return { u0: 0, v0: (1 - vis) / 2, u1: 1, v1: 1 - (1 - vis) / 2 };
+  }
+  return { u0: 0, v0: 0, u1: 1, v1: 1 };
 }
 
 export function moveRect(r: PctRect, dxPct: number, dyPct: number): PctRect {
@@ -134,4 +142,10 @@ export function rectToPx(r: PctRect, frameW: number, frameH: number): { x: numbe
 /** Preview surface: the same rect as CSS percentages of the stage box. */
 export function rectToCss(r: PctRect): { left: string; top: string; width: string; height: string } {
   return { left: `${r.xPct}%`, top: `${r.yPct}%`, width: `${r.wPct}%`, height: `${r.hPct}%` };
+}
+
+/** "x 72% · y 8% · 24% × 40%" — the panel's geometry row. Whole percents. */
+export function formatSpotGeometry(r: PctRect): string {
+  const n = (v: number) => Math.round(v);
+  return `x ${n(r.xPct)}% · y ${n(r.yPct)}% · ${n(r.wPct)}% × ${n(r.hPct)}%`;
 }

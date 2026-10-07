@@ -32,12 +32,13 @@ export interface SpotLayerProps {
   currentTime: number;
   isPlaying: boolean;
   /** Editing: present => the box is draggable (move) and has 8 resize handles. */
-  onCommitRect?: (spotId: string, rect: PctRect) => void;
+  onCommitRect?: (spotId: string, rect: PctRect, individual: boolean) => void;
   /** Called continuously while dragging (and with null on release) so the panel's
    *  geometry row updates in realtime. */
-  onLiveRect?: (spotId: string, rect: PctRect | null) => void;
-  /** The rect currently being dragged (display override). */
-  liveRect?: { id: string; rect: PctRect } | null;
+  onLiveRect?: (spotId: string, rect: PctRect | null, individual: boolean) => void;
+  /** The rect currently being dragged (display override). scope 'project' = the
+   *  per-project default is being dragged: every non-custom block follows. */
+  liveRect?: { id: string; rect: PctRect; scope: 'project' | 'block' } | null;
   onSelect?: (spotId: string) => void;
   selectedSpotId?: string | null;
 }
@@ -74,7 +75,7 @@ function SpotVideo({ item, asset, currentTime, isPlaying }: {
       muted
       playsInline
       preload="auto"
-      className="w-full h-full object-fill block"
+      className="w-full h-full object-cover block"
       onLoadedMetadata={e => {
         const v = e.currentTarget;
         // Seek-on-enter: the sync effect above skipped while metadata was unavailable.
@@ -89,12 +90,15 @@ function SpotVideo({ item, asset, currentTime, isPlaying }: {
 export function SpotLayer({ items, assets, currentTime, isPlaying, onCommitRect, onLiveRect, liveRect, onSelect, selectedSpotId }: SpotLayerProps) {
   const active = activeSpotAt(items, currentTime);
   const wrapRef = useRef<HTMLDivElement>(null);
-  const dragRef = useRef<{ mode: 'move' | ResizeHandle; startX: number; startY: number; start: PctRect; last: PctRect; w: number; h: number } | null>(null);
+  const dragRef = useRef<{ mode: 'move' | ResizeHandle; startX: number; startY: number; start: PctRect; last: PctRect; w: number; h: number; individual: boolean } | null>(null);
   if (!active) return null;
   const asset = active.assetId ? assets.find(a => a.id === active.assetId) : undefined;
   const usable = asset && asset.url && !asset.unresolved && (asset.type === 'video' || asset.type === 'image') ? asset : undefined;
   const editable = !!onCommitRect;
-  const rect = liveRect && liveRect.id === active.id ? liveRect.rect : active.rect;
+  const rect =
+    liveRect && (liveRect.id === active.id || (liveRect.scope === 'project' && !active.custom))
+      ? liveRect.rect
+      : active.rect;
 
   const begin = (e: React.PointerEvent, mode: 'move' | ResizeHandle) => {
     if (!editable) return;
@@ -103,7 +107,7 @@ export function SpotLayer({ items, assets, currentTime, isPlaying, onCommitRect,
     const box = wrapRef.current?.getBoundingClientRect();
     if (!box || box.width === 0 || box.height === 0) return;
     (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
-    dragRef.current = { mode, startX: e.clientX, startY: e.clientY, start: rect, last: rect, w: box.width, h: box.height };
+    dragRef.current = { mode, startX: e.clientX, startY: e.clientY, start: rect, last: rect, w: box.width, h: box.height, individual: e.altKey };
     onSelect?.(active.id);
   };
   const move = (e: React.PointerEvent) => {
@@ -112,14 +116,14 @@ export function SpotLayer({ items, assets, currentTime, isPlaying, onCommitRect,
     const dx = ((e.clientX - d.startX) / d.w) * 100;
     const dy = ((e.clientY - d.startY) / d.h) * 100;
     d.last = d.mode === 'move' ? moveRect(d.start, dx, dy) : resizeRect(d.start, d.mode, dx, dy, d.w / d.h);
-    onLiveRect?.(active.id, d.last);
+    onLiveRect?.(active.id, d.last, d.individual);
   };
   const end = () => {
     const d = dragRef.current;
     dragRef.current = null;
     if (!d) return;
-    onLiveRect?.(active.id, null);
-    if (d.last !== d.start) onCommitRect?.(active.id, d.last);
+    onLiveRect?.(active.id, null, d.individual);
+    if (d.last !== d.start) onCommitRect?.(active.id, d.last, d.individual);
   };
 
   return (
@@ -148,7 +152,7 @@ export function SpotLayer({ items, assets, currentTime, isPlaying, onCommitRect,
           {usable?.type === 'video' && (
             <SpotVideo key={active.id} item={active} asset={usable} currentTime={currentTime} isPlaying={isPlaying} />
           )}
-          {usable?.type === 'image' && <img src={usable.url} alt="" className="w-full h-full object-fill block" draggable={false} />}
+          {usable?.type === 'image' && <img src={usable.url} alt="" className="w-full h-full object-cover block" draggable={false} />}
           {!usable && (
             <div className="w-full h-full flex items-center justify-center bg-zinc-900 text-yellow-400 text-[10px] font-semibold tracking-wide">
               NO CLIP

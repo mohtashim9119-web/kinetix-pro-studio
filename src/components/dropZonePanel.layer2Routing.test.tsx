@@ -32,6 +32,7 @@ function layer2(onDropDoc: (f: File) => void): Layer2PanelProps {
   return {
     segments: [], assets: [], spots: [], resolved: {}, pendingDoc: null, findings: [],
     onDropDoc, onClearPending: noop, onPatchSpot: noop, onDeleteSpot: noop, onAddManual: noop,
+    onSelectSpot: noop, onResetSpotGeometry: noop, onCustomizeSpotGeometry: noop, onResetProjectDefault: noop,
   };
 }
 

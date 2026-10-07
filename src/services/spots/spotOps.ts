@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import type { Spot, SpotCorner, SpotGeometry } from '../../types';
+import type { Spot, SpotGeometry } from '../../types';
 import type { ResolveSpotsResult } from './resolveSpots';
 
 export function mergeDocSpots(existing: readonly Spot[], bound: readonly Spot[]): Spot[] {
@@ -24,8 +24,6 @@ export function addManualSpot(
       ...(assetId ? { assetId } : {}),
       anchorSegmentId,
       offsetSec: 0,
-      corner: 'top-right',
-      heightPct: 40,
       source: 'manual',
       boundAt: now,
     },
@@ -33,8 +31,6 @@ export function addManualSpot(
 }
 
 export interface SpotPatch {
-  corner?: SpotCorner;
-  heightPct?: number;
   offsetSec?: number;
   assetId?: string | null;
   /** The name this clip was chosen by (what the wand would re-bind by). */

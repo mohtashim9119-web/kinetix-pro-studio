@@ -488,7 +488,6 @@ export interface TranscriptToken {
  *  content-derived id; `startSec = anchorSegment.startTime + offsetSec`;
  *  `durSec = durOverrideSec ?? (video ? asset.duration : 3)`. No end sec is
  *  ever stored — only an explicit user override (`durOverrideSec`). */
-export type SpotCorner = 'top-right' | 'top-left' | 'bottom-right' | 'bottom-left';
 /** Freeform box in percent of the FRAME (x/y top-left; w/h size). A STAMPED manual
  *  override: written by a preview drag/resize, preserved across re-sync. */
 export interface SpotGeometry {
@@ -496,6 +495,11 @@ export interface SpotGeometry {
   yPct: number;
   wPct: number;
   hPct: number;
+}
+/** The per-project default box: one stored geometry every block WITHOUT an
+ *  individual override follows (live). Stamped; preserved across re-sync. */
+export interface SpotDefaultGeometry extends SpotGeometry {
+  source: 'project-default';
 }
 export interface Spot {
   id: string;
@@ -506,10 +510,8 @@ export interface Spot {
   /** Stamped by a manual edge-drag / panel edit; preserved across re-sync. */
   durOverrideSec?: number;
   /** Default 'top-right'. */
-  corner: SpotCorner;
-  /** Percent of frame height, default 40; width = native aspect. */
-  heightPct: number;
-  /** Stamped manual box (see `SpotGeometry`); absent = corner + heightPct default. */
+  /** Stamped individual box (see `SpotGeometry`); absent = the project default,
+   *  else the built-in LEFT HALF (R7 cascade). */
   geometry?: SpotGeometry;
   source: 'doc' | 'manual';
   /** The clip name the doc block (or user) asked for — what the wand binds by when
@@ -529,7 +531,7 @@ export interface SpotRenderSpec {
   startSec: number;
   durSec: number;
   /** The RESOLVED box in percent of the frame (geometry override, else the
-   *  corner/heightPct default) — the worker renders this rect directly. */
+   *  individual → project default → left half) — the worker renders this rect directly. */
   xPct: number;
   yPct: number;
   wPct: number;
@@ -558,6 +560,8 @@ export interface Project {
    *  segment). Additive, headings pattern: treat as `[]` when absent; the store
    *  defaults it to `[]` on load. Resolution lives in `services/spots/`. */
   spots?: Spot[];
+  /** R7 — per-project default box for Layer-2 blocks (see `SpotDefaultGeometry`). */
+  spotDefaultGeometry?: SpotDefaultGeometry;
   assets: Asset[];
   voiceoverId?: string;
   lastExportPath?: string;

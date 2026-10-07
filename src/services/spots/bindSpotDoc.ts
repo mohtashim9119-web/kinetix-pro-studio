@@ -69,8 +69,6 @@ export function bindSpotDoc(
       ...(block.body ? { clipName: block.body } : {}),
       anchorSegmentId: segment.id,
       offsetSec: 0,
-      corner: 'top-right',
-      heightPct: 40,
       source: 'doc',
       boundAt: opts.now,
     });

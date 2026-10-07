@@ -99,8 +99,6 @@ describe('Project.spots load default', () => {
       assetId: 'a1',
       anchorSegmentId: computeContentKey('Spot fixture.', 0),
       offsetSec: 0,
-      corner: 'top-right',
-      heightPct: 40,
       source: 'doc',
       boundAt: 123,
     };
@@ -115,7 +113,7 @@ describe('removed default-clip + sprinkle: older saves load clean', () => {
   it('drops defaultSpotAssetId and re-labels a legacy sprinkle spot as manual (kept, editable)', async () => {
     const legacy = {
       id: 'sp9', assetId: 'a1', anchorSegmentId: computeContentKey('Spot fixture.', 0), offsetSec: 0,
-      corner: 'top-right', heightPct: 40, source: 'sprinkle', boundAt: 1,
+      source: 'sprinkle', boundAt: 1,
     };
     await saveProject(baseProject({ spots: [legacy as unknown as Spot], defaultSpotAssetId: 'a1' } as Partial<Project>));
     const loaded = await loadProjectDetailed('p-spot');

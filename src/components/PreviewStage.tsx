@@ -258,9 +258,9 @@ interface Props {
   /** Layer 2 spots, already resolved to absolute time by `resolveSpots` — drawn as a
    *  DOM rectangle at stage z 35 (see `spotPreviewMath`). */
   spotItems?: PreviewSpotItem[];
-  onSpotRectCommit?: (spotId: string, rect: PctRect) => void;
-  onSpotRectLive?: (spotId: string, rect: PctRect | null) => void;
-  liveSpotRect?: { id: string; rect: PctRect } | null;
+  onSpotRectCommit?: (spotId: string, rect: PctRect, individual: boolean) => void;
+  onSpotRectLive?: (spotId: string, rect: PctRect | null, individual: boolean) => void;
+  liveSpotRect?: { id: string; rect: PctRect; scope: 'project' | 'block' } | null;
   onSpotSelect?: (spotId: string) => void;
   selectedSpotId?: string | null;
   /** WebGL2 Phase 4 auto-grade: PreviewStage owns the decode pool + assets, so

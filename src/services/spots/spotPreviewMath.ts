@@ -29,6 +29,9 @@ export interface PreviewSpotItem {
   durSec: number;
   /** The RESOLVED box (% of frame) from `resolveSpots` — the same rect export bakes. */
   rect: PctRect;
+  /** True when the box is this block's OWN (individual) geometry — a live
+   *  project-default drag must not move it. */
+  custom?: boolean;
 }
 
 export function activeSpotAt(items: readonly PreviewSpotItem[], t: number): PreviewSpotItem | undefined {

@@ -11,7 +11,7 @@ import { resolveSpots } from './resolveSpots';
 import type { Asset, Spot, VideoSegment } from '../../types';
 
 const spot = (o: Partial<Spot> & { id: string }): Spot => ({
-  anchorSegmentId: 's1', offsetSec: 0, corner: 'top-right', heightPct: 40, source: 'doc', boundAt: 0, ...o,
+  anchorSegmentId: 's1', offsetSec: 0, source: 'doc', boundAt: 0, ...o,
 });
 
 describe('spotOps', () => {
@@ -22,12 +22,12 @@ describe('spotOps', () => {
   });
   it('addManualSpot defaults per contract', () => {
     const r = addManualSpot([], 's2', 'a1', 5, () => 'x');
-    expect(r).toEqual([{ id: 'x', assetId: 'a1', anchorSegmentId: 's2', offsetSec: 0, corner: 'top-right', heightPct: 40, source: 'manual', boundAt: 5 }]);
+    expect(r).toEqual([{ id: 'x', assetId: 'a1', anchorSegmentId: 's2', offsetSec: 0, source: 'manual', boundAt: 5 }]);
   });
   it('patchSpot stamps durOverrideSec; null clears it; other spots untouched by reference', () => {
     const a = spot({ id: 'a' }); const b = spot({ id: 'b' });
-    const r = patchSpot([a, b], 'a', { durOverrideSec: 4, corner: 'bottom-left' });
-    expect(r[0]).toMatchObject({ durOverrideSec: 4, corner: 'bottom-left' });
+    const r = patchSpot([a, b], 'a', { durOverrideSec: 4 });
+    expect(r[0]).toMatchObject({ durOverrideSec: 4 });
     expect(r[1]).toBe(b);
     const cleared = patchSpot(r, 'a', { durOverrideSec: null });
     expect('durOverrideSec' in cleared[0]!).toBe(false);
