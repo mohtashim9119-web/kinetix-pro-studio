@@ -54,5 +54,8 @@ describe('useExportMediaGate', () => {
     act(() => t.api.cancel());
     expect(t.onProceed).not.toHaveBeenCalled();
     expect(t.api.issues).toBeNull();
+    // Closing (X / Escape) after a dismissed card must leave nothing pending to confirm.
+    act(() => t.api.confirm());
+    expect(t.onProceed).not.toHaveBeenCalled();
   });
 });

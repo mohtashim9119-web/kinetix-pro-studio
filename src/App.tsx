@@ -7628,6 +7628,7 @@ export default function App() {
             setMediaPickerSignal(n => n + 1);
           }}
           onContinue={mediaGate.confirm}
+          onDismiss={mediaGate.cancel}
         />
       )}
 

@@ -18,7 +18,7 @@ describe('MissingMediaExportWarning', () => {
     const onCancel = vi.fn();
     const onContinue = vi.fn();
     await act(async () => {
-      root!.render(<MissingMediaExportWarning issues={{ none: [3, 7], offline: [], corrupt: [] }} onCancel={onCancel} onContinue={onContinue} />);
+      root!.render(<MissingMediaExportWarning issues={{ none: [3, 7], offline: [], corrupt: [] }} onCancel={onCancel} onContinue={onContinue} onDismiss={() => {}} />);
     });
     expect(container.textContent).toContain(
       'Segments 3, 7 have no media and will export as black frames, using slower export path. Add media or continue.',
@@ -35,5 +35,38 @@ describe('MissingMediaExportWarning', () => {
     expect(onContinue).not.toHaveBeenCalled();
     act(() => cont.click());
     expect(onContinue).toHaveBeenCalledTimes(1);
+  });
+
+  async function mountCard() {
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+    const fns = { onCancel: vi.fn(), onContinue: vi.fn(), onDismiss: vi.fn() };
+    await act(async () => {
+      root!.render(<MissingMediaExportWarning issues={{ none: [3], offline: [], corrupt: [] }} {...fns} />);
+    });
+    return fns;
+  }
+
+  it('the X button dismisses without adding media or continuing', async () => {
+    const fns = await mountCard();
+    act(() => (container!.querySelector('[data-testid="missing-media-close"]') as HTMLButtonElement).click());
+    expect(fns.onDismiss).toHaveBeenCalledTimes(1);
+    expect(fns.onCancel).not.toHaveBeenCalled();
+    expect(fns.onContinue).not.toHaveBeenCalled();
+  });
+
+  it('Escape dismisses without adding media or continuing', async () => {
+    const fns = await mountCard();
+    act(() => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); });
+    expect(fns.onDismiss).toHaveBeenCalledTimes(1);
+    expect(fns.onCancel).not.toHaveBeenCalled();
+    expect(fns.onContinue).not.toHaveBeenCalled();
+  });
+
+  it('other keys do nothing', async () => {
+    const fns = await mountCard();
+    act(() => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); });
+    expect(fns.onDismiss).not.toHaveBeenCalled();
   });
 });
