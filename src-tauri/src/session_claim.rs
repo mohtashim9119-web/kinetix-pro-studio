@@ -928,6 +928,16 @@ mod tests {
         dir
     }
 
+    /// A private base folder for tests that SCAN for sessions. Scanning the shared
+    /// system temp folder raced other tests writing claim files there in parallel
+    /// (one of them writes a claim non-atomically on purpose), and the live app's
+    /// own sessions — the scan then read a half-written claim and failed.
+    fn private_scan_base(tag: &str) -> PathBuf {
+        let base = std::env::temp_dir().join(format!("kinetix-scan-test-{tag}-{}", Uuid::new_v4()));
+        fs::create_dir_all(&base).unwrap();
+        base
+    }
+
     fn temp_session_dir(tag: &str) -> (String, PathBuf) {
         let id = Uuid::new_v4().to_string();
         let dir = std::env::temp_dir().join(format!("kinetix-export-{id}"));
@@ -1251,9 +1261,10 @@ mod tests {
 
     #[test]
     fn reclaimable_report_classifies_live_resumable_and_orphan() {
+        let base = private_scan_base("report");
         let mk = |manifest: bool, claim: bool| {
             let id = Uuid::new_v4().to_string();
-            let dir = std::env::temp_dir().join(format!("kinetix-export-{id}"));
+            let dir = base.join(format!("kinetix-export-{id}"));
             let _ = fs::remove_dir_all(&dir);
             fs::create_dir_all(&dir).unwrap();
             fs::write(dir.join("piece_0.h264"), vec![1u8; 1000]).unwrap();
@@ -1268,7 +1279,8 @@ mod tests {
         let (live_id, live_dir) = mk(true, true);
         let (resumable_id, resumable_dir) = mk(true, false);
         let (orphan_id, orphan_dir) = mk(false, false);
-        let report = report_reclaimable_sessions(&std::env::temp_dir()).unwrap();
+        let report = report_reclaimable_sessions(&base).unwrap();
+        assert_eq!(report.scanned, 3, "only this test's own sessions are scanned");
         assert!(!report.temp_dir.is_empty());
         let find = |id: &str| report.entries.iter().find(|e| e.session_id == id).unwrap().clone();
         assert_eq!(find(&live_id).class, "live");
@@ -1284,13 +1296,15 @@ mod tests {
         for d in [live_dir, resumable_dir, orphan_dir] {
             let _ = fs::remove_dir_all(&d);
         }
+        let _ = fs::remove_dir_all(&base);
     }
 
     #[test]
     fn reclaim_sessions_removes_named_non_live_and_refuses_live() {
+        let base = private_scan_base("reclaim");
         let mk = |claim: bool| {
             let id = Uuid::new_v4().to_string();
-            let dir = std::env::temp_dir().join(format!("kinetix-export-{id}"));
+            let dir = base.join(format!("kinetix-export-{id}"));
             let _ = fs::remove_dir_all(&dir);
             fs::create_dir_all(&dir).unwrap();
             fs::write(dir.join("piece_0.h264"), vec![1u8; 1000]).unwrap();
@@ -1303,7 +1317,7 @@ mod tests {
         let (live_id, live_dir) = mk(true);
         let (gone_id, gone_dir) = mk(false);
         let report = reclaim_sessions(
-            &std::env::temp_dir(),
+            &base,
             &[live_id.clone(), gone_id.clone(), "not-a-uuid".to_string()],
         )
         .unwrap();
@@ -1315,6 +1329,7 @@ mod tests {
         assert!(!gone_dir.exists());
         release_session_claim(&live_dir).unwrap();
         let _ = fs::remove_dir_all(&live_dir);
+        let _ = fs::remove_dir_all(&base);
     }
 
     #[test]
