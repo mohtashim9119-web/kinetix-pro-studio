@@ -342,6 +342,8 @@ interface Props {
   onDeleteVoiceover: () => void;
   /** Opens the recovery/relink screen for the current project's assets. */
   onOpenRelinkMedia: () => void;
+  /** Bumped by the owner to open the Media block's file picker (export warning's Add Media). */
+  openMediaPickerSignal?: number;
   // G6 Step 4 — the Media block, below the 4 slots.
   /** Switches to the Segments tab and selects every segment using this
    *  asset — the Media block's "used in N scenes" chip click target. */
@@ -522,6 +524,7 @@ export function DropZonePanel({
   onDeleteAllAssets,
   onDeleteVoiceover,
   onOpenRelinkMedia,
+  openMediaPickerSignal,
   onHighlightUsage,
   onIngestComplete,
   onIngestError,
@@ -627,6 +630,9 @@ export function DropZonePanel({
   // React batching cannot cause it to read a stale pre-update value.
   const stagedRef = useRef<StagedFiles>(EMPTY_STAGED);
   const mediaBlockRef = useRef<MediaBlockHandle>(null);
+  useEffect(() => {
+    if (openMediaPickerSignal) mediaBlockRef.current?.openFilePicker();
+  }, [openMediaPickerSignal]);
   const [assetsDragOver, setAssetsDragOver] = useState(false);
   // Combined-look effect presets — loaded from lookPresetService on mount, kept in
   // sync with localStorage on every add/remove from EffectsPanel.

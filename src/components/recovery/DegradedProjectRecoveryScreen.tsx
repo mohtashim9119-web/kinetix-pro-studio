@@ -76,6 +76,8 @@ export interface DegradedProjectRecoveryScreenProps {
   onToggleFolderProposal?: (assetId: string, candidateId: string) => void;
   onConfirmFolderRelink?: () => void;
   onCancelFolderRelink?: () => void;
+  /** Opened from the sync log's Relink: this asset's row is outlined and scrolled into view. */
+  highlightAssetId?: string | null;
   /** Close without writing — returns to dashboard, project stays poisoned. */
   onClose: () => void;
 }
@@ -91,9 +93,11 @@ export function DegradedProjectRecoveryScreen({
   onToggleFolderProposal,
   onConfirmFolderRelink,
   onCancelFolderRelink,
+  highlightAssetId,
   onClose,
 }: DegradedProjectRecoveryScreenProps): React.ReactElement {
   const trapRef = useFocusTrap<HTMLDivElement>();
+  const scrolledRef = React.useRef(false);
   const canSave = canPersistRecoveredProject({ assets, segments });
   const unresolvedCount = totalUnresolvedCount(assets, segments);
   const assetNameById = new Map<string, string>([
@@ -324,7 +328,16 @@ export function DegradedProjectRecoveryScreen({
               data-row-id={row.rowId}
               data-asset-id={row.assetId ?? ''}
               data-resolution-status={row.resolutionStatus}
-              className="flex items-center justify-between gap-3 bg-[#1A1A1A] border border-[#282828] rounded-lg px-3 py-2"
+              data-highlighted={!!highlightAssetId && row.assetId === highlightAssetId ? 'true' : undefined}
+              ref={(el) => {
+                if (el && highlightAssetId && row.assetId === highlightAssetId && !scrolledRef.current) {
+                  scrolledRef.current = true;
+                  el.scrollIntoView?.({ block: 'center' });
+                }
+              }}
+              className={`flex items-center justify-between gap-3 bg-[#1A1A1A] border rounded-lg px-3 py-2 ${
+                highlightAssetId && row.assetId === highlightAssetId ? 'border-[#F27D26]' : 'border-[#282828]'
+              }`}
             >
               <div className="min-w-0 flex-1">
                 {row.segmentLabel && (

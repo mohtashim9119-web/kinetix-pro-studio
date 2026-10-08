@@ -41,6 +41,7 @@ import { killAllMemberCloudJobs } from '../services/cloudSyncEngine';
 import { Z } from './overlayLayers';
 import { ConfirmDialog } from './ConfirmDialog';
 import { deleteProjectEverywhere } from '../services/projectDelete';
+import { bulkDoneStatus } from '../services/syncLogSummary';
 
 const DRAWER = `fixed top-0 left-0 ${Z.drawer} flex h-full w-[min(100vw,480px)] flex-col border-r border-[var(--kx-line-2)] bg-[var(--kx-bg)] will-change-transform`;
 /** The panel's slide: the dashboard's glide uses the same curve (ProjectDashboard DOCK_MOTION). */
@@ -174,7 +175,7 @@ function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFi
     : phase === 'cloud' ? (item?.phase ?? 'Working on the cloud…')
     : phase === 'cloud-done' && record.awaitingOpen ? READY_TO_FINISH
     : phase === 'cloud-done' || phase === 'finishing' ? BULK_COPY.building
-    : phase === 'done' ? 'Ready'
+    : phase === 'done' ? bulkDoneStatus(record.syncSummary)
     : phase === 'finish-failed' ? BULK_COPY.finishFailed(record.message ?? '')
     : phase === 'paused' ? (record.message?.startsWith('Sync paused') ? record.message : `Paused — ${record.message ?? 'open the project to answer'}`)
     : phase === 'failed' ? (record.message ? `Failed — Retry — ${record.message}` : 'Failed — Retry')
@@ -207,6 +208,7 @@ function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFi
   const messages: { text: string; warn: boolean }[] = [
     ...(row.busy ? [{ text: row.progress || 'Adding…', warn: false }] : [{ text: `${quiet}${cost ? ` · ${cost}` : ''}`, warn: false }]),
     ...(item?.receipt ? [{ text: item.receipt, warn: true }] : []),
+    ...(phase === 'done' ? (record?.syncSummary?.warnings ?? []).map(w => ({ text: w, warn: true })) : []),
     ...row.notes.map(n => ({ text: n, warn: true })),
   ].filter(m => m.text.trim() !== '');
   const shown = messages.length === 0 ? 0 : Math.min(msgIdx, messages.length - 1);

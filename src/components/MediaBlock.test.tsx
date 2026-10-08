@@ -782,7 +782,7 @@ describe('U9 — always-visible Media block', () => {
     mockIngestLooseFiles.mockResolvedValue({ assets: [], audioAssetId: undefined, counts: ZERO_COUNTS, duplicateNames: [] });
     mockIngestZip.mockResolvedValue({ assets: [], audioAssetId: undefined, counts: ZERO_COUNTS, duplicateNames: [] });
     const onIngestComplete = vi.fn();
-    const handle: { current: { ingestFiles: (f: File[]) => void; ingestZips: (f: File[]) => void } | null } = { current: null };
+    const handle: { current: { ingestFiles: (f: File[]) => void; ingestZips: (f: File[]) => void; openFilePicker: () => void } | null } = { current: null };
     root = createRoot(container);
     await act(async () => {
       root.render(

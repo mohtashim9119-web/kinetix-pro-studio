@@ -517,3 +517,24 @@ describe('SyncLogPanel user view — title, jump, dismiss', () => {
     expect(container.querySelectorAll('[data-testid="sync-attention-line"]').length).toBe(1);
   });
 });
+
+describe('SyncLogPanel — Relink files passes the first offline asset', () => {
+  it('calls onRelinkOffline with the first offline asset id', () => {
+    const calls: Array<string | undefined> = [];
+    root = createRoot(container);
+    act(() => {
+      root.render(
+        <SyncLogPanel
+          syncLog={[]}
+          offlineAssetNames={['broll.mp4', 'b.mp4']}
+          offlineAssets={[{ id: 'a1', name: 'broll.mp4' }, { id: 'a2', name: 'b.mp4' }]}
+          onRelinkOffline={(id) => calls.push(id)}
+          onClearLog={() => {}}
+        />,
+      );
+    });
+    click(container.querySelector('[data-kind="offline-media"] button'));
+    click(container.querySelector('[data-testid="sync-relink"]'));
+    expect(calls).toEqual(['a1']);
+  });
+});

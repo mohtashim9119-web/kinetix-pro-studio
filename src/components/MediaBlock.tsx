@@ -110,6 +110,8 @@ interface MediaBlockProps {
 export interface MediaBlockHandle {
   ingestFiles: (files: File[]) => void;
   ingestZips: (files: File[]) => void;
+  /** Opens the same "add files" picker the import menu opens. */
+  openFilePicker: () => void;
 }
 
 type TypeFilter = 'all' | 'image' | 'video' | 'audio';
@@ -583,6 +585,7 @@ export const MediaBlock = forwardRef<MediaBlockHandle, MediaBlockProps>(function
     // only, so zips must NOT be handed back to `onZipsChosen`.
     ingestFiles: (files: File[]) => { if (files.length > 0) void importMixed(files, false); },
     ingestZips: (files: File[]) => { if (files.length > 0) void importMixed(files, false); },
+    openFilePicker: () => { filesInputRef.current?.click(); },
   }), [importMixed]);
 
   // G6 polish item 3 — bulk "Delete unused". Routes every unused asset

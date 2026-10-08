@@ -982,6 +982,8 @@ export type SyncLogFindingKind =
   | 'asset-unverified'
   | 'asset-corrupt'
   | 'asset-replaced'
+  /** Offline files that came back (relinked) — kept as a record after the block clears. */
+  | 'asset-relinked'
   /** Layer 2 spots — all details-only. A doc block whose tag matched no main
    *  segment; a block whose clip name matched no vault asset (and no default);
    *  a spot clamped at the voiceover end; two spots overlapping (last wins);
@@ -1144,7 +1146,7 @@ export interface SyncLogEntry {
   /** See `SyncLogFindingKind`. `count` carries the number the view needs
    *  from the finding (re-timed scenes, character-placed segments) so it is
    *  never parsed back out of prose. */
-  finding?: { kind: SyncLogFindingKind; count?: number };
+  finding?: { kind: SyncLogFindingKind; count?: number; segmentIds?: string[] };
 }
 
 /** One violation's worth of detail inside a grouped `SyncLogEntry` — a

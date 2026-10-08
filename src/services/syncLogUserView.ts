@@ -171,7 +171,7 @@ const FREEZE_FRAME_MARKER = 'the final frame will hold';
  * hints, message prefixes, `owningRule`, the counts in its prose), so old
  * logs still classify. New entries never take this path.
  */
-function findingOf(entry: SyncLogEntry): { kind: SyncLogFindingKind; count?: number } | undefined {
+function findingOf(entry: SyncLogEntry): SyncLogEntry['finding'] {
   if (entry.finding) return entry.finding;
   if (entry.type !== 'warning' && entry.type !== 'info') return undefined;
   const hint = entry.fixHint;
@@ -221,6 +221,7 @@ const FINDING_ATTENTION: Record<SyncLogFindingKind, AttentionKind | undefined> =
   'asset-unverified': undefined,
   'asset-corrupt': undefined,
   'asset-replaced': undefined,
+  'asset-relinked': undefined,
   // Layer 2 spots: details only (the Layer-2 panel is their own surface).
   'spot-segment-unmatched': undefined,
   'spot-clip-unmatched': undefined,
@@ -337,12 +338,24 @@ export interface AttentionItem {
   sceneRef?: { index?: number; name?: string };
 }
 
+/** What the estimated-timing entries say about WHICH scenes — never words or chunks. */
+export interface EstimatedScenes {
+  ids: string[];
+  refs: { index?: number; name?: string }[];
+  /** A character-timing fallback places every scene; its own placed count. */
+  allScenes: number;
+  /** Some entry names no scene (e.g. CTC chunks) — a scene count would be a guess. */
+  unknown: boolean;
+}
+
 export interface AttentionLine {
   kind: AttentionKind;
   tone: 'red' | 'amber';
   count: number;
   summary: string;
   items: AttentionItem[];
+  /** Estimated-timings only. */
+  estimatedScenes?: EstimatedScenes;
   /** True when ManageModelsModal can fix it (kind 8). */
   offerManageModels: boolean;
 }
@@ -447,6 +460,32 @@ function sceneRefFromMessage(message: string): { index: number; name: string } |
   return m ? { index: Number(m[1]) - 1, name: m[2]! } : undefined;
 }
 
+function noteEstimatedScenes(acc: EstimatedScenes, entry: SyncLogEntry): void {
+  const finding = findingOf(entry);
+  switch (finding?.kind) {
+    case 'fa-victim-retimed':
+      if (finding.segmentIds && finding.segmentIds.length > 0) acc.ids.push(...finding.segmentIds);
+      else acc.unknown = true;
+      return;
+    case 'tail-unmatched':
+    case 'numeric-unmatched': {
+      const refs = (entry.groupedItems ?? []).flatMap(i => {
+        const index = typeof i.detail?.segmentIndex === 'number' ? i.detail.segmentIndex : undefined;
+        const name = typeof i.detail?.segmentName === 'string' ? i.detail.segmentName : undefined;
+        return index !== undefined || name !== undefined ? [{ index, name }] : [];
+      });
+      if (refs.length > 0) acc.refs.push(...refs); else acc.unknown = true;
+      return;
+    }
+    case 'character-fallback':
+      if (typeof finding.count === 'number') acc.allScenes = Math.max(acc.allScenes, finding.count);
+      else acc.unknown = true;
+      return;
+    default:
+      acc.unknown = true;
+  }
+}
+
 function countFor(kind: AttentionKind, entry: SyncLogEntry): number {
   if (kind === 'no-media') return leadingInt(entry.message, /No asset available for (\d+) of/) ?? 1;
   if (entry.groupedItems && entry.groupedItems.length > 0) return entry.groupedItems.length;
@@ -474,6 +513,7 @@ export function buildSyncLogUserView(
   const windowed = log.filter(inWindow);
 
   // --- attention ---
+  const estimatedScenes: EstimatedScenes = { ids: [], refs: [], allScenes: 0, unknown: false };
   const byKind = new Map<AttentionKind, { count: number; items: AttentionItem[] }>();
   const add = (kind: AttentionKind, count: number, items: AttentionItem[]): void => {
     const acc = byKind.get(kind) ?? { count: 0, items: [] };
@@ -484,6 +524,7 @@ export function buildSyncLogUserView(
   for (const entry of windowed) {
     const kind = attentionKindForEntry(entry);
     if (kind) add(kind, countFor(kind, entry), itemsFor(entry));
+    if (kind === 'estimated-timings') noteEstimatedScenes(estimatedScenes, entry);
   }
   if (offlineAssetNames.length > 0) {
     add('offline-media', offlineAssetNames.length, offlineAssetNames.map(name => ({ text: name })));
@@ -497,6 +538,7 @@ export function buildSyncLogUserView(
       count: acc.count,
       summary: SYNC_LOG_USER_COPY.attention[kind](acc.count),
       items: acc.items,
+      ...(kind === 'estimated-timings' ? { estimatedScenes } : {}),
       offerManageModels: kind === 'model-missing',
     }];
   });

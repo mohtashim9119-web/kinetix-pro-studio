@@ -130,3 +130,111 @@ describe('integration with the real view model', () => {
     expect(buildSummaryBlocks(view.attention).blocks).toEqual([]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// R3 — estimated-timing block: a TRUE distinct-scene count (never words/chunks).
+// ---------------------------------------------------------------------------
+import { buildFaVictimRetimedLogEntry, buildCharacterTimingEntry, buildCtcInfeasibleLogEntry } from './syncLog';
+
+const victim = (id: string, tag: string) =>
+  ({ segmentIndex: 0, segmentId: id, segmentTag: tag, trustedStartSec: 0, trustedEndSec: 1, estimatedWordCount: 9 });
+const liveSegs = ['a', 'b', 'c', 'd'].map((id, i) => ({ id, text: `scene ${i} text` }));
+const estimatedBlock = (entries: SyncLogEntry[], segs = liveSegs) => {
+  const view = buildSyncLogUserView(entries, []);
+  return buildSummaryBlocks(view.attention, { segments: segs }).blocks.find(b => b.id === 'estimated');
+};
+
+describe('estimated-timing distinct scene count', () => {
+  it('counts distinct scenes, not words: 2 victims with 9 words each = 2 scenes', () => {
+    const b = estimatedBlock([buildFaVictimRetimedLogEntry('r', [victim('a', 'A'), victim('b', 'B')], 1)!]);
+    expect(b?.title).toBe('2 scenes have estimated timing');
+  });
+
+  it('mixed data: victims a,b + a tail finding on scenes b,c (one overlaps) = 3 distinct scenes', () => {
+    const tail: SyncLogEntry = {
+      ...makeSyncLogEntry('r', 'warning', '2 scenes tail', undefined, 2),
+      finding: { kind: 'tail-unmatched', count: 2 },
+      groupedItems: [
+        { message: 'b tail', detail: { segmentIndex: 1, segmentName: 'scene 1 text' } },
+        { message: 'c tail', detail: { segmentIndex: 2, segmentName: 'scene 2 text' } },
+      ],
+    } as SyncLogEntry;
+    const b = estimatedBlock([buildFaVictimRetimedLogEntry('r', [victim('a', 'A'), victim('b', 'B')], 1)!, tail]);
+    expect(b?.title).toBe('3 scenes have estimated timing');
+  });
+
+  it('a single scene reads singular', () => {
+    const b = estimatedBlock([buildFaVictimRetimedLogEntry('r', [victim('a', 'A')], 1)!]);
+    expect(b?.title).toBe('1 scene has estimated timing');
+  });
+
+  it('character-timing fallback = every placed scene', () => {
+    const b = estimatedBlock([buildCharacterTimingEntry('r', true, 4, 1)]);
+    expect(b?.title).toBe('4 scenes have estimated timing');
+  });
+
+  it('an entry with no scene identity (CTC chunks count words/chunks) never invents a number', () => {
+    const ctc = buildCtcInfeasibleLogEntry('r', [], [{ chunkIndex: 0, startSec: 1, endSec: 2, wordCount: 30 }], 1)!;
+    const b = estimatedBlock([buildFaVictimRetimedLogEntry('r', [victim('a', 'A')], 1)!, ctc]);
+    expect(b?.title).toBe('Some scenes have estimated timing');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// R3 — offline record: when files return the block resolves and a "relinked"
+// record stays in the latest sync's Actions list.
+// ---------------------------------------------------------------------------
+import { detectRelinkedAssets, buildAssetRelinkedEntry } from './syncLog';
+
+describe('offline relink record', () => {
+  it('detects only assets that were offline and are now present', () => {
+    const prev = new Map([['a1', 'broll.mp4'], ['a2', 'b.mp4'], ['a3', 'gone.mp4']]);
+    const assets = [
+      { id: 'a1', name: 'broll.mp4', unresolved: undefined },
+      { id: 'a2', name: 'b.mp4', unresolved: true },
+    ] as never;
+    expect(detectRelinkedAssets(prev, assets)).toEqual([{ id: 'a1', name: 'broll.mp4' }]);
+  });
+
+  it('block resolves (no offline names) while the relinked record persists, tagged "relinked", in the latest run', () => {
+    const rec = buildAssetRelinkedEntry('r2', [{ id: 'a1', name: 'broll.mp4' }], 300);
+    const other = makeSyncLogEntry('r2', 'skip', 'skipped', undefined, 250);
+    const view = buildSyncLogUserView([other, rec], [{ syncRunId: 'r2', timestamp: 250, totalSegments: 3, coveredSegments: 2, skippedSegments: 1, aborted: false }], []);
+    expect(buildSummaryBlocks(view.attention).blocks.find(b => b.id === 'offline-media')).toBeUndefined();
+    const sections = buildRunSections([other, rec], [{ syncRunId: 'r2', timestamp: 250, totalSegments: 3, coveredSegments: 2, skippedSegments: 1, aborted: false }], { dismissed: new Set(), autoResolved: new Set() });
+    const recs = sections[0]!.actions.filter(a => a.status === 'relinked');
+    expect(recs).toHaveLength(1);
+    expect(recs[0]!.entry.message).toContain('broll.mp4');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// R6 — bulk row: one summary line + warnings reuse the same block titles.
+// ---------------------------------------------------------------------------
+import { summarizeProjectForBulk, bulkDoneStatus } from './syncLogSummary';
+
+describe('summarizeProjectForBulk (finished bulk row)', () => {
+  const skip = makeSyncLogEntry('r1', 'skip', 'S3 skipped', undefined, 10);
+  const proj = {
+    syncLog: [skip],
+    syncRunSummaries: [{ syncRunId: 'r1', timestamp: 10, totalSegments: 224, coveredSegments: 221, skippedSegments: 3, aborted: false }],
+    segments: [{ id: 'a', assetId: 'x', text: 'a' }],
+    assets: [{ id: 'x', name: 'x', url: 'blob:x', type: 'image' }],
+  } as never;
+
+  it('line is the same "matched · placeholders" text; warnings use the block titles', () => {
+    const s = summarizeProjectForBulk(proj);
+    expect(s.line).toBe('221/224 scenes matched');
+    expect(s.warnings).toEqual(['1 scene was not found in the voiceover']);
+  });
+
+  it('a clean project has no warnings', () => {
+    const s = summarizeProjectForBulk({ syncLog: [], syncRunSummaries: [{ syncRunId: 'r', timestamp: 1, totalSegments: 5, coveredSegments: 5, skippedSegments: 0, aborted: false }], segments: [], assets: [] } as never);
+    expect(s).toEqual({ line: '5/5 scenes matched', warnings: [] });
+  });
+
+  it('done-row status is "Ready · <line>" and falls back to plain Ready', () => {
+    expect(bulkDoneStatus({ line: '221/224 scenes matched · 3 placeholders', warnings: [] })).toBe('Ready · 221/224 scenes matched · 3 placeholders');
+    expect(bulkDoneStatus(undefined)).toBe('Ready');
+  });
+});

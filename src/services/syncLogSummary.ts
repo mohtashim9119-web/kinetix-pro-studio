@@ -2,8 +2,11 @@
 // uniform warning blocks) and the per-sync Details sections. Pure — the panel
 // renders what this returns. The log itself is untouched.
 import type { SyncLogEntry, SyncRunSummary } from '../types';
+import type { Asset, Project, VideoSegment } from '../types';
 import {
+  buildSyncLogUserView,
   attentionKindForEntry,
+  resolveAttentionItemSegmentId,
   type AttentionItem,
   type AttentionKind,
   type AttentionLine,
@@ -44,14 +47,15 @@ export const SUMMARY_COPY = {
   attention: (n: number): string => `${n} item${s(n)} need${s(n, 's', '')} your attention`,
   title: {
     skipped: (n: number): string => `${n} scene${s(n)} ${s(n, 'was', 'were')} not found in the voiceover`,
-    estimated: (): string => 'Some scenes have estimated timing',
+    estimated: (n?: number): string =>
+      n === undefined ? 'Some scenes have estimated timing' : `${n} scene${s(n)} ${s(n, 'has', 'have')} estimated timing`,
     'text-fit': (n: number): string => `${n} scene${s(n)} may have extra or missing text`,
     mismatch: (): string => "Script and voiceover don't look like a pair",
     'no-media': (n: number): string => `${n} scene${s(n)} ${s(n, 'has', 'have')} no media`,
     'offline-media': (n: number): string => `${n} media file${s(n)} ${s(n, 'is', 'are')} offline`,
     'sync-stopped': (): string => "Sync couldn't finish",
-  } satisfies Record<BlockId, (n: number) => string>,
-  statusLabel: { dismissed: 'Dismissed', resolved: 'Resolved' },
+  } satisfies Record<BlockId, (n: number) => string | undefined>,
+  statusLabel: { dismissed: 'Dismissed', resolved: 'Resolved', relinked: 'Relinked' },
   mediaSection: 'Media activity',
 } as const;
 
@@ -70,6 +74,8 @@ export interface LiveSummaryState {
   /** Scenes with no media right now (1-based timeline number). When given, the
    *  no-media block follows it instead of the frozen log entry. */
   unassigned?: readonly { id: string; number: number }[];
+  /** The live timeline — lets the estimated-timing block resolve scenes to a true count. */
+  segments?: readonly { id: string; text?: string }[];
 }
 
 export function buildSummaryBlocks(
@@ -107,10 +113,26 @@ export function buildSummaryBlocks(
   const blocks = BLOCK_ORDER.flatMap(id => {
     const b = acc.get(id);
     if (!b) return [];
-    b.title = SUMMARY_COPY.title[id](b.count);
+    b.title = id === 'estimated'
+      ? SUMMARY_COPY.title.estimated(estimatedSceneCount(attention, live))
+      : SUMMARY_COPY.title[id](b.count) as string;
     return [b];
   });
   return { blocks, autoResolved };
+}
+
+/** True distinct scenes behind the estimated-timing entries, or undefined when any entry names no scene. */
+export function estimatedSceneCount(attention: readonly AttentionLine[], live: LiveSummaryState): number | undefined {
+  const est = attention.find(l => l.kind === 'estimated-timings')?.estimatedScenes;
+  if (!est || est.unknown || !live.segments) return undefined;
+  const ids = new Set(est.ids);
+  for (const ref of est.refs) {
+    const id = resolveAttentionItemSegmentId({ text: '', sceneRef: ref }, live.segments);
+    if (!id) return undefined;
+    ids.add(id);
+  }
+  const count = Math.max(ids.size, est.allScenes);
+  return count > 0 ? count : undefined;
 }
 
 export function summaryHeader(
@@ -134,7 +156,7 @@ export function summaryLine2(headline: SyncLogHeadline): string | undefined {
 // Details: one section per sync, each with Actions and Info.
 // ---------------------------------------------------------------------------
 
-export interface ActionRecord { entry: SyncLogEntry; status?: 'dismissed' | 'resolved' }
+export interface ActionRecord { entry: SyncLogEntry; status?: 'dismissed' | 'resolved' | 'relinked' }
 
 export interface RunSection {
   key: string;
@@ -173,6 +195,7 @@ export function buildRunSections(
     const actions: ActionRecord[] = [];
     const info: SyncLogEntry[] = [];
     for (const entry of ordered) {
+      if (entry.finding?.kind === 'asset-relinked') { actions.push({ entry, status: 'relinked' }); continue; }
       const kind = key === 'media' ? undefined : attentionKindForEntry(entry);
       if (!kind) { info.push(entry); continue; }
       if (key !== latestKey) { actions.push({ entry }); continue; }
@@ -189,4 +212,26 @@ export function buildRunSections(
     sections.push({ key, title, timestamp, actions, info });
   }
   return sections.sort((a, b) => b.timestamp - a.timestamp);
+}
+
+// ---------------------------------------------------------------------------
+// Bulk: a finished row carries the same one-line summary and block titles.
+// ---------------------------------------------------------------------------
+
+export interface BulkSyncSummary { line?: string; warnings: string[] }
+
+export function summarizeProjectForBulk(
+  project: Pick<Project, 'syncLog' | 'syncRunSummaries' | 'segments' | 'assets'>,
+): BulkSyncSummary {
+  const assets: readonly Asset[] = project.assets ?? [];
+  const offline = assets.filter(a => a.unresolved).map(a => a.name);
+  const view = buildSyncLogUserView(project.syncLog ?? [], project.syncRunSummaries ?? [], offline);
+  const segments: readonly VideoSegment[] = project.segments ?? [];
+  const unassigned = segments.flatMap((seg, i) => (seg.assetId ? [] : [{ id: seg.id, number: i + 1 }]));
+  const { blocks } = buildSummaryBlocks(view.attention, { unassigned, segments });
+  return { line: summaryLine2(view.headline), warnings: blocks.map(b => b.title) };
+}
+
+export function bulkDoneStatus(summary: BulkSyncSummary | undefined): string {
+  return summary?.line ? `Ready · ${summary.line}` : 'Ready';
 }

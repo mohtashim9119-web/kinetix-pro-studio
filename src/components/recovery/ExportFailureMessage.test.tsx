@@ -109,10 +109,18 @@ describe('ExportFailureMessage — raw diagnostics stay collapsed', () => {
     expect(container.querySelector('[data-testid="export-failure-body"]')?.textContent)
       .not.toMatch(/destroyed|retained_bytes|assertion failed/i);
 
-    const details = container.querySelector('[data-testid="export-failure-technical-body"]')?.textContent ?? '';
-    expect(details).toContain(RAW_ERROR);
-    expect(details).toContain(STACK);
-    expect(details).toContain(PANIC);
+    // Visible Details: readable labels only — raw text lives in the collapsed Raw subsection.
+    const visible = container.querySelector('[data-testid="export-failure-technical-body"]')?.textContent ?? '';
+    expect(visible).toContain('Type: Export stopped unexpectedly');
+    expect(visible).not.toContain(RAW_ERROR);
+    expect(visible).not.toMatch(/kind=|rawError=|stack=|panic=/);
+    const raw = container.querySelector('[data-testid="export-failure-raw"]');
+    expect(raw?.tagName).toBe('DETAILS');
+    expect((raw as HTMLDetailsElement).open).toBe(false);
+    const rawText = raw?.textContent ?? '';
+    expect(rawText).toContain(RAW_ERROR);
+    expect(rawText).toContain(STACK);
+    expect(rawText).toContain(PANIC);
   });
 });
 

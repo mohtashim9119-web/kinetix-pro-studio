@@ -26,6 +26,7 @@
 
 import { laterCheckpoint } from './bulkStageChecklist';
 import type { QueueItem, SyncQueue } from './syncQueue';
+import type { BulkSyncSummary } from './syncLogSummary';
 
 export type BatchPhase =
   | 'queued' | 'cloud' | 'cloud-done' | 'finishing' | 'done' | 'finish-failed'
@@ -57,6 +58,8 @@ export interface BatchRow {
   /** What the row held at Build Timeline (names and slots only, no bytes), so a
    *  built row still reads "17 files" with its four slots after a restart. */
   summary?: BatchRowSummary;
+  /** Finished rows: the one-line sync summary and its warning titles (see syncLogSummary.ts). */
+  syncSummary?: BulkSyncSummary;
 }
 
 export interface BatchRowSummary {
@@ -72,6 +75,8 @@ export interface FinishRequest {
 
 export interface FinishResult {
   ok: boolean;
+  /** Set by the finalizer on success; stored on the row for the drawer. */
+  syncSummary?: BulkSyncSummary;
   message?: string;
   /** Not run (the operator is busy, or navigated mid-finish): wait for Open. */
   deferred?: boolean;
@@ -592,6 +597,7 @@ export class BulkBatchRunner {
         try { this.deps.onBuilt?.(id, (Date.now() - builtFrom) / 1000); } catch { /* display-only hook */ }
         const row = this.rows.find(r => r.id === id);
         if (row) row.checkpoint = 'ready';
+        if (row && result.syncSummary) row.syncSummary = result.syncSummary;
         this.commit();
         if (row) for (const l of this.readyListeners) l({ id: row.id, name: row.name });
       }

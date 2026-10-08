@@ -581,3 +581,16 @@ describe('1.5.1 one retry workflow', () => {
     }
   });
 });
+
+describe('bulk finish carries the project summary onto the row (R6)', () => {
+  it("stores the finalizer's syncSummary on the done row", async () => {
+    const { runner, finishCloud, started } = boot(memory());
+    runner.setFinalizer(async () => ({ ok: true, syncSummary: { line: '9/10 scenes matched', warnings: ['1 scene has no media'] } }));
+    runner.start([{ id: 'a', name: 'A' }]);
+    await vi.waitFor(() => expect(started).toEqual(['a']));
+    finishCloud('a');
+    await vi.waitFor(() => expect(phases(runner).a).toBe('done'));
+    expect(runner.snapshot().find(r => r.id === 'a')?.syncSummary)
+      .toEqual({ line: '9/10 scenes matched', warnings: ['1 scene has no media'] });
+  });
+});

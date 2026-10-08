@@ -117,3 +117,11 @@ describe('WPM range 100–300 (explicit boundaries)', () => {
     expect(classifyScriptWpm(301, 60).band).toBe('soft-fast');
   });
 });
+
+describe('WPM hard threshold 350 (explicit boundaries)', () => {
+  it('349 and 350 are soft-fast; 351 is hard-fast', () => {
+    expect(classifyScriptWpm(349, 60).band).toBe('soft-fast');
+    expect(classifyScriptWpm(350, 60).band).toBe('soft-fast');
+    expect(classifyScriptWpm(351, 60).band).toBe('hard-fast');
+  });
+});

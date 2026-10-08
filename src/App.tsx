@@ -286,6 +286,8 @@ import {
   buildAnchorTrustLogEntries,
   buildRunEdgeViolationLogEntries,
   buildCtcInfeasibleLogEntry,
+  detectRelinkedAssets,
+  buildAssetRelinkedEntry,
   buildLocalCoverageWarningEntry,
   buildFaVictimRetimedLogEntry,
 } from './services/syncLog';
@@ -446,7 +448,8 @@ import { buildExportDiagnosticsBlob } from './services/exportDiagnosticsBlob';
 import { ExportFailureMessage } from './components/recovery/ExportFailureMessage';
 import { ReexportCheckpointModal } from './components/ReexportCheckpointModal';
 import { MissingMediaExportWarning } from './components/MissingMediaExportWarning';
-import { findMediaIssues, hasMediaIssues, type MediaIssues } from './services/exportFailure/missingMediaMessage';
+import { useExportMediaGate } from './hooks/useExportMediaGate';
+import { summarizeProjectForBulk } from './services/syncLogSummary';
 import { StorageRootRelocationView } from './components/recovery/StorageRootRelocationView';
 import { useStorageRootRelocation } from './hooks/useStorageRootRelocation';
 import { checkExistingCheckpoint, type ReexportCheckOutcome } from './services/webcodecsExport/exportReexportCheck';
@@ -2157,6 +2160,10 @@ export default function App() {
     assets: readonly RecoveryAsset[];
   } | null>(null);
   const [relinkTargetAssetId, setRelinkTargetAssetId] = useState<string | null>(null);
+  // Sync-log Relink: which offline asset the recovery screen outlines first.
+  const [relinkHighlightAssetId, setRelinkHighlightAssetId] = useState<string | null>(null);
+  // Bumped to open the Media block's file picker (export warning's Add Media).
+  const [mediaPickerSignal, setMediaPickerSignal] = useState(0);
   // Set instead of relinkTargetAssetId when the row has no asset at all (the
   // asset was deleted outright) — attachNewAssetToSegment mints a fresh one.
   const [relinkTargetSegmentId, setRelinkTargetSegmentId] = useState<string | null>(null);
@@ -3553,8 +3560,6 @@ export default function App() {
 
   // Segments with no media export as black frames on the slower canvas path;
   // the user is asked once per Export click, and re-checked on the next click.
-  const [missingMediaWarning, setMissingMediaWarning] = useState<MediaIssues | null>(null);
-
   const proceedToExportSettings = useCallback(async (): Promise<void> => {
     if (!isTauri()) {
       setShowExportSettingsModal(true);
@@ -3585,15 +3590,6 @@ export default function App() {
     setShowExportSettingsModal(true);
   }, [project, purgeCheckpointSession]);
 
-  const handleExportButtonClick = useCallback(async (): Promise<void> => {
-    const issues = findMediaIssues(project.segments, project.assets);
-    if (hasMediaIssues(issues)) {
-      setMissingMediaWarning(issues);
-      return;
-    }
-    await proceedToExportSettings();
-  }, [project.segments, project.assets, proceedToExportSettings]);
-
   const handleReexportStartFresh = useCallback(async (): Promise<void> => {
     if (!reexportOffer) return;
     const { sessionId } = reexportOffer;
@@ -3602,9 +3598,8 @@ export default function App() {
     setShowExportSettingsModal(true);
   }, [reexportOffer, purgeCheckpointSession]);
 
-  const handleReexportResumeSession = useCallback((): void => {
-    if (!reexportOffer) return;
-    const { sessionId, manifest } = reexportOffer;
+  const performReexportResume = useCallback((offer: NonNullable<typeof reexportOffer>): void => {
+    const { sessionId, manifest } = offer;
     // Resolution/aspect ratio are NOT re-derived from manifest.width/height:
     // `sourceTimelineHash` already hashed `project.resolutionTier` and
     // `project.aspectRatio` as their own fields (exportCheckpoint.ts's
@@ -3628,7 +3623,30 @@ export default function App() {
     pendingReexportAutoResumeSessionId.current = sessionId;
     setReexportOffer(null);
     startExportWithSpots();
-  }, [reexportOffer, project.resolutionTier, startExportWithSpots]);
+  }, [project.resolutionTier, startExportWithSpots]);
+
+  // Every way into an export — the Export button AND re-export Resume — goes
+  // through this one media check, so the resume shortcut cannot skip the warning.
+  const mediaGate = useExportMediaGate<
+    { kind: 'settings' } | { kind: 'resume'; offer: NonNullable<typeof reexportOffer> }
+  >(
+    project.segments,
+    project.assets,
+    useCallback((p) => {
+      if (p.kind === 'settings') void proceedToExportSettings();
+      else performReexportResume(p.offer);
+    }, [proceedToExportSettings, performReexportResume]),
+  );
+
+  const handleExportButtonClick = useCallback((): void => {
+    mediaGate.request({ kind: 'settings' });
+  }, [mediaGate]);
+
+  const handleReexportResumeSession = useCallback((): void => {
+    if (!reexportOffer) return;
+    setReexportOffer(null);
+    mediaGate.request({ kind: 'resume', offer: reexportOffer });
+  }, [reexportOffer, mediaGate]);
 
   // ExportSettingsModal's Continue commits exportResolution/exportFps via
   // setState, then must call startExport — but startExport is a useCallback
@@ -5191,10 +5209,30 @@ export default function App() {
 
   // Sync-log user view, attention kind 7 — offline media is live project
   // state (`Asset.unresolved`, set at open), not a log entry.
-  const offlineAssetNames = useMemo(
-    () => project.assets.filter(a => a.unresolved).map(a => a.name),
+  const offlineAssetsForLog = useMemo(
+    () => project.assets.filter(a => a.unresolved).map(a => ({ id: a.id, name: a.name })),
     [project.assets],
   );
+  const offlineAssetNames = useMemo(() => offlineAssetsForLog.map(a => a.name), [offlineAssetsForLog]);
+
+  // When offline files come back (relinked), the sync-log block clears itself;
+  // leave a record so the event is never lost. Same project only — switching
+  // projects must not read as a relink.
+  const prevOfflineRef = useRef<{ projectId: string; offline: Map<string, string> }>({ projectId: '', offline: new Map() });
+  useEffect(() => {
+    const prev = prevOfflineRef.current;
+    if (prev.projectId === project.id && prev.offline.size > 0) {
+      const relinked = detectRelinkedAssets(prev.offline, project.assets);
+      if (relinked.length > 0) {
+        const runs = project.syncRunSummaries ?? [];
+        const latest = runs.reduce<(typeof runs)[number] | undefined>((b, r) => (!b || r.timestamp >= b.timestamp ? r : b), undefined);
+        const entry = buildAssetRelinkedEntry(latest?.syncRunId ?? mintSyncLogId(), relinked);
+        setProject(p => appendSyncLogEntries(p, [entry]));
+      }
+    }
+    prevOfflineRef.current = { projectId: project.id, offline: new Map(offlineAssetsForLog.map(a => [a.id, a.name])) };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project.id, offlineAssetsForLog]);
 
   // Sync-log summary: scenes with no media right now, live, so the "no media"
   // block shrinks and clears as the user adds media.
@@ -6332,6 +6370,7 @@ export default function App() {
   // Step 3 — close without writing: return to dashboard, project stays
   // poisoned, in-flight folder-pick discarded (never partially applied).
   const handleRecoveryClose = useCallback((): void => {
+    setRelinkHighlightAssetId(null);
     performRecoveryClose({
       clearFolderRelink: () => setFolderRelink(null),
       clearRecoveryUi: () => setDegradedRecovery(null),
@@ -6714,7 +6753,7 @@ export default function App() {
             };
           }
           if (liveProjectRef.current.id === projectId) setProject(() => built.project);
-          return { ok: true };
+          return { ok: true, syncSummary: summarizeProjectForBulk(built.project) };
         },
       });
     } finally {
@@ -6861,6 +6900,7 @@ export default function App() {
             onDeleteAllAssets={handleDeleteAllAssets}
             onDeleteVoiceover={() => { if (project.voiceoverId) handleDeleteAsset(project.voiceoverId); }}
             onOpenRelinkMedia={() => { void refreshDegradedRecovery(project.id); }}
+            openMediaPickerSignal={mediaPickerSignal}
             onHighlightUsage={handleHighlightAssetUsage}
             onIngestComplete={handleMediaIngestComplete}
             onIngestError={handleMediaIngestError}
@@ -7339,7 +7379,13 @@ export default function App() {
               offlineAssetNames={offlineAssetNames}
               segments={project.segments}
               unassignedSegments={unassignedSegmentsForLog}
-              onRelinkOffline={() => setActiveLeftTab('files')}
+              offlineAssets={offlineAssetsForLog}
+              onRelinkOffline={(firstAssetId) => {
+                setActiveLeftTab('files');
+                setLeftPanelCollapsed(false);
+                setRelinkHighlightAssetId(firstAssetId ?? null);
+                void refreshDegradedRecovery(project.id);
+              }}
               onClearLog={handleClearSyncLog}
               onOpenModelsModal={() => setShowManageModelsModal(true)}
               onSeekToSegment={handleSegmentClick}
@@ -7571,11 +7617,17 @@ export default function App() {
         />
       )}
 
-      {missingMediaWarning && (
+      {mediaGate.issues && (
         <MissingMediaExportWarning
-          issues={missingMediaWarning}
-          onCancel={() => setMissingMediaWarning(null)}
-          onContinue={() => { setMissingMediaWarning(null); void proceedToExportSettings(); }}
+          issues={mediaGate.issues}
+          onCancel={() => {
+            // "Add Media": close the card, open the Files tab's own file picker.
+            mediaGate.cancel();
+            setActiveLeftTab('files');
+            setLeftPanelCollapsed(false);
+            setMediaPickerSignal(n => n + 1);
+          }}
+          onContinue={mediaGate.confirm}
         />
       )}
 
@@ -8069,6 +8121,7 @@ export default function App() {
           projectName={degradedRecovery.projectName}
           segments={degradedRecovery.segments}
           assets={degradedRecovery.assets}
+          highlightAssetId={relinkHighlightAssetId}
           onRelink={handleRecoveryRelinkRequest}
           folderRelink={folderRelink}
           onPickFolder={() => { void handleRecoveryPickFolder(); }}

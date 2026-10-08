@@ -56,6 +56,7 @@ async function renderScreen(props: {
   assets: readonly RecoveryAsset[];
   segments: readonly RecoverySegment[];
   onClose?: () => void;
+  highlightAssetId?: string | null;
 }): Promise<ReturnType<typeof createRecoveryActionsFake>> {
   const fake = createRecoveryActionsFake();
   root = createRoot(container);
@@ -65,6 +66,7 @@ async function renderScreen(props: {
         projectName="Machine 1 talk"
         segments={props.segments}
         assets={props.assets}
+        highlightAssetId={props.highlightAssetId}
         onRelink={fake.onRelink}
         onSave={fake.onSave}
         onClose={props.onClose ?? (() => {})}
@@ -285,5 +287,14 @@ describe('DegradedProjectRecoveryScreen — folder-pick primary action (Step 2)'
       (container.querySelector('[data-testid="recovery-folder-toggle"]') as HTMLInputElement).click();
     });
     expect(toggles).toEqual([['asset-missing', 'c1']]);
+  });
+});
+
+describe('DegradedProjectRecoveryScreen — highlight (opened from the sync log Relink)', () => {
+  it('marks only the highlighted asset row', async () => {
+    await renderScreen({ assets: [missingAsset, anotherMissingAsset], segments, highlightAssetId: 'asset-native' });
+    const rows = [...container.querySelectorAll('[data-testid="recovery-item"]')];
+    const marked = rows.filter(r => r.getAttribute('data-highlighted') === 'true');
+    expect(marked.map(r => r.getAttribute('data-asset-id'))).toEqual(['asset-native']);
   });
 });

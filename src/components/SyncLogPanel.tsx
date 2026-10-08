@@ -100,8 +100,10 @@ interface Props {
    *  state. When given, the "no media" block follows it and clears itself as
    *  media is added. */
   unassignedSegments?: { id: string; number: number }[];
-  /** Relink button inside the offline-media block. */
-  onRelinkOffline?: () => void;
+  /** Offline assets with ids, so Relink can target the first one. */
+  offlineAssets?: { id: string; name: string }[];
+  /** Relink button inside the offline-media block; gets the first offline asset's id. */
+  onRelinkOffline?: (firstAssetId?: string) => void;
   onClearLog: () => void;
   /** WS2 Step 12 (A3) — opens ManageModelsModal. Optional so a caller that
    *  has no model UI wired (e.g. a future embedding) can omit it; the
@@ -521,7 +523,7 @@ const TONE_CLASSES: Record<'green' | 'amber' | 'red', { dot: string; ping: strin
 };
 
 export function SyncLogPanel({
-  syncLog, syncRunSummaries, offlineAssetNames, segments = [], unassignedSegments, onRelinkOffline, onClearLog, onOpenModelsModal, onSeekToSegment,
+  syncLog, syncRunSummaries, offlineAssetNames, segments = [], unassignedSegments, offlineAssets, onRelinkOffline, onClearLog, onOpenModelsModal, onSeekToSegment,
 }: Props): React.ReactElement {
   // Collapsed by default only when there's nothing to show — an empty section
   // shouldn't occupy the panel, but a run that just skipped scenes should be
@@ -563,7 +565,7 @@ export function SyncLogPanel({
       return next;
     });
   };
-  const { blocks, autoResolved } = buildSummaryBlocks(view.attention, { unassigned: unassignedSegments });
+  const { blocks, autoResolved } = buildSummaryBlocks(view.attention, { unassigned: unassignedSegments, segments });
   const visibleBlocks = blocks.filter(b => !dismissed.has(dismissKey(b.id)));
   const dismissedIds = new Set<BlockId>(blocks.filter(b => dismissed.has(dismissKey(b.id))).map(b => b.id));
   const header = summaryHeader(visibleBlocks);
@@ -700,7 +702,7 @@ export function SyncLogPanel({
                               {block.offerRelink && onRelinkOffline && (
                                 <button
                                   type="button"
-                                  onClick={onRelinkOffline}
+                                  onClick={() => onRelinkOffline(offlineAssets?.[0]?.id)}
                                   data-testid="sync-relink"
                                   className="px-2 py-1 text-[11px] text-gray-400 hover:text-gray-100 underline underline-offset-2"
                                 >

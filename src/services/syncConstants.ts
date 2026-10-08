@@ -840,6 +840,10 @@ export const FA_FRAME_SEC = 0.02;
 //      ones averaging out to a normal total WPM).
 // ---------------------------------------------------------------------------
 
+// WPM band 100-300 / hard 350 / per-scene density 5.0 words/sec: 300 WPM is 5 words/sec, so the
+// normal band's top and the per-scene density limit are the same speed. Real fast-paced scenes
+// run 3.9-4.8 words/sec (234-288 WPM) and must not warn; the hard "check your files" threshold
+// sits above the band (350) so a genuinely implausible script still does.
 /** User-facing text for the sync text-mismatch pause (single-project dialog and bulk row). */
 export const SYNC_TEXT_MISMATCH_BODY = 'Text mismatch detected. Check your script or scenes file and retry.';
 export const SYNC_TEXT_MISMATCH_MESSAGE = `Sync paused — ${SYNC_TEXT_MISMATCH_BODY}`;

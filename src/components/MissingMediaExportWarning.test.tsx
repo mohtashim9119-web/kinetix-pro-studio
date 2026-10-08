@@ -26,6 +26,7 @@ describe('MissingMediaExportWarning', () => {
     const cancel = container.querySelector<HTMLButtonElement>('[data-testid="missing-media-cancel"]')!;
     const cont = container.querySelector<HTMLButtonElement>('[data-testid="missing-media-continue"]')!;
     expect(cancel.textContent).toBe('Add Media');
+    expect(cancel.getAttribute('data-testid')).toBe('missing-media-cancel');
     expect(cont.textContent).toBe('Continue');
     expect(cancel.className).toContain('F27D26');
     expect(cont.className).not.toContain('F27D26');
