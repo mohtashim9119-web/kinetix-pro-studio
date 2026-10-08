@@ -45,10 +45,11 @@ import type { TranscriptToken } from '../src/types';
 import type { SilenceInterval } from '../src/services/silenceDetector';
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+// V6 text inputs: tracked copies in scripts/fixtures (provenance: Downloads/All Projects Test Data/V6 Natural Long Pause Segs/All Text Files, vendored 2026-10-09).
 const V6 = resolve(REPO, '.work-phase4/replay/v6');
 const AUDIO_DURATION = 1421.29;
-const SCRIPT = '/Users/mohtashim/Downloads/All Projects Test Data/V6 Natural Long Pause Segs/All Text Files/Script.txt';
-const SCENES = '/Users/mohtashim/Downloads/All Projects Test Data/V6 Natural Long Pause Segs/All Text Files/Sync.txt';
+const SCRIPT = resolve(REPO, 'scripts/fixtures/v6-script.txt');
+const SCENES = resolve(REPO, 'scripts/fixtures/v6-sync.txt');
 
 function requireFile(path: string, how: string): string {
   if (!existsSync(path)) throw new Error(`Missing input: ${path}\nRegenerate it:\n    ${how}`);

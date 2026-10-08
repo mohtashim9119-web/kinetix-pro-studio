@@ -24,11 +24,12 @@ import type { TranscriptToken } from '../src/types';
 import type { SilenceInterval } from '../src/services/silenceDetector';
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+// V6 text inputs: tracked copies in scripts/fixtures (provenance: Downloads/All Projects Test Data/V6 Natural Long Pause Segs/All Text Files, vendored 2026-10-09).
 const V6DIR = resolve(REPO, '.work-phase4/replay/v6');
 const OUT = resolve(REPO, '.work-phase4/session-p');
 const AUDIO = 1421.29;
-const SCRIPT = '/Users/mohtashim/Downloads/All Projects Test Data/V6 Natural Long Pause Segs/All Text Files/Script.txt';
-const SCENES = '/Users/mohtashim/Downloads/All Projects Test Data/V6 Natural Long Pause Segs/All Text Files/Sync.txt';
+const SCRIPT = resolve(REPO, 'scripts/fixtures/v6-script.txt');
+const SCENES = resolve(REPO, 'scripts/fixtures/v6-sync.txt');
 
 const rd = (f: string) => readFileSync(resolve(V6DIR, f), 'utf-8');
 
