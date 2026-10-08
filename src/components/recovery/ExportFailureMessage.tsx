@@ -81,6 +81,14 @@ export function ExportFailureMessage({
     failureVia,
   });
 
+  // Visible Details: plain labels only. The raw kind/error/stack strings stay in
+  // `technicalLines` (the collapsed Raw subsection and Copy diagnostics).
+  const readableLines = [
+    `Type: ${presentation.title}`,
+    manifestPresent ? 'Saved progress: found' : null,
+    hardwareFailoverUsed ? 'Hardware fallback: used' : null,
+  ].filter((line): line is string => line !== null);
+
   const technicalLines = [
     `kind=${kind}`,
     `retentionAttempted=${String(retentionAttempted)}`,
@@ -203,12 +211,15 @@ export function ExportFailureMessage({
         <summary className="text-[9px] font-black uppercase tracking-widest text-gray-600 cursor-pointer">
           Details
         </summary>
-        <pre
-          data-testid="export-failure-technical-body"
-          className="mt-2 text-[10px] text-gray-500 whitespace-pre-wrap break-all"
-        >
-          {technicalLines.join('\n')}
-        </pre>
+        <ul data-testid="export-failure-technical-body" className="mt-2 text-[10px] text-gray-500 space-y-0.5">
+          {readableLines.map((line) => <li key={line}>{line}</li>)}
+        </ul>
+        <details data-testid="export-failure-raw" className="mt-2">
+          <summary className="text-[9px] uppercase tracking-widest text-gray-700 cursor-pointer">Raw</summary>
+          <pre className="mt-1 text-[10px] text-gray-600 whitespace-pre-wrap break-all">
+            {technicalLines.join('\n')}
+          </pre>
+        </details>
         {onCopyDiagnostics && (
           <button
             type="button"

@@ -76,6 +76,8 @@ export interface DegradedProjectRecoveryScreenProps {
   onToggleFolderProposal?: (assetId: string, candidateId: string) => void;
   onConfirmFolderRelink?: () => void;
   onCancelFolderRelink?: () => void;
+  /** Opened from the sync log's Relink: this asset's row is outlined and scrolled into view. */
+  highlightAssetId?: string | null;
   /** Close without writing — returns to dashboard, project stays poisoned. */
   onClose: () => void;
 }
@@ -91,9 +93,11 @@ export function DegradedProjectRecoveryScreen({
   onToggleFolderProposal,
   onConfirmFolderRelink,
   onCancelFolderRelink,
+  highlightAssetId,
   onClose,
 }: DegradedProjectRecoveryScreenProps): React.ReactElement {
   const trapRef = useFocusTrap<HTMLDivElement>();
+  const scrolledRef = React.useRef(false);
   const canSave = canPersistRecoveredProject({ assets, segments });
   const unresolvedCount = totalUnresolvedCount(assets, segments);
   const assetNameById = new Map<string, string>([
@@ -103,6 +107,8 @@ export function DegradedProjectRecoveryScreen({
       .map((s): [string, string] => [s.id, s.expectedFileName]),
   ]);
   const itemRows = buildRecoveryItemRows(segments, assets);
+  const [itemTab, setItemTab] = React.useState<'all' | 'missing'>('all');
+  const visibleRows = itemTab === 'missing' ? itemRows.filter((row) => row.resolutionStatus !== 'resolved') : itemRows;
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent): void => {
@@ -316,15 +322,46 @@ export function DegradedProjectRecoveryScreen({
         )}
 
         <section className="space-y-2 mb-6" data-testid="recovery-item-list">
+          <div role="tablist" data-testid="recovery-item-tabs" className="flex gap-2 mb-3">
+            {([['all', 'All'], ['missing', 'Missing']] as const).map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                role="tab"
+                aria-selected={itemTab === id}
+                data-testid={`recovery-tab-${id}`}
+                onClick={() => setItemTab(id)}
+                className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest border transition-colors ${
+                  itemTab === id
+                    ? 'bg-[#F27D26] border-[#F27D26] text-white'
+                    : 'bg-transparent border-[#282828] text-gray-500 hover:text-white hover:border-gray-500'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
           <h3 className="text-[8px] uppercase tracking-widest text-gray-600">Timeline items</h3>
-          {itemRows.map((row) => (
+          {itemTab === 'missing' && visibleRows.length === 0 && (
+            <p data-testid="recovery-missing-empty" className="text-[11px] text-gray-500">Nothing is missing.</p>
+          )}
+          {visibleRows.map((row) => (
             <div
               key={row.rowId}
               data-testid="recovery-item"
               data-row-id={row.rowId}
               data-asset-id={row.assetId ?? ''}
               data-resolution-status={row.resolutionStatus}
-              className="flex items-center justify-between gap-3 bg-[#1A1A1A] border border-[#282828] rounded-lg px-3 py-2"
+              data-highlighted={!!highlightAssetId && row.assetId === highlightAssetId ? 'true' : undefined}
+              ref={(el) => {
+                if (el && highlightAssetId && row.assetId === highlightAssetId && !scrolledRef.current) {
+                  scrolledRef.current = true;
+                  el.scrollIntoView?.({ block: 'center' });
+                }
+              }}
+              className={`flex items-center justify-between gap-3 bg-[#1A1A1A] border rounded-lg px-3 py-2 ${
+                highlightAssetId && row.assetId === highlightAssetId ? 'border-[#F27D26]' : 'border-[#282828]'
+              }`}
             >
               <div className="min-w-0 flex-1">
                 {row.segmentLabel && (

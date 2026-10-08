@@ -1291,7 +1291,7 @@ export function buildFaVictimRetimedLogEntry(
       owningRule: 'FA',
       severity: 'warning',
       fixHint: 'Review the re-timed scenes — their boundaries come from Whisper, not forced alignment. Accept the estimate, or re-run Build Timeline after tightening the affected scene tags.',
-      finding: { kind: 'fa-victim-retimed', count: victims.length },
+      finding: { kind: 'fa-victim-retimed', count: victims.length, segmentIds: victims.map(v => v.segmentId) },
       ruleDetail: {
         reason: `${victims.length} FA victim segment(s), engine fa degraded reason fa-chunk-infeasible; ${totalWords} word(s) marked Estimated from Whisper timing.`,
       },
@@ -1308,6 +1308,34 @@ export function buildFaVictimRetimedLogEntry(
  * (the defensive case — a 'warning'), `'engine-character'` when there is no
  * voiceover at all (an 'info'). Messages unchanged from the inline originals.
  */
+/** Offline assets (id -> name) from the previous render that are now present again. */
+export function detectRelinkedAssets(
+  previousOffline: ReadonlyMap<string, string>,
+  assets: readonly { id: string; name: string; unresolved?: boolean }[],
+): { id: string; name: string }[] {
+  const out: { id: string; name: string }[] = [];
+  for (const a of assets) {
+    if (previousOffline.has(a.id) && !a.unresolved) out.push({ id: a.id, name: a.name });
+  }
+  return out;
+}
+
+/** The record left behind when offline files come back, so the block can clear without losing the event. */
+export function buildAssetRelinkedEntry(
+  syncRunId: string,
+  assets: readonly { id: string; name: string }[],
+  timestamp: number = Date.now(),
+): SyncLogEntry {
+  const names = assets.map(a => a.name).join(', ');
+  return makeSyncLogEntry(
+    syncRunId,
+    'info',
+    assets.length === 1 ? `Relinked: ${names}` : `Relinked ${assets.length} files: ${names}`,
+    { finding: { kind: 'asset-relinked', count: assets.length } },
+    timestamp,
+  );
+}
+
 export function buildCharacterTimingEntry(
   syncRunId: string,
   unexpectedFallback: boolean,
