@@ -306,6 +306,12 @@ function round(value: number, places = 3): number {
   return Math.round(value * f) / f;
 }
 
+/** Mirrors `cloud/sync_core.py`'s USD_PER_WORKER_SEC (T4 + 2 cores + 8 GiB);
+ *  equality pinned by `syncQueue.test.ts`. A rate-card estimate — Modal's
+ *  invoice is the truth. Lives here (import-free) so view code can price a run
+ *  without loading the cloud client. */
+export const CLOUD_USD_PER_WORKER_SEC = (0.59 + 0.0473 * 2 + 0.008 * 8) / 3600;
+
 export function formatUsd(value: number): string {
   return value < 0.01 ? `$${value.toFixed(4)}` : `$${value.toFixed(2)}`;
 }

@@ -1483,3 +1483,23 @@ describe('isKnownSyncLogEntryType / filterKnownSyncLogEntries — retired types 
     expect(filterKnownSyncLogEntries(undefined)).toBeUndefined();
   });
 });
+
+describe('buildUnscriptedSpeechEntry — speech not in the script (log only)', () => {
+  // Inline imports keep this block self-contained.
+  it('one grouped warning; each stretch names the committed scene that holds its start', async () => {
+    const { buildUnscriptedSpeechEntry } = await import('./syncLog');
+    const segs = [0, 1, 2].map(i => ({ id: `s${i}`, startTime: i * 10, duration: 10 })) as unknown as Parameters<typeof buildUnscriptedSpeechEntry>[2];
+    const e = buildUnscriptedSpeechEntry('run', [{ startSec: 12, endSec: 15 }, { startSec: 25, endSec: 26 }], segs, 1)!;
+    expect(e.type).toBe('warning');
+    expect(e.finding).toEqual({ kind: 'unscripted-speech', count: 2 });
+    expect(e.groupedItems?.map(g => g.detail)).toEqual([
+      { startSec: 12, endSec: 15, segmentIndex: 1, segmentId: 's1' },
+      { startSec: 25, endSec: 26, segmentIndex: 2, segmentId: 's2' },
+    ]);
+  });
+
+  it('nothing to log when there is no unscripted speech', async () => {
+    const { buildUnscriptedSpeechEntry } = await import('./syncLog');
+    expect(buildUnscriptedSpeechEntry('run', [], [], 1)).toBeUndefined();
+  });
+});

@@ -135,52 +135,9 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  act(() => root.unmount());
+  if (root) act(() => root.unmount());
   container.remove();
   localStorage.clear();
-});
-
-function mount(syncLog: SyncLogEntry[], syncRunSummaries?: SyncRunSummary[], offlineAssetNames?: string[]): void {
-  root = createRoot(container);
-  act(() => {
-    root.render(
-      <SyncLogPanel
-        syncLog={syncLog}
-        syncRunSummaries={syncRunSummaries}
-        offlineAssetNames={offlineAssetNames}
-        onClearLog={() => {}}
-      />,
-    );
-  });
-}
-
-/** Every row the user sees without clicking anything: raw entry cards,
- *  attention lines and the details line. The old UI rendered one card per
- *  entry — this is the number the budget caps. */
-function visibleRows(): { rawCards: number; attention: number; details: number } {
-  return {
-    rawCards: container.querySelectorAll('[data-testid="sync-log-raw-entry"]').length,
-    attention: container.querySelectorAll('[data-testid="sync-attention-line"]').length,
-    details: container.querySelectorAll('[data-testid="sync-details-line"]').length,
-  };
-}
-
-function click(el: Element | null | undefined): void {
-  expect(el).toBeTruthy();
-  act(() => { el!.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
-}
-
-describe('SyncLogPanel user view — the budget', () => {
-  it('a 50-entry log renders AT MOST 10 attention lines + 1 details line, and no raw cards', () => {
-    const log = buildFiftyEntryLog();
-    expect(log).toHaveLength(50);
-    mount(log, [summary({ coveredSegments: 17, skippedSegments: 3 })]);
-    const rows = visibleRows();
-    expect(rows.rawCards).toBe(0);
-    expect(rows.attention).toBeLessThanOrEqual(10);
-    expect(rows.details).toBe(1);
-    expect(rows.rawCards + rows.attention + rows.details).toBeLessThanOrEqual(11);
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -196,34 +153,6 @@ function buildHealthyLog(): SyncLogEntry[] {
   ];
 }
 
-/** Opens Details, every sync section, and every Actions/Info list inside. */
-function openAllDetails(): void {
-  const toggle = container.querySelector('[data-testid="sync-details-line"] button');
-  if (toggle?.getAttribute('aria-expanded') !== 'true') click(toggle);
-  for (const b of container.querySelectorAll('[data-testid="sync-run-section"] > button')) click(b);
-  for (const b of container.querySelectorAll('[data-testid="sync-details-actions"] > button, [data-testid="sync-details-info"] > button')) click(b);
-}
-
-describe('SyncLogPanel user view — healthy run', () => {
-  it('renders 0 attention lines, the green all-clear status, and one collapsed details line', () => {
-    mount(buildHealthyLog(), [summary({ totalSegments: 5, coveredSegments: 5 })]);
-    const rows = visibleRows();
-    expect(rows.attention).toBe(0);
-    expect(rows.rawCards).toBe(0);
-    expect(rows.details).toBe(1);
-    const status = container.querySelector('[data-testid="sync-status"]');
-    expect(status?.getAttribute('data-state')).toBe('clear');
-    expect(status?.getAttribute('data-tone')).toBe('green');
-    expect(container.querySelector('[data-testid="sync-status-text"]')?.textContent).toBe('Everything is running smoothly');
-    expect(container.querySelector('[data-testid="sync-summary-stats"]')?.textContent).toBe('5/5 scenes matched');
-    const detailsButton = container.querySelector('[data-testid="sync-details-line"] button');
-    expect(detailsButton?.getAttribute('aria-expanded')).toBe('false');
-    expect(container.querySelector('[data-testid="sync-details-line"]')?.textContent).toBe('Details');
-    click(detailsButton);
-    expect(container.querySelectorAll('[data-testid="sync-run-section"]').length).toBe(1);
-  });
-});
-
 // ---------------------------------------------------------------------------
 // Honesty pin — a degraded run is never shown green by the app: it opens red
 // and only turns green on the user's own dismissal (user ruling wins); a new
@@ -231,31 +160,7 @@ describe('SyncLogPanel user view — healthy run', () => {
 // carries its placeholder and estimated counts.
 // ---------------------------------------------------------------------------
 describe('SyncLogPanel user view — honesty pin', () => {
-  it('a degraded run opens red; green only after the user dismisses every item; red again on a new degraded run', () => {
-    const log = buildFiftyEntryLog();
-    const run1 = summary({ coveredSegments: 17, skippedSegments: 3 });
-    mount(log, [run1]);
-    const status = (): Element | null => container.querySelector('[data-testid="sync-status"]');
-    expect(status()?.getAttribute('data-state')).toBe('attention');
-    const n = container.querySelectorAll('[data-testid="sync-attention-line"]').length;
-    expect(container.querySelector('[data-testid="sync-status-text"]')?.textContent).toBe(`${n} items need your attention`);
-    while (container.querySelector('[data-testid="sync-attention-dismiss"]')) {
-      click(container.querySelector('[data-testid="sync-attention-dismiss"]'));
-    }
-    expect(status()?.getAttribute('data-state')).toBe('clear');
 
-    act(() => root.unmount());
-    const run2 = log.map(e => ({ ...e, id: `${e.id}-r2`, timestamp: AT + 60_000 }));
-    mount([...log, ...run2], [run1, summary({ timestamp: AT + 60_000, coveredSegments: 17, skippedSegments: 3 })]);
-    expect(status()?.getAttribute('data-state')).toBe('attention');
-  });
-
-  it("the degraded run's second line carries matched and placeholder counts", () => {
-    mount(buildFiftyEntryLog(), [summary({ coveredSegments: 17, skippedSegments: 3 })]);
-    // skips 3 and 7 kept a slot; 11 did not
-    expect(container.querySelector('[data-testid="sync-summary-stats"]')?.textContent)
-      .toBe('17/20 scenes matched · 2 placeholders');
-  });
 
   it('a character-timing fallback run reads as fully estimated, never clean', () => {
     const view = buildSyncLogUserView([
@@ -272,22 +177,6 @@ describe('SyncLogPanel user view — honesty pin', () => {
 // Old project — persisted 'fa-fallback' entries (pre-Wave-1) load through
 // the REAL loader and the panel renders without them.
 // ---------------------------------------------------------------------------
-describe('SyncLogPanel user view — old project with fa-fallback entries', () => {
-  it('renders, filtering the retired type, when handed a legacy log directly', () => {
-    const legacy = {
-      ...buildSyncEngineEntry(RUN, 'whisper', 10, AT),
-      id: 'legacy-fa', type: 'fa-fallback',
-      message: 'High-precision sync was ON but did not run. This run used Whisper timing instead.',
-    } as unknown as SyncLogEntry;
-    mount([legacy, buildSyncInfoEntry(RUN, 3, 3, 0, AT)]);
-    expect(container.textContent).not.toContain('did not run');
-    expect(container.textContent).toContain('Details');
-    openAllDetails();
-    expect(container.textContent).not.toContain('FA FALLBACK');
-    expect(container.textContent).toContain('Sync completed: 3 of 3 segments matched.');
-  });
-});
-
 // ---------------------------------------------------------------------------
 // Raw details — every type still renders with its badge, one level down.
 // ---------------------------------------------------------------------------
@@ -329,31 +218,7 @@ describe('SyncLogPanel user view — raw details view', () => {
     expect(new Set(buildEveryTypeLog().map(e => e.type)).size).toBe(19);
   });
 
-  it('Details expands to counts, then each count to its raw entries with their badges', () => {
-    const log = buildEveryTypeLog();
-    // A later (empty) sync makes RUN an earlier sync, so all its actions are listed.
-    mount(log, [summary(), summary({ syncRunId: 'run-later', timestamp: AT + 1 })]);
-    const badgesBefore = [...container.querySelectorAll('.uppercase.rounded.border')].length;
-    expect(badgesBefore).toBe(0); // badge zoo stays out of the default view
 
-    click(container.querySelector('[data-testid="sync-details-line"] button'));
-    expect(container.querySelectorAll('[data-testid="sync-run-section"]').length).toBeGreaterThan(1);
-    expect(container.querySelectorAll('[data-testid="sync-log-raw-entry"]').length).toBe(0); // sections only, no raw yet
-
-    openAllDetails();
-    expect(container.querySelectorAll('[data-testid="sync-log-raw-entry"]').length).toBe(log.length);
-    const badges = new Set([...container.querySelectorAll('.uppercase.rounded.border')].map(b => b.textContent));
-    for (const badge of EVERY_BADGE) expect(badges, badge).toContain(badge);
-  });
-
-  it('open sections persist for the session (sessionStorage) across a remount', () => {
-    mount(buildHealthyLog());
-    click(container.querySelector('[data-testid="sync-details-line"] button'));
-    expect(JSON.parse(sessionStorage.getItem('kx-sync-log-open-sections') ?? '[]')).toEqual(['details']);
-    act(() => root.unmount());
-    mount(buildHealthyLog());
-    expect(container.querySelectorAll('[data-testid="sync-run-section"]').length).toBeGreaterThan(0);
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -392,27 +257,7 @@ describe('SyncLogPanel user view — kind mapping', () => {
     expect(view.attention.map(l => l.kind)).toEqual([kind]);
   });
 
-  it('a log with every trigger renders the seven merged blocks, in order, red/amber only', () => {
-    const log = ATTENTION_ORDER.flatMap(k => TRIGGERS[k]());
-    mount(log, undefined, ['broll.mp4']);
-    const lines = [...container.querySelectorAll('[data-testid="sync-attention-line"]')];
-    expect(lines.map(l => l.getAttribute('data-kind'))).toEqual([
-      'skipped', 'estimated', 'text-fit', 'mismatch', 'no-media', 'offline-media', 'sync-stopped',
-    ]);
-    expect(lines.map(l => l.getAttribute('data-tone'))).toEqual([
-      'red', 'amber', 'amber', 'red', 'amber', 'red', 'red',
-    ]);
-    expect(lines[0]!.textContent).toBe('1 scene was not found in the voiceover');
-    expect(lines[4]!.textContent).toBe('3 scenes have no media');
-  });
 
-  it('scenes expand inside their line', () => {
-    mount(TRIGGERS['unmatched-scene']());
-    const line = container.querySelector('[data-kind="skipped"]')!;
-    expect(line.textContent).not.toContain('[planted]');
-    click(line.querySelector('button'));
-    expect(line.textContent).toContain('S5: [planted] planted');
-  });
 
   it('the other FA-degradation triggers map to estimated timings too', () => {
     expect(attentionKindForEntry(buildFaVictimRetimedLogEntry(RUN, [
@@ -459,28 +304,12 @@ describe('SyncLogPanel user view — title, jump, dismiss', () => {
     root = createRoot(container);
     act(() => {
       root.render(
-        <SyncLogPanel syncLog={log} syncRunSummaries={summaries} segments={segments} onSeekToSegment={onSeek} onClearLog={() => {}} />,
+        <SyncLogPanel syncLog={log} syncRunSummaries={summaries} segments={segments} onSeekToSegment={onSeek} />,
       );
     });
   }
 
-  it('the section title carries no count', () => {
-    mount(buildFiftyEntryLog());
-    const title = [...container.querySelectorAll('span')].find(el => el.textContent?.startsWith('Sync Log'));
-    expect(title?.textContent).toBe('Sync Log');
-  });
 
-  it('a grouped per-scene finding jumps to that scene on click', () => {
-    const timeline = [seg(0, 'intro line'), seg(1, 'y 12 patas debajo de su cuerpo.', 0.5), seg(2, 'outro')];
-    const dense = validateSceneDensity(timeline, [alignWords(1, 1), alignWords(40, 40), alignWords(1, 1)]);
-    const seeks: string[] = [];
-    mountWith([buildGroupedViolationEntry(RUN, dense, AT)!], timeline, id => seeks.push(id));
-    const line = container.querySelector('[data-kind="text-fit"]')!;
-    click(line.querySelector('button'));
-    const item = line.querySelector('button[data-testid="sync-attention-item"]');
-    click(item);
-    expect(seeks).toEqual(['seg-1']);
-  });
 
   it('resolves by text when the validator index has drifted (placeholder re-inserted)', () => {
     const live = [seg(0, 'intro line'), { ...seg(1, 'placeholder'), id: 'ph' }, { ...seg(2, 'the dense scene text'), id: 'dense' }];
@@ -489,52 +318,6 @@ describe('SyncLogPanel user view — title, jump, dismiss', () => {
     expect(resolveAttentionItemSegmentId({ text: 'x', sceneRef: { index: 1, name: 'nowhere…' } }, live)).toBeUndefined();
   });
 
-  it('an item with no resolvable scene renders as plain text, not a jump', () => {
-    mountWith(TRIGGERS['script-audio-mismatch'](), [], () => {});
-    const line = container.querySelector('[data-kind="mismatch"]')!;
-    click(line.querySelector('button'));
-    expect(line.querySelector('button[data-testid="sync-attention-item"]')).toBeNull();
-    expect(line.querySelector('p[data-testid="sync-attention-item"]')).toBeTruthy();
-  });
 
-  it('dismiss hides the line for this run only; entries stay under Details; a new run raises it again', () => {
-    const log = TRIGGERS['unmatched-scene']();
-    const run1 = [summary({ coveredSegments: 19, skippedSegments: 1 })];
-    mountWith(log, [], () => {});
-    click(container.querySelector('[data-testid="sync-attention-dismiss"]'));
-    expect(container.querySelectorAll('[data-testid="sync-attention-line"]').length).toBe(0);
-    expect(container.querySelector('[data-testid="sync-status"]')?.getAttribute('data-state')).toBe('clear');
-    openAllDetails();
-    expect(container.textContent).toContain('Dismissed');
-
-    act(() => root.unmount());
-    mountWith(log, [], () => {});
-    expect(container.querySelectorAll('[data-testid="sync-attention-line"]').length).toBe(0); // persisted
-
-    act(() => root.unmount());
-    const nextRun = log.map(e => ({ ...e, id: `${e.id}-2`, timestamp: AT + 60_000 }));
-    mountWith([...log, ...nextRun], [], () => {}, [...run1, summary({ timestamp: AT + 60_000, coveredSegments: 19, skippedSegments: 1 })]);
-    expect(container.querySelectorAll('[data-testid="sync-attention-line"]').length).toBe(1);
-  });
 });
 
-describe('SyncLogPanel — Relink files passes the first offline asset', () => {
-  it('calls onRelinkOffline with the first offline asset id', () => {
-    const calls: Array<string | undefined> = [];
-    root = createRoot(container);
-    act(() => {
-      root.render(
-        <SyncLogPanel
-          syncLog={[]}
-          offlineAssetNames={['broll.mp4', 'b.mp4']}
-          offlineAssets={[{ id: 'a1', name: 'broll.mp4' }, { id: 'a2', name: 'b.mp4' }]}
-          onRelinkOffline={(id) => calls.push(id)}
-          onClearLog={() => {}}
-        />,
-      );
-    });
-    click(container.querySelector('[data-kind="offline-media"] button'));
-    click(container.querySelector('[data-testid="sync-relink"]'));
-    expect(calls).toEqual(['a1']);
-  });
-});

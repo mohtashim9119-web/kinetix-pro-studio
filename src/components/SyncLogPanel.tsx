@@ -6,25 +6,28 @@
 // (App.tsx), so this file holds no log policy and no persistence of its own —
 // the log rides along on the Project blob the existing projectStore already saves.
 import React, { useState } from 'react';
-import { ChevronDown, ChevronRight, Trash2, Copy, Check } from 'lucide-react';
+import { ChevronDown, ChevronRight, Copy, Check } from 'lucide-react';
 import type { SyncLogEntry, SyncLogEntryType, SyncRunSummary } from '../types';
 import { SKIPPED_SCENE_COPY } from '../services/skippedScenePlaceholders';
 import {
-  buildSyncLogUserView,
   resolveAttentionItemSegmentId,
   skipEntryLabel,
   SYNC_LOG_USER_COPY,
   type SyncLogHeadline,
 } from '../services/syncLogUserView';
 import {
-  buildRunSections,
-  buildSummaryBlocks,
-  summaryHeader,
-  summaryLine2,
-  SUMMARY_COPY,
-  type BlockId,
-} from '../services/syncLogSummary';
-import { Z } from './overlayLayers';
+  buildSyncGroups,
+  resolveKey,
+  timeAgo,
+  warningKey,
+  RESOLVABLE_ACTIONS,
+  SYNC_GROUPS_COPY,
+  type ActionGroup,
+  type GroupItem,
+  type LiveState,
+  type SyncGroup,
+  type WarningGroup,
+} from '../services/syncLogGroups';
 
 // Operator ruling (sync-log user view) — the default view is headline +
 // attention list + one collapsed Details line (services/syncLogUserView.ts
@@ -86,34 +89,29 @@ function writeStoredDismissed(keys: Set<string>): void {
 
 interface Props {
   syncLog: SyncLogEntry[];
-  /** `project.syncRunSummaries` — locates the latest run (the attention
-   *  window) and supplies the headline's N/N. Optional: without it the view
-   *  falls back to the log's own run markers. */
+  /** `project.syncRunSummaries` — one per sync run. */
   syncRunSummaries?: SyncRunSummary[];
-  /** Names of the project's assets currently offline (`Asset.unresolved`) —
-   *  attention kind 7. Live project state, not a log entry. */
-  offlineAssetNames?: string[];
-  /** The live timeline (`project.segments`), used only to resolve a grouped
-   *  finding's scene to a jump target (`resolveAttentionItemSegmentId`). */
-  segments?: { id: string; text?: string }[];
-  /** Scenes with no media right now (1-based timeline number) — live project
-   *  state. When given, the "no media" block follows it and clears itself as
-   *  media is added. */
-  unassignedSegments?: { id: string; number: number }[];
-  /** Offline assets with ids, so Relink can target the first one. */
-  offlineAssets?: { id: string; name: string }[];
-  /** Relink button inside the offline-media block; gets the first offline asset's id. */
-  onRelinkOffline?: (firstAssetId?: string) => void;
-  onClearLog: () => void;
-  /** WS2 Step 12 (A3) — opens ManageModelsModal. Optional so a caller that
-   *  has no model UI wired (e.g. a future embedding) can omit it; the
-   *  deep-link button below simply doesn't render without it. */
+  /** The live project, so media and Layer 2 problems are always current and
+   *  clear themselves as the user fixes them. */
+  segments?: LiveState['segments'];
+  assets?: LiveState['assets'];
+  spots?: LiveState['spots'];
+  /** WS2 Step 12 (A3) — opens ManageModelsModal. */
   onOpenModelsModal?: () => void;
-  /** WS2 T2.1 — deep-links the playhead to the COMMITTED segment named by an
-   *  entry's `segmentId` (e.g. the neighbour that absorbed a dropped scene's
-   *  gap). Optional so a caller with no seek wiring can omit it; the
-   *  deep-link control below simply doesn't render without it. */
+  /** Deep-links the playhead to a committed segment. */
   onSeekToSegment?: (segmentId: string) => void;
+  /** "Add media" on Missing media. */
+  onAddMedia?: () => void;
+  /** "Relink files" on Offline media; gets the first offline asset's id. */
+  onRelinkOffline?: (firstAssetId?: string) => void;
+  /** "Retry" on Sync stopped and "Re-sync" on Skipped scenes. */
+  onRetrySync?: () => void;
+  /** "Open files" on Wrong file pair (the script / voiceover slots). */
+  onOpenFiles?: () => void;
+  /** "Open Layer 2" on Layer 2 unbound. */
+  onOpenLayer2?: () => void;
+  /** This project's cloud cost ledger entries (cost per sync). */
+  costEntries?: readonly { at: number; usd: number; sec: number; cached: boolean }[];
 }
 
 /** True when an fa-preflight/fa-paused entry's own detail names a missing
@@ -516,33 +514,76 @@ export function formatHeadline(headline: SyncLogHeadline): string {
   return parts.join(' · ');
 }
 
-const TONE_CLASSES: Record<'green' | 'amber' | 'red', { dot: string; ping: string }> = {
-  green: { dot: 'bg-emerald-400', ping: 'bg-emerald-400' },
-  amber: { dot: 'bg-amber-500', ping: 'bg-amber-500' },
-  red: { dot: 'bg-red-500', ping: 'bg-red-500' },
+const TONE_DOT: Record<'green' | 'amber' | 'red', string> = {
+  green: 'bg-emerald-400',
+  amber: 'bg-amber-500',
+  red: 'bg-red-500',
 };
 
-export function SyncLogPanel({
-  syncLog, syncRunSummaries, offlineAssetNames, segments = [], unassignedSegments, offlineAssets, onRelinkOffline, onClearLog, onOpenModelsModal, onSeekToSegment,
-}: Props): React.ReactElement {
-  // Collapsed by default only when there's nothing to show — an empty section
-  // shouldn't occupy the panel, but a run that just skipped scenes should be
-  // visible without a click. `null` = the user hasn't expressed a preference,
-  // so the default tracks the log's live emptiness (a plain
-  // useState(syncLog.length === 0) would latch at mount and stay collapsed
-  // through the very sync that produced the entries).
-  const [manualCollapsed, setManualCollapsed] = useState<boolean | null>(null);
-  // Expanded by default even when the log is empty: the status card below is
-  // always present and reads green when there is nothing to flag.
-  const collapsed = manualCollapsed ?? false;
-  const [showClearConfirm, setShowClearConfirm] = useState(false);
-  const [copied, setCopied] = useState(false);
+/** Pulsing dot; `still` draws it without the ping (used where nothing is wrong). */
+function Pulse({ tone, still = false }: { tone: 'green' | 'amber' | 'red'; still?: boolean }): React.ReactElement {
+  return (
+    <span className="relative flex w-1.5 h-1.5 flex-shrink-0">
+      {!still && <span className={`absolute inline-flex w-full h-full rounded-full opacity-60 animate-ping ${TONE_DOT[tone]}`} />}
+      <span className={`relative inline-flex w-1.5 h-1.5 rounded-full ${TONE_DOT[tone]}`} />
+    </span>
+  );
+}
 
-  // Open user-view sections, lazily read from sessionStorage once per mount
-  // (functional initializer, matching MediaBlock.tsx's sort control).
-  const [openSections, setOpenSections] = useState<Set<string>>(readStoredOpenSections);
-  const toggleSection = (id: string): void => {
-    setOpenSections(prev => {
+/** One of the three identical cards. Same geometry for every card: header row
+ *  (title left, chip right), body only when open. */
+function Card({
+  id, title, chip, open, onToggle, muted, children, headerExtra,
+}: {
+  id: string;
+  title: string;
+  chip: React.ReactNode;
+  open: boolean;
+  onToggle: () => void;
+  muted: boolean;
+  children?: React.ReactNode;
+  headerExtra?: React.ReactNode;
+}): React.ReactElement {
+  return (
+    <div data-testid="sync-card" data-card={id} className={`rounded-lg border border-white/[0.06] ${muted ? 'opacity-60' : ''}`}>
+      <div className="group/card flex items-center gap-1 px-[0.5vw] h-8">
+        <button type="button" onClick={onToggle} aria-expanded={open} className="flex-1 min-w-0 h-full flex items-center gap-1.5 text-left">
+          {open ? <ChevronDown size={11} className="text-gray-500 flex-shrink-0" /> : <ChevronRight size={11} className="text-gray-500 flex-shrink-0" />}
+          <span className="text-[12px] font-bold uppercase tracking-wider text-gray-300">{title}</span>
+        </button>
+        {headerExtra}
+        <span className="flex items-center justify-end min-w-[1.5rem]" data-testid="sync-card-chip">{chip}</span>
+      </div>
+      {open && <div className="px-[0.5vw] pb-1 divide-y divide-white/[0.06]">{children}</div>}
+    </div>
+  );
+}
+
+const CHIP_TONE: Record<'red' | 'amber' | 'green' | 'blue', string> = {
+  red: 'bg-red-500/20 text-red-300',
+  amber: 'bg-amber-500/20 text-amber-300',
+  green: 'bg-emerald-500/20 text-emerald-300',
+  blue: 'bg-sky-500/20 text-sky-300',
+};
+
+function Chip({ n, tone }: { n: number; tone: 'red' | 'amber' | 'green' | 'blue' }): React.ReactElement {
+  return <span className={`text-[12px] font-medium leading-4 rounded px-1.5 ${CHIP_TONE[tone]}`}>{n}</span>;
+}
+
+export function SyncLogPanel({
+  syncLog, syncRunSummaries, segments = [], assets = [], spots = [],
+  onOpenModelsModal, onSeekToSegment, onAddMedia, onRelinkOffline, onRetrySync, onOpenFiles, onOpenLayer2, costEntries,
+}: Props): React.ReactElement {
+  const [manualCollapsed, setManualCollapsed] = useState<boolean | null>(null);
+  const collapsed = manualCollapsed ?? false;
+  /** The sync whose records were just copied (brief "Copied" tick). */
+  const [copiedRun, setCopiedRun] = useState<string | null>(null);
+
+  // Open sections, session-persisted. An id in the set FLIPS that section's default.
+  const [toggled, setToggled] = useState<Set<string>>(readStoredOpenSections);
+  const isOpen = (id: string, defaultOpen = false): boolean => (toggled.has(id) ? !defaultOpen : defaultOpen);
+  const toggle = (id: string): void => {
+    setToggled(prev => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id); else next.add(id);
       writeStoredOpenSections(next);
@@ -550,37 +591,34 @@ export function SyncLogPanel({
     });
   };
 
-  // Newest first. `syncLog` is append-ordered (oldest first) on the Project;
-  // reverse a COPY so the prop array is never mutated.
-  const entries = [...syncLog].reverse();
-  const view = buildSyncLogUserView(syncLog, syncRunSummaries, offlineAssetNames);
+  // SYNC boxes: in-memory only (see renderSync).
+  const [syncToggled, setSyncToggled] = useState<Set<string>>(() => new Set());
+  const toggleSync = (runId: string): void => {
+    setSyncToggled(prev => {
+      const next = new Set(prev);
+      if (next.has(runId)) next.delete(runId); else next.add(runId);
+      return next;
+    });
+  };
 
   const [dismissed, setDismissed] = useState<Set<string>>(readStoredDismissed);
-  const dismissKey = (id: string): string => `${id}@${view.windowKey}`;
-  const dismissBlock = (id: string): void => {
+  const dismiss = (keys: string[]): void => {
     setDismissed(prev => {
       const next = new Set(prev);
-      next.add(dismissKey(id));
+      for (const k of keys) next.add(k);
       writeStoredDismissed(next);
       return next;
     });
   };
-  const { blocks, autoResolved } = buildSummaryBlocks(view.attention, { unassigned: unassignedSegments, segments });
-  const visibleBlocks = blocks.filter(b => !dismissed.has(dismissKey(b.id)));
-  const dismissedIds = new Set<BlockId>(blocks.filter(b => dismissed.has(dismissKey(b.id))).map(b => b.id));
-  const header = summaryHeader(visibleBlocks);
-  const line2 = summaryLine2(view.headline);
-  const runSections = buildRunSections(syncLog, syncRunSummaries ?? [], {
-    dismissed: dismissedIds,
-    autoResolved: new Set<BlockId>(autoResolved),
-  });
 
-  const handleCopy = (e: React.MouseEvent): void => {
-    e.stopPropagation();
-    const text = entries.map(formatEntryText).join('\n\n');
+  const view = buildSyncGroups({ log: syncLog, summaries: syncRunSummaries ?? [], live: { segments, assets, spots }, dismissed, costEntries });
+
+  /** Copies one sync's records (oldest first), hidden ones included. */
+  const copySync = (sync: SyncGroup): void => {
+    const text = sync.entries.map(formatEntryText).join('\n\n');
     const onCopied = (): void => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
+      setCopiedRun(sync.runId);
+      setTimeout(() => setCopiedRun(r => (r === sync.runId ? null : r)), 1500);
     };
     navigator.clipboard.writeText(text).then(onCopied).catch(() => {
       try {
@@ -599,286 +637,287 @@ export function SyncLogPanel({
     });
   };
 
-  const detailsOpen = openSections.has('details');
-  const detailsCounts = view.details.counts
-    .map(c => `${c.count} ${SYNC_LOG_USER_COPY.categories[c.category]}`)
-    .join(' · ');
 
-  return (
-    <div className="flex-shrink-0">
-      {/* Section header */}
-      <div
-        className="flex items-center gap-2 px-4 py-2 cursor-pointer select-none"
-        onClick={() => setManualCollapsed(!collapsed)}
-      >
-        {collapsed
-          ? <ChevronRight size={12} className="text-gray-600" />
-          : <ChevronDown size={12} className="text-gray-600" />
-        }
-        <span className="text-[9px] font-black uppercase tracking-widest text-gray-500 flex-1">
-          Sync Log
-        </span>
-      </div>
+  const ctaFor = (g: ActionGroup, sync: SyncGroup): { label: string; run: () => void } | undefined => {
+    if (!sync.live) return undefined;
+    const firstOfflineAsset = g.items.find(i => i.key.startsWith('asset:'))?.key.slice('asset:'.length);
+    switch (g.cta) {
+      case 'add-media': return onAddMedia ? { label: 'Add media', run: onAddMedia } : undefined;
+      case 'relink': return onRelinkOffline ? { label: 'Relink', run: () => onRelinkOffline(firstOfflineAsset) } : undefined;
+      case 'replace': return onAddMedia ? { label: 'Replace', run: onAddMedia } : undefined;
+      case 'resync': return onRetrySync ? { label: 'Re-sync', run: onRetrySync } : undefined;
+      case 'open-files': return onOpenFiles ? { label: 'Open files', run: onOpenFiles } : undefined;
+      case 'retry': return onRetrySync ? { label: 'Retry', run: onRetrySync } : undefined;
+      case 'open-layer2': return onOpenLayer2 ? { label: 'Layer 2', run: onOpenLayer2 } : undefined;
+      default: return undefined;
+    }
+  };
 
-      {!collapsed && (
-        <div className="px-4 pb-3">
-          <>
-              {/* Top summary: line 1 is the state (pulse + count, or "smoothly"),
-                  line 2 the quiet stats. Then a separator and the warning
-                  blocks, all drawn the same way. */}
-              <div data-testid="sync-status-card">
-                <div data-testid="sync-status" data-state={header.tone === 'green' ? 'clear' : 'attention'} data-tone={header.tone}>
-                  <div className="flex items-center gap-2 min-w-0">
-                    <span className="flex-shrink-0 self-start flex items-center h-[16.5px]">
-                      <span className="relative flex w-1.5 h-1.5">
-                        <span className={`absolute inline-flex w-full h-full rounded-full opacity-60 animate-ping ${TONE_CLASSES[header.tone].ping}`} />
-                        <span className={`relative inline-flex w-1.5 h-1.5 rounded-full ${TONE_CLASSES[header.tone].dot}`} />
-                      </span>
-                    </span>
-                    <span data-testid="sync-status-text" className="text-xs text-gray-200 leading-snug break-words">{header.text}</span>
-                  </div>
-                  {line2 && (
-                    <p data-testid="sync-summary-stats" className="mt-0.5 ml-3.5 text-[10px] text-gray-500 leading-snug break-words">
-                      {line2}
-                    </p>
-                  )}
-                </div>
+  /** Which item's detail card is open (one at a time), keyed per sync. */
+  const [openDetail, setOpenDetail] = useState<string | null>(null);
 
-                {visibleBlocks.length > 0 && (
-                  <div className="mt-3 pt-2 border-t border-white/[0.06] space-y-0.5">
-                    {visibleBlocks.map(block => {
-                      const sectionId = `attention:${block.id}`;
-                      const open = openSections.has(sectionId);
-                      return (
-                        <div key={block.id} className="group" data-testid="sync-attention-line" data-kind={block.id} data-tone={block.tone}>
-                          <div className="flex items-center gap-2 rounded-md hover:bg-white/[0.03]">
-                            <button
-                              type="button"
-                              onClick={() => toggleSection(sectionId)}
-                              className="flex-1 min-w-0 flex items-center gap-2 py-1 text-left"
-                              aria-expanded={open}
-                            >
-                              <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${TONE_CLASSES[block.tone].dot}`} />
-                              <span className="text-xs text-gray-300 leading-snug break-words flex-1">{block.title}</span>
-                              {open
-                                ? <ChevronDown size={12} className="text-gray-500 flex-shrink-0" />
-                                : <ChevronRight size={12} className="text-gray-500 flex-shrink-0" />
-                              }
-                            </button>
-                            {block.dismissable && (
-                              <button
-                                type="button"
-                                onClick={() => dismissBlock(block.id)}
-                                className="p-0.5 rounded text-gray-600 hover:text-emerald-400 flex-shrink-0 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity"
-                                title="Mark as handled"
-                                aria-label={`Mark as handled: ${block.title}`}
-                                data-testid="sync-attention-dismiss"
-                              >
-                                <Check size={12} />
-                              </button>
-                            )}
-                          </div>
-                          {open && (
-                            <div className="pb-1 space-y-px">
-                              {block.items.map((item, idx) => {
-                                const targetId = onSeekToSegment ? resolveAttentionItemSegmentId(item, segments) : undefined;
-                                return targetId ? (
-                                  <button
-                                    key={idx}
-                                    type="button"
-                                    onClick={() => onSeekToSegment!(targetId)}
-                                    data-testid="sync-attention-item"
-                                    className="w-full text-left text-[11px] text-gray-400 hover:text-gray-100 hover:bg-white/[0.04] rounded px-2 py-1 leading-snug break-words"
-                                    title={SYNC_LOG_USER_COPY.jumpToScene}
-                                  >
-                                    {item.text}
-                                  </button>
-                                ) : (
-                                  <p key={idx} data-testid="sync-attention-item" className="text-[11px] text-gray-500 px-2 py-1 leading-snug break-words">
-                                    {item.text}
-                                  </p>
-                                );
-                              })}
-                              {block.offerRelink && onRelinkOffline && (
-                                <button
-                                  type="button"
-                                  onClick={() => onRelinkOffline(offlineAssets?.[0]?.id)}
-                                  data-testid="sync-relink"
-                                  className="px-2 py-1 text-[11px] text-gray-400 hover:text-gray-100 underline underline-offset-2"
-                                >
-                                  Relink files
-                                </button>
-                              )}
-                              {block.offerManageModels && onOpenModelsModal && (
-                                <button
-                                  type="button"
-                                  onClick={onOpenModelsModal}
-                                  className="px-2 py-1 text-[11px] text-gray-400 hover:text-gray-100 underline underline-offset-2"
-                                >
-                                  {SYNC_LOG_USER_COPY.manageModels}
-                                </button>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-
-              {/* Details — quiet, collapsed, bottom. One section per sync, each
-                  with Actions (what was flagged and then handled) and Info. */}
-              <div data-testid="sync-details-line" className="mt-3 pt-3 border-t border-white/[0.06]">
-                <div className="flex items-start gap-1">
-                  <button
-                    type="button"
-                    onClick={() => toggleSection('details')}
-                    className="flex-1 min-w-0 flex items-start gap-1.5 py-0.5 text-left text-gray-700 hover:text-gray-500 transition-colors"
-                    aria-expanded={detailsOpen}
-                  >
-                    {detailsOpen
-                      ? <ChevronDown size={11} className="flex-shrink-0 mt-[3px]" />
-                      : <ChevronRight size={11} className="flex-shrink-0 mt-[3px]" />
-                    }
-                    <span className="text-[11px] leading-snug break-words">Details</span>
-                  </button>
-                  <div className="flex items-center gap-1 flex-shrink-0">
-                    {syncLog.length > 0 && (
-                      <button
-                        type="button"
-                        data-testid="sync-log-copy"
-                        onClick={handleCopy}
-                        className="p-1 rounded-lg hover:bg-zinc-800 text-gray-600 hover:text-gray-300 transition-colors flex items-center gap-1"
-                        title="Copy sync log"
-                        aria-label="Copy sync log"
-                      >
-                        {copied ? (
-                          <span className="text-[8px] font-black uppercase tracking-wider">Copied!</span>
-                        ) : (
-                          <Copy size={12} />
-                        )}
-                      </button>
-                    )}
-                    {syncLog.length > 0 && (
-                      <button
-                        type="button"
-                        data-testid="sync-log-clear"
-                        onClick={(e) => { e.stopPropagation(); setShowClearConfirm(true); }}
-                        className="p-1 rounded-lg hover:bg-red-900/40 text-gray-600 hover:text-red-400 transition-colors"
-                        title="Clear sync log"
-                        aria-label="Clear sync log"
-                      >
-                        <Trash2 size={12} />
-                      </button>
-                    )}
-                  </div>
-                </div>
-                {detailsOpen && (
-                  <div className="mt-1 max-h-72 overflow-y-scroll custom-scrollbar -mr-[9px] pr-4 divide-y divide-white/[0.06]">
-                    {runSections.map(section => {
-                      const runId = `run:${section.key}`;
-                      const runOpen = openSections.has(runId);
-                      return (
-                        <div key={section.key} data-testid="sync-run-section" data-run={section.key}>
-                          <button
-                            type="button"
-                            onClick={() => toggleSection(runId)}
-                            className="w-full flex items-center gap-1.5 py-1.5 text-left text-gray-600 hover:text-gray-400 transition-colors"
-                            aria-expanded={runOpen}
-                          >
-                            {runOpen
-                              ? <ChevronDown size={11} className="flex-shrink-0" />
-                              : <ChevronRight size={11} className="flex-shrink-0" />
-                            }
-                            <span className="text-[11px]">{section.title}</span>
-                          </button>
-                          {runOpen && (
-                            <div className="pb-1 pl-3 space-y-1">
-                              {([['actions', 'Actions', section.actions.length], ['info', 'Info', section.info.length]] as const)
-                                .filter(([, , n]) => n > 0)
-                                .map(([listId, label, n]) => {
-                                  const listKey = `${runId}:${listId}`;
-                                  const listOpen = openSections.has(listKey);
-                                  return (
-                                    <div key={listId} data-testid={`sync-details-${listId}`}>
-                                      <button
-                                        type="button"
-                                        onClick={() => toggleSection(listKey)}
-                                        className="w-full flex items-center gap-1.5 py-1 text-left text-gray-600 hover:text-gray-400 transition-colors"
-                                        aria-expanded={listOpen}
-                                      >
-                                        {listOpen
-                                          ? <ChevronDown size={10} className="flex-shrink-0" />
-                                          : <ChevronRight size={10} className="flex-shrink-0" />
-                                        }
-                                        <span className="text-[11px]">{label} ({n})</span>
-                                      </button>
-                                      {listOpen && listId === 'info' && (
-                                        <SyncLogRawEntries
-                                          entries={section.info}
-                                          onOpenModelsModal={onOpenModelsModal}
-                                          onSeekToSegment={onSeekToSegment}
-                                        />
-                                      )}
-                                      {listOpen && listId === 'actions' && section.actions.map(a => (
-                                        <div key={a.entry.id} data-testid="sync-action-record">
-                                          {a.status && (
-                                            <span className="text-[9px] uppercase tracking-wider text-emerald-500/80 px-2">
-                                              {SUMMARY_COPY.statusLabel[a.status]}
-                                            </span>
-                                          )}
-                                          <SyncLogRawEntries
-                                            entries={[a.entry]}
-                                            onOpenModelsModal={onOpenModelsModal}
-                                            onSeekToSegment={onSeekToSegment}
-                                          />
-                                        </div>
-                                      ))}
-                                    </div>
-                                  );
-                                })}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-          </>
+  /** One item: its short line (max two lines) and, when clicked, a card with the
+   *  full explanation in plain words — plus "Go to scene" when it names one. */
+  const itemBlock = (
+    item: GroupItem, scope: string, strong: boolean, leading: React.ReactNode, trailing: React.ReactNode,
+  ): React.ReactElement => {
+    const key = `${scope}:${item.key}`;
+    const open = openDetail === key;
+    const targetId = onSeekToSegment
+      ? resolveAttentionItemSegmentId({ text: item.text, segmentId: item.segmentId, sceneRef: item.sceneRef }, segments)
+      : undefined;
+    return (
+      <div key={item.key} className="group/item py-1.5" data-testid="sync-item-block">
+        <div className="flex items-start gap-1.5">
+          {leading}
+          <button
+            type="button"
+            data-testid="sync-item"
+            aria-expanded={open}
+            onClick={() => setOpenDetail(open ? null : key)}
+            className={`flex-1 min-w-0 text-left text-[11px] leading-4 break-words line-clamp-2 hover:text-white ${strong ? 'text-gray-300' : 'text-gray-400'}`}
+          >
+            {item.text}
+          </button>
+          {trailing}
         </div>
-      )}
-
-      {/* Clear confirmation overlay — same pattern as ProjectDashboard's
-          delete confirms (no new dialog dependency). */}
-      {showClearConfirm && (
-        <div className={`fixed inset-0 ${Z.popup} bg-black/70 flex items-center justify-center`}>
-          <div className="bg-zinc-900 border border-zinc-700 rounded-xl p-6 max-w-sm w-full mx-4">
-            <h3 className="text-white font-semibold mb-2">Clear Sync Log</h3>
-            <p className="text-zinc-400 text-sm mb-6">
-              All {syncLog.length} sync log {syncLog.length === 1 ? 'entry' : 'entries'} and their
-              run summaries will be permanently removed. This cannot be undone.
-            </p>
-            <div className="flex gap-3 justify-end">
-              <button
-                onClick={() => setShowClearConfirm(false)}
-                className="px-4 py-2 text-sm text-zinc-400 hover:text-white
-                           rounded-lg hover:bg-zinc-800 transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => { onClearLog(); setShowClearConfirm(false); }}
-                className="px-4 py-2 text-sm bg-red-600 hover:bg-red-500
-                           text-white rounded-lg transition-colors font-medium"
-              >
-                Clear log
+        {open && (
+          <div data-testid="sync-item-detail" className="mt-1.5 rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1.5">
+            <p className="text-[11px] leading-4 text-gray-300">{item.detail ?? item.text}</p>
+            <div className="flex items-center gap-3 mt-1.5">
+              {targetId && (
+                <button type="button" data-testid="sync-item-goto" onClick={() => onSeekToSegment!(targetId)} className="text-[11px] leading-4 text-gray-200 hover:text-white underline underline-offset-2">
+                  Go to scene
+                </button>
+              )}
+              <button type="button" onClick={() => setOpenDetail(null)} className="text-[11px] leading-4 text-gray-500 hover:text-gray-300">
+                Close
               </button>
             </div>
           </div>
+        )}
+      </div>
+    );
+  };
+
+  const ctaButton = (cta: { label: string; run: () => void }): React.ReactElement => (
+    <button type="button" data-testid="sync-cta" onClick={cta.run} className="flex-shrink-0 h-4 inline-flex items-center text-[11px] leading-none text-gray-200 bg-white/[0.06] hover:bg-white/[0.12] rounded px-1.5 transition-colors">
+      {cta.label}
+    </button>
+  );
+
+  const tickButton = (
+    { label, onClick, testId }: { label: string; onClick: () => void; testId: string },
+    reveal = 'group-hover/item:opacity-100',
+  ): React.ReactElement => (
+    <button type="button" data-testid={testId} aria-label={label} title={label} onClick={onClick} className={`flex-shrink-0 h-4 w-4 inline-flex items-center justify-center rounded text-gray-600 hover:text-emerald-400 opacity-0 ${reveal} focus:opacity-100 transition-opacity`}>
+      <Check size={12} />
+    </button>
+  );
+
+  /** A sub-group. One item: just that item's line (no arrow, no title). More:
+   *  a title row with the count and the arrow on the RIGHT; items below, no indent. */
+  const subGroup = ({
+    sectionId, testId, dataAttr, dotClass, title, items, cta, tickFor, groupTick,
+  }: {
+    sectionId: string;
+    testId: string;
+    dataAttr: Record<string, string>;
+    dotClass?: string;
+    title: string;
+    items: GroupItem[];
+    cta?: { label: string; run: () => void };
+    tickFor?: (item: GroupItem) => { label: string; onClick: () => void; testId: string } | undefined;
+    groupTick?: { label: string; onClick: () => void; testId: string };
+  }): React.ReactElement => {
+    const dot = dotClass ? <span className="h-4 flex items-center flex-shrink-0"><span className={`w-1.5 h-1.5 rounded-full ${dotClass}`} /></span> : null;
+    if (items.length === 1) {
+      const item = items[0]!;
+      const tick = tickFor?.(item);
+      return (
+        <div key={sectionId} data-testid={testId} {...dataAttr}>
+          {itemBlock(item, sectionId, true, dot, <>{cta && ctaButton(cta)}{tick && tickButton(tick)}</>)}
+        </div>
+      );
+    }
+    const open = isOpen(sectionId);
+    return (
+      <div key={sectionId} data-testid={testId} {...dataAttr}>
+        <div className="group/sub flex items-start gap-1.5 py-1.5">
+          {dot}
+          <button type="button" onClick={() => toggle(sectionId)} aria-expanded={open} className="flex-1 min-w-0 flex items-center text-left text-[11px] leading-4 text-gray-300">
+            <span className="truncate">{title}</span>
+            <span aria-hidden="true" className="mx-1.5 w-[3px] h-[3px] rounded-full bg-gray-500 flex-shrink-0" />
+            <span className="text-gray-500 flex-shrink-0">{items.length}</span>
+          </button>
+          {cta && ctaButton(cta)}
+          {groupTick && tickButton(groupTick, 'group-hover/sub:opacity-100')}
+          <button type="button" onClick={() => toggle(sectionId)} aria-label={open ? 'Collapse' : 'Expand'} className="flex-shrink-0 h-4 w-4 inline-flex items-center justify-center text-gray-500">
+            {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+          </button>
+        </div>
+        {open && (
+          <div className="border-t border-white/[0.06] divide-y divide-white/[0.06]">
+            {items.map(item => {
+              const tick = tickFor?.(item);
+              return itemBlock(item, sectionId, false, null, tick ? tickButton(tick) : null);
+            })}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const renderAction = (g: ActionGroup, sync: SyncGroup): React.ReactElement => {
+    const resolvable = sync.live && RESOLVABLE_ACTIONS.has(g.id);
+    return (
+      <div key={g.id}>
+        {subGroup({
+          sectionId: `${sync.runId}:action:${g.id}`,
+          testId: 'sync-action-group', dataAttr: { 'data-action': g.id, 'data-tone': g.tone },
+          dotClass: TONE_DOT[g.tone], title: g.title, items: g.items, cta: ctaFor(g, sync),
+          tickFor: resolvable ? item => ({ label: 'Mark resolved', testId: 'sync-action-resolve', onClick: () => dismiss([resolveKey(g.id, item.key, sync.runId)]) }) : undefined,
+        })}
+        {sync.live && g.offerModels && onOpenModelsModal && (
+          <button type="button" onClick={onOpenModelsModal} className="text-[11px] leading-4 text-gray-300 hover:text-white underline underline-offset-2 pb-1.5">
+            {SYNC_LOG_USER_COPY.manageModels}
+          </button>
+        )}
+      </div>
+    );
+  };
+
+  const renderWarning = (g: WarningGroup, sync: SyncGroup): React.ReactElement => subGroup({
+    sectionId: `${sync.runId}:warning:${g.id}`,
+    testId: 'sync-warning-group', dataAttr: { 'data-warning': g.id },
+    dotClass: 'bg-amber-500', title: g.title, items: g.items,
+    tickFor: g.dismissible ? item => ({ label: 'Dismiss', testId: 'sync-warning-dismiss', onClick: () => dismiss([warningKey(g.id, item.key, sync.runId)]) }) : undefined,
+    groupTick: g.dismissible ? { label: `Dismiss all ${g.title}`, testId: 'sync-warning-group-dismiss', onClick: () => dismiss(g.items.map(i => warningKey(g.id, i.key, sync.runId))) } : undefined,
+  });
+
+  const infoDot = <span className="h-4 flex items-center flex-shrink-0"><span className="w-1.5 h-1.5 rounded-full bg-sky-400" /></span>;
+
+  const renderSync = (sync: SyncGroup): React.ReactElement => {
+    const muted = !sync.live;
+    // The newest sync opens by default every time; older ones start closed.
+    // Not remembered, so the latest sync is always shown open.
+    const open = syncToggled.has(sync.runId) ? !sync.live : sync.live;
+    const actionTone = sync.actions.some(a => a.tone === 'red') ? 'red' : 'amber';
+    const warnKeys = sync.warnings.flatMap(w => (w.dismissible ? w.items.map(i => warningKey(w.id, i.key, sync.runId)) : []));
+    const cardId = (c: string): string => `${sync.runId}:card:${c}`;
+    return (
+      <div key={sync.runId} data-testid="sync-group" data-run={sync.runId} data-live={sync.live ? 'true' : 'false'} data-health={sync.health} style={{ width: '19vw' }} className={`mx-auto rounded-xl border border-white/[0.08] ${muted ? 'bg-white/[0.01]' : 'bg-white/[0.03]'}`}>
+        {/* Header: health dot leads the title; Copy sits at the right edge, on
+            the title's 16px line. Clicking the title opens or closes the sync. */}
+        <div className="flex items-start gap-2 px-[0.5vw] py-2">
+          <span data-testid="sync-health" data-health={sync.health} className="h-4 flex items-center flex-shrink-0">
+            <Pulse tone={sync.health === 'red' ? 'red' : sync.health === 'amber' ? 'amber' : 'green'} still={muted || sync.health === 'green'} />
+          </span>
+          <button type="button" onClick={() => toggleSync(sync.runId)} aria-expanded={open} className="flex-1 min-w-0 text-left">
+            <span className="flex items-center gap-2">
+              <span className="text-[12px] leading-4 font-bold uppercase tracking-wider text-gray-200 flex-shrink-0">SYNC {sync.number}</span>
+              <span className={`text-[12px] leading-4 truncate ${muted ? 'text-gray-600' : 'text-gray-500'}`}>{[timeAgo(sync.timestamp), sync.engine].filter(Boolean).join(' · ')}</span>
+            </span>
+            {sync.summary && <span data-testid="sync-summary-line" className={`block text-[12px] mt-1.5 leading-4 ${muted ? 'text-gray-600' : 'text-gray-400'}`}>{sync.summary}</span>}
+          </button>
+          <span className="h-4 flex items-center flex-shrink-0">
+            <button
+              type="button"
+              data-testid="sync-log-copy"
+              onClick={() => copySync(sync)}
+              aria-label={`Copy sync ${sync.number} log`}
+              title={copiedRun === sync.runId ? 'Copied' : 'Copy log'}
+              className="h-5 w-5 inline-flex items-center justify-center rounded text-gray-500 hover:text-gray-200 hover:bg-white/[0.06] transition-colors"
+            >
+              {copiedRun === sync.runId ? <Check size={14} strokeWidth={1.75} className="text-emerald-400" /> : <Copy size={13} strokeWidth={1.75} />}
+            </button>
+          </span>
+        </div>
+        {open && (
+          <div className="px-[0.5vw] pb-[0.5vw] space-y-1.5">
+            <Card
+              id="actions" title="Actions" muted={muted}
+              open={isOpen(cardId('actions'))} onToggle={() => toggle(cardId('actions'))}
+              chip={<Chip n={sync.actionsChip ?? 0} tone={sync.actionsChip ? actionTone : 'green'} />}
+            >
+              {sync.actions.length === 0
+                ? <p className="text-[11px] leading-4 text-gray-600 py-1.5">Nothing to fix.</p>
+                : sync.actions.map(g => renderAction(g, sync))}
+            </Card>
+            <Card
+              id="warnings" title="Warnings" muted={muted}
+              open={isOpen(cardId('warnings'))} onToggle={() => toggle(cardId('warnings'))}
+              chip={<Chip n={sync.warningsChip ?? 0} tone={sync.warningsChip ? 'amber' : 'green'} />}
+              headerExtra={sync.live && warnKeys.length > 0
+                ? tickButton({ label: 'Dismiss all warnings', testId: 'sync-warnings-dismiss-all', onClick: () => dismiss(warnKeys) }, 'group-hover/card:opacity-100')
+                : undefined}
+            >
+              {sync.warnings.length === 0
+                ? <p className="text-[11px] leading-4 text-gray-600 py-1.5">No warnings.</p>
+                : sync.warnings.map(g => renderWarning(g, sync))}
+            </Card>
+            <Card
+              id="info" title="Info" muted={muted}
+              open={isOpen(cardId('info'))} onToggle={() => toggle(cardId('info'))}
+              chip={<Chip n={sync.infoCount} tone="blue" />}
+            >
+              {sync.info.facts.map(item => (
+                <div key={item.key} data-testid="sync-info-fact">
+                  {itemBlock(item, `${sync.runId}:info`, true, infoDot, null)}
+                </div>
+              ))}
+              {sync.info.groups.map(g => subGroup({
+                sectionId: `${sync.runId}:info:${g.id}`,
+                testId: 'sync-info-group', dataAttr: { 'data-info': g.id },
+                dotClass: 'bg-sky-400', title: g.title, items: g.items,
+              }))}
+            </Card>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const earlierOpen = isOpen('earlier');
+  return (
+    <div className="flex-shrink-0 text-[12px] antialiased" style={{ fontFamily: "'Inter', ui-sans-serif, system-ui, sans-serif" }}>
+      {/* Sticky: the log header, headline and divider stay put while the sync
+          groups scroll underneath (the right panel is the scroller). */}
+      <div data-testid="sync-log-sticky" className="sticky top-0 z-10 bg-[#080808]">
+        <div className="flex items-center gap-2 px-4 py-2 cursor-pointer select-none" onClick={() => setManualCollapsed(!collapsed)}>
+          {collapsed ? <ChevronRight size={12} className="text-gray-600" /> : <ChevronDown size={12} className="text-gray-600" />}
+          <span className="text-[12px] font-medium text-gray-400 flex-1">Sync log</span>
+        </div>
+        {!collapsed && (
+          <div className="px-4">
+            <div data-testid="sync-status-card" className="pb-3 border-b border-white/[0.06]">
+              <div data-testid="sync-status" data-state={view.headline.tone === 'green' ? 'clear' : 'attention'} data-tone={view.headline.tone} className="flex items-center gap-2 min-w-0">
+                <Pulse tone={view.headline.tone} />
+                <span data-testid="sync-status-text" className="text-[12px] text-gray-200 leading-snug break-words">{view.headline.text}</span>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {!collapsed && (
+        <div className="px-4 pt-3 pb-3">
+          <div className="-mx-4 space-y-2">
+            {view.syncs.length === 0 && <p className="text-[12px] text-gray-600 px-4">No sync yet.</p>}
+            {view.syncs.map(renderSync)}
+            {view.earlier.length > 0 && (
+              <div data-testid="sync-earlier" className="px-4">
+                <button type="button" onClick={() => toggle('earlier')} aria-expanded={earlierOpen} className="w-full flex items-center gap-1.5 py-1 text-left text-gray-600 hover:text-gray-400">
+                  {earlierOpen ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+                  <span className="text-[12px]">Earlier syncs ({view.earlier.length})</span>
+                </button>
+                {earlierOpen && <div className="space-y-2">{view.earlier.map(renderSync)}</div>}
+              </div>
+            )}
+          </div>
         </div>
       )}
+
     </div>
   );
 }
