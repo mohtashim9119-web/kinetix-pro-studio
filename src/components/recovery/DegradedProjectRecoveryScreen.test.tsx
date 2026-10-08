@@ -298,3 +298,49 @@ describe('DegradedProjectRecoveryScreen — highlight (opened from the sync log 
     expect(marked.map(r => r.getAttribute('data-asset-id'))).toEqual(['asset-native']);
   });
 });
+
+describe('DegradedProjectRecoveryScreen — ALL | MISSING tabs', () => {
+  const rowAssets = (): (string | null)[] =>
+    [...container.querySelectorAll('[data-testid="recovery-item"]')].map(r => r.getAttribute('data-asset-id'));
+  const tab = (id: 'all' | 'missing'): HTMLElement =>
+    container.querySelector(`[data-testid="recovery-tab-${id}"]`) as HTMLElement;
+
+  it('starts on ALL, which lists every item in sequence', async () => {
+    await renderScreen({ assets: [resolvedAsset, missingAsset, anotherMissingAsset], segments });
+    expect(tab('all').getAttribute('aria-selected')).toBe('true');
+    expect(rowAssets()).toEqual(['asset-resolved', 'asset-missing', 'asset-native']);
+  });
+
+  it('MISSING lists only the unlinked items; ALL brings everything back', async () => {
+    await renderScreen({ assets: [resolvedAsset, missingAsset, anotherMissingAsset], segments });
+    await act(async () => { tab('missing').click(); });
+    expect(tab('missing').getAttribute('aria-selected')).toBe('true');
+    expect(rowAssets()).toEqual(['asset-missing', 'asset-native']);
+    await act(async () => { tab('all').click(); });
+    expect(rowAssets()).toEqual(['asset-resolved', 'asset-missing', 'asset-native']);
+  });
+
+  it('MISSING at zero shows "Nothing is missing."', async () => {
+    await renderScreen({
+      assets: [resolvedAsset],
+      segments: [{ id: 'seg-1', label: 'Hook', assetId: 'asset-resolved', resolutionStatus: 'resolved' }],
+    });
+    await act(async () => { tab('missing').click(); });
+    expect(rowAssets()).toEqual([]);
+    expect(container.querySelector('[data-testid="recovery-missing-empty"]')?.textContent).toBe('Nothing is missing.');
+  });
+
+  it('the empty message never shows on ALL', async () => {
+    await renderScreen({ assets: [resolvedAsset, missingAsset], segments });
+    expect(container.querySelector('[data-testid="recovery-missing-empty"]')).toBeNull();
+  });
+
+  it('resets to ALL each time the screen opens', async () => {
+    await renderScreen({ assets: [resolvedAsset, missingAsset], segments });
+    await act(async () => { tab('missing').click(); });
+    act(() => root.unmount());
+    await renderScreen({ assets: [resolvedAsset, missingAsset], segments });
+    expect(tab('all').getAttribute('aria-selected')).toBe('true');
+    expect(rowAssets()).toEqual(['asset-resolved', 'asset-missing', 'asset-native']);
+  });
+});

@@ -107,6 +107,8 @@ export function DegradedProjectRecoveryScreen({
       .map((s): [string, string] => [s.id, s.expectedFileName]),
   ]);
   const itemRows = buildRecoveryItemRows(segments, assets);
+  const [itemTab, setItemTab] = React.useState<'all' | 'missing'>('all');
+  const visibleRows = itemTab === 'missing' ? itemRows.filter((row) => row.resolutionStatus !== 'resolved') : itemRows;
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent): void => {
@@ -320,8 +322,30 @@ export function DegradedProjectRecoveryScreen({
         )}
 
         <section className="space-y-2 mb-6" data-testid="recovery-item-list">
+          <div role="tablist" data-testid="recovery-item-tabs" className="flex gap-2 mb-3">
+            {([['all', 'All'], ['missing', 'Missing']] as const).map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                role="tab"
+                aria-selected={itemTab === id}
+                data-testid={`recovery-tab-${id}`}
+                onClick={() => setItemTab(id)}
+                className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest border transition-colors ${
+                  itemTab === id
+                    ? 'bg-[#F27D26] border-[#F27D26] text-white'
+                    : 'bg-transparent border-[#282828] text-gray-500 hover:text-white hover:border-gray-500'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
           <h3 className="text-[8px] uppercase tracking-widest text-gray-600">Timeline items</h3>
-          {itemRows.map((row) => (
+          {itemTab === 'missing' && visibleRows.length === 0 && (
+            <p data-testid="recovery-missing-empty" className="text-[11px] text-gray-500">Nothing is missing.</p>
+          )}
+          {visibleRows.map((row) => (
             <div
               key={row.rowId}
               data-testid="recovery-item"
