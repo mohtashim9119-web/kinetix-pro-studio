@@ -41,7 +41,8 @@ import {
   stampTimingFindings,
   type GatewayProvenance,
 } from './timingProvenance';
-import { appendSyncLogEntries, mintSyncLogId } from './syncLog';
+import { appendSyncLogEntries, buildUnscriptedSpeechEntry, mintSyncLogId } from './syncLog';
+import { computeRunContextAsync } from './faChunkPlan';
 import type { BulkCheckpoint } from './bulkBatch';
 import { SYNC_PAUSED_MESSAGE, VOICEOVER_DURATION_ABORT_PREFIX } from './applySyncAbort';
 import { classifyVoiceoverReadCause, voiceoverReadSkipReason } from './voiceoverReadCause';
@@ -378,6 +379,19 @@ export async function runBuildTimeline(input: FinishPipelineInput): Promise<Fini
   const locked = matchEffectsAndLocks(finalTimed, allAssets, start.segments, audioDuration);
   finalTimed = locked.segments;
 
+  // Log only: stretches of speech the script doesn't contain (headings read
+  // aloud, intros, retakes) and the scene each went into. Never blocks a sync.
+  let unscriptedLog: SyncLogEntry[] = [];
+  try {
+    if (tokens.length > 0) {
+      const context = await computeRunContextAsync(anchorTimed, tokens, aligned.silences, audioDuration);
+      const entry = buildUnscriptedSpeechEntry(syncRunId, context.unscripted, finalTimed, stampAt);
+      if (entry) unscriptedLog = [entry];
+    }
+  } catch {
+    // A failed scan just means no unscripted-speech warning for this sync.
+  }
+
   const stampLang = faLanguage ?? transcriptLanguage;
   const cachedTranscription = start.timingProvenance?.transcription;
   const transcription = cachedTranscription?.engine === 'whisper-cloud'
@@ -424,7 +438,7 @@ export async function runBuildTimeline(input: FinishPipelineInput): Promise<Fini
     };
   next = appendSyncLogEntries(
     next,
-    [...ruleLog, ...runLog.entries, ...buildLockNotRestoredLogEntries(syncRunId, locked.droppedLocks, stampAt), ...(input.extraLogEntries?.(syncRunId, stampAt) ?? [])],
+    [...ruleLog, ...runLog.entries, ...unscriptedLog, ...buildLockNotRestoredLogEntries(syncRunId, locked.droppedLocks, stampAt), ...(input.extraLogEntries?.(syncRunId, stampAt) ?? [])],
     {
       syncRunId,
       timestamp: stampAt,

@@ -223,6 +223,7 @@ const FINDING_ATTENTION: Record<SyncLogFindingKind, AttentionKind | undefined> =
   'asset-replaced': undefined,
   'asset-relinked': undefined,
   'run-cost': undefined,
+  'unscripted-speech': undefined,
   // Layer 2 spots: details only (the Layer-2 panel is their own surface).
   'spot-segment-unmatched': undefined,
   'spot-clip-unmatched': undefined,

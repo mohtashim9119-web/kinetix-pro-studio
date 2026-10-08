@@ -450,6 +450,7 @@ import { ReexportCheckpointModal } from './components/ReexportCheckpointModal';
 import { MissingMediaExportWarning } from './components/MissingMediaExportWarning';
 import { useExportMediaGate } from './hooks/useExportMediaGate';
 import { summarizeProjectForBulk } from './services/syncLogSummary';
+import { projectCostLedger } from './services/projectCostLedgerShared';
 import { StorageRootRelocationView } from './components/recovery/StorageRootRelocationView';
 import { useStorageRootRelocation } from './hooks/useStorageRootRelocation';
 import { checkExistingCheckpoint, type ReexportCheckOutcome } from './services/webcodecsExport/exportReexportCheck';
@@ -4602,12 +4603,6 @@ export default function App() {
     };
   }, []);
 
-  // WS-logs — empties both log fields. The setProject alone persists it (the
-  // debounced usePersistProject save writes the whole Project).
-  const handleClearSyncLog = useCallback(() => {
-    setProject(prev => clearSyncLog(prev));
-  }, []);
-
   // WS2 T2.1 Commit 4 — S (split the selected segment at the playhead) and
   // D (delete a split slice). Both go through setProject (undoable).
   //
@@ -5209,6 +5204,16 @@ export default function App() {
 
   // Sync-log user view, attention kind 7 — offline media is live project
   // state (`Asset.unresolved`, set at open), not a log entry.
+  // Sync log: this project's cloud cost per sync comes from the cost ledger
+  // (every billed cloud stage, bulk or editor), kept live as charges land.
+  const subscribeCostLedger = useCallback((l: () => void) => projectCostLedger().subscribe(l), []);
+  const costLedgerVersion = useSyncExternalStore(subscribeCostLedger, () => projectCostLedger().getVersion());
+  const costEntriesForLog = useMemo(
+    () => projectCostLedger().get(project.id)?.entries ?? [],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [project.id, costLedgerVersion],
+  );
+
   const offlineAssetsForLog = useMemo(
     () => project.assets.filter(a => a.unresolved).map(a => ({ id: a.id, name: a.name })),
     [project.assets],
@@ -7321,15 +7326,15 @@ export default function App() {
           {rightPanelCollapsed ? <ChevronLeft size={10} className="text-zinc-600" /> : <ChevronRight size={10} className="text-zinc-600" />}
         </button>
 
-        {/* Right panel — 15vw collapsible */}
+        {/* Right panel — 20vw collapsible */}
         <div
-          style={{ width: rightPanelCollapsed ? 0 : '15vw' }}
+          style={{ width: rightPanelCollapsed ? 0 : '20vw' }}
           className="flex-shrink-0 flex flex-col h-full border-l border-[#1A1A1A] bg-[#080808] overflow-hidden transition-[width] duration-300 ease-in-out"
         >
-          {/* overflow-y: scroll, not auto — the right panel's scrollbar track is
-              always reserved (transparent when idle), so expanding the sync
-              log's Details past the panel height never narrows the panel. */}
-          <div className="flex-1 min-h-0 overflow-y-scroll custom-scrollbar">
+          {/* Scrolls with no visible scrollbar and no reserved track, so the
+              content (the sync log's centred SYNC boxes) has equal space on
+              both sides and the width never changes when it starts to scroll. */}
+          <div className="flex-1 min-h-0 overflow-y-auto no-scrollbar">
             {/* Project name + save status */}
             <div className="flex-shrink-0 px-3 pt-3 pb-2 border-b border-[#1A1A1A]">
               <p className="text-xs text-zinc-400 truncate">{project.name}</p>
@@ -7380,13 +7385,15 @@ export default function App() {
                 if (faPauseDialog) handleSyncPausedRetry();
                 else void handleApplySyncFromFiles();
               }}
+              onOpenFiles={() => { setActiveLeftTab('files'); setLeftPanelCollapsed(false); }}
+              onOpenLayer2={() => { setActiveLeftTab('layer2'); setLeftPanelCollapsed(false); }}
+              costEntries={costEntriesForLog}
               onRelinkOffline={(firstAssetId) => {
                 setActiveLeftTab('files');
                 setLeftPanelCollapsed(false);
                 setRelinkHighlightAssetId(firstAssetId ?? null);
                 void refreshDegradedRecovery(project.id);
               }}
-              onClearLog={handleClearSyncLog}
               onOpenModelsModal={() => setShowManageModelsModal(true)}
               onSeekToSegment={handleSegmentClick}
             />
@@ -7415,6 +7422,8 @@ export default function App() {
       )}
 
       <style>{`
+        .no-scrollbar { scrollbar-width: none; -ms-overflow-style: none; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
         .custom-scrollbar::-webkit-scrollbar { width: 5px; height: 5px; }
         .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
         .custom-scrollbar::-webkit-scrollbar-thumb { background: #1a1a1a; border-radius: 10px; }

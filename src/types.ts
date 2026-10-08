@@ -986,6 +986,9 @@ export type SyncLogFindingKind =
   | 'asset-relinked'
   /** Cloud GPU time a run used — `count` is worker-seconds. Header fact, never listed. */
   | 'run-cost'
+  /** Speech in the voiceover that the script doesn't contain (a heading read aloud,
+   *  an intro, a retake) and the scene whose time it went into. Grouped; log only. */
+  | 'unscripted-speech'
   /** Layer 2 spots — all details-only. A doc block whose tag matched no main
    *  segment; a block whose clip name matched no vault asset (and no default);
    *  a spot clamped at the voiceover end; two spots overlapping (last wins);

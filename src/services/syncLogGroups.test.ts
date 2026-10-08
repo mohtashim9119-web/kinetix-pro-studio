@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { SyncLogEntry, SyncLogEntryType, SyncLogFindingKind, SyncRunSummary } from '../types';
-import { makeSyncLogEntry } from './syncLog';
+import { buildMediaImportEntry, makeSyncLogEntry } from './syncLog';
 import {
   buildSyncGroups,
   classifyEntry,
@@ -29,8 +29,10 @@ describe('classifyEntry — kind to group mapping', () => {
   const table: Array<[string, SyncLogEntry, { card: string; sub?: string }]> = [
     // ACTIONS
     ['no-asset', entry(R, 'no-asset'), { card: 'action', sub: 'missing-media' }],
-    ['skip', entry(R, 'skip'), { card: 'action', sub: 'skipped' }],
-    ['wpm', finding(R, 'wpm'), { card: 'action', sub: 'mismatch' }],
+    ['skip (kept as placeholder)', entry(R, 'skip'), { card: 'warning', sub: 'placeholders' }],
+    ['wpm outside today\'s band', finding(R, 'wpm', {}, 'warning', 400), { card: 'warning', sub: 'pace' }],
+    ['wpm inside today\'s band (stale)', finding(R, 'wpm', {}, 'warning', 137), { card: 'hide' }],
+    ['unscripted-speech', finding(R, 'unscripted-speech'), { card: 'warning', sub: 'unscripted' }],
     ['local-coverage', finding(R, 'local-coverage'), { card: 'action', sub: 'mismatch' }],
     ['fa-paused hopeless coverage', entry(R, 'fa-paused', { reason: 'hopeless-local-coverage' }), { card: 'action', sub: 'mismatch' }],
     ['abort', entry(R, 'abort'), { card: 'action', sub: 'sync-stopped' }],
@@ -47,8 +49,8 @@ describe('classifyEntry — kind to group mapping', () => {
     ['tail-unmatched', finding(R, 'tail-unmatched'), { card: 'warning', sub: 'estimated' }],
     ['numeric-unmatched', finding(R, 'numeric-unmatched'), { card: 'warning', sub: 'estimated' }],
     ['whisper after pause', entry(R, 'fa-gate-closed', { reason: 'inference-failed' }), { card: 'warning', sub: 'estimated' }],
-    ['weak-match', finding(R, 'weak-match'), { card: 'warning', sub: 'text-fit' }],
-    ['scene-density', finding(R, 'scene-density'), { card: 'warning', sub: 'text-fit' }],
+    ['weak-match (hidden by ruling)', finding(R, 'weak-match'), { card: 'hide' }],
+    ['scene-density (hidden by ruling)', finding(R, 'scene-density'), { card: 'hide' }],
     ['spot-past-voiceover', finding(R, 'spot-past-voiceover'), { card: 'warning', sub: 'layer2-adjusted' }],
     ['spot-overlap', finding(R, 'spot-overlap'), { card: 'warning', sub: 'layer2-adjusted' }],
     ['lock-refused', entry(R, 'lock-refused'), { card: 'warning', sub: 'edits-dropped' }],
@@ -61,7 +63,8 @@ describe('classifyEntry — kind to group mapping', () => {
     // INFO
     ['media-import clean', entry('imp', 'media-import', { severity: 'info' }), { card: 'info', sub: 'imports' }],
     ['media-match', entry('imp', 'media-match'), { card: 'info', sub: 'imports' }],
-    ['rule-correction', entry(R, 'rule-correction'), { card: 'info', sub: 'adjustments' }],
+    ['rule-correction (R rules hidden)', entry(R, 'rule-correction'), { card: 'hide' }],
+    ['any R-owned line hidden', entry(R, 'warning', { owningRule: 'R.12' }), { card: 'hide' }],
     ['freeze-frame', finding(R, 'freeze-frame'), { card: 'info', sub: 'adjustments' }],
     ['rescue', entry(R, 'rescue'), { card: 'info', sub: 'recoveries' }],
     ['lock-span-overflow', entry(R, 'lock-span-overflow'), { card: 'info', sub: 'lock-overflow' }],
@@ -90,7 +93,7 @@ describe('headline', () => {
   const log = [finding('r1', 'weak-match'), finding('r1', 'ctc-infeasible'), entry('r1', 'rule-correction')];
   it('Info and Warnings never affect it: all clear', () => {
     const v = buildSyncGroups({ log, summaries: [summary('r1', AT)], live: emptyLive, dismissed: NONE });
-    expect(v.headline).toEqual({ tone: 'green', text: 'All clear — exports unblocked', count: 0 });
+    expect(v.headline).toEqual({ tone: 'green', text: 'All clear - Ready to export', count: 0 });
   });
   it('N = unresolved action sub-groups; amber when none are red', () => {
     const live: LiveState = { ...emptyLive, segments: [{ id: 's1' }, { id: 's2', assetId: 'a' }], assets: [{ id: 'a', name: 'a', url: 'blob:a' }] };
@@ -123,7 +126,7 @@ describe('live actions (newest sync) self-clear', () => {
       spots: [],
     });
     const two = buildSyncGroups({ log, summaries: sums, live: live([undefined, 'a', undefined]), dismissed: NONE });
-    expect(sub(two, 'missing-media')?.items.map(i => i.text)).toEqual(['Scene 1', 'Scene 3']);
+    expect(sub(two, 'missing-media')?.items.map(i => i.text)).toEqual(['Scene 1 has no media', 'Scene 3 has no media']);
     expect(sub(two, 'missing-media')?.items.map(i => i.segmentId)).toEqual(['s0', 's2']);
     const one = buildSyncGroups({ log, summaries: sums, live: live(['a', 'a', undefined]), dismissed: NONE });
     expect(sub(one, 'missing-media')?.items).toHaveLength(1);
@@ -140,7 +143,9 @@ describe('live actions (newest sync) self-clear', () => {
     };
     const v = buildSyncGroups({ log: [], summaries: [summary('r1', AT)], live, dismissed: NONE });
     const g = sub(v, 'offline-media')!;
-    expect(g.items).toEqual([{ key: 'asset:off', text: 'broll.mp4', segmentId: 's0' }]);
+    expect(g.items).toHaveLength(1);
+    expect(g.items[0]).toMatchObject({ key: 'asset:off', text: 'broll.mp4 is offline', segmentId: 's0' });
+    expect(g.items[0]!.detail).toContain('Relink');
     expect(g.tone).toBe('red');
     expect(g.cta).toBe('relink');
     const cleared = buildSyncGroups({ log: [], summaries: [summary('r1', AT)], live: { ...live, assets: [{ id: 'off', name: 'broll.mp4', url: 'blob:x' }] }, dismissed: NONE });
@@ -155,7 +160,7 @@ describe('live actions (newest sync) self-clear', () => {
     };
     const v = buildSyncGroups({ log: [], summaries: [summary('r1', AT)], live, dismissed: NONE });
     const g = sub(v, 'damaged-media')!;
-    expect(g.items.map(i => i.text)).toEqual(['bad.png']);
+    expect(g.items.map(i => i.text)).toEqual(["bad.png can't be opened"]);
     expect(g.tone).toBe('red');
   });
 
@@ -176,10 +181,12 @@ describe('live actions (newest sync) self-clear', () => {
     expect(sub(fixed, 'layer2-unbound')).toBeUndefined();
   });
 
-  it('skipped / mismatch / stopped are frozen run records, not live', () => {
-    const l = [entry('r1', 'skip', { segmentIndex: 2, segmentText: 'gone' }), finding('r1', 'wpm'), entry('r1', 'abort')];
+  it('mismatch / stopped are frozen run records; unspoken scenes are a placeholder warning', () => {
+    const l = [entry('r1', 'skip', { segmentIndex: 2, segmentText: 'gone' }), finding('r1', 'local-coverage'), entry('r1', 'abort')];
     const v = buildSyncGroups({ log: l, summaries: [summary('r1', AT)], live: emptyLive, dismissed: NONE });
-    expect(v.syncs[0]!.actions.map(a => a.id)).toEqual(['skipped', 'mismatch', 'sync-stopped']);
+    expect(v.syncs[0]!.actions.map(a => a.id)).toEqual(['mismatch', 'sync-stopped']);
+    expect(v.syncs[0]!.warnings.map(w => w.id)).toEqual(['placeholders']);
+    expect(v.syncs[0]!.warnings[0]!.items[0]!.text).toBe("Scene 3 wasn't spoken");
   });
 });
 
@@ -207,7 +214,8 @@ describe('sync macro groups', () => {
     const older = v.syncs[1]!;
     expect(older.live).toBe(false);
     expect(older.actions.map(a => a.id)).toEqual(['missing-media']); // its frozen record survives
-    expect(v.syncs[0]!.actions.map(a => a.id)).toEqual(['skipped']); // newest: live media is clear
+    expect(v.syncs[0]!.actions).toEqual([]); // newest: live media is clear
+    expect(v.syncs[0]!.warnings.map(w => w.id)).toEqual(['placeholders']);
   });
 
   it('shows 5, the rest under "earlier"', () => {
@@ -219,8 +227,8 @@ describe('sync macro groups', () => {
 
   it('health dot: Actions red, else Warnings amber, else green', () => {
     const l = [
-      entry('r1', 'skip', {}, AT),
-      finding('r2', 'weak-match', {}, 'warning', undefined),
+      entry('r1', 'abort', {}, AT),
+      entry('r2', 'silence-error'),
       entry('r2', 'rule-correction'),
       entry('r3', 'rule-correction'),
     ].map((e, i) => (i >= 1 ? { ...e, timestamp: AT + (i + 1) * 60_000 } : e));
@@ -238,11 +246,11 @@ describe('sync macro groups', () => {
     const s = v.syncs[0]!;
     expect(s.actionsChip).toBeUndefined();
     expect(s.warningsChip).toBeUndefined();
-    const w = buildSyncGroups({ log: [finding('r1', 'weak-match')], summaries: [summary('r1', AT)], live: emptyLive, dismissed: NONE });
+    const w = buildSyncGroups({ log: [entry('r1', 'silence-error')], summaries: [summary('r1', AT)], live: emptyLive, dismissed: NONE });
     expect(w.syncs[0]!.warningsChip).toBe(1);
   });
 
-  it('header facts: engine, run summary line, cost', () => {
+  it('header facts: engine, summary line (matched · estimated · cost), cost', () => {
     const l = [
       finding('r1', 'engine-forced-alignment', {}, 'info'),
       finding('r1', 'run-cost', {}, 'info', 120),
@@ -251,8 +259,9 @@ describe('sync macro groups', () => {
     const v = buildSyncGroups({ log: l, summaries: [summary('r1', AT, { totalSegments: 224, coveredSegments: 221, skippedSegments: 3 })], live: emptyLive, dismissed: NONE });
     const s = v.syncs[0]!;
     expect(s.engine).toBe('Forced alignment');
-    expect(s.info.summaryLine).toBe('Forced alignment · 221/224 matched · 3 skipped · 2 estimated · $0.02');
+    expect(s.summary).toBe('221/224 matched · 2 estimated · used $0.02');
     expect(s.cost).toBe('$0.02');
+    expect(s.info.facts.map(f => f.text)).toEqual(['221 of 224 scenes matched', 'Cloud cost: $0.02']);
   });
 
   it('engine/no-run noise is hidden: unknown engine adds no "Engine not recorded"', () => {
@@ -265,20 +274,20 @@ describe('sync macro groups', () => {
 // 5. Warnings: dismissal persistence + reset on next sync; import-failure promotion.
 // ---------------------------------------------------------------------------
 describe('warnings dismissal', () => {
-  const w1 = finding('r1', 'weak-match');
+  const w1 = entry('r1', 'silence-error');
   it('dismissed items drop out of the group and the chip; the key is stable per run', () => {
     const base = buildSyncGroups({ log: [w1], summaries: [summary('r1', AT)], live: emptyLive, dismissed: NONE });
     const item = base.syncs[0]!.warnings[0]!.items[0]!;
     expect(item.key).toBe(w1.id);
-    const key = warningKey('text-fit', item.key, 'r1');
+    const key = warningKey('quality-notes', item.key, 'r1');
     const after = buildSyncGroups({ log: [w1], summaries: [summary('r1', AT)], live: emptyLive, dismissed: new Set([key]) });
     expect(after.syncs[0]!.warnings).toHaveLength(0);
     expect(after.syncs[0]!.warningsChip).toBeUndefined();
   });
 
   it('resets on the next sync: the same problem in a new run shows again', () => {
-    const key = warningKey('text-fit', w1.id, 'r1');
-    const w2 = finding('r2', 'weak-match');
+    const key = warningKey('quality-notes', w1.id, 'r1');
+    const w2 = entry('r2', 'silence-error');
     const v = buildSyncGroups({
       log: [w1, w2],
       summaries: [summary('r1', AT), summary('r2', AT + 60_000)],
@@ -301,13 +310,13 @@ describe('warnings dismissal', () => {
   });
 
   it('import batches with failures are promoted to Warnings; clean batches stay Info', () => {
-    const bad = entry('imp-1', 'media-import', { severity: 'warning', message: 'Imported 3, 2 failed.' }, AT + 5);
-    const ok = entry('imp-2', 'media-import', { severity: 'info', message: 'Imported 4.' }, AT + 6);
+    const bad = buildMediaImportEntry('imp-1', 'files', { imported: 3, deduped: 0, unsupportedSkipped: 0, failed: 2 }, AT - 5);
+    const ok = buildMediaImportEntry('imp-2', 'files', { imported: 4, deduped: 0, unsupportedSkipped: 0, failed: 0 }, AT - 4);
     const v = buildSyncGroups({ log: [entry('r1', 'rule-correction'), bad, ok], summaries: [summary('r1', AT)], live: emptyLive, dismissed: NONE });
     const s = v.syncs[0]!;
     expect(s.warnings.map(w => w.id)).toEqual(['import-failures']);
-    expect(s.warnings[0]!.items[0]!.text).toBe('Imported 3, 2 failed.');
-    expect(s.info.imports).toEqual(['Imported 4.']);
+    expect(s.warnings[0]!.items[0]!.text).toBe('3 files added · 2 failed');
+    expect(s.info.groups.find(g => g.id === 'imports')?.items.map(i => i.text)).toEqual(['4 files added']);
   });
 });
 
@@ -322,25 +331,26 @@ describe('hide rules and the Info card', () => {
       entry('r1', 'lock-preserved-adjustment', { message: 'LOCKPRESERVED_TEXT' }),
     ];
     const v = buildSyncGroups({ log: l, summaries: [summary('r1', AT)], live: emptyLive, dismissed: NONE });
-    const dump = JSON.stringify(v);
+    const dump = JSON.stringify({ ...v, syncs: v.syncs.map(({ entries: _copyOnly, ...shown }) => shown) });
     for (const t of ['PREFLIGHT_OK_TEXT', 'MALFORMED_TEXT', 'LOCKPRESERVED_TEXT']) expect(dump).not.toContain(t);
   });
 
-  it('the "More details" folder groups adjustments, recoveries, overflow, boundary deltas and assets', () => {
+  it('Info sub-groups: recoveries, overflow, boundary deltas and media notes; R-rule adjustments stay hidden', () => {
     const l = [
       entry('r1', 'rule-correction'), entry('r1', 'rule-correction'), entry('r1', 'rescue'),
       entry('r1', 'lock-span-overflow'), finding('r1', 'boundary-delta', {}, 'info'),
       finding('r1', 'asset-replaced', {}, 'info'), finding('r1', 'asset-unverified', {}, 'info'),
     ];
     const v = buildSyncGroups({ log: l, summaries: [summary('r1', AT)], live: emptyLive, dismissed: NONE });
-    const more = Object.fromEntries(v.syncs[0]!.info.more.map(m => [m.id, m.entries.length]));
-    expect(more).toEqual({ adjustments: 2, recoveries: 1, 'lock-overflow': 1, 'boundary-deltas': 1, assets: 2 });
+    const groups = Object.fromEntries(v.syncs[0]!.info.groups.map(g => [g.id, g.items.length]));
+    expect(groups).toEqual({ recoveries: 1, 'lock-overflow': 1, 'boundary-deltas': 1, assets: 2 });
   });
 
   it('a project with imports but no sync still shows them (one project group)', () => {
-    const v = buildSyncGroups({ log: [entry('imp', 'media-import', { severity: 'info', message: 'Imported 2.' })], summaries: [], live: emptyLive, dismissed: NONE });
+    const imp = buildMediaImportEntry('imp', 'files', { imported: 2, deduped: 0, unsupportedSkipped: 0, failed: 0 }, AT);
+    const v = buildSyncGroups({ log: [imp], summaries: [], live: emptyLive, dismissed: NONE });
     expect(v.syncs).toHaveLength(1);
-    expect(v.syncs[0]!.info.imports).toEqual(['Imported 2.']);
+    expect(v.syncs[0]!.info.groups.find(g => g.id === 'imports')?.items.map(i => i.text)).toEqual(['2 files added']);
   });
 });
 
@@ -350,5 +360,76 @@ describe('timeAgo', () => {
     expect(timeAgo(AT, AT + 5 * 60_000)).toBe('5m ago');
     expect(timeAgo(AT, AT + 3 * 3_600_000)).toBe('3h ago');
     expect(timeAgo(AT, AT + 2 * 86_400_000)).toBe('2d ago');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// One sync = one box; cost wording.
+// ---------------------------------------------------------------------------
+describe('one sync per run summary', () => {
+  it('records written while a sync was prepared (own ids) fold into that sync — no extra box', () => {
+    const prep = [
+      entry('stage-transcribe', 'malformed-token', {}, AT - 30_000),
+      buildMediaImportEntry('imp-1', 'files', { imported: 1, deduped: 0, unsupportedSkipped: 0, failed: 0 }, AT - 20_000),
+      entry('asset-x', 'info', { finding: { kind: 'asset-unverified' } }, AT - 10_000),
+    ];
+    const v = buildSyncGroups({ log: [...prep, entry('r1', 'rescue', {}, AT)], summaries: [summary('r1', AT)], live: emptyLive, dismissed: NONE });
+    expect(v.syncs.map(s => s.runId)).toEqual(['r1']);
+    expect(v.syncs[0]!.entries).toHaveLength(4);
+    expect(v.syncs[0]!.info.groups.map(g => g.id)).toEqual(['imports', 'recoveries', 'assets']);
+  });
+
+  it('records after the last sync join the latest sync', () => {
+    const late = buildMediaImportEntry('imp-2', 'files', { imported: 2, deduped: 0, unsupportedSkipped: 0, failed: 0 }, AT + 120_000);
+    const v = buildSyncGroups({ log: [late], summaries: [summary('r1', AT), summary('r2', AT + 60_000)], live: emptyLive, dismissed: NONE });
+    expect(v.syncs[0]!.runId).toBe('r2');
+    expect(v.syncs[0]!.entries).toHaveLength(1);
+  });
+});
+
+describe('cost wording', () => {
+  const cloudEngine = (run: string) => finding(run, 'engine-forced-alignment-cloud', {}, 'info');
+  const costFact = (v: ReturnType<typeof buildSyncGroups>) => v.syncs[0]!.info.facts.find(f => f.key === 'fact:cost')!;
+
+  it('cache hit: header "used $0", Info "$0 · served from cloud cache", card says cloud + cache', () => {
+    const v = buildSyncGroups({
+      log: [cloudEngine('r1')], summaries: [summary('r1', AT)], live: emptyLive, dismissed: NONE,
+      costEntries: [{ at: AT - 5_000, usd: 0, sec: 0, cached: true }],
+    });
+    expect(v.syncs[0]!.summary).toBe('9/10 matched · 0 estimated · used $0');
+    expect(costFact(v).text).toBe('$0 · served from cloud cache');
+    expect(costFact(v).detail).toBe('Ran on the cloud, served from cache: 0 seconds worked, $0 paid.');
+  });
+
+  it('paid cloud run: "used $X" and seconds worked in the card', () => {
+    const v = buildSyncGroups({
+      log: [cloudEngine('r1')], summaries: [summary('r1', AT)], live: emptyLive, dismissed: NONE,
+      costEntries: [{ at: AT - 5_000, usd: 0.0091, sec: 44, cached: false }],
+    });
+    expect(v.syncs[0]!.summary).toBe('9/10 matched · 0 estimated · used $0.0091');
+    expect(costFact(v).text).toBe('Cloud cost: $0.0091');
+    expect(costFact(v).detail).toBe('Ran on the cloud: 44 seconds worked, $0.0091 paid.');
+  });
+
+  it('local run: "used $0" and "ran on this computer"', () => {
+    const v = buildSyncGroups({ log: [finding('r1', 'engine-forced-alignment', {}, 'info')], summaries: [summary('r1', AT)], live: emptyLive, dismissed: NONE });
+    expect(v.syncs[0]!.summary).toBe('9/10 matched · 0 estimated · used $0');
+    expect(costFact(v).text).toBe('$0 · ran on this computer');
+  });
+
+  it('cloud run with no cost record: "cost unknown", never $0', () => {
+    const v = buildSyncGroups({ log: [cloudEngine('r1')], summaries: [summary('r1', AT)], live: emptyLive, dismissed: NONE });
+    expect(v.syncs[0]!.summary).toBe('9/10 matched · 0 estimated · cost unknown');
+    expect(costFact(v).text).toBe('Cloud cost not recorded');
+  });
+
+  it('estimated count in the header counts distinct scenes, placeholders included', () => {
+    const l = [
+      entry('r1', 'skip', { segmentIndex: 4 }),
+      finding('r1', 'fa-victim-retimed', { finding: { kind: 'fa-victim-retimed', count: 2, segmentIds: ['a', 'b'] } }),
+      finding('r1', 'tail-unmatched', { groupedItems: [{ message: 'x', detail: { segmentIndex: 4 } }, { message: 'y', detail: { segmentIndex: 9 } }] }),
+    ];
+    const v = buildSyncGroups({ log: l, summaries: [summary('r1', AT)], live: emptyLive, dismissed: NONE });
+    expect(v.syncs[0]!.estimatedScenes).toBe(4); // scene 5 (twice) + a + b + scene 10
   });
 });

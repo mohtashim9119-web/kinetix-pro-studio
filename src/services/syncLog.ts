@@ -951,6 +951,38 @@ function committedIndexOf(
  * space, which is not what "Scene N" means to a reader. Gaplessness of the
  * wrong array does not make the lookup right.
  */
+/** ONE grouped warning naming every stretch of speech the script doesn't contain
+ *  and the scene whose time it went into (the committed segment containing its
+ *  start — Model P is gapless, so that lookup is exact). Log only. */
+export function buildUnscriptedSpeechEntry(
+  syncRunId: string,
+  runs: readonly { startSec: number; endSec: number }[],
+  committedSegments: readonly VideoSegment[],
+  timestamp: number = Date.now(),
+): SyncLogEntry | undefined {
+  if (runs.length === 0) return undefined;
+  const groupedItems = runs.map(run => {
+    const idx = committedSegments.findIndex(s => run.startSec >= s.startTime && run.startSec < s.startTime + s.duration);
+    const owner = idx >= 0 ? committedSegments[idx] : undefined;
+    return {
+      message: `Unscripted speech ${fmtSec(run.startSec)}s–${fmtSec(run.endSec)}s${idx >= 0 ? ` went into segment ${idx + 1}` : ''}.`,
+      detail: {
+        startSec: run.startSec,
+        endSec: run.endSec,
+        ...(idx >= 0 ? { segmentIndex: idx } : {}),
+        ...(owner ? { segmentId: owner.id } : {}),
+      },
+    };
+  });
+  return makeSyncLogEntry(
+    syncRunId,
+    'warning',
+    `${runs.length} stretch${runs.length === 1 ? '' : 'es'} of speech not in the script.`,
+    { severity: 'warning', groupedItems, finding: { kind: 'unscripted-speech', count: runs.length } },
+    timestamp,
+  );
+}
+
 export function buildUnscriptedRunLogEntries(
   syncRunId: string,
   runs: readonly UnscriptedRun[],

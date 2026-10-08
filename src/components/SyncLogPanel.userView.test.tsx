@@ -304,7 +304,7 @@ describe('SyncLogPanel user view — title, jump, dismiss', () => {
     root = createRoot(container);
     act(() => {
       root.render(
-        <SyncLogPanel syncLog={log} syncRunSummaries={summaries} segments={segments} onSeekToSegment={onSeek} onClearLog={() => {}} />,
+        <SyncLogPanel syncLog={log} syncRunSummaries={summaries} segments={segments} onSeekToSegment={onSeek} />,
       );
     });
   }
