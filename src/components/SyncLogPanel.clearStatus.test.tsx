@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-// Sync log: Copy / Clear live with the Details rows (they act on the log
+// Sync log: Copy / Clear sit below the sync groups (they act on the log
 // entries), and clearing the log never removes the status card — it stays and
 // reads green ("all clear").
 
@@ -18,7 +18,7 @@ afterEach(() => { act(() => root?.unmount()); container?.remove(); });
 
 function Harness({ initial }: { initial: SyncLogEntry[] }) {
   const [log, setLog] = useState(initial);
-  return <SyncLogPanel syncLog={log} syncRunSummaries={[]} offlineAssetNames={[]} onClearLog={() => setLog([])} />;
+  return <SyncLogPanel syncLog={log} syncRunSummaries={[]} onClearLog={() => setLog([])} />;
 }
 
 async function mount(initial: SyncLogEntry[]): Promise<HTMLDivElement> {
@@ -33,11 +33,10 @@ const entry = (): SyncLogEntry =>
   buildMediaImportEntry('run', 'files', { imported: 2, deduped: 0, unsupportedSkipped: 0, failed: 0 }, 1_700_000_000_000, [], []);
 
 describe('sync log — copy/clear placement and the always-present status card', () => {
-  it('Copy and Clear sit in the Details row, NOT in the section header', async () => {
+  it('Copy and Clear are present, NOT in the section header', async () => {
     const el = await mount([entry()]);
-    const details = el.querySelector('[data-testid="sync-details-line"]')!;
-    expect(details.querySelector('[data-testid="sync-log-copy"]')).not.toBeNull();
-    expect(details.querySelector('[data-testid="sync-log-clear"]')).not.toBeNull();
+    expect(el.querySelector('[data-testid="sync-log-copy"]')).not.toBeNull();
+    expect(el.querySelector('[data-testid="sync-log-clear"]')).not.toBeNull();
     const header = el.querySelector('.cursor-pointer')!;
     expect(header.querySelector('[aria-label="Copy sync log"]')).toBeNull();
     expect(header.querySelector('[aria-label="Clear sync log"]')).toBeNull();
@@ -50,7 +49,7 @@ describe('sync log — copy/clear placement and the always-present status card',
     await act(async () => { confirm.click(); });
     expect(el.querySelector('[data-testid="sync-status-card"]')).not.toBeNull();
     expect(el.querySelector('[data-testid="sync-status"]')?.getAttribute('data-state')).toBe('clear');
-    expect(el.textContent).toContain('Details');
+    expect(el.textContent).toContain('All clear — exports unblocked');
     expect(el.querySelector('[data-testid="sync-log-clear"]')).toBeNull();
     expect(el.textContent).not.toContain('No sync activity yet');
   });

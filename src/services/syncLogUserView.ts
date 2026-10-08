@@ -171,7 +171,7 @@ const FREEZE_FRAME_MARKER = 'the final frame will hold';
  * hints, message prefixes, `owningRule`, the counts in its prose), so old
  * logs still classify. New entries never take this path.
  */
-function findingOf(entry: SyncLogEntry): SyncLogEntry['finding'] {
+export function findingOf(entry: SyncLogEntry): SyncLogEntry['finding'] {
   if (entry.finding) return entry.finding;
   if (entry.type !== 'warning' && entry.type !== 'info') return undefined;
   const hint = entry.fixHint;
@@ -222,6 +222,7 @@ const FINDING_ATTENTION: Record<SyncLogFindingKind, AttentionKind | undefined> =
   'asset-corrupt': undefined,
   'asset-replaced': undefined,
   'asset-relinked': undefined,
+  'run-cost': undefined,
   // Layer 2 spots: details only (the Layer-2 panel is their own surface).
   'spot-segment-unmatched': undefined,
   'spot-clip-unmatched': undefined,
@@ -415,7 +416,7 @@ function leadingInt(text: string | undefined, pattern: RegExp): number | undefin
   return m ? Number(m[1]) : undefined;
 }
 
-function engineOf(entries: readonly SyncLogEntry[]): HeadlineEngine {
+export function engineOf(entries: readonly SyncLogEntry[]): HeadlineEngine {
   for (const e of entries) {
     switch (findingOf(e)?.kind) {
       case 'engine-forced-alignment': return 'forced-alignment';
@@ -430,7 +431,7 @@ function engineOf(entries: readonly SyncLogEntry[]): HeadlineEngine {
   return 'unknown';
 }
 
-function itemsFor(entry: SyncLogEntry): AttentionItem[] {
+export function itemsFor(entry: SyncLogEntry): AttentionItem[] {
   if (entry.type === 'skip') {
     const tag = entry.segmentTag ? `[${entry.segmentTag}] ` : '';
     return [{ text: `${skipEntryLabel(entry)}: ${tag}${entry.segmentText ?? ''}`.trim(), segmentId: entry.segmentId }];

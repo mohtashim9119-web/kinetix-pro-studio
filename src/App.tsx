@@ -1731,7 +1731,7 @@ function buildFinishRunLog(run: FinishRunLog): { entries: SyncLogEntry[]; silenc
 function bulkBillingLog(projectId: string, syncRunId: string, at: number): SyncLogEntry[] {
   const workerSec = bulkBatchRunner().snapshot().find(r => r.id === projectId)?.workerSec ?? 0;
   if (!(workerSec > 0)) return [];
-  return [makeSyncLogEntry(syncRunId, 'info', BULK_COPY.billingLog(cloudCostLine(workerSec)), undefined, at)];
+  return [makeSyncLogEntry(syncRunId, 'info', BULK_COPY.billingLog(cloudCostLine(workerSec)), { finding: { kind: 'run-cost', count: workerSec } }, at)];
 }
 
 const FINISH_STAGES: FinishStages = {
@@ -5213,7 +5213,6 @@ export default function App() {
     () => project.assets.filter(a => a.unresolved).map(a => ({ id: a.id, name: a.name })),
     [project.assets],
   );
-  const offlineAssetNames = useMemo(() => offlineAssetsForLog.map(a => a.name), [offlineAssetsForLog]);
 
   // When offline files come back (relinked), the sync-log block clears itself;
   // leave a record so the event is never lost. Same project only — switching
@@ -5233,13 +5232,6 @@ export default function App() {
     prevOfflineRef.current = { projectId: project.id, offline: new Map(offlineAssetsForLog.map(a => [a.id, a.name])) };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project.id, offlineAssetsForLog]);
-
-  // Sync-log summary: scenes with no media right now, live, so the "no media"
-  // block shrinks and clears as the user adds media.
-  const unassignedSegmentsForLog = useMemo(
-    () => project.segments.flatMap((seg, i) => (seg.assetId ? [] : [{ id: seg.id, number: i + 1 }])),
-    [project.segments],
-  );
 
   // Media-library recovery notice — an event, not a sync-log category (the
   // sync-log user view stays its ten run-scoped kinds). The native loader heals
@@ -7376,10 +7368,18 @@ export default function App() {
             <SyncLogPanel
               syncLog={project.syncLog ?? []}
               syncRunSummaries={project.syncRunSummaries}
-              offlineAssetNames={offlineAssetNames}
               segments={project.segments}
-              unassignedSegments={unassignedSegmentsForLog}
-              offlineAssets={offlineAssetsForLog}
+              assets={project.assets}
+              spots={project.spots ?? []}
+              onAddMedia={() => {
+                setActiveLeftTab('files');
+                setLeftPanelCollapsed(false);
+                setMediaPickerSignal(n => n + 1);
+              }}
+              onRetrySync={() => {
+                if (faPauseDialog) handleSyncPausedRetry();
+                else void handleApplySyncFromFiles();
+              }}
               onRelinkOffline={(firstAssetId) => {
                 setActiveLeftTab('files');
                 setLeftPanelCollapsed(false);

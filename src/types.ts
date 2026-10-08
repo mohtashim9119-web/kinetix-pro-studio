@@ -984,6 +984,8 @@ export type SyncLogFindingKind =
   | 'asset-replaced'
   /** Offline files that came back (relinked) — kept as a record after the block clears. */
   | 'asset-relinked'
+  /** Cloud GPU time a run used — `count` is worker-seconds. Header fact, never listed. */
+  | 'run-cost'
   /** Layer 2 spots — all details-only. A doc block whose tag matched no main
    *  segment; a block whose clip name matched no vault asset (and no default);
    *  a spot clamped at the voiceover end; two spots overlapping (last wins);
