@@ -179,11 +179,12 @@ function KxCheck({ state }: { state: boolean | 'mixed' }): React.ReactElement {
   );
 }
 
-/** Active | Blocked | Finished — Bulk Sync's sub-tabs, for exports. Blocked
- *  holds what needs the operator (blocked, failed, paused); once resolved and
- *  retried a row moves back to Active, then Finished. */
-type ExportTab = 'active' | 'blocked' | 'finished';
+/** Ready | Active | Blocked | Finished — Bulk Sync's sub-tabs, for exports.
+ *  Ready: not started. Blocked holds what needs the operator (blocked, failed,
+ *  paused); once resolved and retried a row moves to Active, then Finished. */
+type ExportTab = 'ready' | 'active' | 'blocked' | 'finished';
 const EXPORT_TABS: readonly { id: ExportTab; label: string }[] = [
+  { id: 'ready', label: 'Ready' },
   { id: 'active', label: 'Active' },
   { id: 'blocked', label: 'Blocked' },
   { id: 'finished', label: 'Finished' },
@@ -192,14 +193,15 @@ const EXPORT_TAB_KEY = 'kinetix:bulk-export-tab:v1';
 function exportTabOf(phase: BulkExportPhase | undefined): ExportTab {
   if (phase === 'blocked' || phase === 'failed' || phase === 'paused') return 'blocked';
   if (phase === 'done') return 'finished';
+  if (phase === undefined || phase === 'idle') return 'ready';
   return 'active';
 }
 function readExportTab(): ExportTab {
   try {
     const raw = localStorage.getItem(EXPORT_TAB_KEY);
-    if (raw === 'active' || raw === 'blocked' || raw === 'finished') return raw;
+    if (raw === 'ready' || raw === 'active' || raw === 'blocked' || raw === 'finished') return raw;
   } catch { /* storage unavailable */ }
-  return 'active';
+  return 'ready';
 }
 
 /** Status colour from the ladder's semantic set. */
@@ -256,7 +258,7 @@ export function BulkExportModal({
     setTabRaw(next);
   };
   const inScope = catalog.filter(p => inWorkspace(workspaceList, wsFilter, p.id));
-  const tabCounts: Record<ExportTab, number> = { active: 0, blocked: 0, finished: 0 };
+  const tabCounts: Record<ExportTab, number> = { ready: 0, active: 0, blocked: 0, finished: 0 };
   for (const p of inScope) tabCounts[exportTabOf(byId.get(p.id)?.phase)] += 1;
   const shown = inScope.filter(p => exportTabOf(byId.get(p.id)?.phase) === tab);
   const allSelected = shown.length > 0 && shown.every(p => byId.get(p.id)?.selected);
@@ -358,6 +360,7 @@ export function BulkExportModal({
             <li data-testid="bulk-export-empty" className="rounded-xl border border-dashed border-[var(--kx-line-2)] px-4 py-6 text-center text-[12px] leading-snug text-[var(--kx-muted)]">
               {tab === 'blocked' ? 'Nothing blocked.'
                 : tab === 'finished' ? 'Nothing exported yet.'
+                : tab === 'active' ? 'Nothing exporting right now.'
                 : wsFilter === 'all' ? 'No projects yet.' : 'No projects in this workspace yet.'}
             </li>
           )}
