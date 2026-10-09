@@ -16,11 +16,8 @@
 //    → blob URLs) and hands back a revoke that frees every URL it minted.
 
 import type { Asset, Project } from '../types';
-import { getAllAssetsForProject, type StoredAsset } from './assetStore';
 import { getProjectAssetRecoveryStatus } from './assetRecovery';
-import { repairMissingAssetsFromNative, repairMissingAssetsFromVault } from './repairAssetsFromNative';
-import { playableAudioBlob } from './audioFormats';
-import { withAssetLoadTimeout } from './assetLoadTimeout';
+import { prepareProjectMedia, type MediaPreparationDeps } from './projectMediaPreparation';
 import { findMediaIssues } from './exportFailure/missingMediaMessage';
 
 /** Stamped on assets storage can supply; truthy is all the media check reads. */
@@ -57,22 +54,6 @@ export interface LoadedProjectMedia {
   revoke(): void;
 }
 
-export interface MediaLoadDeps {
-  readStored: (projectId: string) => Promise<StoredAsset[]>;
-  repairNative: typeof repairMissingAssetsFromNative;
-  repairVault: typeof repairMissingAssetsFromVault;
-  makeUrl: (blob: Blob) => string;
-  revokeUrl: (url: string) => void;
-}
-
-const defaultDeps: MediaLoadDeps = {
-  readStored: id => withAssetLoadTimeout(getAllAssetsForProject(id), 'getAllAssetsForProject(bulk export)'),
-  repairNative: repairMissingAssetsFromNative,
-  repairVault: repairMissingAssetsFromVault,
-  makeUrl: blob => URL.createObjectURL(blob),
-  revokeUrl: url => URL.revokeObjectURL(url),
-};
-
 /**
  * Loads the project's media for one export. THROWS (with a plain reason) when
  * a segment's media cannot be found anywhere — the caller parks the row.
@@ -80,45 +61,18 @@ const defaultDeps: MediaLoadDeps = {
  */
 export async function loadProjectMedia(
   project: Project,
-  overrides: Partial<MediaLoadDeps> = {},
+  deps: Partial<MediaPreparationDeps> = {},
+  revokeUrl?: (url: string) => void,
 ): Promise<LoadedProjectMedia> {
-  const deps = { ...defaultDeps, ...overrides };
-  let stored: StoredAsset[];
-  try {
-    stored = await deps.readStored(project.id);
-  } catch (err) {
-    console.warn('[bulk-export] IndexedDB asset read failed; trying the native store:', err);
-    stored = [];
-  }
-  const blobs = new Map(stored.map(a => [a.id, a]));
-
-  let missing = project.assets.map(a => a.id).filter(id => !blobs.has(id));
-  if (missing.length > 0) {
-    const native = await deps.repairNative(project.id, project.assets, missing);
-    for (const r of native.repaired) blobs.set(r.id, r);
-    missing = missing.filter(id => !blobs.has(id));
-  }
-  if (missing.length > 0) {
-    const vault = await deps.repairVault(project.id, project.assets, missing);
-    for (const r of vault.repaired) blobs.set(r.id, r);
-    missing = missing.filter(id => !blobs.has(id));
-  }
-
-  const minted: string[] = [];
+  const { assets } = await prepareProjectMedia(project.id, project.assets, { deps });
+  let revoked = false;
   const revoke = (): void => {
-    for (const url of minted.splice(0)) deps.revokeUrl(url);
+    if (revoked) return;
+    revoked = true;
+    for (const a of assets) if (a.url) (revokeUrl ?? URL.revokeObjectURL)(a.url);
   };
-  const assets: Asset[] = project.assets.map(a => {
-    const bytes = blobs.get(a.id);
-    if (!bytes) return { ...a, url: '', file: undefined, unresolved: true };
-    const blob = playableAudioBlob(bytes.blob, a.name, a.type);
-    const url = deps.makeUrl(blob);
-    minted.push(url);
-    return { ...a, url, file: new File([blob], a.name, { type: blob.type }), unresolved: false };
-  });
-
   // Only media a segment actually uses can fail the load; an unused orphan
-  // asset stays offline exactly as it does when the project is opened.
+  // stays offline exactly as it does when the project is opened.
   const issues = findMediaIssues(project.segments, assets);
   if (issues.offline.length > 0) {
     revoke();

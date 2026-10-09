@@ -329,9 +329,7 @@ import {
   reportAssetResolutionFailure,
   clearLoadFailure,
 } from './services/projectStore';
-import { repairMissingAssetsFromNative, repairMissingAssetsFromVault } from './services/repairAssetsFromNative';
-import { applySilentProvenanceResolution } from './services/assetResolutionLadder';
-import { withAssetLoadTimeout } from './services/assetLoadTimeout';
+import { getMediaDuration, prepareProjectMedia } from './services/projectMediaPreparation';
 import { migrateIndexedDbAssetsToNative } from './services/migrateAssetsToNative';
 import { backfillAssetContentHashes } from './services/backfillAssetContentHashes';
 import { getProjectAssetRecoveryStatus, relinkAsset, attachNewAssetToSegment, attachNewAssetToSegmentFromPath } from './services/assetRecovery';
@@ -350,7 +348,6 @@ import {
   type UnresolvedAssetMetadata,
 } from './services/relinkResolution';
 import { relinkPickFolder, relinkListFolder, inferMimeType, type RelinkCandidateFile } from './services/relinkNative';
-import { playableAudioBlob } from './services/audioFormats';
 import { writeAssetFromPath } from './services/nativeAssetStore';
 import type { RecoveryAsset, RecoverySegment } from './components/recovery/degradedLoad';
 import { writeAssetBlobNative, deleteAssetNative, deleteProjectAssetsNative } from './services/nativeAssetStore';
@@ -488,15 +485,6 @@ interface RawSegment {
   trimStart: number;
   extraOverlays: TextOverlay[];
 }
-
-const getMediaDuration = (url: string, type: 'video' | 'audio'): Promise<number> => {
-  return new Promise((resolve) => {
-    const media = type === 'video' ? document.createElement('video') : document.createElement('audio');
-    media.src = url;
-    media.onloadedmetadata = () => resolve(media.duration);
-    media.onerror = () => resolve(0);
-  });
-};
 
 /**
  * Resolves a voiceover asset's duration (seconds) via the native ffmpeg probe.
@@ -6557,138 +6545,38 @@ export default function App() {
       }
       const saved = { project: outcome.project, savedAt: outcome.savedAt };
 
-      // Rehydrate the target project's assets from IndexedDB — bounded so a
-      // stuck store cannot hold the dashboard card spinner open forever.
-      const storedAssets = await withAssetLoadTimeout(
-        getAllAssetsForProject(saved.project.id),
-        'getAllAssetsForProject(switch)',
-      ).catch((err) => {
-        console.warn('[kinetix] IndexedDB asset read failed or timed out:', err);
-        return [];
-      });
-      const blobMap = new Map(storedAssets.map(a => [a.id, a]));
-
-      // WS3 item B — launch-time repair, BEFORE the item A orphan check
-      // below: an asset missing from IndexedDB but still present in the
-      // NATIVE store (item B's authoritative copy) is not data loss, only a
-      // cache miss. Rebuild IndexedDB from the native copy here so the
-      // orphan check downstream has nothing left to complain about for
-      // exactly the projects item B's migration already covered.
-      let missingIds = saved.project.assets.map(a => a.id).filter(assetId => !blobMap.has(assetId));
-      if (missingIds.length > 0) {
-        const repair = await repairMissingAssetsFromNative(saved.project.id, saved.project.assets, missingIds);
-        for (const repaired of repair.repaired) blobMap.set(repaired.id, repaired);
-        missingIds = missingIds.filter(id => !blobMap.has(id));
-      }
-      // Item A — second rung: missing from BOTH stores, but the media vault
-      // still holds the same bytes under the row's contentHash.
-      if (missingIds.length > 0) {
-        const vaultRepair = await repairMissingAssetsFromVault(saved.project.id, saved.project.assets, missingIds);
-        for (const repaired of vaultRepair.repaired) blobMap.set(repaired.id, repaired);
-        missingIds = missingIds.filter(id => !blobMap.has(id));
-      }
-
-      // Round 27 Step 4 — silently re-import assets whose exact path + size +
-      // hash still match; weaker rungs and pre-provenance assets fall through
-      // to the recovery screen below. Poison is in-memory only — a restart
-      // re-attempts this ladder; silent re-import cannot bypass confirmation
-      // rules because only exact-path+hash is marked silent in Rust.
-      if (missingIds.length > 0) {
-        const ladder = await applySilentProvenanceResolution(saved.project.id, saved.project.assets, missingIds);
-        if (ladder.resolved.length > 0) {
-          const resolvedIds = new Set(ladder.resolved);
-          const refreshedAssets = await withAssetLoadTimeout(
-            getAllAssetsForProject(saved.project.id),
-            'getAllAssetsForProject(post-ladder)',
+      // Media preparation is the shared seam (also Bulk Export's): IndexedDB
+      // read -> native/vault repair -> silent re-import by path -> blob URLs.
+      // An asset in NO store is a LOAD FAILURE, never a legitimate edit (WS3
+      // item A / D6): it opens with `url: ''` and `unresolved: true`, its row
+      // intact, and the project is poisoned for saving until re-linked — so
+      // nothing can autosave the stripped state over the last known-good copy.
+      let revokedOutgoing = false;
+      const prepared = await prepareProjectMedia(saved.project.id, saved.project.assets, {
+        onOrphans: (orphanedAssets) => {
+          const names = orphanedAssets.map(a => a.name).join(', ');
+          console.error(
+            '[kinetix] Opening project with unresolved asset(s) — saving is disabled until re-linked:',
+            id,
+            orphanedAssets.map(a => a.id),
           );
-          for (const stored of refreshedAssets) {
-            if (resolvedIds.has(stored.id)) blobMap.set(stored.id, stored);
-          }
-        }
-        missingIds = missingIds.filter(id => !blobMap.has(id));
-      }
-
-      // WS3 item A — an asset whose METADATA survived in project.json but
-      // whose BYTES are unresolvable from storage is a LOAD FAILURE, never a
-      // legitimate edit (Machine 1 incident write-up). This must be checked
-      // BEFORE the outgoing project's blob URLs are revoked below and before
-      // any live state changes: silently dropping the reference here and
-      // committing the assetId-stripped result used to run straight into
-      // `setProjectSilent`, which the 500 ms autosave then persisted over the
-      // last known-good native project.json — the exact shape that turned a
-      // recoverable IndexedDB/origin cache loss into permanent destruction
-      // across twenty projects — poisoned for writing (Guard 2's
-      // `loadFailures`, via `reportAssetResolutionFailure` below) so nothing
-      // can autosave over it. THAT poisoning, not a blocking modal, is what
-      // actually prevents the data-loss shape: `saveProject` refuses any
-      // write to a poisoned project id regardless of what the UI is doing.
-      //
-      // D6 (Round 28) — this USED TO also `return` here, trapping the user
-      // on the dashboard behind a forced `DegradedProjectRecoveryScreen`
-      // with no way into the editor until every asset was re-linked. That
-      // traded one failure mode for another: a project with even one
-      // unresolved asset (of, say, forty-two) became completely
-      // unopenable/uneditable until the user found every missing file. The
-      // project now opens into the editor exactly as before, with each
-      // unresolved asset flagged (`Asset.unresolved`) so the timeline/asset
-      // list can mark it offline — see `canPersistRecoveredProject` (which
-      // reads the SAME poison this call sets) for the one place that
-      // question is answered. `refreshDegradedRecovery` is no longer called
-      // automatically here; the user reaches that screen on demand via the
-      // Files tab's "Relink Media…" entry (`onOpenRelinkMedia`).
-      const orphanedAssets = saved.project.assets.filter(a => !blobMap.has(a.id));
-      const orphanedAssetIds = new Set(orphanedAssets.map(a => a.id));
-      if (orphanedAssets.length > 0) {
-        const names = orphanedAssets.map(a => a.name).join(', ');
-        console.error(
-          '[kinetix] Opening project with unresolved asset(s) — saving is disabled until re-linked:',
-          id,
-          orphanedAssets.map(a => a.id),
-        );
-        reportAssetResolutionFailure(
-          saved.project.id,
-          `${orphanedAssets.length} asset${orphanedAssets.length === 1 ? '' : 's'} (${names}) listed ` +
-            `in this project's data could not be found in storage.`,
-        );
-        showToast(
-          `${orphanedAssets.length} asset${orphanedAssets.length === 1 ? '' : 's'} in this project ` +
-            `could not be found in storage — marked offline. Saving is disabled until you re-link ` +
-            `${orphanedAssets.length === 1 ? 'it' : 'them'} via Files ▸ Relink Media…`,
-        );
-      }
-
-      // Revoke current project's blob URLs.
-      project.assets.forEach(a => { if (a.url) URL.revokeObjectURL(a.url); });
-
-      // D6 (Round 28) — an asset in `orphanedAssetIds` has no entry in
-      // `blobMap`; it opens with `url: ''`/`file: undefined` and
-      // `unresolved: true` instead of a rehydrated blob URL. Never drop the
-      // asset ROW itself (id/name/other metadata stay intact) — only a
-      // re-link should ever remove the `unresolved` flag, never a silent
-      // reference strip, which is the exact loss shape Guard 2 exists to
-      // prevent. Every OTHER asset (not in the orphan set) rehydrates exactly
-      // as before.
-      const rehydratedAssets = await Promise.all(
-        saved.project.assets.map(async asset => {
-          if (orphanedAssetIds.has(asset.id)) {
-            return { ...asset, url: '', file: undefined, unresolved: true };
-          }
-          const stored = blobMap.get(asset.id)!;
-          // 1.5.3 — repairs a voiceover persisted untyped (bundle door, pre-1.5.3).
-          const playable = playableAudioBlob(stored.blob, asset.name, asset.type);
-          const rehydratedUrl = URL.createObjectURL(playable);
-          const rehydratedFile = new File([playable], asset.name, { type: playable.type });
-          // Back-compat backfill: a project saved before Asset.duration existed
-          // carries no clip length. This is the one place every stored asset's
-          // blob URL is recreated, so probing here is what keeps the trim bar
-          // and the source-time clamps working on an older project instead of
-          // declining for the whole session.
-          const duration = asset.type === 'video' && asset.duration === undefined
-            ? await getMediaDuration(rehydratedUrl, 'video')
-            : asset.duration;
-          return { ...asset, url: rehydratedUrl, file: rehydratedFile, duration, unresolved: false };
-        }),
-      );
+          reportAssetResolutionFailure(
+            saved.project.id,
+            `${orphanedAssets.length} asset${orphanedAssets.length === 1 ? '' : 's'} (${names}) listed ` +
+              `in this project's data could not be found in storage.`,
+          );
+          showToast(
+            `${orphanedAssets.length} asset${orphanedAssets.length === 1 ? '' : 's'} in this project ` +
+              `could not be found in storage — marked offline. Saving is disabled until you re-link ` +
+              `${orphanedAssets.length === 1 ? 'it' : 'them'} via Files ▸ Relink Media…`,
+          );
+          // Revoke current project's blob URLs.
+          project.assets.forEach(a => { if (a.url) URL.revokeObjectURL(a.url); });
+          revokedOutgoing = true;
+        },
+      });
+      if (!revokedOutgoing) project.assets.forEach(a => { if (a.url) URL.revokeObjectURL(a.url); });
+      const rehydratedAssets = prepared.assets;
 
       const rehydratedSegments = saved.project.segments;
       const rehydratedVoiceoverId = saved.project.voiceoverId;

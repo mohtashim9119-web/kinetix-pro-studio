@@ -63,52 +63,67 @@ describe('withStorageAvailability — stored url:"" is not offline', () => {
   });
 });
 
-describe('loadProjectMedia — the export reads real URLs', () => {
+describe('loadProjectMedia — the export runs the shared media preparation', () => {
   const blob = new Blob(['x'], { type: 'image/png' });
-  const deps = (over: Record<string, unknown> = {}) => {
+  const sa = (id: string) => ({ projectId: 'P', id, blob, name: `${id}.png`, mimeType: 'image/png' });
+  const setup = (over: Record<string, unknown> = {}) => {
     const minted: string[] = [];
     const revoked: string[] = [];
     return {
       minted, revoked,
       deps: {
-        readStored: async () => [{ projectId: 'P', id: 'a1', blob, name: 'a1.png', mimeType: 'image/png' }],
+        readStored: async () => [sa('a1')],
         repairNative: async () => ({ repaired: [], failed: [] }),
         repairVault: async () => ({ repaired: [], failed: [] }),
+        resolveByProvenance: async () => ({ resolved: [], needsConfirmation: [], folderPickOnly: [] }),
         makeUrl: () => { const u = `blob:${minted.length}`; minted.push(u); return u; },
-        revokeUrl: (u: string) => { revoked.push(u); },
+        probeVideoDuration: async () => 7,
         ...over,
       },
+      revokeUrl: (u: string) => { revoked.push(u); },
     };
   };
 
   it('gives every used asset a real blob URL and a file', async () => {
-    const d = deps();
-    const loaded = await loadProjectMedia(withUrl(record([stored('a1')])), d.deps);
+    const d = setup();
+    const loaded = await loadProjectMedia(record([stored('a1')]), d.deps, d.revokeUrl);
     expect(loaded.project.assets[0]!.url).toBe('blob:0');
     expect(loaded.project.assets[0]!.file).toBeInstanceOf(File);
   });
 
   it('revoke frees every minted URL, once', async () => {
-    const d = deps();
-    const loaded = await loadProjectMedia(record([stored('a1')]), d.deps);
+    const d = setup();
+    const loaded = await loadProjectMedia(record([stored('a1')]), d.deps, d.revokeUrl);
     loaded.revoke(); loaded.revoke();
     expect(d.revoked).toEqual(['blob:0']);
   });
 
-  it('repairs from the native store when IndexedDB lacks the bytes', async () => {
-    const d = deps({
-      readStored: async () => [],
-      repairNative: async () => ({ repaired: [{ projectId: 'P', id: 'a1', blob, name: 'a1.png', mimeType: 'image/png' }], failed: [] }),
-    });
-    const loaded = await loadProjectMedia(record([stored('a1')]), d.deps);
-    expect(loaded.project.assets[0]!.url).toBe('blob:0');
-  });
-
   it('throws a plain reason — and frees what it minted — when a used asset is nowhere', async () => {
-    const d = deps({ readStored: async () => [] });
-    await expect(loadProjectMedia(record([stored('a1')]), d.deps)).rejects.toThrow(/media could not be loaded from storage for 1 scene/);
+    const d = setup({ readStored: async () => [] });
+    await expect(loadProjectMedia(record([stored('a1'), stored('a2')], [seg('s1', 'a1')]), d.deps, d.revokeUrl))
+      .rejects.toThrow(/media could not be loaded from storage for 1 scene/);
     expect(d.minted).toEqual(d.revoked);
   });
-});
 
-function withUrl(p: Project): Project { return p; }
+  it('old project: asset missing from IndexedDB, present at its original path, no duration — bulk equals opening', async () => {
+    const video = { id: 'v1', name: 'v1.mp4', type: 'video', url: '' } as Asset; // no duration
+    const rec = record([video], [seg('s1', 'v1')]);
+    // Storage gains the bytes only once the by-path ladder re-imports them.
+    let imported = false;
+    const common = {
+      readStored: async () => (imported ? [{ ...sa('v1'), name: 'v1.mp4' }] : []),
+      resolveByProvenance: async () => { imported = true; return { resolved: ['v1'], needsConfirmation: [], folderPickOnly: [] }; },
+    };
+    const bulk = setup(common);
+    const loadedBulk = await loadProjectMedia(rec, bulk.deps, bulk.revokeUrl);
+    // "Opening in the editor first" runs the very same preparation.
+    imported = false;
+    const open = setup(common);
+    const { prepareProjectMedia } = await import('./projectMediaPreparation');
+    const opened = await prepareProjectMedia('P', rec.assets, { deps: open.deps });
+    expect(imported).toBe(true);
+    expect(loadedBulk.project.assets[0]).toMatchObject({ url: 'blob:0', duration: 7, unresolved: false });
+    expect(loadedBulk.project.assets.map(a => ({ ...a, file: undefined })))
+      .toEqual(opened.assets.map(a => ({ ...a, file: undefined })));
+  });
+});
