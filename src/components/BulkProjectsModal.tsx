@@ -16,6 +16,8 @@
 
 import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Check, ChevronDown, ChevronLeft, ChevronRight, Clapperboard, ExternalLink, FileText, Image as ImageIcon, Mic, Plus, RefreshCw, Trash2, Upload, Volume2, VolumeX, X } from 'lucide-react';
+import { WorkspaceTabs } from './WorkspaceTabs';
+import { inWorkspace, resolveWorkspaceFilter, useWorkspaces, workspaceRegistry, type WorkspaceFilter, type WorkspaceRegistry } from './workspaceRegistry';
 import completeChimeUrl from '../assets/group-complete-notification.mp3';
 import { bulkRowBar, groupAllBuilt, useEasedBarFill, audioSecFromPreflight } from './bulkRowProgress';
 import {
@@ -29,23 +31,20 @@ import { BulkRowStore, defaultBulkRowDeps, type BulkRowState } from '../services
 import type { Project } from '../types';
 import { bulkBatchRunner, cloudSyncQueue } from '../services/bulkSyncQueue';
 import {
-  BULK_GROUP_MAX_ROWS, BULK_MAX_GROUPS, READY_TO_FINISH, groupProgress, isBatchRowFinal, type BatchRow, type BulkBatchRunner,
+  BULK_GROUP_MAX_ROWS, BULK_MAX_GROUPS, READY_TO_FINISH, isBatchRowFinal, type BatchRow, type BulkBatchRunner,
 } from '../services/bulkBatch';
-import { BulkGroupHeader } from './BulkProgress';
 import { bulkFooterLine, cloudCostLine, type CloudQueueDeps } from '../services/cloudQueueJob';
 import { collectDroppedFiles } from '../services/droppedFiles';
 import { missingSpineSlots } from '../services/buildTimelineGate';
 import { type QueueItem, type SyncQueue } from '../services/syncQueue';
 import { readSyncEngineHost } from '../services/syncEngineHost';
 import { killAllMemberCloudJobs } from '../services/cloudSyncEngine';
-import { Z } from './overlayLayers';
 import { ConfirmDialog } from './ConfirmDialog';
 import { deleteProjectEverywhere } from '../services/projectDelete';
 import { bulkDoneStatus } from '../services/syncLogSummary';
 
-const DRAWER = `fixed top-0 left-0 ${Z.drawer} flex h-full w-[min(100vw,480px)] flex-col border-r border-[var(--kx-line-2)] bg-[var(--kx-bg)] will-change-transform`;
-/** The panel's slide: the dashboard's glide uses the same curve (ProjectDashboard DOCK_MOTION). */
-const DRAWER_MOTION: React.CSSProperties = { transition: 'transform 340ms cubic-bezier(.22, 1, .36, 1)' };
+/** Dashboard revamp — the Bulk Sync tab's pane (in flow, fills the left panel). */
+const PANE = 'flex flex-1 h-full w-full min-h-0 flex-col bg-[var(--kx-bg)]';
 /** The dashboard's own neutral palette, so panel and dashboard read as one surface. */
 const DRAWER_PALETTE = {
   '--kx-bg': '#0a0a0b',
@@ -97,8 +96,6 @@ function readSoundMuted(): boolean {
 function writeSoundMuted(muted: boolean): void {
   try { sessionStorage.setItem(SOUND_MUTE_KEY, muted ? '1' : '0'); } catch { /* ignore */ }
 }
-/** Over content it casts a shadow; docked beside the dashboard it is a flat column. */
-const DRAWER_FLOAT = 'shadow-[8px_0_40px_rgba(0,0,0,.55)]';
 const LABEL = 'text-[10px] uppercase tracking-widest text-[var(--kx-muted)] font-bold block mb-2';
 // Enabled: the app's one orange. Disabled: a neutral, legible outline — never a faded orange.
 const BTN_PRIMARY = 'flex-1 border border-transparent bg-[var(--kx-accent)] text-[#1a0f06] p-3 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-[var(--kx-accent-hover)] transition-all focus:outline-none focus:ring-2 focus:ring-[var(--kx-accent-line)] disabled:bg-[var(--kx-surface-2)] disabled:text-[var(--kx-faint)] disabled:border-[var(--kx-line-2)] disabled:cursor-not-allowed';
@@ -111,6 +108,15 @@ const MSG_ARROW = 'w-5 h-6 flex items-center justify-center rounded text-[var(--
 const FIELD = 'bg-[var(--kx-surface-2)] border border-[var(--kx-line-2)] rounded-lg font-semibold text-[var(--kx-text)] placeholder:text-[var(--kx-faint)] placeholder:font-normal outline-none focus:border-[var(--kx-accent-line)] transition-colors disabled:cursor-not-allowed disabled:opacity-70';
 const ROW_BTN = 'flex-shrink-0 flex items-center gap-1.5 h-9 px-3 rounded-lg border border-[var(--kx-line-2)] bg-[var(--kx-surface-2)] text-[12px] font-semibold text-[var(--kx-text)] hover:border-[rgba(255,255,255,.22)] transition-colors disabled:text-[var(--kx-faint)] disabled:cursor-not-allowed disabled:hover:border-[var(--kx-line-2)]';
 const ROW_BTN_SM = 'flex-shrink-0 h-7 px-2.5 rounded-md border border-[var(--kx-line-2)] text-[11px] font-semibold text-[var(--kx-text)] hover:border-[rgba(255,255,255,.22)] transition-colors';
+/** Copy for the group-free Bulk Sync tab (BULK_COPY's group sentences no longer apply). */
+const PANE_COPY = {
+  createHeading: 'New projects',
+  create: 'Create',
+  batchesFull: (max: number): string => `Up to ${max} unfinished batches at a time. Clear finished rows to make room.`,
+  empty: 'No projects yet. Create some above.',
+  emptyWorkspace: 'No bulk projects in this workspace yet.',
+  addFull: `Up to ${BULK_GROUP_MAX_ROWS} projects per batch — create a new batch above.`,
+};
 const CHIP = 'flex-shrink-0 flex items-center gap-1 whitespace-nowrap text-[11px] font-semibold px-1.5 py-0.5 rounded-[6px]';
 
 /** Each slot's type icon, in the Files tab's per-type colours. */
@@ -595,16 +601,15 @@ function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFi
 }
 
 export function BulkProjectsModal({
-  createBlankProject, parseProjectData, onOpenProject, onFinishRow, onClose, onProjectsCreated,
-  runner: injectedRunner, queue = cloudSyncQueue, store: injected, hidden = false, docked = false,
-  deleteProject = deleteProjectEverywhere, onProjectsDeleted,
+  createBlankProject, parseProjectData, onOpenProject, onFinishRow, onProjectsCreated,
+  runner: injectedRunner, queue = cloudSyncQueue, store: injected, hidden = false,
+  deleteProject = deleteProjectEverywhere, onProjectsDeleted, workspaces: injectedWorkspaces,
 }: {
   createBlankProject: () => Project;
   parseProjectData: CloudQueueDeps['parseProjectData'];
   onOpenProject: (id: string) => void;
   /** A row built on the cloud and waiting for its Open: finish it now. */
   onFinishRow?: (id: string) => void;
-  onClose: () => void;
   /** Projects were just created (Build Timeline): the dashboard should refresh. */
   onProjectsCreated?: () => void;
   /** The persistent batch (default: the app's). It keeps working after this
@@ -612,10 +617,11 @@ export function BulkProjectsModal({
   runner?: BulkBatchRunner;
   queue?: SyncQueue;
   store?: BulkRowStore;
-  /** Hide keeps the batch mounted and running. It does not close it. */
+  /** Not on screen (another tab, or the editor is up). It keeps the batch
+   *  mounted and running — visibility never changes what the batch does. */
   hidden?: boolean;
-  /** Docked as the dashboard's left column (no shadow; the dashboard moves over). */
-  docked?: boolean;
+  /** The workspace registry (default: the app's). */
+  workspaces?: WorkspaceRegistry;
   /** Deletes a created project everywhere (default: the dashboard's own delete). */
   deleteProject?: (id: string) => Promise<string[]>;
   /** A row's project was deleted: the dashboard and editor let go of it. */
@@ -643,22 +649,36 @@ export function BulkProjectsModal({
   const records = useSyncExternalStore(l => runner.subscribe(l), () => runner.snapshot());
   const groups = useSyncExternalStore(l => runner.subscribe(l), () => runner.groups());
   const [skips, setSkips] = useState<Record<string, string>>({});
-  // 1.3.1 — a group is created inline (a 2–30 field and "Create Group"),
-  // never through a popup and never from the dashboard.
+  // Projects are created inline (a 2–30 field and "Create"), never through a
+  // popup and never from the dashboard. The runner still files each Create as
+  // one internal batch ("group") — its Build Timeline / chime unit — but the
+  // group UI is gone: rows show under their project's WORKSPACE instead.
   const [countRaw, setCountRaw] = useState('');
   const [soundMuted, setSoundMuted] = useState(readSoundMuted);
   const [drawerTab, setDrawerTab] = useState<BulkDrawerTab>(readBulkDrawerTab);
+  const wsRegistry = useMemo(() => injectedWorkspaces ?? workspaceRegistry(), [injectedWorkspaces]);
+  const workspaceList = useWorkspaces(wsRegistry);
+  const [wsFilterRaw, setWsFilter] = useState<WorkspaceFilter>('all');
+  const wsFilter = resolveWorkspaceFilter(workspaceList, wsFilterRaw);
+  const inScope = (id: string): boolean => inWorkspace(workspaceList, wsFilter, id);
   const seenComplete = useRef<Set<string> | null>(null);
   const count = parseBulkCount(countRaw, BULK_MAX_PROJECTS, BULK_MIN_PROJECTS);
-  const createGroup = (): void => {
+  const createRows = (): void => {
     if (!store || count === null || !runner.canCreateGroup()) return;
     const ids = store.createDrafts(count);
     if (!runner.createGroup(ids)) { void Promise.all(ids.map(id => store.discardRow(id))); return; }
+    // Created under a workspace tab: the new rows belong to that workspace.
+    if (wsFilter !== 'all') wsRegistry.assign(ids, wsFilter);
     setCountRaw('');
   };
-  const addToGroup = (groupId: string): void => {
+  // One more row, into the newest batch with room (a batch holds up to 30).
+  const addTarget = [...groups].reverse().find(g => g.rowIds.length < BULK_GROUP_MAX_ROWS);
+  const addRow = (): void => {
+    if (!addTarget) return;
     const id = store?.addRow();
-    if (id && !runner.addRowToGroup(groupId, id)) void store?.discardRow(id);
+    if (!id) return;
+    if (!runner.addRowToGroup(addTarget.id, id)) { void store?.discardRow(id); return; }
+    if (wsFilter !== 'all') wsRegistry.assign([id], wsFilter);
   };
   // While this window is open, finished cloud work is turned into real timelines.
   useEffect(() => runner.holdFinishOpen(), [runner]);
@@ -688,27 +708,48 @@ export function BulkProjectsModal({
   }, [groups, records, recordById, soundMuted]);
 
   const rowById = new Map(rows.map(r => [r.projectId, r]));
-  // Every row belongs to a group (each group carries the Build Timeline): a
-  // draft found outside one (saved before groups, or seeded) is adopted.
+  // Every row belongs to a batch (the runner's unit of work): a draft found
+  // outside one (saved before groups, or seeded) is adopted.
   const looseKey = rows.filter(r => !r.built && !groups.some(g => g.rowIds.includes(r.projectId))).map(r => r.projectId).join('|');
   useEffect(() => { if (looseKey) runner.adoptRows(looseKey.split('|')); }, [looseKey, runner]);
-  const inGroup = new Set(groups.flatMap(g => g.rowIds));
-  const loose = rows.filter(r => !inGroup.has(r.projectId));
-  const retryAllIds = collectRetryAllRowIds(groups, records);
+  // Batch order, then row order — the same order the groups showed them in.
+  const batched = groups.flatMap(g => g.rowIds);
+  const batchedSet = new Set(batched);
+  const orderedIds = [...batched, ...rows.filter(r => !batchedSet.has(r.projectId)).map(r => r.projectId)];
+  const scopedRows = orderedIds
+    .map(id => rowById.get(id))
+    .filter((r): r is BulkRowState => !!r && inScope(r.projectId));
+  const rowOnTab = (row: BulkRowState): boolean =>
+    bulkDrawerTabForPhase(recordById.get(row.projectId)?.phase) === drawerTab;
+  const shownRows = scopedRows.filter(rowOnTab);
+  const scopedIds = scopedRows.map(r => r.projectId);
+  const retryAllIds = collectRetryAllRowIds(groups, records).filter(inScope);
   const selectTab = (next: BulkDrawerTab): void => {
     setDrawerTab(next);
     writeBulkDrawerTab(next);
   };
   const retryAll = (): void => {
-    for (const id of collectRetryAllRowIds(groups, records)) {
+    for (const id of retryAllIds) {
       runner.retry(id, undefined, { preserveAutoRetries: true });
     }
   };
-  const rowOnTab = (row: BulkRowState): boolean =>
-    bulkDrawerTabForPhase(recordById.get(row.projectId)?.phase) === drawerTab;
+  const phaseOf = (id: string): BatchRow['phase'] | undefined => recordById.get(id)?.phase;
+  const runningIds = scopedIds.filter(id => { const p = phaseOf(id); return p === 'queued' || p === 'cloud'; });
+  const cancelScoped = (): void => { for (const id of runningIds) runner.cancel(id); };
+  // All: the runner's own Clear finished (every final row). A workspace: only
+  // the rows its FINISHED tab shows, so nothing outside it is touched.
+  const finishedIds = scopedIds.filter(id => bulkDrawerTabForPhase(phaseOf(id)) === 'finished');
+  const canClear = wsFilter === 'all'
+    ? records.some(r => isBatchRowFinal(r.phase))
+    : finishedIds.length > 0;
+  const clearFinished = (): void => {
+    if (wsFilter === 'all') runner.clearFinished();
+    else for (const id of finishedIds) runner.removeRow(id);
+  };
   const tabEmptyCopy = drawerTab === 'failed-paused' ? BULK_COPY.noFailedRows
     : drawerTab === 'finished' ? BULK_COPY.nothingFinished
-    : BULK_COPY.emptyDrawer;
+    : wsFilter !== 'all' ? PANE_COPY.emptyWorkspace
+    : PANE_COPY.empty;
   const renderRow = (row: BulkRowState): React.ReactElement => (
     <BulkRow
       key={row.projectId}
@@ -734,14 +775,14 @@ export function BulkProjectsModal({
     />
   );
 
-  const build = (groupRowIds: readonly string[]): void => {
+  const build = (rowIds: readonly string[]): void => {
     void (async () => {
       if (!store) return;
-      // Only now do projects exist — for this group's rows. Every other row stays a draft.
-      const { created, skips: left } = await store.buildReady(groupRowIds);
+      // Only now do projects exist — for these rows. Every other row stays a draft.
+      const { created, skips: left } = await store.buildReady(rowIds);
       setSkips(prev => {
         const next = { ...prev };
-        for (const id of groupRowIds) delete next[id];
+        for (const id of rowIds) delete next[id];
         return { ...next, ...left };
       });
       if (created.length === 0) return;
@@ -750,8 +791,7 @@ export function BulkProjectsModal({
     })();
   };
 
-  // U5 — nothing clears by itself: hiding, opening or finishing keeps every draft.
-  const close = (): void => onClose();
+  // U5 — nothing clears by itself: switching tabs, opening or finishing keeps every draft.
   const open = (id: string): void => onOpenProject(id);
   const finishRow = (id: string): void => {
     if (onFinishRow) onFinishRow(id);
@@ -767,84 +807,70 @@ export function BulkProjectsModal({
       runner.removeRow(row.projectId);
       store?.forgetRow(row.projectId);
       const failures = await deleteProject(row.projectId);
+      wsRegistry.forget([row.projectId]);
       onProjectsDeleted?.([row.projectId], failures);
     } else {
       await store?.discardRow(row.projectId);
       runner.removeRow(row.projectId);
+      wsRegistry.forget([row.projectId]);
     }
   };
 
-  // First open slides in too: one painted frame off-screen, then the slide.
-  const [entered, setEntered] = useState(false);
-  useEffect(() => {
-    let inner = 0;
-    const outer = requestAnimationFrame(() => { inner = requestAnimationFrame(() => setEntered(true)); });
-    return () => { cancelAnimationFrame(outer); cancelAnimationFrame(inner); };
-  }, []);
-  const off = hidden || !entered;
-
   return (
     <div
-      className={`${DRAWER} ${docked ? '' : DRAWER_FLOAT} ${off ? '-translate-x-full pointer-events-none' : ''}`}
-      style={{ ...DRAWER_PALETTE, ...DRAWER_MOTION }}
+      className={PANE}
+      style={DRAWER_PALETTE}
       data-testid="bulk-modal"
       data-hidden={hidden ? 'true' : 'false'}
       aria-hidden={hidden}
     >
       <div
-        role="dialog"
-        aria-modal="false"
+        role="region"
         aria-label={BULK_COPY.modalTitle}
         className="flex flex-col h-full min-h-0"
       >
-        <div className="px-6 pt-6 pb-5 flex-shrink-0 border-b border-[var(--kx-line)] bg-[var(--kx-panel)]">
-          <div className="flex items-center justify-between">
-            <h2 className="flex items-center gap-2.5 text-sm font-black uppercase tracking-[0.2em] text-[var(--kx-text)]">
-              <span aria-hidden="true" className="h-4 w-1 rounded-full bg-[var(--kx-accent)]" />
-              {BULK_COPY.modalTitle}
-            </h2>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                data-testid="bulk-sound-toggle"
-                aria-pressed={!soundMuted}
-                aria-label={soundMuted ? 'Completion sound off' : 'Completion sound on'}
-                title={soundMuted ? 'Completion sound off' : 'Completion sound on'}
-                onClick={() => {
-                  const next = !soundMuted;
-                  setSoundMuted(next);
-                  writeSoundMuted(next);
-                }}
-                className="w-8 h-8 flex items-center justify-center rounded-lg text-[var(--kx-muted)] hover:text-white hover:bg-[var(--kx-hover)] transition-colors"
-              >
-                {soundMuted ? <VolumeX size={15} /> : <Volume2 size={15} />}
-              </button>
-              {records.some(r => r.phase === 'queued' || r.phase === 'cloud') && (
-                <button
-                  type="button"
-                  data-testid="bulk-stop-all"
-                  onClick={() => { void runner.stopAllCloudWork(() => killAllMemberCloudJobs()); }}
-                  className="flex-shrink-0 h-8 px-3 rounded-lg border border-[var(--kx-line-2)] text-[11px] font-semibold text-[var(--kx-text)] hover:text-white hover:bg-[var(--kx-hover)] transition-colors"
-                >
-                  {BULK_COPY.stopAll}
-                </button>
-              )}
-              <button
-                type="button"
-                aria-label={BULK_COPY.close}
-                data-testid="bulk-close"
-              onClick={close}
-              className="w-8 h-8 flex items-center justify-center rounded-lg text-[var(--kx-muted)] hover:text-white hover:bg-[var(--kx-hover)] transition-colors focus:outline-none focus:ring-2 focus:ring-[var(--kx-accent-line)]"
-            >
-              <X size={16} />
-            </button>
+        <div className="px-5 pt-4 pb-4 flex-shrink-0 border-b border-[var(--kx-line)] bg-[var(--kx-panel)]">
+          <div className="flex items-center gap-2">
+            <div className="flex-1 min-w-0">
+              <WorkspaceTabs
+                workspaces={workspaceList}
+                value={wsFilter}
+                onChange={setWsFilter}
+                testIdPrefix="bulk-sync-ws"
+                label="Bulk Sync workspaces"
+              />
             </div>
+            <button
+              type="button"
+              data-testid="bulk-sound-toggle"
+              aria-pressed={!soundMuted}
+              aria-label={soundMuted ? 'Completion sound off' : 'Completion sound on'}
+              title={soundMuted ? 'Completion sound off' : 'Completion sound on'}
+              onClick={() => {
+                const next = !soundMuted;
+                setSoundMuted(next);
+                writeSoundMuted(next);
+              }}
+              className="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-lg text-[var(--kx-muted)] hover:text-white hover:bg-[var(--kx-hover)] transition-colors"
+            >
+              {soundMuted ? <VolumeX size={15} /> : <Volume2 size={15} />}
+            </button>
+            {records.some(r => r.phase === 'queued' || r.phase === 'cloud') && (
+              <button
+                type="button"
+                data-testid="bulk-stop-all"
+                onClick={() => { void runner.stopAllCloudWork(() => killAllMemberCloudJobs()); }}
+                className="flex-shrink-0 h-8 px-3 rounded-lg border border-[var(--kx-line-2)] text-[11px] font-semibold text-[var(--kx-text)] hover:text-white hover:bg-[var(--kx-hover)] transition-colors"
+              >
+                {BULK_COPY.stopAll}
+              </button>
+            )}
           </div>
-          <div className="mt-5">
-            <span data-testid="bulk-create-heading" className={LABEL}>{BULK_COPY.newGroup}</span>
+          <div className="mt-4">
+            <span data-testid="bulk-create-heading" className={LABEL}>{PANE_COPY.createHeading}</span>
             <form
               className="flex items-center gap-2"
-              onSubmit={e => { e.preventDefault(); createGroup(); }}
+              onSubmit={e => { e.preventDefault(); createRows(); }}
             >
               <input
                 data-testid="bulk-create-count"
@@ -866,131 +892,114 @@ export function BulkProjectsModal({
                 className={`${BTN_PRIMARY} flex-none h-10 px-5 py-0 flex items-center gap-1.5`}
                 disabled={!store || count === null || !runner.canCreateGroup()}
               >
-                {BULK_COPY.createGroup}
+                {PANE_COPY.create}
               </button>
             </form>
             {!runner.canCreateGroup() ? (
-              <p className="mt-2 text-[11px] leading-snug text-gray-500">{BULK_COPY.groupsFull(BULK_MAX_GROUPS)}</p>
+              <p className="mt-2 text-[11px] leading-snug text-gray-500">{PANE_COPY.batchesFull(BULK_MAX_GROUPS)}</p>
             ) : countRaw.trim() !== '' && count === null ? (
               <p className="mt-2 text-[11px] leading-snug text-amber-300">{BULK_COPY.quantityInvalid(BULK_MAX_PROJECTS)}</p>
             ) : null}
           </div>
         </div>
-        <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar px-5 py-5 space-y-4" data-testid="bulk-groups">
-          {groups.length === 0 && rows.length === 0 && (
-            <p data-testid="bulk-empty" className="rounded-2xl border border-dashed border-[var(--kx-line-2)] px-4 py-8 text-center text-[12px] leading-snug text-[var(--kx-muted)]">{BULK_COPY.emptyDrawer}</p>
-          )}
-          {groups.map(group => {
-            const members = group.rowIds.map(id => rowById.get(id)).filter((r): r is BulkRowState => !!r && rowOnTab(r));
-            return (
-              <section
-                key={group.id}
-                data-testid={`bulk-group-section-${group.id}`}
-                className="rounded-2xl border border-[var(--kx-line-2)] bg-[var(--kx-panel)] shadow-[0_1px_0_rgba(255,255,255,.03)_inset]"
+        <div className="px-5 pt-3 flex-shrink-0">
+          <div
+            role="tablist"
+            aria-label="Bulk rows"
+            data-testid="bulk-drawer-tabs"
+            className="flex gap-1 p-1 rounded-xl border border-[var(--kx-line-2)] bg-[var(--kx-surface)]"
+          >
+            {BULK_DRAWER_TABS.map(t => (
+              <button
+                key={t.id}
+                type="button"
+                role="tab"
+                aria-selected={drawerTab === t.id}
+                data-testid={`bulk-tab-${t.id}`}
+                onClick={() => selectTab(t.id)}
+                className={`flex-1 min-w-0 h-8 px-1 rounded-lg text-[9px] font-black uppercase tracking-widest transition-colors ${
+                  drawerTab === t.id
+                    ? 'bg-[var(--kx-surface-2)] text-[var(--kx-text)]'
+                    : 'text-[var(--kx-muted)] hover:text-[var(--kx-text)]'
+                }`}
               >
-                <div className="px-4">
-                <BulkGroupHeader
-                  group={group}
-                  progress={groupProgress(group, records)}
-                  onToggle={() => runner.setCollapsed(group.id, !group.collapsed)}
-                  onRename={name => runner.renameGroup(group.id, name)}
-                >
-                  {drawerTab === 'new' && group.rowIds.some(id => { const p = recordById.get(id)?.phase; return p === 'queued' || p === 'cloud'; }) && (
-                    <button
-                      type="button"
-                      data-testid={`bulk-cancel-group-${group.id}`}
-                      onClick={() => runner.cancelGroup(group.id)}
-                      className="flex-shrink-0 text-[11px] text-gray-400 hover:text-white transition-colors"
-                    >
-                      {BULK_COPY.cancelAll}
-                    </button>
-                  )}
-                  {drawerTab === 'finished' && group.rowIds.some(id => { const p = recordById.get(id)?.phase; return p !== undefined && isBatchRowFinal(p); }) && (
-                    <button
-                      type="button"
-                      data-testid={`bulk-clear-finished-${group.id}`}
-                      onClick={() => runner.clearFinished(group.id)}
-                      className="flex-shrink-0 text-[11px] text-gray-400 hover:text-white transition-colors"
-                    >
-                      {BULK_COPY.clearFinished}
-                    </button>
-                  )}
-                </BulkGroupHeader>
-                <div
-                  role="tablist"
-                  aria-label={`${group.name} rows`}
-                  data-testid="bulk-drawer-tabs"
-                  className="mb-3 flex gap-1 p-1 rounded-xl border border-[var(--kx-line-2)] bg-[var(--kx-surface)]"
-                >
-                  {BULK_DRAWER_TABS.map(t => (
-                    <button
-                      key={t.id}
-                      type="button"
-                      role="tab"
-                      aria-selected={drawerTab === t.id}
-                      data-testid={`bulk-tab-${t.id}`}
-                      onClick={() => selectTab(t.id)}
-                      className={`flex-1 min-w-0 h-8 px-1 rounded-lg text-[9px] font-black uppercase tracking-widest transition-colors ${
-                        drawerTab === t.id
-                          ? 'bg-[var(--kx-surface-2)] text-[var(--kx-text)]'
-                          : 'text-[var(--kx-muted)] hover:text-[var(--kx-text)]'
-                      }`}
-                    >
-                      {t.label}
-                    </button>
-                  ))}
-                </div>
-                </div>
-                {!group.collapsed && (
-                  <div className="p-3 border-t border-[var(--kx-line)]">
-                    {drawerTab === 'failed-paused' && (
-                      <button
-                        type="button"
-                        data-testid="bulk-retry-all"
-                        disabled={retryAllIds.length === 0}
-                        onClick={retryAll}
-                        className={`${ROW_BTN} w-full justify-center mb-3`}
-                      >
-                        {retryAllIds.length === 0 ? BULK_COPY.noFailedRows : BULK_COPY.retryAll}
-                      </button>
-                    )}
-                    {members.length === 0 ? (
-                      <p data-testid="bulk-tab-empty" className="rounded-xl border border-dashed border-[var(--kx-line-2)] px-4 py-6 text-center text-[12px] leading-snug text-[var(--kx-muted)]">{tabEmptyCopy}</p>
-                    ) : (
-                      <ol className="space-y-2.5">{members.map(renderRow)}</ol>
-                    )}
-                    {drawerTab === 'new' && (
-                    <div className="mt-3 px-1 flex items-center gap-3">
-                      <button
-                        type="button"
-                        data-testid={`bulk-add-${group.id}`}
-                        className="flex items-center gap-1.5 h-8 px-2 rounded-md text-[12px] font-semibold text-[var(--kx-muted)] hover:text-white hover:bg-[var(--kx-hover)] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                        disabled={group.rowIds.length >= BULK_GROUP_MAX_ROWS}
-                        title={group.rowIds.length >= BULK_GROUP_MAX_ROWS ? `Up to ${BULK_GROUP_MAX_ROWS} projects in a group` : undefined}
-                        onClick={() => addToGroup(group.id)}
-                      >
-                        <Plus size={12} />
-                        {BULK_COPY.addProject}
-                      </button>
-                      <div className="flex-1" />
-                      <button
-                        type="button"
-                        data-testid={`bulk-build-${group.id}`}
-                        className={`${BTN_BUILD} flex-none px-5 py-2.5`}
-                        disabled={!cloud || !members.some(isComplete)}
-                        title={!cloud ? BULK_COPY.notCloud : !members.some(isComplete) ? BULK_COPY.buildNeeds : undefined}
-                        onClick={() => build(group.rowIds)}
-                      >
-                        {BULK_COPY.build}
-                      </button>
-                    </div>
-                    )}
-                  </div>
-                )}
-              </section>
-            );
-          })}
-          {drawerTab === 'new' && loose.length > 0 && <ol className="space-y-3">{loose.filter(rowOnTab).map(renderRow)}</ol>}
+                {t.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar px-5 py-4" data-testid="bulk-groups">
+          {drawerTab === 'failed-paused' && (
+            <button
+              type="button"
+              data-testid="bulk-retry-all"
+              disabled={retryAllIds.length === 0}
+              onClick={retryAll}
+              className={`${ROW_BTN} w-full justify-center mb-3`}
+            >
+              {retryAllIds.length === 0 ? BULK_COPY.noFailedRows : BULK_COPY.retryAll}
+            </button>
+          )}
+          {drawerTab === 'new' && runningIds.length > 0 && (
+            <div className="mb-3 flex justify-end">
+              <button
+                type="button"
+                data-testid="bulk-cancel-scope"
+                onClick={cancelScoped}
+                className="flex-shrink-0 text-[11px] text-gray-400 hover:text-white transition-colors"
+              >
+                {BULK_COPY.cancelAll}
+              </button>
+            </div>
+          )}
+          {drawerTab === 'finished' && canClear && (
+            <div className="mb-3 flex justify-end">
+              <button
+                type="button"
+                data-testid="bulk-clear-finished"
+                onClick={clearFinished}
+                className="flex-shrink-0 text-[11px] text-gray-400 hover:text-white transition-colors"
+              >
+                {BULK_COPY.clearFinished}
+              </button>
+            </div>
+          )}
+          {shownRows.length === 0 ? (
+            <p
+              data-testid={rows.length === 0 && groups.length === 0 ? 'bulk-empty' : 'bulk-tab-empty'}
+              className="rounded-xl border border-dashed border-[var(--kx-line-2)] px-4 py-6 text-center text-[12px] leading-snug text-[var(--kx-muted)]"
+            >
+              {tabEmptyCopy}
+            </p>
+          ) : (
+            <ol className="space-y-2.5" data-testid="bulk-rows">{shownRows.map(renderRow)}</ol>
+          )}
+          {drawerTab === 'new' && (
+            <div className="mt-3 px-1 flex items-center gap-3">
+              <button
+                type="button"
+                data-testid="bulk-add"
+                className="flex items-center gap-1.5 h-8 px-2 rounded-md text-[12px] font-semibold text-[var(--kx-muted)] hover:text-white hover:bg-[var(--kx-hover)] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                disabled={!store || !addTarget}
+                title={groups.length > 0 && !addTarget ? PANE_COPY.addFull : undefined}
+                onClick={addRow}
+              >
+                <Plus size={12} />
+                {BULK_COPY.addProject}
+              </button>
+              <div className="flex-1" />
+              <button
+                type="button"
+                data-testid="bulk-build"
+                className={`${BTN_BUILD} flex-none px-5 py-2.5`}
+                disabled={!cloud || !shownRows.some(isComplete)}
+                title={!cloud ? BULK_COPY.notCloud : !shownRows.some(isComplete) ? BULK_COPY.buildNeeds : undefined}
+                onClick={() => build(scopedIds)}
+              >
+                {BULK_COPY.build}
+              </button>
+            </div>
+          )}
         </div>
         <div className="px-6 pt-3 pb-5 flex-shrink-0 border-t border-[var(--kx-line)] bg-[var(--kx-panel)]" data-testid="bulk-footer">
           {line && <p className="text-[11px] leading-snug text-gray-400 mb-1" data-testid="bulk-batch-line">{line}</p>}

@@ -4,7 +4,10 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { WORKSPACES_KEY, WorkspaceRegistry, inWorkspace, resolveWorkspaceFilter } from './workspaceRegistry';
+import {
+  WORKSPACES_KEY, WORKSPACES_MIGRATED_KEY, WorkspaceRegistry, inWorkspace, migrateBulkGroupsToWorkspaces,
+  readWorkspaceMigration, resolveWorkspaceFilter,
+} from './workspaceRegistry';
 
 function memStorage(seed: Record<string, string> = {}): Storage {
   const m = new Map(Object.entries(seed));
@@ -122,5 +125,65 @@ describe('workspace filters', () => {
   it('a filter naming a deleted workspace falls back to All', () => {
     expect(resolveWorkspaceFilter(ws, 'gone')).toBe('all');
     expect(resolveWorkspaceFilter(ws, 'a')).toBe('a');
+  });
+});
+
+describe('one-time migration: bulk groups → workspaces', () => {
+  const batch = (groups: { id: string; name: string; rowIds: string[] }[]): string =>
+    JSON.stringify({ rows: [], groups: groups.map(g => ({ ...g, collapsed: false })) });
+
+  it('every group becomes a workspace with the same name and members, and the counts are recorded', () => {
+    const storage = memStorage({
+      'kinetix:bulk-batch:v1': batch([
+        { id: 'g1', name: 'Client A', rowIds: ['a', 'b'] },
+        { id: 'g2', name: 'Client B', rowIds: ['c', 'd', 'e'] },
+      ]),
+    });
+    const reg = new WorkspaceRegistry(storage);
+    const result = migrateBulkGroupsToWorkspaces(reg, storage);
+    expect(result).toEqual({ workspaces: 2, projects: 5, skipped: 0 });
+    expect(reg.snapshot().map(w => [w.name, w.projectIds])).toEqual([['Client A', ['a', 'b']], ['Client B', ['c', 'd', 'e']]]);
+    expect(readWorkspaceMigration(storage)).toMatchObject({ workspaces: 2, projects: 5, skipped: 0 });
+  });
+
+  it('is guarded by a done-flag: it never reruns (not even when groups change later)', () => {
+    const storage = memStorage({ 'kinetix:bulk-batch:v1': batch([{ id: 'g1', name: 'A', rowIds: ['a', 'b'] }]) });
+    const reg = new WorkspaceRegistry(storage);
+    migrateBulkGroupsToWorkspaces(reg, storage);
+    storage.setItem('kinetix:bulk-batch:v1', batch([{ id: 'g9', name: 'Later', rowIds: ['x', 'y'] }]));
+    expect(migrateBulkGroupsToWorkspaces(reg, storage)).toBeNull();
+    expect(migrateBulkGroupsToWorkspaces(new WorkspaceRegistry(storage), storage)).toBeNull();
+    expect(reg.snapshot().map(w => w.name)).toEqual(['A']);
+  });
+
+  it('no batch (or no groups): records a zero result and sets the flag', () => {
+    const storage = memStorage();
+    const reg = new WorkspaceRegistry(storage);
+    expect(migrateBulkGroupsToWorkspaces(reg, storage)).toEqual({ workspaces: 0, projects: 0, skipped: 0 });
+    expect(storage.getItem(WORKSPACES_MIGRATED_KEY)).not.toBeNull();
+    expect(reg.snapshot()).toEqual([]);
+  });
+
+  it('a project already in a workspace keeps it (one workspace per project); the rest migrate', () => {
+    const storage = memStorage({ 'kinetix:bulk-batch:v1': batch([{ id: 'g1', name: 'A', rowIds: ['a', 'b'] }]) });
+    const reg = new WorkspaceRegistry(storage);
+    const mine = reg.create('Mine');
+    reg.assign(['a'], mine.id);
+    expect(migrateBulkGroupsToWorkspaces(reg, storage)).toEqual({ workspaces: 1, projects: 1, skipped: 1 });
+    expect(reg.workspaceOf('a')?.id).toBe(mine.id);
+    expect(reg.snapshot().find(w => w.name === 'A')!.projectIds).toEqual(['b']);
+  });
+
+  it('never writes the bulk batch', () => {
+    const raw = batch([{ id: 'g1', name: 'A', rowIds: ['a', 'b'] }]);
+    const storage = memStorage({ 'kinetix:bulk-batch:v1': raw });
+    migrateBulkGroupsToWorkspaces(new WorkspaceRegistry(storage), storage);
+    expect(storage.getItem('kinetix:bulk-batch:v1')).toBe(raw);
+  });
+
+  it('corrupt batch storage migrates nothing but still sets the flag', () => {
+    const storage = memStorage({ 'kinetix:bulk-batch:v1': '{oops' });
+    expect(migrateBulkGroupsToWorkspaces(new WorkspaceRegistry(storage), storage)).toEqual({ workspaces: 0, projects: 0, skipped: 0 });
+    expect(storage.getItem(WORKSPACES_MIGRATED_KEY)).not.toBeNull();
   });
 });

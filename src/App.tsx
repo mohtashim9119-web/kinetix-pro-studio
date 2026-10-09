@@ -4,6 +4,7 @@
  */
 
 import { useState, useRef, useEffect, useLayoutEffect, useMemo, useCallback, useSyncExternalStore, ChangeEvent, lazy, Suspense, type ReactElement } from 'react';
+import { createPortal } from 'react-dom';
 import { 
   Play, 
   Pause, 
@@ -426,7 +427,8 @@ const DiagnosticLogModal = lazy(() =>
 import { Timeline } from './components/Timeline';
 import { PreviewStage, type AutoGradeSampler, type PreviewStageHandle } from './components/PreviewStage';
 import { SpeedBadge, SPEED_LADDER } from './components/SpeedBadge';
-import { ProjectDashboard } from './components/ProjectDashboard';
+import { ProjectDashboard, type DashboardLeftTab } from './components/ProjectDashboard';
+import { workspaceRegistry } from './components/workspaceRegistry';
 import { BulkProjectsModal } from './components/BulkProjectsModal';
 import { BulkExportModal, BulkExportRunningNotice } from './components/BulkExportModal';
 import { BulkExportHost } from './components/BulkExportHost';
@@ -2191,6 +2193,19 @@ export default function App() {
   useEffect(() => { writeBulkExportDrawerOpen(exportMounted && !exportHidden); }, [exportMounted, exportHidden]);
   const bulkDrawerOpen = bulkMounted && !bulkHidden;
   const exportDrawerOpen = exportMounted && !exportHidden;
+  // Dashboard revamp — the dashboard's permanent left panel. Bulk Sync (and
+  // Bulk Export) stay mounted HERE, exactly as long as the old drawers did
+  // (from first open until reload), so their background work never depends
+  // on which tab is showing. Their content renders through a portal into a
+  // stable host element that the tab's pane adopts while the dashboard is up.
+  const [dashboardLeftTab, setDashboardLeftTab] = useState<DashboardLeftTab>(() => (bulkMounted ? 'bulk-sync' : 'workspaces'));
+  const [bulkSyncPaneHost] = useState<HTMLElement | null>(() => (typeof document === 'undefined' ? null : document.createElement('div')));
+  useEffect(() => {
+    if (dashboardLeftTab !== 'bulk-sync') return;
+    setBulkHidden(false);
+    setBulkMounted(true);
+  }, [dashboardLeftTab]);
+  const bulkSyncVisible = showDashboard && dashboardLeftTab === 'bulk-sync';
   const openBulkDrawer = useCallback(() => {
     setExportHidden(true);
     setBulkHidden(false);
@@ -6904,7 +6919,10 @@ export default function App() {
       onOpenAppSettings={() => setShowAppSettingsModal(true)}
       onAssetCleanupFailed={showToast}
       parseProjectData={parseProjectData}
-      bulkDockInset={(bulkDrawerOpen || exportDrawerOpen) && bulkDockWide ? BULK_DRAWER_WIDTH : 0}
+      bulkDockInset={exportDrawerOpen && bulkDockWide ? BULK_DRAWER_WIDTH : 0}
+      leftTab={dashboardLeftTab}
+      onLeftTabChange={setDashboardLeftTab}
+      paneHosts={{ 'bulk-sync': bulkSyncPaneHost }}
       metasVersion={dashboardVersion}
       bulkOpen={bulkMounted}
       onProjectsDeleted={dropDeletedFromEditor}
@@ -8124,26 +8142,25 @@ export default function App() {
           onClose={() => setExportHidden(true)}
         />
       )}
-      {bulkMounted && (
+      {bulkMounted && bulkSyncPaneHost && createPortal(
         <BulkProjectsModal
-          hidden={bulkHidden || !showDashboard}
-          docked={showDashboard && bulkDockWide}
+          hidden={!bulkSyncVisible}
           createBlankProject={makeDefaultProject}
           parseProjectData={parseProjectData}
           onProjectsCreated={() => setDashboardVersion(v => v + 1)}
-          onOpenProject={id => { userNavSeqRef.current += 1; setBulkHidden(true); void handleSwitchProject(id); }}
+          onOpenProject={id => { userNavSeqRef.current += 1; void handleSwitchProject(id); }}
           onFinishRow={id => {
             userNavSeqRef.current += 1;
-            setBulkHidden(true);
             if (!bulkBatchRunner(parseProjectData).finishNow(id)) void handleSwitchProject(id);
           }}
-          onClose={() => setBulkHidden(true)}
           onProjectsDeleted={(ids, failures) => {
             dropDeletedFromEditor(ids);
+            workspaceRegistry().forget(ids);
             setDashboardVersion(v => v + 1);
             if (failures.length > 0) showToast(`The project is gone, but some of its files could not be cleaned up on disk. (${failures.join('; ')})`);
           }}
-        />
+        />,
+        bulkSyncPaneHost,
       )}
       {showNewProjectModal && (
         <NewProjectModal

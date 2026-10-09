@@ -111,3 +111,59 @@ describe('dashboard — two fixed panels', () => {
     expect(Array.from(right.querySelectorAll('button')).some(b => b.textContent?.includes('New Project'))).toBe(true);
   });
 });
+
+describe('dashboard — tab content App keeps mounted (Bulk Sync / Bulk Export)', () => {
+  it('the pane adopts App\'s stable host element; unmounting the dashboard (editor up) only detaches it', async () => {
+    const host = document.createElement('div');
+    const content = document.createElement('p');
+    content.dataset.testid = 'portaled-content';
+    host.appendChild(content);
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+    await act(async () => {
+      root.render(
+        <ProjectDashboard
+          currentProjectId={null}
+          onSelectProject={() => {}}
+          onNewProject={() => {}}
+          onOpenAppSettings={() => {}}
+          leftTab="bulk-sync"
+          paneHosts={{ 'bulk-sync': host }}
+        />,
+      );
+    });
+    expect(q('dashboard-left-pane-bulk-sync')!.contains(content)).toBe(true);
+    act(() => root.unmount());
+    expect(host.isConnected).toBe(false);
+    expect(host.firstChild).toBe(content);
+    // afterEach unmounts again: give it a fresh root.
+    root = createRoot(container);
+  });
+
+  it('a controlled left tab reports clicks and follows the prop', async () => {
+    const seen: string[] = [];
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+    const render = async (tab: 'workspaces' | 'bulk-sync' | 'bulk-export'): Promise<void> => {
+      await act(async () => {
+        root.render(
+          <ProjectDashboard
+            currentProjectId={null}
+            onSelectProject={() => {}}
+            onNewProject={() => {}}
+            onOpenAppSettings={() => {}}
+            leftTab={tab}
+            onLeftTabChange={t => seen.push(t)}
+          />,
+        );
+      });
+    };
+    await render('workspaces');
+    await act(async () => { (q('dashboard-left-tab-bulk-export') as HTMLButtonElement).click(); });
+    expect(seen).toEqual(['bulk-export']);
+    await render('bulk-export');
+    expect(q('dashboard-left-tab-bulk-export')!.getAttribute('aria-selected')).toBe('true');
+  });
+});

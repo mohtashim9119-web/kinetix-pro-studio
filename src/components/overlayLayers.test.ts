@@ -71,7 +71,9 @@ describe('overlay scale', () => {
 
   it('the drawer, the dashboard and every former z-200 modal sit on their ruled layers', () => {
     const src = (rel: string): string => readFileSync(join(SRC, rel), 'utf8');
-    expect(src('components/BulkProjectsModal.tsx')).toContain('${Z.drawer}');
+    // Dashboard revamp — Bulk Sync is a pane inside the dashboard's left panel
+    // (the dashboard's own stacking context), no longer a drawer layer of its own.
+    expect(src('components/BulkProjectsModal.tsx')).not.toContain('${Z.drawer}');
     expect(src('components/BulkExportModal.tsx')).toContain('${Z.drawer}');
     // (Its count popup is gone — Create Group is inline; its confirms are ConfirmDialog, on Z.dialog.)
     expect(src('components/ConfirmDialog.tsx')).toContain('${Z.dialog}');

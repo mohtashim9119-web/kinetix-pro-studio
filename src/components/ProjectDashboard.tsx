@@ -71,6 +71,15 @@ interface Props {
   bulkDockInset?: number;
   /** Ids just deleted, so the editor can drop one it still holds in memory. */
   onProjectsDeleted?: (ids: string[]) => void;
+  /** The left panel's tab, when App owns it (it must know what is showing). */
+  leftTab?: DashboardLeftTab;
+  onLeftTabChange?: (tab: DashboardLeftTab) => void;
+  /**
+   * Stable elements App portals a tab's content into (Bulk Sync, Bulk Export).
+   * The pane adopts its element while the dashboard is up; the content's React
+   * tree lives in App and never remounts with the dashboard or the tab.
+   */
+  paneHosts?: Partial<Record<DashboardLeftTab, HTMLElement | null>>;
 }
 
 /** The dashboard's permanent left panel: three tabs, no close. */
@@ -80,6 +89,19 @@ export const DASHBOARD_LEFT_TABS: readonly { id: DashboardLeftTab; label: string
   { id: 'bulk-sync', label: 'Bulk Sync' },
   { id: 'bulk-export', label: 'Bulk Export' },
 ];
+
+/** Adopts App's stable host element into this pane for as long as it is mounted. */
+function PaneHost({ host }: { host: HTMLElement }): React.ReactElement {
+  const slot = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const el = slot.current;
+    if (!el) return;
+    host.style.display = 'contents';
+    el.appendChild(host);
+    return () => { if (host.parentNode === el) el.removeChild(host); };
+  }, [host]);
+  return <div ref={slot} className="kxd-pane-host" />;
+}
 
 /** One curve for the panel's slide and the dashboard's glide, so they move as one. */
 export const DOCK_MOTION = { ms: 340, ease: 'cubic-bezier(.22, 1, .36, 1)' } as const;
@@ -156,6 +178,9 @@ export function ProjectDashboard({
   bulkOpen = false,
   bulkDockInset = 0,
   onProjectsDeleted,
+  leftTab: controlledLeftTab,
+  onLeftTabChange,
+  paneHosts,
 }: Props): React.ReactElement {
   const [engineHost, setEngineHost] = useState<SyncEngineHost>(readSyncEngineHost);
   useEffect(() => onSyncEngineHostChange(setEngineHost), []);
@@ -164,7 +189,12 @@ export function ProjectDashboard({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [showBulkConfirm, setShowBulkConfirm] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
-  const [leftTab, setLeftTab] = useState<DashboardLeftTab>('workspaces');
+  const [ownLeftTab, setOwnLeftTab] = useState<DashboardLeftTab>('workspaces');
+  const leftTab = controlledLeftTab ?? ownLeftTab;
+  const setLeftTab = (tab: DashboardLeftTab): void => {
+    setOwnLeftTab(tab);
+    onLeftTabChange?.(tab);
+  };
   // The persistent batch: reachable from here until it is cleared, even after a reload.
   const batch = bulkBatchRunner(parseProjectData);
   const batchRows = useSyncExternalStore(l => batch.subscribe(l), () => batch.snapshot());
@@ -347,6 +377,8 @@ export function ProjectDashboard({
           >
             {t.id === 'workspaces' ? (
               <WorkspacesPane projects={workspaceProjects} draftIds={draftIds} />
+            ) : paneHosts?.[t.id] ? (
+              <PaneHost host={paneHosts[t.id]!} />
             ) : (
               <p className="kxd-pane-placeholder">{t.label}</p>
             )}

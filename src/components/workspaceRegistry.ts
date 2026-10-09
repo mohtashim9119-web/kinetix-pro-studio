@@ -14,6 +14,10 @@
 import { useSyncExternalStore } from 'react';
 
 export const WORKSPACES_KEY = 'kinetix:workspaces:v1';
+/** Done-flag (and receipt) of the one-time bulk groups → workspaces migration. */
+export const WORKSPACES_MIGRATED_KEY = 'kinetix:workspaces-migrated:v1';
+/** The bulk batch's storage (owned by services/bulkBatch.ts) — read here, never written. */
+const BULK_BATCH_KEY = 'kinetix:bulk-batch:v1';
 
 export interface Workspace {
   id: string;
@@ -154,11 +158,79 @@ export class WorkspaceRegistry {
   }
 }
 
+export interface WorkspaceMigrationResult {
+  /** Workspaces created, one per bulk group. */
+  workspaces: number;
+  /** Projects (draft and built rows) placed into them. */
+  projects: number;
+  /** Rows left where they were: already in a workspace, or in an earlier group. */
+  skipped: number;
+}
+
+/**
+ * One time only: every bulk group (the old drawer's group UI) becomes a
+ * workspace with the same name and members. Guarded by a done-flag so it
+ * never reruns, even if groups appear again later (the runner still keeps
+ * internal groups as its creation batches — they are no longer shown).
+ * Reads the bulk batch's stored groups; never writes them.
+ */
+export function migrateBulkGroupsToWorkspaces(
+  registry: WorkspaceRegistry,
+  storage: Pick<Storage, 'getItem' | 'setItem'> | undefined = defaultStorage(),
+): WorkspaceMigrationResult | null {
+  try {
+    if (!storage || storage.getItem(WORKSPACES_MIGRATED_KEY) !== null) return null;
+  } catch { return null; }
+  const result: WorkspaceMigrationResult = { workspaces: 0, projects: 0, skipped: 0 };
+  let groups: { name?: unknown; rowIds?: unknown }[] = [];
+  try {
+    const raw = storage.getItem(BULK_BATCH_KEY);
+    const parsed = raw ? JSON.parse(raw) as { groups?: unknown } : null;
+    if (Array.isArray(parsed?.groups)) groups = parsed!.groups as typeof groups;
+  } catch { groups = []; }
+  const placed = new Set(registry.snapshot().flatMap(w => w.projectIds));
+  for (const g of groups) {
+    if (!g || !Array.isArray(g.rowIds)) continue;
+    const ids = (g.rowIds as unknown[]).filter((id): id is string => typeof id === 'string');
+    const members = ids.filter(id => !placed.has(id));
+    result.skipped += ids.length - members.length;
+    const ws = registry.create(typeof g.name === 'string' ? g.name : '');
+    registry.assign(members, ws.id);
+    members.forEach(id => placed.add(id));
+    result.workspaces += 1;
+    result.projects += members.length;
+  }
+  try {
+    storage.setItem(WORKSPACES_MIGRATED_KEY, JSON.stringify({ at: Date.now(), ...result }));
+  } catch { /* the flag could not be written: the next boot tries again */ }
+  return result;
+}
+
+/** What the one-time migration did on this machine, or null if it has not run. */
+export function readWorkspaceMigration(
+  storage: Pick<Storage, 'getItem'> | undefined = defaultStorage(),
+): (WorkspaceMigrationResult & { at: number }) | null {
+  try {
+    const raw = storage?.getItem(WORKSPACES_MIGRATED_KEY);
+    return raw ? JSON.parse(raw) as WorkspaceMigrationResult & { at: number } : null;
+  } catch { return null; }
+}
+
 let shared: WorkspaceRegistry | null = null;
 
-/** The app's registry (localStorage-backed). Tests construct their own. */
+/** The app's registry (localStorage-backed). Tests construct their own. The
+ *  one-time groups → workspaces migration runs before anyone reads it. */
 export function workspaceRegistry(): WorkspaceRegistry {
-  if (!shared) shared = new WorkspaceRegistry();
+  if (!shared) {
+    shared = new WorkspaceRegistry();
+    const migrated = migrateBulkGroupsToWorkspaces(shared);
+    if (migrated) {
+      console.info(
+        `[workspaces] migrated bulk groups → workspaces: ${migrated.workspaces} workspace(s), ` +
+          `${migrated.projects} project(s), ${migrated.skipped} skipped`,
+      );
+    }
+  }
   return shared;
 }
 

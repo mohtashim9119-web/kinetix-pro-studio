@@ -80,6 +80,7 @@
 .kxd-tab:focus-visible { outline: 2px solid var(--kxd-accent-hi); outline-offset: 1px; }
 .kxd-left-pane { flex: 1; min-height: 0; display: flex; flex-direction: column; border-top: 1px solid var(--kxd-line); }
 .kxd-left-pane[hidden] { display: none; }
+.kxd-pane-host { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .kxd-pane-placeholder {
   margin: 20px; padding: 32px 16px; text-align: center;
   border: 1px dashed var(--kxd-line-strong); border-radius: var(--kxd-radius-md);

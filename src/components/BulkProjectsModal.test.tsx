@@ -5,7 +5,9 @@
  */
 
 // Wave 3 U7.5 — the Bulk Projects modal: rows, slot state, the batch gate,
-// per-row phase / cancel / open, close-does-not-cancel.
+// per-row phase / cancel / open, hide-does-not-cancel.
+// Dashboard revamp Stage 3 — it is now the Bulk Sync tab's pane: no close
+// button, no group UI; rows show under workspace tabs (All + each workspace).
 
 import React from 'react';
 import { act } from 'react-dom/test-utils';
@@ -43,6 +45,7 @@ import { BulkProjectsModal } from './BulkProjectsModal';
 import { BulkRowStore, type BulkRowDeps } from '../services/bulkRows';
 import { cloudSyncQueue, queueProjectsForCloudSync } from '../services/bulkSyncQueue';
 import { BulkBatchRunner } from '../services/bulkBatch';
+import { WorkspaceRegistry } from './workspaceRegistry';
 import { classifyAndIngestBundleZip } from '../services/bundleIngest';
 import type { StagedFiles } from './DropZonePanel';
 
@@ -102,15 +105,26 @@ const modal = (h: Harness, count: number, extra: Partial<React.ComponentProps<ty
   if (count > 0) h.store.init(count);
   return modalEl(h, extra);
 };
+const wsStorage = (): Storage => {
+  const m = new Map<string, string>();
+  return {
+    getItem: k => m.get(k) ?? null, setItem: (k, v) => { m.set(k, String(v)); }, removeItem: k => { m.delete(k); },
+    clear: () => m.clear(), key: i => [...m.keys()][i] ?? null, get length() { return m.size; },
+  };
+};
+/** One isolated workspace registry per test (never the app's localStorage one). */
+let workspaces: WorkspaceRegistry;
 const modalEl = (h: Harness, extra: Partial<React.ComponentProps<typeof BulkProjectsModal>>): React.ReactElement => (
   <BulkProjectsModal
     createBlankProject={blank} parseProjectData={async () => []}
-    onOpenProject={() => {}} onClose={() => {}} store={h.store} runner={makeRunner()} {...extra}
+    onOpenProject={() => {}} store={h.store} runner={makeRunner()} workspaces={workspaces} {...extra}
   />
 );
-/** The Build Timeline button of the group holding this row. */
-const buildFor = (host: HTMLElement, rowId: string): HTMLButtonElement =>
-  q(host, `bulk-row-${rowId}`)!.closest('section')!.querySelector('[data-testid^="bulk-build-"]') as HTMLButtonElement;
+/** The pane's one Build Timeline (it builds the rows of the selected workspace tab). */
+const buildFor = (host: HTMLElement, _rowId: string): HTMLButtonElement => q(host, 'bulk-build') as HTMLButtonElement;
+const clickWs = async (host: HTMLElement, id: string): Promise<void> => {
+  await act(async () => { (q(host, `bulk-sync-ws-${id}`) as HTMLButtonElement).click(); });
+};
 const rowIds = (host: HTMLElement): string[] =>
   [...host.querySelectorAll('[data-testid^="bulk-row-"]')].map(el => el.getAttribute('data-testid')!.replace('bulk-row-', ''));
 const clickTab = async (host: HTMLElement, tab: 'new' | 'failed-paused' | 'finished'): Promise<void> => {
@@ -118,6 +132,7 @@ const clickTab = async (host: HTMLElement, tab: 'new' | 'failed-paused' | 'finis
 };
 
 beforeEach(() => {
+  workspaces = new WorkspaceRegistry(wsStorage());
   finishAtOnce = false;
   cloudSyncQueue.clearFinished();
   try { localStorage.removeItem('kinetix:bulk-drawer-tab:v1'); } catch { /* ignore */ }
@@ -174,14 +189,15 @@ describe('BulkProjectsModal — draft rows', () => {
     expect((await chip()).getAttribute('data-filled')).toBe('true');
   });
 
-  it('a group\'s Add project appends a row to it, and stops at 30', async () => {
+  it('Add project appends a row to the newest batch with room, and stops at 30', async () => {
     const h = store();
     const runner = makeRunner();
-    const g = runner.createGroup(h.store.createDrafts(29))!;
+    runner.createGroup(h.store.createDrafts(29));
     const { host } = await mount(modal(h, 0, { runner }));
-    await act(async () => { (q(host, `bulk-add-${g.id}`) as HTMLButtonElement).click(); });
+    await act(async () => { (q(host, 'bulk-add') as HTMLButtonElement).click(); });
     expect(rowIds(host)).toHaveLength(30);
-    expect((q(host, `bulk-add-${g.id}`) as HTMLButtonElement).disabled).toBe(true);
+    expect(runner.groups()[0]!.rowIds).toHaveLength(30);
+    expect((q(host, 'bulk-add') as HTMLButtonElement).disabled).toBe(true);
   });
 
   it('wrong files can be removed one by one, or all at once (Clear files), and a whole row can be removed', async () => {
@@ -208,8 +224,8 @@ describe('BulkProjectsModal — draft rows', () => {
     cloudSyncQueue.clearFinished();
     const h = store();
     const onCreated = vi.fn();
-    const onClose = vi.fn();
-    const { host } = await mount(modal(h, 5, { onProjectsCreated: onCreated, onClose }));
+    const runner = makeRunner();
+    const { root, host } = await mount(modal(h, 5, { onProjectsCreated: onCreated, runner }));
     const ids = rowIds(host);
     await act(async () => {
       await h.store.addFiles(ids[0]!, fourFiles()); h.store.setTypedName(ids[0]!, 'Alpine');
@@ -224,9 +240,10 @@ describe('BulkProjectsModal — draft rows', () => {
     expect(q(host, `bulk-status-${ids[0]}`)!.textContent).toBe('Transcribing on the cloud…');
     // Files stay editable until the first successful finish.
     expect((q(host, `bulk-name-${ids[0]}`) as HTMLInputElement).disabled).toBe(false);
-    // Hiding: every row stays (U5 — nothing clears by itself); running jobs are not touched.
-    await act(async () => { (q(host, 'bulk-close') as HTMLButtonElement).click(); });
-    await vi.waitFor(() => expect(onClose).toHaveBeenCalled());
+    // Hiding (another tab, or the editor): every row stays (U5 — nothing clears by itself); running jobs are not touched.
+    expect(q(host, 'bulk-close')).toBeNull();
+    await act(async () => { root.render(modal(h, 0, { onProjectsCreated: onCreated, runner, hidden: true })); });
+    expect(q(host, 'bulk-modal')!.getAttribute('data-hidden')).toBe('true');
     expect(h.purged).toEqual([]);
     expect(h.store.snapshot().map(r => r.projectId)).toEqual(ids);
     expect(cloudSyncQueue.snapshot().items[0]!.status).toBe('running');
@@ -274,12 +291,11 @@ describe('BulkProjectsModal — draft rows', () => {
     finishAtOnce = false;
   });
 
-  it('hiding the drawer keeps it mounted and off the editor', async () => {
+  it('hidden (another tab, or the editor) keeps the pane mounted with its rows', async () => {
     const h = store();
     const { host } = await mount(modal(h, 1, { hidden: true }));
     const drawer = q(host, 'bulk-modal')!;
     expect(drawer.getAttribute('data-hidden')).toBe('true');
-    expect(drawer.className).toContain('pointer-events-none');
     expect(drawer.getAttribute('aria-hidden')).toBe('true');
     expect(rowIds(host)).toHaveLength(1);
   });
@@ -306,11 +322,11 @@ describe('BulkProjectsModal — draft rows', () => {
     await act(async () => { cloudSyncQueue.cancelAll(); });
   });
 
-  it('create a group inline: a 2–30 field and "Create Group" — the group appears at once, no popup', async () => {
+  it('create rows inline: a 2–30 field and "Create" — the rows appear at once, no popup, no group header', async () => {
     const h = store();
     const runner = makeRunner();
     const { host } = await mount(modal(h, 0, { runner }));
-    expect(q(host, 'bulk-create-heading')!.textContent).toBe('New group');
+    expect(q(host, 'bulk-create-heading')!.textContent).toBe('New projects');
     const field = q(host, 'bulk-create-count') as HTMLInputElement;
     const create = q(host, 'bulk-create') as HTMLButtonElement;
     expect(field.getAttribute('aria-label')).toBe('Number of projects');
@@ -321,67 +337,63 @@ describe('BulkProjectsModal — draft rows', () => {
       expect(create.disabled, `"${bad}" must not create`).toBe(true);
     }
     await setValue(field, '4');
-    expect(create.textContent).toBe('Create Group');
+    expect(create.textContent).toBe('Create');
     await act(async () => { create.click(); });
     expect(document.querySelector('[data-testid="bulk-count-input"]')).toBeNull();
     expect(document.querySelector('[role="dialog"][aria-modal="true"]')).toBeNull();
     expect(runner.groups()).toHaveLength(1);
-    const group = runner.groups()[0]!;
-    expect(q(host, `bulk-group-section-${group.id}`)!.querySelectorAll('[data-testid^="bulk-row-"]')).toHaveLength(4);
-    // A group's own "Add project" adds a row to THAT group.
-    await act(async () => { (q(host, `bulk-add-${group.id}`) as HTMLButtonElement).click(); });
+    expect(rowIds(host)).toHaveLength(4);
+    expect(host.querySelector('[data-testid^="bulk-group-section-"]')).toBeNull();
+    // "Add project" adds a row to the newest batch.
+    await act(async () => { (q(host, 'bulk-add') as HTMLButtonElement).click(); });
     expect(runner.groups()[0]!.rowIds).toHaveLength(5);
   });
 
-  it('at most 5 groups exist at a time: at 5, "Create Group" is off and says why', async () => {
+  it('at most 5 unfinished batches at a time (runner rule): at 5, "Create" is off and says why', async () => {
     const h = store();
     const runner = makeRunner();
     for (let g = 0; g < 5; g += 1) runner.createGroup([`g${g}a`, `g${g}b`]);
     const { host } = await mount(modal(h, 0, { runner }));
     expect((q(host, 'bulk-create') as HTMLButtonElement).disabled).toBe(true);
-    expect(host.textContent).toContain('Up to 5 groups');
+    expect(host.textContent).toContain('Up to 5 unfinished batches');
   });
 
-  it('a group can be renamed in place (Enter saves, Escape cancels)', async () => {
+  it('the group UI is gone: no group header, rename, collapse, per-group Build / Cancel / Clear', async () => {
     const h = store();
     const runner = makeRunner();
     const g = runner.createGroup(h.store.createDrafts(2))!;
     const { host } = await mount(modal(h, 0, { runner }));
-    await act(async () => { (q(host, `bulk-group-rename-${g.id}`) as HTMLButtonElement).click(); });
-    const input = q(host, `bulk-group-name-${g.id}`) as HTMLInputElement;
-    expect(input.value).toBe('Group 1');
-    await setValue(input, 'Client A');
-    await act(async () => { input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); });
-    expect(runner.groups()[0]!.name).toBe('Client A');
-    expect(q(host, `bulk-group-${g.id}`)!.textContent).toContain('Client A');
-    await act(async () => { (q(host, `bulk-group-rename-${g.id}`) as HTMLButtonElement).click(); });
-    const again = q(host, `bulk-group-name-${g.id}`) as HTMLInputElement;
-    await setValue(again, 'Nope');
-    await act(async () => { again.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); });
-    expect(runner.groups()[0]!.name).toBe('Client A');
+    for (const id of [`bulk-group-section-${g.id}`, `bulk-group-${g.id}`, `bulk-group-rename-${g.id}`, `bulk-group-toggle-${g.id}`,
+      `bulk-build-${g.id}`, `bulk-add-${g.id}`, `bulk-cancel-group-${g.id}`, `bulk-clear-finished-${g.id}`]) {
+      expect(q(host, id), id).toBeNull();
+    }
+    expect(host.textContent).not.toContain('Group 1');
   });
 
-  it('each group has its own Build Timeline: it builds only that group\'s rows; there is no bottom Build or Cancel-all button and no intro text', async () => {
+  it('one Build Timeline builds only the rows of the selected workspace tab', async () => {
     finishAtOnce = false;
     cloudSyncQueue.clearFinished();
     const h = store();
     const runner = makeRunner();
     const g1 = runner.createGroup(h.store.createDrafts(2))!;
     const g2 = runner.createGroup(h.store.createDrafts(2))!;
+    const ws = workspaces.create('Channel One');
+    workspaces.assign([g1.rowIds[0]!], ws.id);
     const { host } = await mount(modal(h, 0, { runner }));
-    expect(q(host, 'bulk-build')).toBeNull();
-    expect(q(host, 'bulk-cancel-all')).toBeNull();
     expect(host.textContent).not.toContain('Drop files onto a row');
     await act(async () => {
       await h.store.addFiles(g1.rowIds[0]!, fourFiles()); h.store.setTypedName(g1.rowIds[0]!, 'One');
       await h.store.addFiles(g2.rowIds[0]!, fourFiles()); h.store.setTypedName(g2.rowIds[0]!, 'Two');
     });
-    const b1 = q(host, `bulk-build-${g1.id}`) as HTMLButtonElement;
-    expect(b1.textContent).toBe('Build Timeline');
-    await act(async () => { b1.click(); });
+    await clickWs(host, ws.id);
+    expect(rowIds(host)).toEqual([g1.rowIds[0]]);
+    const b = q(host, 'bulk-build') as HTMLButtonElement;
+    expect(b.textContent).toBe('Build Timeline');
+    await act(async () => { b.click(); });
     await vi.waitFor(() => expect(h.created).toEqual(['One']));
     expect(runner.snapshot().map(r => r.id)).toEqual([g1.rowIds[0]]);
-    expect((q(host, `bulk-build-${g2.id}`) as HTMLButtonElement).disabled).toBe(false);
+    await clickWs(host, 'all');
+    expect((q(host, 'bulk-build') as HTMLButtonElement).disabled).toBe(false);
     await act(async () => { cloudSyncQueue.cancelAll(); });
   }, 15_000);
 
@@ -410,34 +422,88 @@ const seededRunner = (rows: { id: string; name: string; phase: string }[], group
   return new BulkBatchRunner({ queue: cloudSyncQueue, enqueue: () => {}, exists: () => true, storage: disk });
 };
 
-describe('Bulk UI rebuild U2 — left-edge drawer with group headers', () => {
-  it('the drawer sits on the LEFT edge and slides out to the left when hidden', async () => {
+describe('Dashboard revamp Stage 3 — the Bulk Sync tab pane', () => {
+  it('sits in flow inside its tab (not a fixed left-edge drawer), with no close button', async () => {
     const h = store();
     const { root, host } = await mount(modal(h, 0));
-    const drawer = q(host, 'bulk-modal')!;
-    expect(drawer.className).toContain('left-0');
-    expect(drawer.className).not.toContain('right-0');
+    const pane = q(host, 'bulk-modal')!;
+    expect(pane.className).not.toContain('fixed');
+    expect(pane.className).not.toContain('left-0');
+    expect(q(host, 'bulk-close')).toBeNull();
+    expect(host.querySelector('[aria-label="Hide"]')).toBeNull();
     await act(async () => { root.render(modal(h, 0, { hidden: true })); });
-    expect(q(host, 'bulk-modal')!.className).toContain('-translate-x-full');
+    expect(q(host, 'bulk-modal')!.className).not.toContain('-translate-x-full');
   });
 
-  it('rows render under their group header (ring, n/m done, red dot); collapse hides the rows and persists', async () => {
+  it('workspace tabs: All + each workspace; rows show under their project\'s workspace, All shows everything', async () => {
     const h = store();
     const runner = seededRunner(
-      [{ id: 'a', name: 'A', phase: 'done' }, { id: 'b', name: 'B', phase: 'failed' }, { id: 'c', name: 'C', phase: 'done' }, { id: 'd', name: 'D', phase: 'done' }],
-      [{ id: 'g1', name: 'Client A', collapsed: false, rowIds: ['a', 'b'] }, { id: 'g2', name: 'Client B', collapsed: false, rowIds: ['c', 'd'] }],
+      [{ id: 'a', name: 'A', phase: 'cloud' }, { id: 'b', name: 'B', phase: 'queued' }, { id: 'c', name: 'C', phase: 'cloud' }],
+      [{ id: 'g1', name: 'Old group', collapsed: false, rowIds: ['a', 'b', 'c'] }],
     );
+    const w1 = workspaces.create('Cooking');
+    const w2 = workspaces.create('Travel');
+    workspaces.assign(['a'], w1.id);
+    workspaces.assign(['b'], w2.id);
     const { host } = await mount(modal(h, 0, { runner }));
-    await clickTab(host, 'finished');
-    const g1 = q(host, 'bulk-group-section-g1')!;
-    expect(g1.querySelector('[data-testid="bulk-group-count-g1"]')!.textContent).toBe('1/2 done');
-    expect(g1.querySelector('[data-testid="bulk-failed-dot"]')!.textContent).toBe('1');
+    const tabs = [...q(host, 'bulk-sync-ws-tabs')!.querySelectorAll('[role="tab"]')].map(t => t.textContent);
+    expect(tabs).toEqual(['All', 'Cooking', 'Travel']);
+    expect(q(host, 'bulk-sync-ws-all')!.getAttribute('aria-selected')).toBe('true');
+    expect(rowIds(host)).toEqual(['a', 'b', 'c']);
+    await clickWs(host, w1.id);
+    expect(rowIds(host)).toEqual(['a']);
+    await clickWs(host, w2.id);
+    expect(rowIds(host)).toEqual(['b']);
+    await clickWs(host, 'all');
+    expect(rowIds(host)).toEqual(['a', 'b', 'c']);
+  });
+
+  it('NEW / FAILED-PAUSED / FINISHED are scoped to the selected workspace tab', async () => {
+    const h = store();
+    const runner = seededRunner(
+      [{ id: 'a', name: 'A', phase: 'failed' }, { id: 'b', name: 'B', phase: 'failed' }, { id: 'c', name: 'C', phase: 'done' }, { id: 'd', name: 'D', phase: 'done' }],
+      [{ id: 'g1', name: 'G', collapsed: false, rowIds: ['a', 'b', 'c', 'd'] }],
+    );
+    const w = workspaces.create('Cooking');
+    workspaces.assign(['a', 'c'], w.id);
+    const { host } = await mount(modal(h, 0, { runner }));
     await clickTab(host, 'failed-paused');
-    expect(q(host, 'bulk-group-section-g1')!.querySelectorAll('[data-testid^="bulk-row-"]')).toHaveLength(1);
-    expect(q(host, 'bulk-group-section-g2')!.querySelectorAll('[data-testid^="bulk-row-"]')).toHaveLength(0);
-    await act(async () => { (q(host, 'bulk-group-toggle-g1') as HTMLButtonElement).click(); });
-    expect(q(host, 'bulk-group-section-g1')!.querySelectorAll('[data-testid^="bulk-row-"]')).toHaveLength(0);
-    expect(runner.groups()[0]!.collapsed).toBe(true);
+    expect(rowIds(host)).toEqual(['a', 'b']);
+    await clickWs(host, w.id);
+    expect(rowIds(host)).toEqual(['a']);
+    await clickTab(host, 'finished');
+    expect(rowIds(host)).toEqual(['c']);
+    await clickTab(host, 'new');
+    expect(q(host, 'bulk-tab-empty')!.textContent).toBe('No bulk projects in this workspace yet.');
+  });
+
+  it('rows created (or added) under a workspace tab belong to that workspace', async () => {
+    const h = store();
+    const runner = makeRunner();
+    const w = workspaces.create('Cooking');
+    const { host } = await mount(modal(h, 0, { runner }));
+    await clickWs(host, w.id);
+    await setValue(q(host, 'bulk-create-count') as HTMLInputElement, '2');
+    await act(async () => { (q(host, 'bulk-create') as HTMLButtonElement).click(); });
+    const ids = runner.groups()[0]!.rowIds;
+    expect(workspaces.snapshot()[0]!.projectIds).toEqual(ids);
+    expect(rowIds(host)).toEqual(ids);
+    await act(async () => { (q(host, 'bulk-add') as HTMLButtonElement).click(); });
+    expect(workspaces.snapshot()[0]!.projectIds).toHaveLength(3);
+    await clickWs(host, 'all');
+    expect(rowIds(host)).toHaveLength(3);
+  });
+
+  it('a selected workspace that is deleted falls back to All', async () => {
+    const h = store();
+    const runner = seededRunner([{ id: 'a', name: 'A', phase: 'cloud' }], [{ id: 'g1', name: 'G', collapsed: false, rowIds: ['a'] }]);
+    const w = workspaces.create('Gone soon');
+    const { host } = await mount(modal(h, 0, { runner }));
+    await clickWs(host, w.id);
+    expect(rowIds(host)).toEqual([]);
+    await act(async () => { workspaces.remove(w.id); });
+    expect(q(host, 'bulk-sync-ws-all')!.getAttribute('aria-selected')).toBe('true');
+    expect(rowIds(host)).toEqual(['a']);
   });
 });
 
@@ -536,19 +602,25 @@ describe('Bulk UI rebuild U5 — delete and persist', () => {
     expect(onProjectsDeleted).toHaveBeenCalledWith(['p2'], []);
   });
 
-  it('each group has its own "Clear finished", shown only when it has finished rows; it clears only that group', async () => {
+  it('"Clear finished" shows only when the scope has finished rows; under a workspace it clears only that workspace\'s', async () => {
     const h = store();
     const runner = seededRunner(
       [{ id: 'a', name: 'A', phase: 'done' }, { id: 'b', name: 'B', phase: 'cloud' }, { id: 'c', name: 'C', phase: 'done' }, { id: 'd', name: 'D', phase: 'queued' }],
       [{ id: 'g1', name: 'One', collapsed: false, rowIds: ['a', 'b'] }, { id: 'g2', name: 'Two', collapsed: false, rowIds: ['c', 'd'] }],
     );
+    const w = workspaces.create('Cooking');
+    workspaces.assign(['a', 'b'], w.id);
     const { host } = await mount(modal(h, 0, { runner }));
-    await clickTab(host, 'finished');
     expect(q(host, 'bulk-clear-finished')).toBeNull();
-    await act(async () => { (q(host, 'bulk-clear-finished-g1') as HTMLButtonElement).click(); });
+    await clickTab(host, 'finished');
+    await clickWs(host, w.id);
+    await act(async () => { (q(host, 'bulk-clear-finished') as HTMLButtonElement).click(); });
     expect(runner.snapshot().map(r => r.id)).toEqual(['b', 'c', 'd']);
-    expect(q(host, 'bulk-clear-finished-g1')).toBeNull();
-    expect(q(host, 'bulk-clear-finished-g2')).not.toBeNull();
+    expect(q(host, 'bulk-clear-finished')).toBeNull();
+    await clickWs(host, 'all');
+    expect(q(host, 'bulk-clear-finished')).not.toBeNull();
+    await act(async () => { (q(host, 'bulk-clear-finished') as HTMLButtonElement).click(); });
+    expect(runner.snapshot().map(r => r.id)).toEqual(['b', 'd']);
   });
 });
 
@@ -576,7 +648,6 @@ describe('1.3.0 landing — the background pipeline drives drawer rows to ready'
     expect(open.disabled).toBe(false);
     expect(onOpen).not.toHaveBeenCalled();
     expect(onFinishRow).not.toHaveBeenCalled();
-    expect(q(host, `bulk-group-count-${g.id}`)!.textContent).toBe('1/2 done');
     finishAtOnce = false;
   }, 15_000);
 });
@@ -710,15 +781,13 @@ describe('1.3.1 — row files, message line, docking', () => {
     expect(status()).toBe(first);
   });
 
-  it('docked beside the dashboard it is a flat column; over content it casts a shadow', async () => {
+  it('in its tab it is a flat column (no drawer shadow)', async () => {
     const h = store();
-    const { root, host } = await mount(modal(h, 0, { docked: true }));
+    const { host } = await mount(modal(h, 0));
     expect(q(host, 'bulk-modal')!.className).not.toContain('shadow-[');
-    await act(async () => { root.render(modal(h, 0, { docked: false })); });
-    expect(q(host, 'bulk-modal')!.className).toContain('shadow-[');
   });
 
-  it('P10: a running group shows Cancel all and Stop all; there is still no bottom Cancel-all', async () => {
+  it('P10: running rows in scope show Cancel all and Stop all; there is still no bottom Cancel-all', async () => {
     finishAtOnce = false;
     cloudSyncQueue.clearFinished();
     const h = store();
@@ -729,11 +798,11 @@ describe('1.3.1 — row files, message line, docking', () => {
       await h.store.addFiles(g.rowIds[0]!, fourFiles());
       h.store.setTypedName(g.rowIds[0]!, 'One');
     });
-    await act(async () => { (q(host, `bulk-build-${g.id}`) as HTMLButtonElement).click(); });
+    await act(async () => { (q(host, 'bulk-build') as HTMLButtonElement).click(); });
     await vi.waitFor(() => expect(q(host, 'bulk-stop-all')).not.toBeNull());
-    expect(q(host, `bulk-cancel-group-${g.id}`)).not.toBeNull();
+    expect(q(host, 'bulk-cancel-scope')).not.toBeNull();
     expect(q(host, 'bulk-cancel-all')).toBeNull();
-    await act(async () => { (q(host, `bulk-cancel-group-${g.id}`) as HTMLButtonElement).click(); });
+    await act(async () => { (q(host, 'bulk-cancel-scope') as HTMLButtonElement).click(); });
     await vi.waitFor(() => expect(q(host, 'bulk-stop-all')).toBeNull());
   }, 15_000);
 
@@ -749,7 +818,7 @@ describe('1.3.1 — row files, message line, docking', () => {
       await h.store.addFiles(id, fourFiles());
       h.store.setTypedName(id, 'One');
     });
-    await act(async () => { (q(host, `bulk-build-${g.id}`) as HTMLButtonElement).click(); });
+    await act(async () => { (q(host, 'bulk-build') as HTMLButtonElement).click(); });
     await vi.waitFor(() => expect(q(host, `bulk-cancel-${id}`)).not.toBeNull());
     await act(async () => { (q(host, `bulk-cancel-${id}`) as HTMLButtonElement).click(); });
     await clickTab(host, 'failed-paused');
@@ -768,14 +837,13 @@ describe('1.3.1 — row files, message line, docking', () => {
 });
 
 describe('bulk drawer tabs — T1 T2 T3 T4 T5', () => {
-  it('T1: NEW / FAILED-PAUSED / FINISHED render as horizontal tabs under each group header', async () => {
+  it('T1: NEW / FAILED-PAUSED / FINISHED render once, as horizontal tabs under the workspace tabs', async () => {
     const h = store();
     const { host } = await mount(modal(h, 2));
-    const section = host.querySelector('[data-testid^="bulk-group-section-"]')!;
-    const tabs = section.querySelector('[data-testid="bulk-drawer-tabs"]')!;
-    const header = section.querySelector('[data-testid="bulk-group-toggle-' + section.getAttribute('data-testid')!.replace('bulk-group-section-', '') + '"]');
-    expect(tabs).not.toBeNull();
-    expect(header && (header.compareDocumentPosition(tabs) & Node.DOCUMENT_POSITION_FOLLOWING)).toBeTruthy();
+    expect(host.querySelectorAll('[data-testid="bulk-drawer-tabs"]')).toHaveLength(1);
+    const tabs = q(host, 'bulk-drawer-tabs')!;
+    const ws = q(host, 'bulk-sync-ws-tabs')!;
+    expect(ws.compareDocumentPosition(tabs) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(tabs.getAttribute('role')).toBe('tablist');
     expect(tabs.className).toMatch(/flex/);
     expect(q(host, 'bulk-tab-new')!.textContent).toBe('NEW');
@@ -796,29 +864,22 @@ describe('bulk drawer tabs — T1 T2 T3 T4 T5', () => {
     expect(rowIds(host)).toEqual(['b']);
     await clickTab(host, 'finished');
     expect(rowIds(host)).toEqual(['c']);
-    expect(q(host, 'bulk-group-section-g1')).not.toBeNull();
   });
 
-  it('T3: selected tab persists in kinetix:bulk-drawer-tab:v1 and collapse is independent', async () => {
+  it('T3: selected tab persists in kinetix:bulk-drawer-tab:v1', async () => {
     const h = store();
     const runner = seededRunner(
       [{ id: 'a', name: 'A', phase: 'queued' }, { id: 'b', name: 'B', phase: 'failed' }],
       [{ id: 'g1', name: 'G', collapsed: false, rowIds: ['a', 'b'] }],
     );
     const { root, host } = await mount(modal(h, 0, { runner }));
-    expect(runner.groups()[0]!.collapsed).toBe(false);
     await clickTab(host, 'failed-paused');
     expect(localStorage.getItem('kinetix:bulk-drawer-tab:v1')).toBe('failed-paused');
-    expect(runner.groups()[0]!.collapsed).toBe(false);
-    await act(async () => { (q(host, 'bulk-group-toggle-g1') as HTMLButtonElement).click(); });
-    expect(runner.groups()[0]!.collapsed).toBe(true);
     await clickTab(host, 'new');
-    expect(runner.groups()[0]!.collapsed).toBe(true);
     await clickTab(host, 'failed-paused');
     await act(async () => { root.unmount(); });
     const again = await mount(modal(h, 0, { runner }));
     expect(q(again.host, 'bulk-tab-failed-paused')!.getAttribute('aria-selected')).toBe('true');
-    expect(runner.groups()[0]!.collapsed).toBe(true);
   });
 
   it('T4: Retry All queues failed|finish-failed|cancelled FIFO without next and without resetting autoRetries; paused stays', async () => {
