@@ -59,14 +59,6 @@ const DRAWER_PALETTE = {
   '--kx-text': '#f2f1ed',
   '--kx-muted': '#a8a8b0',
   '--kx-faint': '#707078',
-  // Row-card contrast ladder: the card is lifted off the pane, fields sink
-  // below the card, buttons and chips rise above it. (Card, fields and
-  // buttons used to share one grey — the disabled look.)
-  '--kx-card-top': '#232327',
-  '--kx-card-bot': '#1b1b1e',
-  '--kx-field': '#0f0f11',
-  '--kx-raised': '#2c2c31',
-  '--kx-raised-hover': '#35353b',
   // The dashboard root thins text (antialiased); the pane's small type needs
   // the platform's normal weight to read crisp.
   WebkitFontSmoothing: 'subpixel-antialiased',
@@ -120,9 +112,9 @@ const FILE_LINE = 'flex items-center gap-2 px-3 py-1 text-[12px]';
 const FILE_KIND = 'w-20 flex-shrink-0 whitespace-nowrap text-[10px] uppercase tracking-widest text-[var(--kx-faint)]';
 const FILE_ICON = 'flex-shrink-0 w-6 h-6 flex items-center justify-center rounded text-[var(--kx-faint)] hover:text-white hover:bg-[var(--kx-hover)] transition-colors';
 const MSG_ARROW = 'w-5 h-6 flex items-center justify-center rounded text-[var(--kx-faint)] hover:text-white hover:bg-[var(--kx-hover)] transition-colors';
-const FIELD = 'bg-[var(--kx-field)] border border-[rgba(255,255,255,.14)] rounded-lg font-semibold text-[var(--kx-text)] shadow-[inset_0_1px_2px_rgba(0,0,0,.5)] placeholder:text-[var(--kx-faint)] placeholder:font-normal outline-none focus:border-[var(--kx-accent-line)] transition-colors disabled:cursor-not-allowed disabled:opacity-70';
-const ROW_BTN = 'flex-shrink-0 flex items-center gap-1.5 h-9 px-3 rounded-lg border border-[rgba(255,255,255,.14)] bg-[var(--kx-raised)] text-[12px] font-semibold text-[var(--kx-text)] shadow-[inset_0_1px_0_rgba(255,255,255,.06),0_1px_2px_rgba(0,0,0,.4)] hover:bg-[var(--kx-raised-hover)] hover:border-[rgba(255,255,255,.24)] transition-colors disabled:bg-transparent disabled:shadow-none disabled:text-[var(--kx-faint)] disabled:cursor-not-allowed disabled:hover:border-[rgba(255,255,255,.14)]';
-const ROW_BTN_SM = 'flex-shrink-0 h-7 px-2.5 rounded-md border border-[rgba(255,255,255,.14)] bg-[var(--kx-raised)] text-[11px] font-semibold text-[var(--kx-text)] hover:bg-[var(--kx-raised-hover)] hover:border-[rgba(255,255,255,.24)] transition-colors';
+const FIELD = 'bg-[var(--kx-bg)] border border-[var(--kx-line-2)] rounded-lg font-semibold text-[var(--kx-text)] placeholder:text-[var(--kx-faint)] placeholder:font-normal outline-none focus:border-[var(--kx-accent-line)] transition-colors disabled:cursor-not-allowed disabled:opacity-70';
+const ROW_BTN = 'flex-shrink-0 flex items-center gap-1.5 h-9 px-3 rounded-lg border border-[var(--kx-line-2)] bg-[var(--kx-surface)] text-[12px] font-semibold text-[var(--kx-text)] hover:bg-[var(--kx-hover)] hover:border-[rgba(255,255,255,.22)] transition-colors disabled:bg-transparent disabled:text-[var(--kx-faint)] disabled:cursor-not-allowed disabled:hover:border-[var(--kx-line-2)]';
+const ROW_BTN_SM = 'flex-shrink-0 h-7 px-2.5 rounded-md border border-[var(--kx-line-2)] bg-[var(--kx-surface)] text-[11px] font-semibold text-[var(--kx-text)] hover:bg-[var(--kx-hover)] hover:border-[rgba(255,255,255,.22)] transition-colors';
 /** Copy for the group-free Bulk Sync tab (BULK_COPY's group sentences no longer apply). */
 const PANE_COPY = {
   countPlaceholder: 'How many new projects? Enter 2–30',
@@ -251,7 +243,7 @@ function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFi
       }}
       className={`kx-bulk-row rounded-xl border p-3.5 transition-colors ${over
         ? 'bg-[var(--kx-accent-soft)] border-[var(--kx-accent-line)]'
-        : 'bg-[linear-gradient(180deg,var(--kx-card-top),var(--kx-card-bot))] border-[rgba(255,255,255,.12)] hover:border-[rgba(255,255,255,.2)]'}`}
+        : 'bg-[var(--kx-panel)] border-[var(--kx-line-2)] hover:border-[rgba(255,255,255,.18)]'}`}
     >
       {/* Row 1 — name, Open, Rebuild, Upload. */}
       <div className="flex items-center gap-2">
@@ -329,7 +321,7 @@ function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFi
             data-filled={row.slots[slot]}
             className={`${CHIP} ${row.slots[slot]
               ? 'bg-[var(--kx-ready-soft)] text-[var(--kx-ready)]'
-              : 'bg-[var(--kx-raised)] text-[#cfcfd6]'}`}
+              : 'bg-[var(--kx-surface)] text-[var(--kx-muted)]'}`}
           >
             <SlotIcon slot={slot} />
             {BULK_COPY.slot[slot]}
@@ -945,7 +937,7 @@ export function BulkProjectsModal({
             ))}
           </div>
         </div>
-        <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar px-5 py-4" data-testid="bulk-groups">
+        <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar px-5 py-4 bg-[var(--kx-surface)]" data-testid="bulk-groups">
           {drawerTab === 'failed-paused' && (
             <button
               type="button"

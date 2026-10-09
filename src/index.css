@@ -148,8 +148,7 @@ body.resizing * {
 .kx-bulk-bar {
   height: 5px;
   border-radius: 999px;
-  /* Sunk below the row card (the bulk pane's field shade) so an empty bar still reads. */
-  background: var(--kx-field, var(--kx-surface-2));
+  background: var(--kx-surface-2);
   overflow: hidden;
 }
 .kx-bulk-bar-fill {
