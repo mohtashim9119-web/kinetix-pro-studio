@@ -5,13 +5,19 @@
 
 // Bulk Export pre-check — run on every not-started (Ready) project as soon as
 // the pane shows, BEFORE the operator clicks Export: a project whose sync log
-// has unresolved actions goes to Blocked. Decided by the sync log alone (the
-// operator's rule) — no media or export-path checks here. View-side only:
-// reads the stored record, never writes, never touches the queue.
+// has unresolved actions — or whose media is really offline in storage — goes
+// to Blocked. Media comes from the same storage seam Start uses (a stored
+// record has no media URLs; log-recorded offline entries are stale snapshots
+// and never block); the rest of the sync-log actions are the newest sync's.
+// No export-path check here. View-side only: reads, never writes, never
+// touches the queue.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { loadProject } from '../services/projectStore';
 import { buildSyncGroups } from '../services/syncLogGroups';
+import { withStorageAvailability } from '../services/bulkExportMedia';
+import { BULK_EXPORT_OFFLINE, preflightBulkExport } from '../services/bulkExportPreflight';
+import type { Project } from '../types';
 
 /** The sync log panel's dismissals (the same store it reads and writes). */
 const SYNC_LOG_DISMISSED_KEY = 'kx-sync-log-dismissed';
@@ -27,28 +33,39 @@ function readDismissed(): Set<string> {
 }
 
 /**
- * Why this project should wait, or null when it is clear — decided by its
- * sync log alone: any unresolved action in its newest sync (the sync log
- * panel's own action groups, minus items the operator marked resolved).
- * Reads only the stored record; never loads media or touches storage.
+ * Why this project should wait, or null when it is clear:
+ *  1. a segment's media is really offline (storage holds no bytes for it) —
+ *     the same availability seam and media check Start uses;
+ *  2. any unresolved action in its newest sync (the sync log panel's own
+ *     action groups, minus items the operator marked resolved). Log-recorded
+ *     offline entries are skipped: they are snapshots, storage is the truth.
  */
-export async function precheckProject(id: string): Promise<string | null> {
-  let loaded: Awaited<ReturnType<typeof loadProject>>;
+export async function precheckProject(
+  id: string,
+  deps: {
+    load?: (id: string) => Promise<{ project: Project } | null>;
+    withAvailability?: (p: Project) => Promise<Project>;
+  } = {},
+): Promise<string | null> {
+  let loaded: { project: Project } | null;
   try {
-    loaded = await loadProject(id);
+    loaded = await (deps.load ?? loadProject)(id);
   } catch {
     return null;
   }
   if (!loaded) return null;
   const project = loaded.project;
+
+  const checked = await (deps.withAvailability ?? withStorageAvailability)(project);
+  if (preflightBulkExport(checked.segments, checked.assets).kind === 'block') return BULK_EXPORT_OFFLINE;
+
   const view = buildSyncGroups({
     log: project.syncLog ?? [],
     summaries: project.syncRunSummaries ?? [],
-    // No live media view: a stored record has no media URLs, so live media
-    // checks would call every asset offline. The log's own records decide.
+    // No live view: the log's own records decide the rest (media is above).
     dismissed: readDismissed(),
   });
-  const open = view.syncs[0]?.actions ?? [];
+  const open = (view.syncs[0]?.actions ?? []).filter(g => g.id !== 'offline-media');
   if (open.length === 0) return null;
   const items = open.reduce((n, g) => n + g.items.length, 0);
   return `Blocked — ${items === 1 ? '1 unresolved action' : `${items} unresolved actions`} in the sync log (${open[0]!.title})`;
