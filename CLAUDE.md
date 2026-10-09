@@ -73,7 +73,7 @@ Completed work → `docs/archive/history/history.md` (+ `history-2.md` overflow)
 
 **Sync / FA:** Timestamps measure distance, never decide identity; golden replay stops at `snapCoveredBoundaries` — not an FA/rule gate.
 
-**Repo ops:** Stage named paths only; no redirect-truncate into existing files; no `git checkout` to revert probes with uncommitted edits.
+**Repo ops:** `tsc` (`npm run lint`) runs after every stage even when suites are held; stage named paths only; no redirect-truncate into existing files; no `git checkout` to revert probes with uncommitted edits.
 
 Full discovery trail → `docs/archive/history/history.md` Decisions Log; `project-state.md` Rulings In Force indexes cross-cutting rulings.
 
