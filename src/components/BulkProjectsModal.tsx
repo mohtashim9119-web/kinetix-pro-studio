@@ -54,6 +54,14 @@ const DRAWER_PALETTE = {
   '--kx-hover': '#242428',
   '--kx-line': 'rgba(255,255,255,.07)',
   '--kx-line-2': 'rgba(255,255,255,.12)',
+  // The dashboard's warm text greys, not the editor's blue-greys: cool grey
+  // text on these warm surfaces read washed out (the "muted" look).
+  '--kx-text': '#f2f1ed',
+  '--kx-muted': '#a8a8b0',
+  '--kx-faint': '#707078',
+  // The dashboard root thins text (antialiased); the pane's small type needs
+  // the platform's normal weight to read crisp.
+  WebkitFontSmoothing: 'subpixel-antialiased',
 } as React.CSSProperties;
 const SOUND_MUTE_KEY = 'kinetix:bulk-complete-sound-muted';
 
@@ -102,7 +110,7 @@ const BTN_BUILD = 'border border-transparent bg-[var(--kx-accent)] text-[#1a0f06
 const BTN_SECONDARY = 'border border-[var(--kx-line-2)] bg-[var(--kx-surface-2)] text-[var(--kx-text)] rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-[var(--kx-hover)] hover:border-[rgba(255,255,255,.22)] transition-all focus:outline-none focus:ring-2 focus:ring-[var(--kx-accent-line)] disabled:opacity-55 disabled:cursor-not-allowed disabled:hover:bg-[var(--kx-surface-2)]';
 const FILE_LINE = 'flex items-center gap-2 px-3 py-1 text-[12px]';
 const FILE_KIND = 'w-20 flex-shrink-0 whitespace-nowrap text-[10px] uppercase tracking-widest text-[var(--kx-faint)]';
-const FILE_ICON = 'flex-shrink-0 w-6 h-6 flex items-center justify-center rounded text-gray-500 hover:text-white hover:bg-[var(--kx-hover)] transition-colors';
+const FILE_ICON = 'flex-shrink-0 w-6 h-6 flex items-center justify-center rounded text-[var(--kx-faint)] hover:text-white hover:bg-[var(--kx-hover)] transition-colors';
 const MSG_ARROW = 'w-5 h-6 flex items-center justify-center rounded text-[var(--kx-faint)] hover:text-white hover:bg-[var(--kx-hover)] transition-colors';
 const FIELD = 'bg-[var(--kx-surface-2)] border border-[var(--kx-line-2)] rounded-lg font-semibold text-[var(--kx-text)] placeholder:text-[var(--kx-faint)] placeholder:font-normal outline-none focus:border-[var(--kx-accent-line)] transition-colors disabled:cursor-not-allowed disabled:opacity-70';
 const ROW_BTN = 'flex-shrink-0 flex items-center gap-1.5 h-9 px-3 rounded-lg border border-[var(--kx-line-2)] bg-[var(--kx-surface-2)] text-[12px] font-semibold text-[var(--kx-text)] hover:border-[rgba(255,255,255,.22)] transition-colors disabled:text-[var(--kx-faint)] disabled:cursor-not-allowed disabled:hover:border-[var(--kx-line-2)]';
@@ -475,7 +483,7 @@ function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFi
               type="button"
               data-testid={`bulk-replace-all-${row.projectId}`}
               onClick={() => replaceAllRef.current?.click()}
-              className="flex items-center gap-1.5 text-[11px] text-gray-400 hover:text-white transition-colors"
+              className="flex items-center gap-1.5 text-[11px] text-[var(--kx-muted)] hover:text-white transition-colors"
             >
               <RefreshCw size={12} />
               {BULK_COPY.replaceAll}
@@ -484,7 +492,7 @@ function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFi
               type="button"
               data-testid={`bulk-clear-${row.projectId}`}
               onClick={onClearFiles}
-              className="flex items-center gap-1.5 text-[11px] text-gray-400 hover:text-[var(--kx-danger)] transition-colors"
+              className="flex items-center gap-1.5 text-[11px] text-[var(--kx-muted)] hover:text-[var(--kx-danger)] transition-colors"
             >
               <Trash2 size={12} />
               {BULK_COPY.clearFiles}
@@ -899,21 +907,20 @@ export function BulkProjectsModal({
               </button>
             </form>
             {!runner.canCreateGroup() ? (
-              <p className="mt-2 text-[11px] leading-snug text-gray-500">{PANE_COPY.batchesFull(BULK_MAX_GROUPS)}</p>
+              <p className="mt-2 text-[11px] leading-snug text-[var(--kx-faint)]">{PANE_COPY.batchesFull(BULK_MAX_GROUPS)}</p>
             ) : countRaw.trim() !== '' && count === null ? (
               <p className="mt-2 text-[11px] leading-snug text-amber-300">{BULK_COPY.quantityInvalid(BULK_MAX_PROJECTS)}</p>
             ) : null}
           </div>
-          {/* Active | Failed | Ready — the top tabs' design language (recessed
-              track, gliding thumb, orange hairline), one size down. */}
+          {/* Active | Failed | Ready — lower value than the top tabs: plain
+              labels with counts, the selected one marked by the same short
+              orange hairline. No track, no thumb. */}
           <div
             role="tablist"
             aria-label="Bulk rows"
             data-testid="bulk-drawer-tabs"
             className="kxd-subtabs mt-4"
-            style={{ '--kxd-subtab-i': Math.max(0, BULK_DRAWER_TABS.findIndex(t => t.id === drawerTab)) } as React.CSSProperties}
           >
-            <span className="kxd-subtabs-thumb" aria-hidden="true" />
             {BULK_DRAWER_TABS.map(t => (
               <button
                 key={t.id}
@@ -948,7 +955,7 @@ export function BulkProjectsModal({
                 type="button"
                 data-testid="bulk-cancel-scope"
                 onClick={cancelScoped}
-                className="flex-shrink-0 text-[11px] text-gray-400 hover:text-white transition-colors"
+                className="flex-shrink-0 text-[11px] text-[var(--kx-muted)] hover:text-white transition-colors"
               >
                 {BULK_COPY.cancelAll}
               </button>
@@ -960,7 +967,7 @@ export function BulkProjectsModal({
                 type="button"
                 data-testid="bulk-clear-finished"
                 onClick={clearFinished}
-                className="flex-shrink-0 text-[11px] text-gray-400 hover:text-white transition-colors"
+                className="flex-shrink-0 text-[11px] text-[var(--kx-muted)] hover:text-white transition-colors"
               >
                 {BULK_COPY.clearFinished}
               </button>
@@ -1003,7 +1010,7 @@ export function BulkProjectsModal({
           </button>
         </div>
         <div className="px-6 pt-3 pb-5 flex-shrink-0 border-t border-[var(--kx-line)] bg-[var(--kx-panel)]" data-testid="bulk-footer">
-          {line && <p className="text-[11px] leading-snug text-gray-400 mb-1" data-testid="bulk-batch-line">{line}</p>}
+          {line && <p className="text-[11px] leading-snug text-[var(--kx-muted)] mb-1" data-testid="bulk-batch-line">{line}</p>}
           {!cloud && <p className="text-[11px] leading-snug text-amber-300/90 mb-1">{BULK_COPY.notCloud}</p>}
           <p className="text-[11px] leading-snug text-[var(--kx-faint)]">{BULK_COPY.footerNote}</p>
         </div>

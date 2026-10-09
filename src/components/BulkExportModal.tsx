@@ -19,6 +19,11 @@ const DRAWER_PALETTE = {
   '--kx-hover': '#242428',
   '--kx-line': 'rgba(255,255,255,.07)',
   '--kx-line-2': 'rgba(255,255,255,.12)',
+  // Same de-muting as Bulk Sync: warm text greys, normal text weight.
+  '--kx-text': '#f2f1ed',
+  '--kx-muted': '#a8a8b0',
+  '--kx-faint': '#707078',
+  WebkitFontSmoothing: 'subpixel-antialiased',
 } as React.CSSProperties;
 const LABEL = 'text-[10px] uppercase tracking-widest text-[var(--kx-muted)] font-bold block mb-2';
 const BTN_PRIMARY = 'flex-1 border border-transparent bg-[var(--kx-accent)] text-[#1a0f06] p-3 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-[var(--kx-accent-hover)] transition-all focus:outline-none focus:ring-2 focus:ring-[var(--kx-accent-line)] disabled:bg-[var(--kx-surface-2)] disabled:text-[var(--kx-faint)] disabled:border-[var(--kx-line-2)] disabled:cursor-not-allowed';
