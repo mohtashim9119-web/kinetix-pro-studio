@@ -6,7 +6,13 @@
 import React, { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { Z } from './overlayLayers';
 import type { BulkExportRunner } from '../services/bulkExportQueue';
+import { FolderOpen } from 'lucide-react';
 import { WorkspaceTabs } from './WorkspaceTabs';
+import { relinkPickFolder } from '../services/relinkNative';
+import {
+  FPS_OPTIONS, RESOLUTION_OPTIONS, shortFolder, useWorkspaceExportSettings, workspaceExportSettings,
+  type WorkspaceExportSettingsStore,
+} from './workspaceExportSettings';
 import { inWorkspace, resolveWorkspaceFilter, useWorkspaces, workspaceRegistry, type WorkspaceFilter, type WorkspaceRegistry } from './workspaceRegistry';
 
 /** Dashboard revamp — the Bulk Export tab's pane (in flow, fills the left panel). */
@@ -39,14 +45,98 @@ export function BulkExportRunningNotice({ runner }: { runner: BulkExportRunner }
   );
 }
 
+/**
+ * The selected workspace's export defaults — resolution, frame rate, folder.
+ * Under All: the defaults for projects that belong to no workspace.
+ */
+function ExportSettingsHeader({
+  scope, scopeName, store,
+}: {
+  scope: string;
+  scopeName: string | null;
+  store?: WorkspaceExportSettingsStore;
+}): React.ReactElement {
+  const settingsStore = store ?? workspaceExportSettings();
+  const settings = useWorkspaceExportSettings(scope, settingsStore);
+  const [picking, setPicking] = useState(false);
+  const chooseFolder = async (): Promise<void> => {
+    setPicking(true);
+    try {
+      const picked = await relinkPickFolder();
+      if (picked) settingsStore.set(scope, { folder: picked });
+    } finally {
+      setPicking(false);
+    }
+  };
+  const scopeLine = scopeName ? `Applied to every project in ${scopeName}` : 'Applied to projects without a workspace';
+  return (
+    <div className="kxd-xs" data-testid="bulk-export-settings" title={scopeLine}>
+      <div className="kxd-xs-row">
+        <div className="kxd-xs-field">
+          <span className="kxd-xs-label">Resolution</span>
+          <div className="kxd-seg" role="radiogroup" aria-label="Export resolution">
+            {RESOLUTION_OPTIONS.map(r => (
+              <button
+                key={r}
+                type="button"
+                role="radio"
+                aria-checked={settings.resolution === r}
+                data-testid={`bulk-export-res-${r}`}
+                className="kxd-seg-item"
+                onClick={() => settingsStore.set(scope, { resolution: r })}
+              >
+                {r}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="kxd-xs-field">
+          <span className="kxd-xs-label">Frame rate</span>
+          <div className="kxd-seg" role="radiogroup" aria-label="Export frame rate">
+            {FPS_OPTIONS.map(f => (
+              <button
+                key={f}
+                type="button"
+                role="radio"
+                aria-checked={settings.fps === f}
+                data-testid={`bulk-export-fps-${f}`}
+                className="kxd-seg-item"
+                onClick={() => settingsStore.set(scope, { fps: f })}
+              >
+                {f}
+                <span className="kxd-seg-unit">fps</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+      <button
+        type="button"
+        className={`kxd-folder-btn${settings.folder ? '' : ' is-empty'}`}
+        data-testid="bulk-export-folder"
+        title={settings.folder ?? 'Choose the folder every export in this scope is saved to'}
+        disabled={picking}
+        onClick={() => { void chooseFolder(); }}
+      >
+        <FolderOpen size={14} aria-hidden="true" className="kxd-folder-icon" />
+        <span className="kxd-folder-label">Export folder</span>
+        <span className="kxd-folder-path">{settings.folder ? shortFolder(settings.folder) : 'Choose folder…'}</span>
+        {settings.folder && <span className="kxd-folder-change">Change</span>}
+      </button>
+    </div>
+  );
+}
+
 export function BulkExportModal({
-  runner, hidden = false, workspaces: injectedWorkspaces,
+  runner, hidden = false, workspaces: injectedWorkspaces, exportSettings,
 }: {
   runner: BulkExportRunner;
   /** Not on screen (another tab, or the editor is up). The queue runs regardless. */
   hidden?: boolean;
   /** The workspace registry (default: the app's). */
   workspaces?: WorkspaceRegistry;
+  /** Per-workspace export defaults (default: the app's). */
+  exportSettings?: WorkspaceExportSettingsStore;
 }): React.ReactElement {
   // Fresh on every open (the tab coming on screen): the catalog and every
   // Blocked row are re-read, never a snapshot from when the pane first mounted.
@@ -91,20 +181,25 @@ export function BulkExportModal({
             testIdPrefix="bulk-export-ws"
             label="Bulk Export workspaces"
           />
-          <div className="mt-4 flex items-center justify-between gap-3">
-            <label className="flex items-center gap-2 text-[12px] text-[var(--kx-text)]">
-              <input
-                type="checkbox"
-                data-testid="bulk-export-select-all"
-                checked={allSelected}
-                onChange={e => { selectAll(e.target.checked); }}
-              />
-              Select all
-            </label>
-            <span data-testid="bulk-export-selected-count" className={`${LABEL} mb-0`}>
-              {selected} selected
-            </span>
-          </div>
+          <ExportSettingsHeader
+            scope={wsFilter}
+            scopeName={wsFilter === 'all' ? null : workspaceList.find(w => w.id === wsFilter)?.name ?? null}
+            store={exportSettings}
+          />
+        </div>
+        <div className="px-5 pt-3 pb-1 flex-shrink-0 flex items-center justify-between gap-3">
+          <label className="flex items-center gap-2 text-[12px] text-[var(--kx-text)]">
+            <input
+              type="checkbox"
+              data-testid="bulk-export-select-all"
+              checked={allSelected}
+              onChange={e => { selectAll(e.target.checked); }}
+            />
+            Select all
+          </label>
+          <span data-testid="bulk-export-selected-count" className={`${LABEL} mb-0`}>
+            {selected} selected
+          </span>
         </div>
         <ul className="flex-1 min-h-0 overflow-y-auto px-4 py-3 space-y-2 custom-scrollbar">
           {shown.length === 0 && (
