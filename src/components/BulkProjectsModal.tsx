@@ -727,7 +727,16 @@ export function BulkProjectsModal({
   const tabCounts: Record<BulkDrawerTab, number> = { 'new': 0, 'failed-paused': 0, 'finished': 0 };
   for (const r of scopedRows) tabCounts[bulkDrawerTabForPhase(recordById.get(r.projectId)?.phase)] += 1;
   const scopedIds = scopedRows.map(r => r.projectId);
-  const retryAllIds = collectRetryAllRowIds(groups, records).filter(inScope);
+  // Batch order first (FIFO within a batch); then any retryable record that
+  // somehow sits outside every batch, so Retry all never skips a visible row.
+  const retryAllIds = (() => {
+    const ordered = collectRetryAllRowIds(groups, records);
+    const seen = new Set(ordered);
+    const stray = records
+      .filter(r => !seen.has(r.id) && (r.phase === 'failed' || r.phase === 'finish-failed' || r.phase === 'cancelled'))
+      .map(r => r.id);
+    return [...ordered, ...stray].filter(inScope);
+  })();
   const selectTab = (next: BulkDrawerTab): void => {
     setDrawerTab(next);
     writeBulkDrawerTab(next);
@@ -933,16 +942,25 @@ export function BulkProjectsModal({
           </div>
         </div>
         <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar px-5 py-4" data-testid="bulk-groups">
-          {drawerTab === 'failed-paused' && (
-            <button
-              type="button"
-              data-testid="bulk-retry-all"
-              disabled={retryAllIds.length === 0}
-              onClick={retryAll}
-              className={`${ROW_BTN} w-full justify-center mb-3`}
-            >
-              {retryAllIds.length === 0 ? BULK_COPY.noFailedRows : BULK_COPY.retryAll}
-            </button>
+          {/* Retry all appears only when something here can be retried (failed,
+              finish-failed or cancelled in this workspace scope — paused rows
+              wait for their answer). With nothing to retry, the empty-tab
+              message below is the only line: no duplicate. */}
+          {drawerTab === 'failed-paused' && retryAllIds.length > 0 && (
+            <div className="mb-3 flex items-center gap-3">
+              <span className="flex-1 min-w-0 text-[11px] text-[var(--kx-muted)]" data-testid="bulk-retry-all-count">
+                {retryAllIds.length === 1 ? '1 project can be retried' : `${retryAllIds.length} projects can be retried`}
+              </span>
+              <button
+                type="button"
+                data-testid="bulk-retry-all"
+                onClick={retryAll}
+                className={`${ROW_BTN_ACCENT.replace('h-9', 'h-8')} px-4`}
+              >
+                <RefreshCw size={12} />
+                {`${BULK_COPY.retryAll} (${retryAllIds.length})`}
+              </button>
+            </div>
           )}
           {drawerTab === 'new' && runningIds.length > 0 && (
             <div className="mb-3 flex justify-end">
