@@ -31,6 +31,10 @@ describe('release version lockstep', () => {
     expect(conf.app.windows[0]!.title).toBe(`Kinetix Pro Studio v${npm}`);
     expect(read('index.html')).toContain(`<title>Kinetix Pro Studio v${npm}</title>`);
   });
+  it('is the 1.6.0 release (sync log rebuild, media warning, plain-language errors)', () => {
+    expect(npm).toBe('1.6.0');
+    expect(read('index.html')).toContain('<title>Kinetix Pro Studio v1.6.0</title>');
+  });
   it('is a real semver', () => {
     expect(npm).toMatch(/^\d+\.\d+\.\d+$/);
   });

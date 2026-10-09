@@ -57,14 +57,15 @@ import type { TranscriptToken, VideoSegment } from '../src/types';
 import type { SilenceInterval } from '../src/services/silenceDetector';
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+// V6 text inputs: tracked copies in scripts/fixtures (provenance: Downloads/All Projects Test Data/V6 Natural Long Pause Segs/All Text Files, vendored 2026-10-09).
 const REPLAY_ROOT = resolve(REPO, '.work-phase4/replay');
 const RESTORE_CMD = 'python3 scripts/phase4-restore-replay-inputs.py';
 
 const V6 = {
   key: 'v6',
   audioDuration: 1421.29,
-  sceneDetailsPath: '/Users/mohtashim/Downloads/All Projects Test Data/V6 Natural Long Pause Segs/All Text Files/Sync.txt',
-  scriptPath: '/Users/mohtashim/Downloads/All Projects Test Data/V6 Natural Long Pause Segs/All Text Files/Script.txt',
+  sceneDetailsPath: resolve(REPO, 'scripts/fixtures/v6-sync.txt'),
+  scriptPath: resolve(REPO, 'scripts/fixtures/v6-script.txt'),
 } as const;
 
 function requireInput(key: string, fileName: string): string {

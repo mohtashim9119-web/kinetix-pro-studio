@@ -38,8 +38,9 @@ const RESTORE_CMD = 'python3 scripts/phase4-restore-replay-inputs.py';
 interface Spec { key: string; sceneDetailsPath: string; scriptPath: string; audioDuration: number; }
 const PROJECTS: Spec[] = [
   { key: 'v6',
-    sceneDetailsPath: '/Users/mohtashim/Downloads/All Projects Test Data/V6 Natural Long Pause Segs/All Text Files/Sync.txt',
-    scriptPath: '/Users/mohtashim/Downloads/All Projects Test Data/V6 Natural Long Pause Segs/All Text Files/Script.txt',
+    // Tracked copies (provenance: Downloads/All Projects Test Data/V6 Natural Long Pause Segs/All Text Files, vendored 2026-10-09).
+    sceneDetailsPath: resolve(REPO, 'scripts/fixtures/v6-sync.txt'),
+    scriptPath: resolve(REPO, 'scripts/fixtures/v6-script.txt'),
     audioDuration: 1421.29 },
   { key: '173',
     // Tracked copies (provenance: Downloads/All Projects Test Data/173 Segs Project, vendored 2026-10-08 as a data re-baseline).

@@ -67,8 +67,9 @@ export const CORPORA: Record<string, CorpusSpec> = {
     key: 'v6',
     language: 'en',
     audioDuration: 1421.29,
-    scriptPath: '/Users/mohtashim/Downloads/All Projects Test Data/V6 Natural Long Pause Segs/All Text Files/Script.txt',
-    sceneDetailsPath: '/Users/mohtashim/Downloads/All Projects Test Data/V6 Natural Long Pause Segs/All Text Files/Sync.txt',
+    // V6 text inputs: tracked copies (provenance: Downloads/All Projects Test Data/V6 Natural Long Pause Segs/All Text Files, vendored 2026-10-09).
+    scriptPath: resolve(REPO, 'scripts/fixtures/v6-script.txt'),
+    sceneDetailsPath: resolve(REPO, 'scripts/fixtures/v6-sync.txt'),
   },
   '173': {
     key: '173',

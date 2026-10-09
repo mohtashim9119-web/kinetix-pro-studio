@@ -31,6 +31,7 @@ import type { TranscriptToken, VideoSegment } from '../src/types';
 import type { SilenceInterval } from '../src/services/silenceDetector';
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+// V6 text inputs: tracked copies in scripts/fixtures (provenance: Downloads/All Projects Test Data/V6 Natural Long Pause Segs/All Text Files, vendored 2026-10-09).
 const OUT = resolve(REPO, '.work-phase4/session-ab');
 const scriptWordCount = (t: string): number => t.split(/\s+/).filter(w => w.length > 0).length;
 
@@ -40,8 +41,8 @@ type CorpusKey = 'v6' | '173' | 'spanish';
 const CORPORA: Record<CorpusKey, { dir: string; script: string; sync: string; audio: number }> = {
   v6: {
     dir: resolve(REPO, '.work-phase4/replay/v6'),
-    script: '/Users/mohtashim/Downloads/All Projects Test Data/V6 Natural Long Pause Segs/All Text Files/Script.txt',
-    sync: '/Users/mohtashim/Downloads/All Projects Test Data/V6 Natural Long Pause Segs/All Text Files/Sync.txt',
+    script: resolve(REPO, 'scripts/fixtures/v6-script.txt'),
+    sync: resolve(REPO, 'scripts/fixtures/v6-sync.txt'),
     audio: 1421.29,
   },
   '173': {
