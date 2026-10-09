@@ -3,10 +3,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Z } from './overlayLayers';
 import type { BulkExportRunner } from '../services/bulkExportQueue';
-import { FolderOpen } from 'lucide-react';
+import { FolderOpen, SlidersHorizontal } from 'lucide-react';
 import { WorkspaceTabs } from './WorkspaceTabs';
 import { relinkPickFolder } from '../services/relinkNative';
 import {
@@ -48,6 +48,9 @@ export function BulkExportRunningNotice({ runner }: { runner: BulkExportRunner }
 /**
  * The selected workspace's export defaults — resolution, frame rate, folder.
  * Under All: the defaults for projects that belong to no workspace.
+ *
+ * Low-focus settings: the header shows them as ONE quiet summary line; the
+ * controls live in a small popover opened from it (Edit).
  */
 function ExportSettingsHeader({
   scope, scopeName, store,
@@ -58,7 +61,20 @@ function ExportSettingsHeader({
 }): React.ReactElement {
   const settingsStore = store ?? workspaceExportSettings();
   const settings = useWorkspaceExportSettings(scope, settingsStore);
+  const [open, setOpen] = useState(false);
   const [picking, setPicking] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent): void => {
+      if (picking) return;
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent): void => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    window.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('mousedown', onDown); window.removeEventListener('keydown', onKey); };
+  }, [open, picking]);
   const chooseFolder = async (): Promise<void> => {
     setPicking(true);
     try {
@@ -68,61 +84,87 @@ function ExportSettingsHeader({
       setPicking(false);
     }
   };
-  const scopeLine = scopeName ? `Applied to every project in ${scopeName}` : 'Applied to projects without a workspace';
+  const folderName = settings.folder ? settings.folder.split(/[\\/]/).filter(Boolean).pop() ?? settings.folder : null;
+  const scopeLine = scopeName ? `Applies to every project in ${scopeName}` : 'Applies to projects without a workspace';
   return (
-    <div className="kxd-xs" data-testid="bulk-export-settings" title={scopeLine}>
-      <div className="kxd-xs-row">
-        <div className="kxd-xs-field">
-          <span className="kxd-xs-label">Res</span>
-          <div className="kxd-seg" role="radiogroup" aria-label="Export resolution">
-            {RESOLUTION_OPTIONS.map(r => (
-              <button
-                key={r}
-                type="button"
-                role="radio"
-                aria-checked={settings.resolution === r}
-                data-testid={`bulk-export-res-${r}`}
-                className="kxd-seg-item"
-                onClick={() => settingsStore.set(scope, { resolution: r })}
-              >
-                {r}
-              </button>
-            ))}
+    <div className="kxd-xsum-wrap" ref={rootRef} data-testid="bulk-export-settings">
+      <button
+        type="button"
+        className="kxd-xsum"
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        data-testid="bulk-export-settings-summary"
+        title={`${scopeLine}${settings.folder ? ` · ${settings.folder}` : ''}`}
+        onClick={() => setOpen(o => !o)}
+      >
+        <SlidersHorizontal size={12} aria-hidden="true" className="kxd-xsum-icon" />
+        <span className="kxd-xsum-values">
+          <span>{settings.resolution}</span>
+          <span className="kxd-xsum-sep" aria-hidden="true">·</span>
+          <span>{settings.fps} fps</span>
+          <span className="kxd-xsum-sep" aria-hidden="true">·</span>
+          {folderName
+            ? <span className="kxd-xsum-folder">{folderName}</span>
+            : <span className="kxd-xsum-missing" data-testid="bulk-export-folder-missing">No export folder</span>}
+        </span>
+        <span className="kxd-xsum-edit">{open ? 'Done' : 'Edit'}</span>
+      </button>
+
+      {open && (
+        <div className="kxd-xpop" role="dialog" aria-label="Export settings" data-testid="bulk-export-settings-pop">
+          <p className="kxd-xpop-scope">{scopeLine}</p>
+          <div className="kxd-xpop-row">
+            <span className="kxd-xpop-label">Resolution</span>
+            <div className="kxd-seg" role="radiogroup" aria-label="Export resolution">
+              {RESOLUTION_OPTIONS.map(r => (
+                <button
+                  key={r}
+                  type="button"
+                  role="radio"
+                  aria-checked={settings.resolution === r}
+                  data-testid={`bulk-export-res-${r}`}
+                  className="kxd-seg-item"
+                  onClick={() => settingsStore.set(scope, { resolution: r })}
+                >
+                  {r}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="kxd-xpop-row">
+            <span className="kxd-xpop-label">Frame rate</span>
+            <div className="kxd-seg" role="radiogroup" aria-label="Export frame rate">
+              {FPS_OPTIONS.map(f => (
+                <button
+                  key={f}
+                  type="button"
+                  role="radio"
+                  aria-checked={settings.fps === f}
+                  data-testid={`bulk-export-fps-${f}`}
+                  className="kxd-seg-item"
+                  onClick={() => settingsStore.set(scope, { fps: f })}
+                >
+                  {f} fps
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="kxd-xpop-row">
+            <span className="kxd-xpop-label">Folder</span>
+            <button
+              type="button"
+              className={`kxd-folder-btn${settings.folder ? '' : ' is-empty'}`}
+              data-testid="bulk-export-folder"
+              title={settings.folder ?? 'Choose the folder exports are saved to'}
+              disabled={picking}
+              onClick={() => { void chooseFolder(); }}
+            >
+              <FolderOpen size={12} aria-hidden="true" className="kxd-folder-icon" />
+              <span className="kxd-folder-path">{settings.folder ? shortFolder(settings.folder, 30) : 'Choose folder…'}</span>
+            </button>
           </div>
         </div>
-        <div className="kxd-xs-field">
-          <span className="kxd-xs-label">FPS</span>
-          <div className="kxd-seg" role="radiogroup" aria-label="Export frame rate">
-            {FPS_OPTIONS.map(f => (
-              <button
-                key={f}
-                type="button"
-                role="radio"
-                aria-checked={settings.fps === f}
-                data-testid={`bulk-export-fps-${f}`}
-                className="kxd-seg-item"
-                onClick={() => settingsStore.set(scope, { fps: f })}
-              >
-                {f}
-              </button>
-            ))}
-          </div>
-        </div>
-        <div className="kxd-xs-field">
-          <span className="kxd-xs-label">Folder</span>
-          <button
-            type="button"
-            className={`kxd-folder-btn${settings.folder ? '' : ' is-empty'}`}
-            data-testid="bulk-export-folder"
-            title={settings.folder ? `${settings.folder} — click to change` : 'Choose the folder every export in this scope is saved to'}
-            disabled={picking}
-            onClick={() => { void chooseFolder(); }}
-          >
-            <FolderOpen size={11} aria-hidden="true" className="kxd-folder-icon" />
-            <span className="kxd-folder-path">{settings.folder ? shortFolder(settings.folder, 40) : 'Choose…'}</span>
-          </button>
-        </div>
-      </div>
+      )}
     </div>
   );
 }

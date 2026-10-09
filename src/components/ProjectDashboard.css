@@ -191,18 +191,37 @@
 }
 .kxd-subtab[aria-selected="true"] .kxd-subtab-count { color: var(--kxd-accent-hi); }
 .kxd-subtab:focus-visible { outline: 2px solid var(--kxd-accent-hi); outline-offset: 2px; border-radius: 3px; }
-/* Bulk Export's export settings (per workspace): resolution and frame rate as
-   small segmented controls — the top tabs' language at field size — and the
-   export folder as one full-width field-button. */
-/* Sized so the header matches Bulk Sync's (tabs + 40px field + sub-tabs). */
-.kxd-xs { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
-/* Res / FPS / Folder — stacked: each a row of label + control. */
-.kxd-xs-row { display: flex; flex-direction: column; gap: 6px; }
-.kxd-xs-field { min-width: 0; display: grid; grid-template-columns: 52px minmax(0, 1fr); align-items: center; gap: 8px; }
-.kxd-xs-label {
-  font-size: 8.5px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase;
-  color: var(--kxd-text-faint);
+/* Bulk Export's export settings (per workspace) — low focus: one quiet summary
+   line in the header; the controls open in a small popover below it. */
+.kxd-xsum-wrap { position: relative; margin-top: 12px; }
+.kxd-xsum {
+  width: 100%; height: 30px; padding: 0 10px;
+  display: flex; align-items: center; gap: 8px; text-align: left;
+  background: transparent; border: 1px solid var(--kxd-line); border-radius: 8px;
+  color: var(--kxd-text-dim); font-size: 11px;
+  transition: background 0.12s ease, border-color 0.12s ease;
 }
+.kxd-xsum:hover, .kxd-xsum[aria-expanded="true"] { background: var(--kxd-surface); border-color: var(--kxd-line-strong); }
+.kxd-xsum:focus-visible { outline: 2px solid var(--kxd-accent-hi); outline-offset: 1px; }
+.kxd-xsum-icon { flex-shrink: 0; color: var(--kxd-text-faint); }
+.kxd-xsum-values { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; white-space: nowrap; overflow: hidden; }
+.kxd-xsum-values > span { flex-shrink: 0; }
+.kxd-xsum-sep { color: var(--kxd-text-faint); }
+.kxd-xsum-values > .kxd-xsum-folder { flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.kxd-xsum-missing { color: var(--kxd-accent-hi); }
+.kxd-xsum-edit { flex-shrink: 0; font-size: 10.5px; font-weight: 600; color: var(--kxd-text-faint); }
+.kxd-xsum:hover .kxd-xsum-edit { color: var(--kxd-text); }
+
+.kxd-xpop {
+  position: absolute; left: 0; right: 0; top: calc(100% + 6px); z-index: 30;
+  padding: 12px; display: flex; flex-direction: column; gap: 10px;
+  background: var(--kxd-surface-raised); border: 1px solid var(--kxd-line-strong); border-radius: 10px;
+  box-shadow: var(--kxd-shadow-menu);
+}
+.kxd-xpop-scope { margin: 0; font-size: 11px; color: var(--kxd-text-faint); }
+.kxd-xpop-row { display: grid; grid-template-columns: 76px minmax(0, 1fr); align-items: center; gap: 10px; }
+.kxd-xpop-label { font-size: 11px; color: var(--kxd-text-dim); }
+
 .kxd-seg {
   display: flex; gap: 2px; padding: 2px;
   background: var(--kxd-surface); border: 1px solid var(--kxd-line); border-radius: 7px;
