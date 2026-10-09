@@ -202,8 +202,9 @@
 }
 .kxd-xrow:hover { border-color: var(--kxd-line-strong); }
 .kxd-xrow.is-selected { box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.28); border-color: transparent; }
+.kxd-xrow-top { display: flex; align-items: center; gap: 6px; }
 .kxd-xrow-main {
-  width: 100%; display: flex; align-items: center; gap: 10px; min-width: 0;
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; min-width: 0;
   padding: 0 0 0 4px; background: none; border: none; text-align: left; color: inherit; cursor: pointer;
 }
 .kxd-xrow-main:focus-visible { outline: 2px solid var(--kxd-accent-hi); outline-offset: 3px; border-radius: 6px; }
@@ -250,11 +251,16 @@
 .kxd-xctl-primary:disabled { opacity: 0.55; cursor: not-allowed; }
 .kxd-xctl-primary:disabled:hover { background: var(--kxd-accent); }
 .kxd-xrow-thumb {
-  position: relative; flex-shrink: 0; width: 72px; aspect-ratio: 16 / 10;
+  position: relative; flex-shrink: 0; width: 64px; aspect-ratio: 16 / 9;
   border-radius: 6px; overflow: hidden; background: var(--kxd-surface-raised);
   box-shadow: inset 0 0 0 1px var(--kxd-line);
 }
-.kxd-xrow-thumb .kxd-art-empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
+/* No thumbnail yet: a dark diagonal gradient with a quiet clapperboard, not a broken-image icon. */
+.kxd-xrow-thumb .kxd-art-empty {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  color: var(--kxd-text-faint);
+  background: linear-gradient(135deg, var(--kxd-surface-hover), var(--kxd-surface) 70%);
+}
 .kxd-xrow-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .kxd-xrow-name {
   font-size: 13px; font-weight: 600; color: var(--kxd-text);
@@ -263,6 +269,7 @@
 .kxd-xrow-meta {
   display: flex; align-items: center; gap: 6px;
   font-family: 'JetBrains Mono', monospace; font-size: 10.5px; color: var(--kxd-text-faint);
+  font-variant-numeric: tabular-nums;
 }
 .kxd-xrow-sep { color: var(--kxd-text-faint); }
 .kxd-xrow-status {
@@ -270,14 +277,26 @@
   display: flex; align-items: center; gap: 7px; min-width: 0;
   font-size: 11px; color: var(--kxd-text-dim);
 }
-.kxd-xrow-dot { flex-shrink: 0; width: 6px; height: 6px; border-radius: 50%; background: var(--kxd-text-faint); }
+.kxd-xrow-actions { flex-shrink: 0; display: flex; align-items: center; gap: 6px; padding-right: 4px; }
+/* Hover / keyboard-focus action: takes no width until the row is hovered or focused. */
+.kxd-xrow-open {
+  display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 6px;
+  background: var(--kxd-surface-raised); border: 1px solid var(--kxd-line-strong); color: var(--kxd-text);
+  opacity: 0; width: 0; border-width: 0; overflow: hidden;
+  transition: opacity 0.12s ease, width 0.12s ease;
+}
+.kxd-xrow:hover .kxd-xrow-open, .kxd-xrow:focus-within .kxd-xrow-open { opacity: 1; width: 24px; border-width: 1px; }
+.kxd-xrow-open:hover { background: var(--kxd-surface-hover); }
+.kxd-xrow-open:focus-visible { outline: 2px solid var(--kxd-accent-hi); outline-offset: 1px; }
+/* The row's state at a glance: a dot on the edge (the reason sits under the row). */
+.kxd-xrow-dot { flex-shrink: 0; width: 7px; height: 7px; border-radius: 50%; background: transparent; }
+.kxd-xrow-dot[data-tone="bad"] { background: #f0a09d; }
+.kxd-xrow-dot[data-tone="warn"] { background: var(--kxd-accent-hi); }
+.kxd-xrow-dot[data-tone="live"] { background: var(--kxd-accent); box-shadow: 0 0 6px rgba(232, 132, 61, 0.6); }
+.kxd-xrow-dot[data-tone="good"] { background: var(--kx-ready); }
 .kxd-xrow-msg { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.kxd-xrow-status[data-tone="bad"] .kxd-xrow-dot { background: #f0a09d; }
 .kxd-xrow-status[data-tone="bad"] .kxd-xrow-msg { color: #f0a09d; }
-.kxd-xrow-status[data-tone="warn"] .kxd-xrow-dot { background: var(--kxd-accent-hi); }
-.kxd-xrow-status[data-tone="live"] .kxd-xrow-dot { background: var(--kxd-accent); box-shadow: 0 0 6px rgba(232, 132, 61, 0.6); }
 .kxd-xrow-status[data-tone="live"] .kxd-xrow-msg { color: var(--kxd-text); }
-.kxd-xrow-status[data-tone="good"] .kxd-xrow-dot { background: var(--kx-ready); }
 .kxd-xrow-retry {
   flex-shrink: 0; display: inline-flex; align-items: center; gap: 4px;
   height: 22px; padding: 0 8px; border-radius: 6px;

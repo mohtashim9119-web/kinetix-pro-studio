@@ -8007,6 +8007,7 @@ export default function App() {
         <BulkExportModal
           runner={bulkExport}
           hidden={!bulkExportVisible}
+          onOpenProject={id => { userNavSeqRef.current += 1; void handleSwitchProject(id); }}
         />,
         bulkExportPaneHost,
       )}

@@ -42,12 +42,12 @@ const wsMem = (): Storage => {
   };
 };
 
-async function mount(runner: BulkExportRunner, workspaces = new WorkspaceRegistry(wsMem()), hidden = false): Promise<void> {
+async function mount(runner: BulkExportRunner, workspaces = new WorkspaceRegistry(wsMem()), hidden = false, onOpenProject?: (id: string) => void): Promise<void> {
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
   await act(async () => {
-    root.render(<BulkExportModal runner={runner} workspaces={workspaces} hidden={hidden} />);
+    root.render(<BulkExportModal runner={runner} workspaces={workspaces} hidden={hidden} onOpenProject={onOpenProject} />);
   });
 }
 
@@ -178,5 +178,32 @@ describe('BulkExportModal — Dashboard revamp Stage 4 (Bulk Export tab)', () =>
     await act(async () => { await runner.startSelected(); });
     await act(async () => { await new Promise(r => setTimeout(r, 10)); });
     expect(container.querySelector('[data-testid="bulk-export-counts"]')!.textContent).toBe('1 done · 1 failed · 1 blocked');
+  });
+
+  it('each row has an Open action (outside the select button) and a status dot on its edge', async () => {
+    const opened: string[] = [];
+    const noPath = { ...project('n'), lastExportPath: undefined } as unknown as Project;
+    const runner = runnerOf([project('a'), noPath]);
+    await mount(runner, undefined, false, id => opened.push(id));
+    await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="bulk-export-tab-ready"]')!.click(); });
+    const open = container.querySelector<HTMLButtonElement>('[data-testid="bulk-export-open-a"]')!;
+    expect(open.getAttribute('aria-label')).toBe('Open a');
+    expect(open.closest('[data-testid="bulk-export-check-a"]')).toBeNull();
+    await act(async () => { open.click(); });
+    expect(opened).toEqual(['a']);
+    expect(runner.snapshot().find(r => r.id === 'a')?.selected ?? false).toBe(false);
+    expect(container.querySelector('[data-testid="bulk-export-dot-a"]')!.getAttribute('data-tone')).toBe('idle');
+    runner.setSelected('n', true);
+    await act(async () => { await runner.startSelected(); });
+    await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="bulk-export-tab-blocked"]')!.click(); });
+    expect(container.querySelector('[data-testid="bulk-export-dot-n"]')!.getAttribute('data-tone')).toBe('bad');
+  });
+
+  it('a project without a thumbnail shows the fallback mark, not a broken image', async () => {
+    await mount(runnerOf([project('a')]));
+    await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="bulk-export-tab-ready"]')!.click(); });
+    const thumb = container.querySelector('[data-testid="bulk-export-row-a"] .kxd-xrow-thumb')!;
+    expect(thumb.querySelector('img')).toBeNull();
+    expect(thumb.querySelector('.kxd-art-empty svg')).not.toBeNull();
   });
 });

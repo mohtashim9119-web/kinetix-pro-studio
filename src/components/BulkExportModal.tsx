@@ -6,7 +6,7 @@
 import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Z } from './overlayLayers';
 import type { BulkExportPhase, BulkExportRunner } from '../services/bulkExportQueue';
-import { Check, FolderOpen, Image as ImageIcon, Minus, Play, RefreshCw, SlidersHorizontal, Square, X } from 'lucide-react';
+import { Check, FolderOpen, Clapperboard, ExternalLink, Minus, Play, RefreshCw, SlidersHorizontal, Square, X } from 'lucide-react';
 import { loadAllMetas } from '../services/projectStore';
 import { ProjectCardThumb } from './ProjectCardThumb';
 import { formatDuration, useProjectDurations } from './projectDurations';
@@ -222,7 +222,7 @@ function toneOf(phase: BulkExportPhase | undefined): 'bad' | 'warn' | 'live' | '
 }
 
 export function BulkExportModal({
-  runner, hidden = false, workspaces: injectedWorkspaces, exportSettings,
+  runner, hidden = false, workspaces: injectedWorkspaces, exportSettings, onOpenProject,
 }: {
   runner: BulkExportRunner;
   /** Not on screen (another tab, or the editor is up). The queue runs regardless. */
@@ -231,6 +231,8 @@ export function BulkExportModal({
   workspaces?: WorkspaceRegistry;
   /** Per-workspace export defaults (default: the app's). */
   exportSettings?: WorkspaceExportSettingsStore;
+  /** Opens a project in the editor (the row's hover / focus action). */
+  onOpenProject?: (id: string) => void;
 }): React.ReactElement {
   // Fresh on every open (the tab coming on screen): the catalog and every
   // Blocked row are re-read, never a snapshot from when the pane first mounted.
@@ -422,6 +424,7 @@ export function BulkExportModal({
             const canRetry = row?.phase === 'failed' || row?.phase === 'paused' || row?.phase === 'waiting'
               || row?.phase === 'blocked' || row?.phase === 'cancelled' || preReason !== undefined;
             const canCancel = row?.phase === 'queued' || row?.phase === 'exporting';
+            const statusTone = preReason ? 'bad' : toneOf(row?.phase);
             return (
               <li
                 key={p.id}
@@ -429,31 +432,52 @@ export function BulkExportModal({
                 data-phase={row?.phase ?? 'idle'}
                 className={`kx-bulk-row kxd-xrow${selectedRow ? ' is-selected' : ''}`}
               >
-                <button
-                  type="button"
-                  role="checkbox"
-                  aria-checked={selectedRow}
-                  aria-label={`Select ${p.name}`}
-                  className="kxd-xrow-main"
-                  data-testid={`bulk-export-check-${p.id}`}
-                  onClick={() => { runner.setSelected(p.id, !selectedRow); }}
-                >
-                  <KxCheck state={selectedRow} />
-                  <span className="kxd-xrow-thumb" aria-hidden="true">
-                    {meta ? <ProjectCardThumb meta={meta} /> : <span className="kxd-art-empty"><ImageIcon size={14} strokeWidth={1.5} /></span>}
-                  </span>
-                  <span className="kxd-xrow-body">
-                    <span className="kxd-xrow-name" title={p.name}>{p.name}</span>
-                    <span className="kxd-xrow-meta">
-                      <span>{sec !== undefined ? formatDuration(sec) : '—'}</span>
-                      <span className="kxd-xrow-sep" aria-hidden="true">·</span>
-                      <span>{scenes === 1 ? '1 scene' : `${scenes} scenes`}</span>
+                <div className="kxd-xrow-top">
+                  <button
+                    type="button"
+                    role="checkbox"
+                    aria-checked={selectedRow}
+                    aria-label={`Select ${p.name}`}
+                    className="kxd-xrow-main"
+                    data-testid={`bulk-export-check-${p.id}`}
+                    onClick={() => { runner.setSelected(p.id, !selectedRow); }}
+                  >
+                    <KxCheck state={selectedRow} />
+                    <span className="kxd-xrow-thumb" aria-hidden="true">
+                      {meta ? <ProjectCardThumb meta={meta} /> : <span className="kxd-art-empty"><Clapperboard size={14} strokeWidth={1.5} /></span>}
                     </span>
-                  </span>
-                </button>
+                    <span className="kxd-xrow-body">
+                      <span className="kxd-xrow-name" title={p.name}>{p.name}</span>
+                      <span className="kxd-xrow-meta">
+                        <span>{sec !== undefined ? formatDuration(sec) : '—'}</span>
+                        <span className="kxd-xrow-sep" aria-hidden="true">·</span>
+                        <span>{scenes === 1 ? '1 scene' : `${scenes} scenes`}</span>
+                      </span>
+                    </span>
+                  </button>
+                  <div className="kxd-xrow-actions">
+                    {onOpenProject && (
+                      <button
+                        type="button"
+                        className="kxd-xrow-open"
+                        data-testid={`bulk-export-open-${p.id}`}
+                        aria-label={`Open ${p.name}`}
+                        title="Open project"
+                        onClick={() => onOpenProject(p.id)}
+                      >
+                        <ExternalLink size={13} aria-hidden="true" />
+                      </button>
+                    )}
+                    <span
+                      className="kxd-xrow-dot"
+                      data-testid={`bulk-export-dot-${p.id}`}
+                      data-tone={statusTone}
+                      aria-hidden="true"
+                    />
+                  </div>
+                </div>
                 {(message || canRetry || canCancel) && (
-                  <div className="kxd-xrow-status" data-tone={preReason ? 'bad' : toneOf(row?.phase)}>
-                    <span className="kxd-xrow-dot" aria-hidden="true" />
+                  <div className="kxd-xrow-status" data-tone={statusTone}>
                     <span data-testid={`bulk-export-status-${p.id}`} className="kxd-xrow-msg" title={message ?? ''}>
                       {message ?? ''}
                     </span>
