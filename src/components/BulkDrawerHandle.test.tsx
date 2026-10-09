@@ -23,7 +23,8 @@ describe('editor has no bulk affordances', () => {
     expect(app).not.toMatch(/bulk-drawer-handle/);
     // Bulk Sync renders into the dashboard's left panel only: hidden whenever the editor is up.
     expect(app).toContain('hidden={!bulkSyncVisible}');
-    expect(app).toContain("const bulkSyncVisible = showDashboard && dashboardLeftTab === 'bulk-sync';");
+    expect(app).toContain('const leftPanelShown = showDashboard && !dashboardLeftCollapsed;');
+    expect(app).toContain("const bulkSyncVisible = leftPanelShown && dashboardLeftTab === 'bulk-sync';");
   });
 
   it('dashboard still renders the Bulk Sync tab with progress (no header bulk button)', () => {

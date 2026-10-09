@@ -10,9 +10,9 @@ export const BULK_DRAWER_TAB_KEY = 'kinetix:bulk-drawer-tab:v1';
 export type BulkDrawerTab = 'new' | 'failed-paused' | 'finished';
 
 export const BULK_DRAWER_TABS: readonly { id: BulkDrawerTab; label: string }[] = [
-  { id: 'new', label: 'NEW' },
-  { id: 'failed-paused', label: 'FAILED-PAUSED' },
-  { id: 'finished', label: 'FINISHED' },
+  { id: 'new', label: 'Active' },
+  { id: 'failed-paused', label: 'Failed' },
+  { id: 'finished', label: 'Ready' },
 ];
 
 const NEW_PHASES: ReadonlySet<BatchPhase> = new Set(['queued', 'cloud', 'finishing', 'cloud-done']);

@@ -16,6 +16,8 @@ import { useSyncExternalStore } from 'react';
 export const WORKSPACES_KEY = 'kinetix:workspaces:v1';
 /** Done-flag (and receipt) of the one-time bulk groups → workspaces migration. */
 export const WORKSPACES_MIGRATED_KEY = 'kinetix:workspaces-migrated:v1';
+/** Done-flag of the one-time "Group N" → "Workspace N" rename (workspaces are never groups). */
+export const WORKSPACES_GROUP_NAMES_KEY = 'kinetix:workspaces-group-names:v1';
 /** The bulk batch's storage (owned by services/bulkBatch.ts) — read here, never written. */
 const BULK_BATCH_KEY = 'kinetix:bulk-batch:v1';
 
@@ -194,7 +196,7 @@ export function migrateBulkGroupsToWorkspaces(
     const ids = (g.rowIds as unknown[]).filter((id): id is string => typeof id === 'string');
     const members = ids.filter(id => !placed.has(id));
     result.skipped += ids.length - members.length;
-    const ws = registry.create(typeof g.name === 'string' ? g.name : '');
+    const ws = registry.create(workspaceNameFromGroup(typeof g.name === 'string' ? g.name : ''));
     registry.assign(members, ws.id);
     members.forEach(id => placed.add(id));
     result.workspaces += 1;
@@ -204,6 +206,36 @@ export function migrateBulkGroupsToWorkspaces(
     storage.setItem(WORKSPACES_MIGRATED_KEY, JSON.stringify({ at: Date.now(), ...result }));
   } catch { /* the flag could not be written: the next boot tries again */ }
   return result;
+}
+
+/** The runner's default group names ("Group 3") read as workspaces ("Workspace 3");
+ *  a name the operator chose is kept as it is. */
+export function workspaceNameFromGroup(name: string): string {
+  const m = /^\s*group\s+(\d+)\s*$/i.exec(name);
+  return m ? `Workspace ${m[1]}` : name;
+}
+
+/**
+ * One time only: workspaces migrated before the rename rule still carry the
+ * runner's "Group N" default — rename them "Workspace N" (skipping a name
+ * already taken). Guarded by its own done-flag.
+ */
+export function renameGroupNamedWorkspaces(
+  registry: WorkspaceRegistry,
+  storage: Pick<Storage, 'getItem' | 'setItem'> | undefined = defaultStorage(),
+): number {
+  try {
+    if (!storage || storage.getItem(WORKSPACES_GROUP_NAMES_KEY) !== null) return 0;
+  } catch { return 0; }
+  let renamed = 0;
+  for (const ws of registry.snapshot()) {
+    const next = workspaceNameFromGroup(ws.name);
+    if (next === ws.name || registry.snapshot().some(w => w.name === next)) continue;
+    registry.rename(ws.id, next);
+    renamed += 1;
+  }
+  try { storage.setItem(WORKSPACES_GROUP_NAMES_KEY, String(renamed)); } catch { /* retried next boot */ }
+  return renamed;
 }
 
 /** What the one-time migration did on this machine, or null if it has not run. */
@@ -223,6 +255,7 @@ let shared: WorkspaceRegistry | null = null;
 export function workspaceRegistry(): WorkspaceRegistry {
   if (!shared) {
     shared = new WorkspaceRegistry();
+    renameGroupNamedWorkspaces(shared);
     const migrated = migrateBulkGroupsToWorkspaces(shared);
     if (migrated) {
       console.info(
@@ -236,6 +269,31 @@ export function workspaceRegistry(): WorkspaceRegistry {
 
 export function useWorkspaces(registry: WorkspaceRegistry = workspaceRegistry()): readonly Workspace[] {
   return useSyncExternalStore(l => registry.subscribe(l), () => registry.snapshot());
+}
+
+/** The project grid's selected workspace (also the highlighted card in the
+ *  Workspaces tab). Written synchronously on every change, so a reload, a
+ *  crash or a trip into the editor (which unmounts the dashboard) lands back
+ *  on the same selection. */
+export const GRID_WORKSPACE_KEY = 'kinetix:dashboard-grid-workspace:v1';
+
+export function readGridWorkspace(
+  storage: Pick<Storage, 'getItem'> | undefined = defaultStorage(),
+): WorkspaceFilter {
+  try {
+    const raw = storage?.getItem(GRID_WORKSPACE_KEY);
+    return raw && raw.trim() ? raw : 'all';
+  } catch { return 'all'; }
+}
+
+export function writeGridWorkspace(
+  filter: WorkspaceFilter,
+  storage: Pick<Storage, 'setItem' | 'removeItem'> | undefined = defaultStorage(),
+): void {
+  try {
+    if (filter === 'all') storage?.removeItem(GRID_WORKSPACE_KEY);
+    else storage?.setItem(GRID_WORKSPACE_KEY, filter);
+  } catch { /* storage unavailable: the grid starts on All */ }
 }
 
 /** Is this id shown under this filter? "All" shows everything, assigned or not. */

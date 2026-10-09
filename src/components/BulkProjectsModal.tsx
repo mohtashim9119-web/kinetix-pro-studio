@@ -96,11 +96,10 @@ function readSoundMuted(): boolean {
 function writeSoundMuted(muted: boolean): void {
   try { sessionStorage.setItem(SOUND_MUTE_KEY, muted ? '1' : '0'); } catch { /* ignore */ }
 }
-const LABEL = 'text-[10px] uppercase tracking-widest text-[var(--kx-muted)] font-bold block mb-2';
-// Enabled: the app's one orange. Disabled: a neutral, legible outline — never a faded orange.
-const BTN_PRIMARY = 'flex-1 border border-transparent bg-[var(--kx-accent)] text-[#1a0f06] p-3 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-[var(--kx-accent-hover)] transition-all focus:outline-none focus:ring-2 focus:ring-[var(--kx-accent-line)] disabled:bg-[var(--kx-surface-2)] disabled:text-[var(--kx-faint)] disabled:border-[var(--kx-line-2)] disabled:cursor-not-allowed';
 // Build Timeline stays orange in both states; disabled is a quieter orange.
 const BTN_BUILD = 'border border-transparent bg-[var(--kx-accent)] text-[#1a0f06] rounded-xl text-[10px] font-black uppercase tracking-widest shadow-[0_4px_18px_rgba(255,138,60,.18)] hover:bg-[var(--kx-accent-hover)] transition-all focus:outline-none focus:ring-2 focus:ring-[var(--kx-accent-line)] disabled:opacity-55 disabled:shadow-none disabled:cursor-not-allowed disabled:hover:bg-[var(--kx-accent)]';
+// Build Timeline's grey twin (same shape and type, neutral surface).
+const BTN_SECONDARY = 'border border-[var(--kx-line-2)] bg-[var(--kx-surface-2)] text-[var(--kx-text)] rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-[var(--kx-hover)] hover:border-[rgba(255,255,255,.22)] transition-all focus:outline-none focus:ring-2 focus:ring-[var(--kx-accent-line)] disabled:opacity-55 disabled:cursor-not-allowed disabled:hover:bg-[var(--kx-surface-2)]';
 const FILE_LINE = 'flex items-center gap-2 px-3 py-1 text-[12px]';
 const FILE_KIND = 'w-20 flex-shrink-0 whitespace-nowrap text-[10px] uppercase tracking-widest text-[var(--kx-faint)]';
 const FILE_ICON = 'flex-shrink-0 w-6 h-6 flex items-center justify-center rounded text-gray-500 hover:text-white hover:bg-[var(--kx-hover)] transition-colors';
@@ -110,12 +109,12 @@ const ROW_BTN = 'flex-shrink-0 flex items-center gap-1.5 h-9 px-3 rounded-lg bor
 const ROW_BTN_SM = 'flex-shrink-0 h-7 px-2.5 rounded-md border border-[var(--kx-line-2)] text-[11px] font-semibold text-[var(--kx-text)] hover:border-[rgba(255,255,255,.22)] transition-colors';
 /** Copy for the group-free Bulk Sync tab (BULK_COPY's group sentences no longer apply). */
 const PANE_COPY = {
-  createHeading: 'New projects',
-  create: 'Create',
-  batchesFull: (max: number): string => `Up to ${max} unfinished batches at a time. Clear finished rows to make room.`,
-  empty: 'No projects yet. Create some above.',
+  countPlaceholder: 'How many new projects? Enter 2–30',
+  create: 'Add Projects',
+  batchesFull: (_max: number): string => 'Limit reached — clear Ready rows (or finish some) to add more projects.',
+  empty: 'No projects yet. Add some above.',
   emptyWorkspace: 'No bulk projects in this workspace yet.',
-  addFull: `Up to ${BULK_GROUP_MAX_ROWS} projects per batch — create a new batch above.`,
+  addFull: `This set is full (${BULK_GROUP_MAX_ROWS}) — use Add Projects above.`,
 };
 const CHIP = 'flex-shrink-0 flex items-center gap-1 whitespace-nowrap text-[11px] font-semibold px-1.5 py-0.5 rounded-[6px]';
 
@@ -722,6 +721,8 @@ export function BulkProjectsModal({
   const rowOnTab = (row: BulkRowState): boolean =>
     bulkDrawerTabForPhase(recordById.get(row.projectId)?.phase) === drawerTab;
   const shownRows = scopedRows.filter(rowOnTab);
+  const tabCounts: Record<BulkDrawerTab, number> = { 'new': 0, 'failed-paused': 0, 'finished': 0 };
+  for (const r of scopedRows) tabCounts[bulkDrawerTabForPhase(recordById.get(r.projectId)?.phase)] += 1;
   const scopedIds = scopedRows.map(r => r.projectId);
   const retryAllIds = collectRetryAllRowIds(groups, records).filter(inScope);
   const selectTab = (next: BulkDrawerTab): void => {
@@ -867,7 +868,8 @@ export function BulkProjectsModal({
             )}
           </div>
           <div className="mt-4">
-            <span data-testid="bulk-create-heading" className={LABEL}>{PANE_COPY.createHeading}</span>
+            {/* The workspace IS the group now: this only adds N rows (to the
+                selected workspace, if one is selected). */}
             <form
               className="flex items-center gap-2"
               onSubmit={e => { e.preventDefault(); createRows(); }}
@@ -880,18 +882,19 @@ export function BulkProjectsModal({
                 max={BULK_MAX_PROJECTS}
                 step={1}
                 aria-label={BULK_COPY.groupCountLabel}
-                placeholder={BULK_COPY.groupCountPlaceholder}
+                placeholder={PANE_COPY.countPlaceholder}
                 value={countRaw}
                 disabled={!runner.canCreateGroup()}
                 onChange={e => setCountRaw(e.target.value)}
-                className={`${FIELD} w-full min-w-0 flex-1 h-10 px-3 text-[13px]`}
+                className={`${FIELD} flex-1 min-w-0 h-10 px-3 text-[13px]`}
               />
               <button
                 type="submit"
                 data-testid="bulk-create"
-                className={`${BTN_PRIMARY} flex-none h-10 px-5 py-0 flex items-center gap-1.5`}
+                className={`${BTN_BUILD} flex-none h-10 px-5 py-0 flex items-center gap-1.5`}
                 disabled={!store || count === null || !runner.canCreateGroup()}
               >
+                <Plus size={12} strokeWidth={2.6} />
                 {PANE_COPY.create}
               </button>
             </form>
@@ -901,14 +904,16 @@ export function BulkProjectsModal({
               <p className="mt-2 text-[11px] leading-snug text-amber-300">{BULK_COPY.quantityInvalid(BULK_MAX_PROJECTS)}</p>
             ) : null}
           </div>
-        </div>
-        <div className="px-5 pt-3 flex-shrink-0">
+          {/* Active | Failed | Ready — the top tabs' design language (recessed
+              track, gliding thumb, orange hairline), one size down. */}
           <div
             role="tablist"
             aria-label="Bulk rows"
             data-testid="bulk-drawer-tabs"
-            className="flex gap-1 p-1 rounded-xl border border-[var(--kx-line-2)] bg-[var(--kx-surface)]"
+            className="kxd-subtabs mt-4"
+            style={{ '--kxd-subtab-i': Math.max(0, BULK_DRAWER_TABS.findIndex(t => t.id === drawerTab)) } as React.CSSProperties}
           >
+            <span className="kxd-subtabs-thumb" aria-hidden="true" />
             {BULK_DRAWER_TABS.map(t => (
               <button
                 key={t.id}
@@ -917,13 +922,10 @@ export function BulkProjectsModal({
                 aria-selected={drawerTab === t.id}
                 data-testid={`bulk-tab-${t.id}`}
                 onClick={() => selectTab(t.id)}
-                className={`flex-1 min-w-0 h-8 px-1 rounded-lg text-[9px] font-black uppercase tracking-widest transition-colors ${
-                  drawerTab === t.id
-                    ? 'bg-[var(--kx-surface-2)] text-[var(--kx-text)]'
-                    : 'text-[var(--kx-muted)] hover:text-[var(--kx-text)]'
-                }`}
+                className="kxd-subtab"
               >
-                {t.label}
+                <span className="kxd-subtab-label">{t.label}</span>
+                <span className="kxd-subtab-count" data-testid={`bulk-tab-count-${t.id}`}>{tabCounts[t.id]}</span>
               </button>
             ))}
           </div>
@@ -974,32 +976,31 @@ export function BulkProjectsModal({
           ) : (
             <ol className="space-y-2.5" data-testid="bulk-rows">{shownRows.map(renderRow)}</ol>
           )}
-          {drawerTab === 'new' && (
-            <div className="mt-3 px-1 flex items-center gap-3">
-              <button
-                type="button"
-                data-testid="bulk-add"
-                className="flex items-center gap-1.5 h-8 px-2 rounded-md text-[12px] font-semibold text-[var(--kx-muted)] hover:text-white hover:bg-[var(--kx-hover)] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                disabled={!store || !addTarget}
-                title={groups.length > 0 && !addTarget ? PANE_COPY.addFull : undefined}
-                onClick={addRow}
-              >
-                <Plus size={12} />
-                {BULK_COPY.addProject}
-              </button>
-              <div className="flex-1" />
-              <button
-                type="button"
-                data-testid="bulk-build"
-                className={`${BTN_BUILD} flex-none px-5 py-2.5`}
-                disabled={!cloud || !shownRows.some(isComplete)}
-                title={!cloud ? BULK_COPY.notCloud : !shownRows.some(isComplete) ? BULK_COPY.buildNeeds : undefined}
-                onClick={() => build(scopedIds)}
-              >
-                {BULK_COPY.build}
-              </button>
-            </div>
-          )}
+        </div>
+        {/* Sticky: Build Timeline is always in reach, whatever sub-tab or scroll.
+            It builds the complete rows of the selected workspace (All: every row). */}
+        <div className="px-5 py-3 flex-shrink-0 flex items-center gap-3 border-t border-[var(--kx-line-2)] bg-[var(--kx-panel)] shadow-[0_-10px_24px_-12px_rgba(0,0,0,.8)]" data-testid="bulk-build-bar">
+          <button
+            type="button"
+            data-testid="bulk-add"
+            className={`${BTN_SECONDARY} flex-1 basis-0 h-10 px-5 flex items-center justify-center gap-1.5`}
+            disabled={!store || !addTarget}
+            title={groups.length > 0 && !addTarget ? PANE_COPY.addFull : undefined}
+            onClick={addRow}
+          >
+            <Plus size={12} />
+            {BULK_COPY.addProject}
+          </button>
+          <button
+            type="button"
+            data-testid="bulk-build"
+            className={`${BTN_BUILD} flex-1 basis-0 h-10 px-5`}
+            disabled={!cloud || !scopedRows.some(isComplete)}
+            title={!cloud ? BULK_COPY.notCloud : !scopedRows.some(isComplete) ? BULK_COPY.buildNeeds : undefined}
+            onClick={() => build(scopedIds)}
+          >
+            {BULK_COPY.build}
+          </button>
         </div>
         <div className="px-6 pt-3 pb-5 flex-shrink-0 border-t border-[var(--kx-line)] bg-[var(--kx-panel)]" data-testid="bulk-footer">
           {line && <p className="text-[11px] leading-snug text-gray-400 mb-1" data-testid="bulk-batch-line">{line}</p>}

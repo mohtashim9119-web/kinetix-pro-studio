@@ -1,5 +1,5 @@
 import React, { useEffect, useLayoutEffect, useState, useRef, useCallback, useSyncExternalStore } from 'react';
-import { Plus, Trash2, Search, Check, Loader2, Settings, ChevronDown, Play } from 'lucide-react';
+import { Plus, Trash2, Search, Check, Loader2, Settings, ChevronDown, Play, PanelLeft, LayoutGrid, RefreshCcw, Upload, type LucideIcon } from 'lucide-react';
 import type { ProjectMeta } from '../types';
 import { loadAllMetas, commitTombstones } from '../services/projectStore';
 import { cleanupDeletedProjectAssets, deleteProjectRecords } from '../services/projectDelete';
@@ -16,7 +16,9 @@ import { Z } from './overlayLayers';
 import { ProjectCardThumb } from './ProjectCardThumb';
 import { WorkspacesPane, type WorkspaceProject } from './WorkspacesPane';
 import { DASHBOARD_LEFT_TABS, type DashboardLeftTab } from './dashboardLeftTab';
-import { inWorkspace, resolveWorkspaceFilter, useWorkspaces, workspaceRegistry, type WorkspaceFilter } from './workspaceRegistry';
+import {
+  inWorkspace, readGridWorkspace, resolveWorkspaceFilter, useWorkspaces, workspaceRegistry, writeGridWorkspace, type WorkspaceFilter,
+} from './workspaceRegistry';
 import { WorkspaceTabs } from './WorkspaceTabs';
 import './ProjectDashboard.css';
 
@@ -38,7 +40,9 @@ interface Props {
    */
   openingProjectId?: string | null;
   onSelectProject: (id: string) => void;
-  onNewProject: () => void;
+  /** New Project. Called with the selected workspace (null = All): the new
+   *  project joins it. */
+  onNewProject: (workspaceId: string | null) => void;
   /**
    * Opens App Settings (WS2 T4.1 Step 1). THE ONLY entry point to it, and it
    * lives here rather than in the editor for a reason: App Settings is
@@ -79,7 +83,16 @@ interface Props {
    * tree lives in App and never remounts with the dashboard or the tab.
    */
   paneHosts?: Partial<Record<DashboardLeftTab, HTMLElement | null>>;
+  /** The left panel is hidden (its drawer button). CSS only — nothing unmounts. */
+  leftCollapsed?: boolean;
+  onLeftCollapsedChange?: (collapsed: boolean) => void;
 }
+
+const TAB_ICON: Record<DashboardLeftTab, LucideIcon> = {
+  'workspaces': LayoutGrid,
+  'bulk-sync': RefreshCcw,
+  'bulk-export': Upload,
+};
 
 export { DASHBOARD_LEFT_TABS, type DashboardLeftTab };
 
@@ -122,6 +135,8 @@ export function ProjectDashboard({
   leftTab: controlledLeftTab,
   onLeftTabChange,
   paneHosts,
+  leftCollapsed: controlledCollapsed,
+  onLeftCollapsedChange,
 }: Props): React.ReactElement {
   const [engineHost, setEngineHost] = useState<SyncEngineHost>(readSyncEngineHost);
   useEffect(() => onSyncEngineHostChange(setEngineHost), []);
@@ -131,14 +146,45 @@ export function ProjectDashboard({
   const [showBulkConfirm, setShowBulkConfirm] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const workspaces = useWorkspaces();
-  const [gridWsRaw, setGridWs] = useState<WorkspaceFilter>('all');
+  // Persisted on every change (synchronously — nothing to lose on a crash),
+  // restored on every mount: reload, crash, or back from the editor.
+  const [gridWsRaw, setGridWsRaw] = useState<WorkspaceFilter>(readGridWorkspace);
+  const setGridWs = (next: WorkspaceFilter): void => {
+    writeGridWorkspace(next);
+    setGridWsRaw(next);
+  };
   const gridWs = resolveWorkspaceFilter(workspaces, gridWsRaw);
+  // The stored workspace was deleted: All is what shows, so All is what is stored.
+  useEffect(() => {
+    if (gridWsRaw !== 'all' && gridWs === 'all') writeGridWorkspace('all');
+  }, [gridWsRaw, gridWs]);
   const [ownLeftTab, setOwnLeftTab] = useState<DashboardLeftTab>('workspaces');
   const leftTab = controlledLeftTab ?? ownLeftTab;
   const setLeftTab = (tab: DashboardLeftTab): void => {
     setOwnLeftTab(tab);
     onLeftTabChange?.(tab);
   };
+  const [ownCollapsed, setOwnCollapsed] = useState(false);
+  const leftCollapsed = controlledCollapsed ?? ownCollapsed;
+  const toggleLeft = (): void => {
+    setOwnCollapsed(!leftCollapsed);
+    onLeftCollapsedChange?.(!leftCollapsed);
+  };
+  const leftTabIndex = Math.max(0, DASHBOARD_LEFT_TABS.findIndex(t => t.id === leftTab));
+  const drawerButton = (where: 'panel' | 'topbar'): React.ReactElement => (
+    <button
+      type="button"
+      className="kxd-drawer-btn"
+      data-testid={`dashboard-left-toggle-${where}`}
+      aria-controls="kxd-left-panel"
+      aria-expanded={!leftCollapsed}
+      aria-label={leftCollapsed ? 'Show studio panel' : 'Hide studio panel'}
+      title={leftCollapsed ? 'Show panel' : 'Hide panel'}
+      onClick={toggleLeft}
+    >
+      <PanelLeft size={16} strokeWidth={1.8} aria-hidden="true" />
+    </button>
+  );
   // The persistent batch: reachable from here until it is cleared, even after a reload.
   const batch = bulkBatchRunner(parseProjectData);
   const batchRows = useSyncExternalStore(l => batch.subscribe(l), () => batch.snapshot());
@@ -197,13 +243,26 @@ export function ProjectDashboard({
   // are members too, counted but not listed by name.
   const workspaceProjects = React.useMemo<WorkspaceProject[]>(() => {
     const seen = new Set(metas.map(m => m.id));
+    const recordOf = new Map(batchRows.map(r => [r.id, r]));
     return [
-      ...metas.map(m => ({ id: m.id, name: m.name })),
-      ...batchRows.filter(r => !seen.has(r.id)).map(r => ({ id: r.id, name: r.name })),
+      ...metas.map(m => ({
+        id: m.id, name: m.name, savedAt: m.savedAt, segmentCount: m.segmentCount, meta: m,
+        phase: recordOf.get(m.id)?.phase, billingAttempts: recordOf.get(m.id)?.billingAttempts,
+      })),
+      ...batchRows.filter(r => !seen.has(r.id)).map(r => ({ id: r.id, name: r.name, phase: r.phase, billingAttempts: r.billingAttempts })),
     ];
   }, [metas, batchRows]);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const draftIds = React.useMemo(() => new Set(unbuiltBulkRowIds()), [metas, batchRows]);
+
+  const selectedWorkspace = gridWs === 'all' ? undefined : workspaces.find(w => w.id === gridWs);
+  const workspaceCounts = React.useMemo(() => {
+    const ids = new Set(metas.map(m => m.id));
+    const out: Record<string, number> = { all: metas.length };
+    for (const w of workspaces) out[w.id] = w.projectIds.filter(id => ids.has(id)).length;
+    return out;
+  }, [metas, workspaces]);
+  const wsProjectCount = workspaceCounts[gridWs] ?? 0;
 
   const filtered = metas.filter(m =>
     inWorkspace(workspaces, gridWs, m.id) && m.name.toLowerCase().includes(search.trim().toLowerCase()));
@@ -255,12 +314,32 @@ export function ProjectDashboard({
 
   return (
     <div className={`kxd-root fixed inset-0 ${showBulkConfirm ? Z.modal : Z.dashboard}`}>
-      <aside className="kxd-left" data-testid="dashboard-left-panel" aria-label="Studio panel">
+      {/* Hidden = collapsed by CSS and inert; never unmounted, so every pane (and
+          the bulk work App portals into them) carries on exactly as when shown. */}
+      <aside
+        id="kxd-left-panel"
+        className={`kxd-left${leftCollapsed ? ' is-collapsed' : ''}`}
+        data-testid="dashboard-left-panel"
+        data-collapsed={leftCollapsed ? 'true' : 'false'}
+        aria-label="Studio panel"
+        inert={leftCollapsed}
+      >
+        <div className="kxd-left-inner">
         <div className="kxd-left-head">
           <h2>Studio</h2>
+          {drawerButton('panel')}
         </div>
-        <div role="tablist" aria-label="Studio panel tabs" className="kxd-tabs" data-testid="dashboard-left-tabs">
-          {DASHBOARD_LEFT_TABS.map(t => (
+        <div
+          role="tablist"
+          aria-label="Studio panel tabs"
+          className="kxd-tabs"
+          data-testid="dashboard-left-tabs"
+          style={{ '--kxd-tab-i': leftTabIndex } as React.CSSProperties}
+        >
+          <span className="kxd-tabs-thumb" aria-hidden="true" />
+          {DASHBOARD_LEFT_TABS.map(t => {
+            const Icon = TAB_ICON[t.id];
+            return (
             <button
               key={t.id}
               type="button"
@@ -272,7 +351,8 @@ export function ProjectDashboard({
               className="kxd-tab"
               onClick={() => setLeftTab(t.id)}
             >
-              {t.label}
+              <Icon className="kxd-tab-icon" size={13} strokeWidth={2} aria-hidden="true" />
+              <span className="kxd-tab-label">{t.label}</span>
               {/* The batch at a glance: a ring + n/m from the first Build Timeline until the
                   batch is cleared (full ring when finished), a red dot when any row failed. */}
               {t.id === 'bulk-sync' && batchRows.length > 0 && (
@@ -283,7 +363,8 @@ export function ProjectDashboard({
               )}
               {t.id === 'bulk-sync' && bulkSignal.failed > 0 && <FailedDot count={bulkSignal.failed} />}
             </button>
-          ))}
+            );
+          })}
         </div>
         {DASHBOARD_LEFT_TABS.map(t => (
           <div
@@ -296,7 +377,12 @@ export function ProjectDashboard({
             hidden={leftTab !== t.id}
           >
             {t.id === 'workspaces' ? (
-              <WorkspacesPane projects={workspaceProjects} draftIds={draftIds} />
+              <WorkspacesPane
+                projects={workspaceProjects}
+                draftIds={draftIds}
+                selectedId={gridWs === 'all' ? null : gridWs}
+                onSelect={id => setGridWs(id ?? 'all')}
+              />
             ) : paneHosts?.[t.id] ? (
               <PaneHost host={paneHosts[t.id]!} />
             ) : (
@@ -304,10 +390,12 @@ export function ProjectDashboard({
             )}
           </div>
         ))}
+        </div>
       </aside>
 
       <section className="kxd-right" data-testid="dashboard-right-panel">
       <header className="kxd-topbar">
+        {leftCollapsed && drawerButton('topbar')}
         <div className="kxd-brand">
           <div className="kxd-brand-mark">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -343,11 +431,6 @@ export function ProjectDashboard({
               {BULK_COPY.stopAll}
             </button>
           )}
-          <button className="kxd-btn kxd-btn-accent" onClick={onNewProject}>
-            <Plus size={14} strokeWidth={2.2} aria-hidden="true" />
-            New Project
-          </button>
-
           <div className="kxd-profile" ref={profileRef}>
             <button
               className="kxd-profile-trigger"
@@ -427,9 +510,15 @@ export function ProjectDashboard({
           {!bulkOpen && <SyncQueuePanel />}
           <div className="kxd-grid-frame" data-testid="project-grid-frame">
           <div className="kxd-section-head">
-            <h1>Recent projects</h1>
-            <div>
-              {selectedCount > 0 ? (
+            <div className="kxd-section-title">
+              <h1>Workspaces</h1>
+              {/* The selected workspace's own total (All: every project) — never the search's. */}
+              <span className="kxd-project-count" data-testid="dashboard-project-count">
+                {wsProjectCount === 1 ? '1 project' : `${wsProjectCount} projects`}
+              </span>
+            </div>
+            <div className="kxd-section-actions">
+              {selectedCount > 0 && (
                 <div className="kxd-selection-bar">
                   <span className="kxd-selection-count">
                     <span>{selectedCount}</span> selected
@@ -456,11 +545,16 @@ export function ProjectDashboard({
                     Delete
                   </button>
                 </div>
-              ) : (
-                <span className="kxd-project-count">
-                  {metas.length === 1 ? '1 project' : `${metas.length} projects`}
-                </span>
               )}
+              <button
+                className="kxd-btn kxd-btn-accent"
+                data-testid="dashboard-new-project"
+                title={selectedWorkspace ? `New project in ${selectedWorkspace.name}` : 'New project (no workspace)'}
+                onClick={() => onNewProject(selectedWorkspace?.id ?? null)}
+              >
+                <Plus size={14} strokeWidth={2.2} aria-hidden="true" />
+                New Project
+              </button>
             </div>
           </div>
 
@@ -471,6 +565,8 @@ export function ProjectDashboard({
               onChange={setGridWs}
               testIdPrefix="grid-ws"
               label="Project workspaces"
+              variant="prominent"
+              counts={workspaceCounts}
             />
           </div>
 

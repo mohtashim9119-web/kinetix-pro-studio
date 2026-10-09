@@ -428,7 +428,9 @@ import { Timeline } from './components/Timeline';
 import { PreviewStage, type AutoGradeSampler, type PreviewStageHandle } from './components/PreviewStage';
 import { SpeedBadge, SPEED_LADDER } from './components/SpeedBadge';
 import { ProjectDashboard } from './components/ProjectDashboard';
-import { readDashboardLeftTab, writeDashboardLeftTab, type DashboardLeftTab } from './components/dashboardLeftTab';
+import {
+  readDashboardLeftCollapsed, readDashboardLeftTab, writeDashboardLeftCollapsed, writeDashboardLeftTab, type DashboardLeftTab,
+} from './components/dashboardLeftTab';
 import { workspaceRegistry } from './components/workspaceRegistry';
 import { BulkProjectsModal } from './components/BulkProjectsModal';
 import { BulkExportModal, BulkExportRunningNotice } from './components/BulkExportModal';
@@ -2167,6 +2169,8 @@ export default function App() {
   // The pure matcher's output lives here; the screen renders it verbatim.
   const [folderRelink, setFolderRelink] = useState<FolderRelinkView | null>(null);
   const [showNewProjectModal, setShowNewProjectModal] = useState(false);
+  // The dashboard's selected workspace when New Project was clicked (null = All).
+  const newProjectWorkspaceRef = useRef<string | null>(null);
   // Dashboard revamp — the dashboard's permanent left panel (Workspaces |
   // Bulk Sync | Bulk Export); the last active tab survives a reload.
   // Bulk Sync and Bulk Export live HERE, not in the dashboard: finishing a
@@ -2186,8 +2190,16 @@ export default function App() {
     if (dashboardLeftTab === 'bulk-sync') setBulkMounted(true);
     else if (dashboardLeftTab === 'bulk-export') setExportMounted(true);
   }, [dashboardLeftTab]);
-  const bulkSyncVisible = showDashboard && dashboardLeftTab === 'bulk-sync';
-  const bulkExportVisible = showDashboard && dashboardLeftTab === 'bulk-export';
+  // The panel's drawer button hides it — CSS only: every pane stays mounted and
+  // every bulk process keeps running. Written synchronously (crash-safe).
+  const [dashboardLeftCollapsed, setDashboardLeftCollapsedRaw] = useState<boolean>(readDashboardLeftCollapsed);
+  const setDashboardLeftCollapsed = useCallback((collapsed: boolean) => {
+    writeDashboardLeftCollapsed(collapsed);
+    setDashboardLeftCollapsedRaw(collapsed);
+  }, []);
+  const leftPanelShown = showDashboard && !dashboardLeftCollapsed;
+  const bulkSyncVisible = leftPanelShown && dashboardLeftTab === 'bulk-sync';
+  const bulkExportVisible = leftPanelShown && dashboardLeftTab === 'bulk-export';
   const bulkExport = useMemo(() => new BulkExportRunner({
     listProjects: () => loadAllMetas().map(m => ({ id: m.id, name: m.name, lastExportPath: m.lastExportPath })),
     loadProject: async (id) => (await loadProject(id))?.project ?? null,
@@ -6150,6 +6162,11 @@ export default function App() {
     // the dashboard next renders.
     const fresh = makeDefaultProject();
     fresh.name = name;
+    // Created from the dashboard with a workspace selected: it joins that
+    // workspace (view-layer membership only). All selected: unassigned.
+    const targetWorkspace = newProjectWorkspaceRef.current;
+    newProjectWorkspaceRef.current = null;
+    if (targetWorkspace) workspaceRegistry().assign([fresh.id], targetWorkspace);
     // Locked forever at creation (aspectRatio) / editable later in Project
     // Settings (resolutionTier) — Project Settings + Aspect Ratio Step 3.
     fresh.aspectRatio = aspectRatio;
@@ -6868,12 +6885,14 @@ export default function App() {
       currentProjectId={project.confirmed ? project.id : null}
       openingProjectId={openingProjectId}
       onSelectProject={(id) => { userNavSeqRef.current += 1; void handleSwitchProject(id); }}
-      onNewProject={() => setShowNewProjectModal(true)}
+      onNewProject={(workspaceId) => { newProjectWorkspaceRef.current = workspaceId ?? null; setShowNewProjectModal(true); }}
       onOpenAppSettings={() => setShowAppSettingsModal(true)}
       onAssetCleanupFailed={showToast}
       parseProjectData={parseProjectData}
       leftTab={dashboardLeftTab}
       onLeftTabChange={setDashboardLeftTab}
+      leftCollapsed={dashboardLeftCollapsed}
+      onLeftCollapsedChange={setDashboardLeftCollapsed}
       paneHosts={{ 'bulk-sync': bulkSyncPaneHost, 'bulk-export': bulkExportPaneHost }}
       metasVersion={dashboardVersion}
       bulkOpen={bulkMounted}
@@ -8116,7 +8135,7 @@ export default function App() {
       {showNewProjectModal && (
         <NewProjectModal
           onConfirm={handleNewProjectConfirm}
-          onCancel={() => setShowNewProjectModal(false)}
+          onCancel={() => { newProjectWorkspaceRef.current = null; setShowNewProjectModal(false); }}
         />
       )}
       {/* App Settings (WS2 T4.1 Step 1) — machine-global settings, rendered

@@ -42,3 +42,23 @@ export function writeDashboardLeftTab(
 ): void {
   try { storage?.setItem(DASHBOARD_LEFT_TAB_KEY, tab); } catch { /* storage unavailable: the panel starts on Workspaces */ }
 }
+
+/** The left panel hidden (its drawer button). Hiding never unmounts anything:
+ *  Bulk Sync / Bulk Export keep running exactly as when it is shown. */
+export const DASHBOARD_LEFT_COLLAPSED_KEY = 'kinetix:dashboard-left-collapsed:v1';
+
+export function readDashboardLeftCollapsed(
+  storage: Pick<Storage, 'getItem'> | undefined = typeof localStorage !== 'undefined' ? localStorage : undefined,
+): boolean {
+  try { return storage?.getItem(DASHBOARD_LEFT_COLLAPSED_KEY) === '1'; } catch { return false; }
+}
+
+export function writeDashboardLeftCollapsed(
+  collapsed: boolean,
+  storage: Pick<Storage, 'setItem' | 'removeItem'> | undefined = typeof localStorage !== 'undefined' ? localStorage : undefined,
+): void {
+  try {
+    if (collapsed) storage?.setItem(DASHBOARD_LEFT_COLLAPSED_KEY, '1');
+    else storage?.removeItem(DASHBOARD_LEFT_COLLAPSED_KEY);
+  } catch { /* storage unavailable: the panel starts shown */ }
+}
