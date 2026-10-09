@@ -19,6 +19,8 @@ import { loadProject } from '../services/projectStore';
 import { settingsFromProject } from '../services/bulkExportSettings';
 import { preflightBulkExport } from '../services/bulkExportPreflight';
 import { buildSyncGroups } from '../services/syncLogGroups';
+import { getProjectAssetRecoveryStatus } from '../services/assetRecovery';
+import type { Asset } from '../types';
 
 /** The sync log panel's dismissals (the same store it reads and writes). */
 const SYNC_LOG_DISMISSED_KEY = 'kx-sync-log-dismissed';
@@ -31,6 +33,22 @@ function readDismissed(): Set<string> {
   } catch {
     return new Set();
   }
+}
+
+/** The record's assets with `url` / `unresolved` set from real storage
+ *  availability (the project-open path's own check). If storage cannot be
+ *  read, nothing is marked offline — a pre-check never invents a block. */
+async function withStorageAvailability(projectId: string, assets: readonly Asset[]): Promise<Asset[]> {
+  let resolved: Map<string, boolean> | null = null;
+  try {
+    const status = await getProjectAssetRecoveryStatus(projectId);
+    if (status) resolved = new Map(status.assets.map(a => [a.assetId, a.resolved]));
+  } catch { resolved = null; }
+  return assets.map(a => {
+    const available = resolved ? resolved.get(a.id) === true : true;
+    // Any non-empty url means "has bytes" to the media check; it is never loaded here.
+    return available ? { ...a, url: a.url || 'stored:', unresolved: false } : { ...a, url: '', unresolved: true };
+  });
 }
 
 /** Why this project cannot export yet, or null when it is clear. */
@@ -46,13 +64,20 @@ export async function precheckProject(id: string, lastExportPath?: string): Prom
 
   const settings = settingsFromProject(project, new Date(), lastExportPath);
   if ('blocked' in settings) return settings.blocked;
-  const gate = preflightBulkExport(project.segments, project.assets);
+
+  // A STORED record never carries media URLs (projectStore writes every asset
+  // with url ''), and may carry a stale `unresolved` flag from an old session —
+  // so judging media from the record says "offline" for every project. Ask
+  // storage instead, exactly as opening the project does: an asset is
+  // available when its bytes are in the cache or the native store.
+  const assets = await withStorageAvailability(id, project.assets);
+  const gate = preflightBulkExport(project.segments, assets);
   if (gate.kind === 'block') return gate.message;
 
   const view = buildSyncGroups({
     log: project.syncLog ?? [],
     summaries: project.syncRunSummaries ?? [],
-    live: { segments: project.segments, assets: project.assets, spots: project.spots ?? [] },
+    live: { segments: project.segments, assets, spots: project.spots ?? [] },
     dismissed: readDismissed(),
   });
   const newest = view.syncs[0];
