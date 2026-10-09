@@ -197,22 +197,22 @@
 /* Sized so the header matches Bulk Sync's (tabs + 40px field + sub-tabs). */
 .kxd-xs { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
 /* Resolution | Frame rate | Folder — one row. */
-.kxd-xs-row { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr) minmax(0, 3fr); gap: 8px; }
+.kxd-xs-row { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr) minmax(0, 3fr); gap: 6px; }
 .kxd-xs-field { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
 .kxd-xs-label {
-  font-size: 9.5px; font-weight: 800; letter-spacing: 0.16em; text-transform: uppercase;
+  font-size: 8.5px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase;
   color: var(--kxd-text-faint);
 }
 .kxd-seg {
-  display: flex; gap: 3px; padding: 3px;
-  background: var(--kxd-surface); border: 1px solid var(--kxd-line); border-radius: 9px;
+  display: flex; gap: 2px; padding: 2px;
+  background: var(--kxd-surface); border: 1px solid var(--kxd-line); border-radius: 7px;
 }
 .kxd-seg-item {
-  position: relative; flex: 1 1 0; min-width: 0; height: 26px; padding: 0 4px;
-  display: inline-flex; align-items: baseline; justify-content: center; gap: 3px;
-  line-height: 26px;
-  background: none; border: none; border-radius: 6px;
-  font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 500;
+  position: relative; flex: 1 1 0; min-width: 0; height: 22px; padding: 0 3px;
+  display: inline-flex; align-items: baseline; justify-content: center; gap: 2px;
+  line-height: 22px;
+  background: none; border: none; border-radius: 5px;
+  font-family: 'JetBrains Mono', monospace; font-size: 10.5px; font-weight: 500;
   color: var(--kxd-text-faint);
   transition: background 0.15s ease, color 0.15s ease;
 }
@@ -222,17 +222,17 @@
   box-shadow: 0 0 0 1px var(--kxd-line-strong);
 }
 .kxd-seg-item[aria-checked="true"]::after {
-  content: ""; position: absolute; left: 50%; bottom: 2px; width: 10px; height: 2px;
+  content: ""; position: absolute; left: 50%; bottom: 1px; width: 8px; height: 1.5px;
   transform: translateX(-50%); border-radius: 2px;
-  background: var(--kxd-accent); box-shadow: 0 0 6px rgba(232, 132, 61, 0.55);
+  background: var(--kxd-accent); box-shadow: 0 0 5px rgba(232, 132, 61, 0.5);
 }
 .kxd-seg-item:focus-visible { outline: 2px solid var(--kxd-accent-hi); outline-offset: -2px; }
-.kxd-seg-unit { font-size: 9.5px; color: inherit; opacity: 0.6; }
+.kxd-seg-unit { font-size: 8.5px; color: inherit; opacity: 0.55; }
 
 .kxd-folder-btn {
-  width: 100%; height: 34px; padding: 0 10px;
-  display: flex; align-items: center; gap: 7px; text-align: left;
-  background: var(--kxd-surface); border: 1px solid var(--kxd-line-strong); border-radius: 9px;
+  width: 100%; height: 28px; padding: 0 8px;
+  display: flex; align-items: center; gap: 6px; text-align: left;
+  background: var(--kxd-surface); border: 1px solid var(--kxd-line); border-radius: 7px;
   color: var(--kxd-text);
   transition: background 0.12s ease, border-color 0.12s ease;
 }
@@ -246,13 +246,13 @@
 }
 .kxd-folder-path {
   flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font-family: 'JetBrains Mono', monospace; font-size: 11.5px; color: var(--kxd-text);
+  font-family: 'JetBrains Mono', monospace; font-size: 10.5px; color: var(--kxd-text-dim);
 }
 .kxd-folder-change { flex-shrink: 0; font-size: 11px; font-weight: 600; color: var(--kxd-text-dim); }
 .kxd-folder-btn:hover .kxd-folder-change { color: var(--kxd-accent-hi); }
 /* No folder yet: the field invites a pick (this is what used to block exports). */
 .kxd-folder-btn.is-empty { border-style: dashed; border-color: rgba(232, 132, 61, 0.45); }
-.kxd-folder-btn.is-empty .kxd-folder-path { font-family: inherit; font-weight: 600; color: var(--kxd-accent-hi); }
+.kxd-folder-btn.is-empty .kxd-folder-path { font-family: inherit; font-size: 10.5px; font-weight: 600; color: var(--kxd-accent-hi); }
 
 .kxd-left-pane { flex: 1; min-height: 0; display: flex; flex-direction: column; border-top: 1px solid var(--kxd-line); }
 .kxd-left-pane[hidden] { display: none; }

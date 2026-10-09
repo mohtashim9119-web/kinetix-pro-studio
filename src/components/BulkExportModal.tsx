@@ -119,8 +119,8 @@ function ExportSettingsHeader({
             disabled={picking}
             onClick={() => { void chooseFolder(); }}
           >
-            <FolderOpen size={13} aria-hidden="true" className="kxd-folder-icon" />
-            <span className="kxd-folder-path">{settings.folder ? shortFolder(settings.folder, 18) : 'Choose…'}</span>
+            <FolderOpen size={11} aria-hidden="true" className="kxd-folder-icon" />
+            <span className="kxd-folder-path">{settings.folder ? shortFolder(settings.folder, 22) : 'Choose…'}</span>
           </button>
         </div>
       </div>
@@ -188,7 +188,7 @@ export function BulkExportModal({
             store={exportSettings}
           />
           <div className="mt-3 flex items-center justify-between gap-3">
-            <label className="flex items-center gap-2 text-[12px] text-[var(--kx-text)]">
+            <label className="flex items-center gap-2 text-[11px] text-[var(--kx-text)]">
               <input
                 type="checkbox"
                 data-testid="bulk-export-select-all"
