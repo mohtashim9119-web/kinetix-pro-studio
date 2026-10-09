@@ -67,6 +67,7 @@ interface Props {
    * finished in the editor). A bulk project shows here only once it is built.
    */
   onBulkOpen?: () => void;
+  onBulkExportOpen?: () => void;
   /** Bumped by App when projects were created/removed behind the dashboard. */
   metasVersion?: number;
   /** The rows modal is open: the queue is shown there, not here too. */
@@ -150,6 +151,7 @@ export function ProjectDashboard({
   onAssetCleanupFailed,
   parseProjectData,
   onBulkOpen,
+  onBulkExportOpen,
   metasVersion = 0,
   bulkOpen = false,
   bulkDockInset = 0,
@@ -318,6 +320,11 @@ export function ProjectDashboard({
         <div className="kxd-actions">
           {/* Bulk UI rebuild U3 — ONE bulk door, and it only ever opens the
               drawer. It never asks a number: creating lives in the drawer. */}
+          {onBulkExportOpen && (
+            <button className="kxd-btn kxd-btn-quiet" data-testid="dashboard-bulk-export" onClick={onBulkExportOpen}>
+              Bulk Export
+            </button>
+          )}
           {onBulkOpen && parseProjectData && (
             <>
             <button className="kxd-btn kxd-btn-quiet" data-testid="dashboard-bulk" onClick={onBulkOpen}>

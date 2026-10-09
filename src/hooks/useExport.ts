@@ -283,9 +283,17 @@ export interface UseExportState {
   lastExportDurabilityWarnings?: string[];
 }
 
+export interface ExportStartRequest {
+  spotRenderSpecs?: SpotRenderSpec[];
+  /** When set, skip the save-path picker (bulk export / tests). */
+  savedPath?: string;
+  /** Skip the per-run completion chime (bulk plays one chime at batch end). */
+  silent?: boolean;
+}
+
 export interface UseExportApi {
   state: UseExportState;
-  startExport: (request?: { spotRenderSpecs?: SpotRenderSpec[] }) => void;
+  startExport: (request?: ExportStartRequest) => void;
   cancelExport: () => void;
   retryExport: () => void;
   dismissSuccess: () => void;
@@ -302,6 +310,7 @@ interface ExportSnapshot {
   fps: ExportFps;
   savedPath: string;
   spotRenderSpecs?: SpotRenderSpec[];
+  silent?: boolean;
 }
 
 const IDLE_STATE: UseExportState = {
@@ -1081,25 +1090,29 @@ export function useExport(
     }));
     // Best-effort completion sound — never awaited, never allowed to affect
     // the export flow or the toast if it fails (see notificationSound.ts).
-    void playExportCompleteChime();
+    if (!snapshot.silent) void playExportCompleteChime();
   }, [teardown, startElapsedTimer, stopElapsedTimer]);
 
-  const startExport = useCallback((request?: { spotRenderSpecs?: SpotRenderSpec[] }): void => {
+  const startExport = useCallback((request?: ExportStartRequest): void => {
     if (!isTauri()) {
       throw new Error('Export is only available in the desktop app.');
     }
     void (async () => {
       // Step 1: prompt for destination BEFORE any rendering work begins.
-      // If the user cancels nothing is wasted.
-      const ts = new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-');
-      const defaultName = `${project.name.replace(/\s+/g, '_')}_${ts}.mp4`;
-      const defaultDir = project.lastExportPath
-        ? parentDir(project.lastExportPath)
-        : null;
-      const savedPath = await invoke<string | null>('pick_save_path', {
-        defaultName,
-        defaultDir,
-      });
+      // If the user cancels nothing is wasted. Bulk export passes savedPath
+      // from the project's last export directory and skips the picker.
+      let savedPath = request?.savedPath ?? null;
+      if (!savedPath) {
+        const ts = new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-');
+        const defaultName = `${project.name.replace(/\s+/g, '_')}_${ts}.mp4`;
+        const defaultDir = project.lastExportPath
+          ? parentDir(project.lastExportPath)
+          : null;
+        savedPath = await invoke<string | null>('pick_save_path', {
+          defaultName,
+          defaultDir,
+        });
+      }
       if (!savedPath) return; // user cancelled — nothing rendered, nothing wasted
 
       // WS3 STEP 10 (H9) — reject an impossible destination HERE, at second
@@ -1126,6 +1139,7 @@ export function useExport(
         fps: exportFps,
         savedPath,
         spotRenderSpecs: request?.spotRenderSpecs,
+        silent: request?.silent === true,
       };
       lastSnapshotRef.current = snapshot;
       void runExport(snapshot);

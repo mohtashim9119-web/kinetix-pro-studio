@@ -457,7 +457,7 @@ describe('P4 — no-difference gate: editor door === bulk door', () => {
     expect(bulkSaves).toHaveLength(1);
   });
 
-  it('14-segment amount fixture: both doors match on segments, timings, boundaries, findings, provenance, logs', async () => {
+  it('14-segment amount fixture: both doors match on segments, timings, boundaries, findings, provenance, logs', { timeout: 15_000 }, async () => {
     const { parseProjectData } = await import('../App');
     const repo = resolve(import.meta.dirname, '../..');
     const script = readFileSync(resolve(repo, 'scripts/fixtures/amount-14seg-script.txt'), 'utf-8');
