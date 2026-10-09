@@ -2198,14 +2198,22 @@ export default function App() {
   // (from first open until reload), so their background work never depends
   // on which tab is showing. Their content renders through a portal into a
   // stable host element that the tab's pane adopts while the dashboard is up.
-  const [dashboardLeftTab, setDashboardLeftTab] = useState<DashboardLeftTab>(() => (bulkMounted ? 'bulk-sync' : 'workspaces'));
+  const [dashboardLeftTab, setDashboardLeftTab] = useState<DashboardLeftTab>(() => (
+    exportMounted ? 'bulk-export' : bulkMounted ? 'bulk-sync' : 'workspaces'
+  ));
   const [bulkSyncPaneHost] = useState<HTMLElement | null>(() => (typeof document === 'undefined' ? null : document.createElement('div')));
+  const [bulkExportPaneHost] = useState<HTMLElement | null>(() => (typeof document === 'undefined' ? null : document.createElement('div')));
   useEffect(() => {
-    if (dashboardLeftTab !== 'bulk-sync') return;
-    setBulkHidden(false);
-    setBulkMounted(true);
+    if (dashboardLeftTab === 'bulk-sync') {
+      setBulkHidden(false);
+      setBulkMounted(true);
+    } else if (dashboardLeftTab === 'bulk-export') {
+      setExportHidden(false);
+      setExportMounted(true);
+    }
   }, [dashboardLeftTab]);
   const bulkSyncVisible = showDashboard && dashboardLeftTab === 'bulk-sync';
+  const bulkExportVisible = showDashboard && dashboardLeftTab === 'bulk-export';
   const openBulkDrawer = useCallback(() => {
     setExportHidden(true);
     setBulkHidden(false);
@@ -6919,10 +6927,10 @@ export default function App() {
       onOpenAppSettings={() => setShowAppSettingsModal(true)}
       onAssetCleanupFailed={showToast}
       parseProjectData={parseProjectData}
-      bulkDockInset={exportDrawerOpen && bulkDockWide ? BULK_DRAWER_WIDTH : 0}
+      bulkDockInset={0}
       leftTab={dashboardLeftTab}
       onLeftTabChange={setDashboardLeftTab}
-      paneHosts={{ 'bulk-sync': bulkSyncPaneHost }}
+      paneHosts={{ 'bulk-sync': bulkSyncPaneHost, 'bulk-export': bulkExportPaneHost }}
       metasVersion={dashboardVersion}
       bulkOpen={bulkMounted}
       onProjectsDeleted={dropDeletedFromEditor}
@@ -8134,13 +8142,12 @@ export default function App() {
           only unmounted once `handleNewProjectConfirm` swaps in the new
           project, so cancelling needs no view restore. */}
       <BulkExportHost runner={bulkExport} />
-      {exportMounted && (
+      {exportMounted && bulkExportPaneHost && createPortal(
         <BulkExportModal
           runner={bulkExport}
-          hidden={exportHidden || !showDashboard}
-          docked={showDashboard && bulkDockWide}
-          onClose={() => setExportHidden(true)}
-        />
+          hidden={!bulkExportVisible}
+        />,
+        bulkExportPaneHost,
       )}
       {bulkMounted && bulkSyncPaneHost && createPortal(
         <BulkProjectsModal

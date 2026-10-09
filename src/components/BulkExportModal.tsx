@@ -4,12 +4,13 @@
  */
 
 import React, { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
-import { X } from 'lucide-react';
 import { Z } from './overlayLayers';
 import type { BulkExportRunner } from '../services/bulkExportQueue';
+import { WorkspaceTabs } from './WorkspaceTabs';
+import { inWorkspace, resolveWorkspaceFilter, useWorkspaces, workspaceRegistry, type WorkspaceFilter, type WorkspaceRegistry } from './workspaceRegistry';
 
-const DRAWER = `fixed top-0 left-0 ${Z.drawer} flex h-full w-[min(100vw,480px)] flex-col border-r border-[var(--kx-line-2)] bg-[var(--kx-bg)] will-change-transform`;
-const DRAWER_MOTION: React.CSSProperties = { transition: 'transform 340ms cubic-bezier(.22, 1, .36, 1)' };
+/** Dashboard revamp — the Bulk Export tab's pane (in flow, fills the left panel). */
+const PANE = 'flex flex-1 h-full w-full min-h-0 flex-col bg-[var(--kx-bg)]';
 const DRAWER_PALETTE = {
   '--kx-bg': '#0a0a0b',
   '--kx-panel': '#111113',
@@ -19,7 +20,6 @@ const DRAWER_PALETTE = {
   '--kx-line': 'rgba(255,255,255,.07)',
   '--kx-line-2': 'rgba(255,255,255,.12)',
 } as React.CSSProperties;
-const DRAWER_FLOAT = 'shadow-[8px_0_40px_rgba(0,0,0,.55)]';
 const LABEL = 'text-[10px] uppercase tracking-widest text-[var(--kx-muted)] font-bold block mb-2';
 const BTN_PRIMARY = 'flex-1 border border-transparent bg-[var(--kx-accent)] text-[#1a0f06] p-3 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-[var(--kx-accent-hover)] transition-all focus:outline-none focus:ring-2 focus:ring-[var(--kx-accent-line)] disabled:bg-[var(--kx-surface-2)] disabled:text-[var(--kx-faint)] disabled:border-[var(--kx-line-2)] disabled:cursor-not-allowed';
 
@@ -43,15 +43,16 @@ export function BulkExportRunningNotice({ runner }: { runner: BulkExportRunner }
 }
 
 export function BulkExportModal({
-  runner, hidden = false, docked = false, onClose,
+  runner, hidden = false, workspaces: injectedWorkspaces,
 }: {
   runner: BulkExportRunner;
+  /** Not on screen (another tab, or the editor is up). The queue runs regardless. */
   hidden?: boolean;
-  docked?: boolean;
-  onClose: () => void;
+  /** The workspace registry (default: the app's). */
+  workspaces?: WorkspaceRegistry;
 }): React.ReactElement {
-  // Fresh on every open: the catalog and every Blocked row are re-read, never
-  // a snapshot from when the drawer first mounted.
+  // Fresh on every open (the tab coming on screen): the catalog and every
+  // Blocked row are re-read, never a snapshot from when the pane first mounted.
   const [opened, setOpened] = useState(0);
   useEffect(() => {
     if (hidden) return;
@@ -62,48 +63,44 @@ export function BulkExportModal({
   const catalog = useMemo(() => runner.listCatalog(), [runner, opened]);
   const rows = useSyncExternalStore(l => runner.subscribe(l), () => runner.snapshot());
   const byId = useMemo(() => new Map(rows.map(r => [r.id, r])), [rows]);
+  // The count is the whole selection — what Start will run — whatever tab shows.
   const selected = catalog.filter(p => byId.get(p.id)?.selected).length;
   const batchRows = rows.filter(r => r.phase !== 'idle');
-  const [entered, setEntered] = useState(false);
-  useEffect(() => {
-    let inner = 0;
-    const outer = requestAnimationFrame(() => { inner = requestAnimationFrame(() => setEntered(true)); });
-    return () => { cancelAnimationFrame(outer); cancelAnimationFrame(inner); };
-  }, []);
-  const off = hidden || !entered;
-  const allSelected = catalog.length > 0 && catalog.every(p => byId.get(p.id)?.selected);
+  const wsRegistry = useMemo(() => injectedWorkspaces ?? workspaceRegistry(), [injectedWorkspaces]);
+  const workspaceList = useWorkspaces(wsRegistry);
+  const [wsFilterRaw, setWsFilter] = useState<WorkspaceFilter>('all');
+  const wsFilter = resolveWorkspaceFilter(workspaceList, wsFilterRaw);
+  const shown = catalog.filter(p => inWorkspace(workspaceList, wsFilter, p.id));
+  const allSelected = shown.length > 0 && shown.every(p => byId.get(p.id)?.selected);
+  // All: the runner's own select-all. A workspace: only the rows it shows.
+  const selectAll = (on: boolean): void => {
+    if (wsFilter === 'all') runner.setSelectedAll(on);
+    else for (const p of shown) runner.setSelected(p.id, on);
+  };
   return (
     <div
-      className={`${DRAWER} ${docked ? '' : DRAWER_FLOAT} ${off ? '-translate-x-full pointer-events-none' : ''}`}
-      style={{ ...DRAWER_PALETTE, ...DRAWER_MOTION }}
+      className={PANE}
+      style={DRAWER_PALETTE}
       data-testid="bulk-export-modal"
       data-hidden={hidden ? 'true' : 'false'}
       aria-hidden={hidden}
     >
-      <div role="dialog" aria-modal="false" aria-label="Bulk Export" className="flex flex-col h-full min-h-0">
-        <div className="px-6 pt-6 pb-5 flex-shrink-0 border-b border-[var(--kx-line)] bg-[var(--kx-panel)]">
-          <div className="flex items-center justify-between">
-            <h2 className="flex items-center gap-2.5 text-sm font-black uppercase tracking-[0.2em] text-[var(--kx-text)]">
-              <span aria-hidden="true" className="h-4 w-1 rounded-full bg-[var(--kx-accent)]" />
-              Bulk Export
-            </h2>
-            <button
-              type="button"
-              aria-label="Close"
-              data-testid="bulk-export-close"
-              onClick={onClose}
-              className="w-8 h-8 flex items-center justify-center rounded-lg text-[var(--kx-muted)] hover:text-white hover:bg-[var(--kx-hover)] transition-colors focus:outline-none focus:ring-2 focus:ring-[var(--kx-accent-line)]"
-            >
-              <X size={16} />
-            </button>
-          </div>
-          <div className="mt-5 flex items-center justify-between gap-3">
+      <div role="region" aria-label="Bulk Export" className="flex flex-col h-full min-h-0">
+        <div className="px-5 pt-4 pb-4 flex-shrink-0 border-b border-[var(--kx-line)] bg-[var(--kx-panel)]">
+          <WorkspaceTabs
+            workspaces={workspaceList}
+            value={wsFilter}
+            onChange={setWsFilter}
+            testIdPrefix="bulk-export-ws"
+            label="Bulk Export workspaces"
+          />
+          <div className="mt-4 flex items-center justify-between gap-3">
             <label className="flex items-center gap-2 text-[12px] text-[var(--kx-text)]">
               <input
                 type="checkbox"
                 data-testid="bulk-export-select-all"
                 checked={allSelected}
-                onChange={e => { runner.setSelectedAll(e.target.checked); }}
+                onChange={e => { selectAll(e.target.checked); }}
               />
               Select all
             </label>
@@ -113,7 +110,12 @@ export function BulkExportModal({
           </div>
         </div>
         <ul className="flex-1 min-h-0 overflow-y-auto px-4 py-3 space-y-2 custom-scrollbar">
-          {catalog.map(p => {
+          {shown.length === 0 && (
+            <li data-testid="bulk-export-empty" className="rounded-xl border border-dashed border-[var(--kx-line-2)] px-4 py-6 text-center text-[12px] leading-snug text-[var(--kx-muted)]">
+              {wsFilter === 'all' ? 'No projects yet.' : 'No projects in this workspace yet.'}
+            </li>
+          )}
+          {shown.map(p => {
             const row = byId.get(p.id);
             return (
               <li

@@ -74,7 +74,7 @@ describe('overlay scale', () => {
     // Dashboard revamp — Bulk Sync is a pane inside the dashboard's left panel
     // (the dashboard's own stacking context), no longer a drawer layer of its own.
     expect(src('components/BulkProjectsModal.tsx')).not.toContain('${Z.drawer}');
-    expect(src('components/BulkExportModal.tsx')).toContain('${Z.drawer}');
+    expect(src('components/BulkExportModal.tsx')).not.toContain('${Z.drawer}');
     // (Its count popup is gone — Create Group is inline; its confirms are ConfirmDialog, on Z.dialog.)
     expect(src('components/ConfirmDialog.tsx')).toContain('${Z.dialog}');
     expect(src('components/ProjectDashboard.tsx')).toContain('Z.dashboard');
