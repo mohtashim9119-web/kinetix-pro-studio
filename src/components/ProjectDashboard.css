@@ -234,6 +234,7 @@
   font-family: 'JetBrains Mono', monospace; font-size: 10.5px; color: var(--kxd-text-faint);
   padding-left: 10px; border-left: 1px solid var(--kxd-line-strong); line-height: 14px;
 }
+.kxd-xctl-checking { font-size: 10.5px; color: var(--kxd-text-faint); }
 .kxd-xctl-btn {
   flex-shrink: 0; display: inline-flex; align-items: center; gap: 6px;
   height: 30px; padding: 0 12px; border-radius: 8px;

@@ -10,6 +10,7 @@ import { Check, FolderOpen, Image as ImageIcon, Minus, Play, RefreshCw, SlidersH
 import { loadAllMetas } from '../services/projectStore';
 import { ProjectCardThumb } from './ProjectCardThumb';
 import { formatDuration, useProjectDurations } from './projectDurations';
+import { useExportPrecheck } from './bulkExportPrecheck';
 import { WorkspaceTabs } from './WorkspaceTabs';
 import { relinkPickFolder } from '../services/relinkNative';
 import {
@@ -190,8 +191,10 @@ const EXPORT_TABS: readonly { id: ExportTab; label: string }[] = [
   { id: 'finished', label: 'Finished' },
 ];
 const EXPORT_TAB_KEY = 'kinetix:bulk-export-tab:v1';
-function exportTabOf(phase: BulkExportPhase | undefined): ExportTab {
+function exportTabOf(phase: BulkExportPhase | undefined, preBlocked = false): ExportTab {
   if (phase === 'blocked' || phase === 'failed' || phase === 'paused') return 'blocked';
+  // Not started, but the pre-check found something to resolve first.
+  if ((phase === undefined || phase === 'idle') && preBlocked) return 'blocked';
   if (phase === 'done') return 'finished';
   if (phase === undefined || phase === 'idle') return 'ready';
   return 'active';
@@ -252,6 +255,24 @@ export function BulkExportModal({
   const workspaceList = useWorkspaces(wsRegistry);
   const [wsFilterRaw, setWsFilter] = useState<WorkspaceFilter>('all');
   const wsFilter = resolveWorkspaceFilter(workspaceList, wsFilterRaw);
+  // Pre-check every not-started project (Start's own checks + unresolved
+  // sync-log actions) as soon as the pane shows; blocked ones go to Blocked.
+  const notStarted = useMemo(() => catalog
+    .filter(p => { const ph = byId.get(p.id)?.phase; return ph === undefined || ph === 'idle'; })
+    .map(p => ({ id: p.id, savedAt: metaById.get(p.id)?.savedAt, lastExportPath: metaById.get(p.id)?.lastExportPath })),
+  [catalog, byId, metaById]);
+  const { verdicts, checking, recheck } = useExportPrecheck(notStarted, opened);
+  /** Retry = re-check first; only a project that is now clear goes back to the queue. */
+  const retryChecked = (ids: readonly string[]): void => {
+    void recheck(ids).then(fresh => {
+      for (const id of ids) if (!fresh.get(id)) void runner.retry(id);
+    });
+  };
+  /** Export skips anything the pre-check holds in Blocked. */
+  const startExport = (): void => {
+    for (const p of catalog) if (verdicts.has(p.id) && byId.get(p.id)?.selected) runner.setSelected(p.id, false);
+    void runner.startSelected();
+  };
   const [tab, setTabRaw] = useState<ExportTab>(readExportTab);
   const setTab = (next: ExportTab): void => {
     try { localStorage.setItem(EXPORT_TAB_KEY, next); } catch { /* this session only */ }
@@ -259,8 +280,9 @@ export function BulkExportModal({
   };
   const inScope = catalog.filter(p => inWorkspace(workspaceList, wsFilter, p.id));
   const tabCounts: Record<ExportTab, number> = { ready: 0, active: 0, blocked: 0, finished: 0 };
-  for (const p of inScope) tabCounts[exportTabOf(byId.get(p.id)?.phase)] += 1;
-  const shown = inScope.filter(p => exportTabOf(byId.get(p.id)?.phase) === tab);
+  const tabOf = (id: string): ExportTab => exportTabOf(byId.get(id)?.phase, verdicts.has(id));
+  for (const p of inScope) tabCounts[tabOf(p.id)] += 1;
+  const shown = inScope.filter(p => tabOf(p.id) === tab);
   const allSelected = shown.length > 0 && shown.every(p => byId.get(p.id)?.selected);
   const someShownSelected = shown.some(p => byId.get(p.id)?.selected);
   // Retry all (Blocked tab): every row there — re-checked against fresh
@@ -300,7 +322,7 @@ export function BulkExportModal({
               className="kxd-xctl-btn kxd-xctl-primary kxd-xstart"
               disabled={selected === 0}
               title={selected === 0 ? 'Select projects to export' : `Export ${selected} selected project${selected === 1 ? '' : 's'}`}
-              onClick={() => { void runner.startSelected(); }}
+              onClick={startExport}
             >
               <Play size={10} fill="currentColor" aria-hidden="true" />
               {selected > 0 ? `Export ${selected}` : 'Export'}
@@ -342,13 +364,14 @@ export function BulkExportModal({
             {selected} selected
           </span>
           <span className="flex-1" />
+          {checking && <span className="kxd-xctl-checking" data-testid="bulk-export-checking">Checking projects…</span>}
           {retryableIds.length > 0 && (
             <button
               type="button"
               data-testid="bulk-export-retry-all"
               className="kxd-xctl-btn"
               title="Re-check and retry every blocked export shown here — resolved ones move to Active"
-              onClick={() => { for (const id of retryableIds) void runner.retry(id); }}
+              onClick={() => retryChecked(retryableIds)}
             >
               <RefreshCw size={11} aria-hidden="true" />
               {`Retry all (${retryableIds.length})`}
@@ -370,7 +393,10 @@ export function BulkExportModal({
             const selectedRow = row?.selected === true;
             const sec = durations.get(p.id);
             const scenes = meta?.segmentCount ?? 0;
-            const canRetry = row?.phase === 'failed' || row?.phase === 'paused' || row?.phase === 'waiting';
+            const preReason = (row?.phase === undefined || row?.phase === 'idle') ? verdicts.get(p.id) : undefined;
+            const message = row?.message ?? preReason;
+            const canRetry = row?.phase === 'failed' || row?.phase === 'paused' || row?.phase === 'waiting'
+              || row?.phase === 'blocked' || preReason !== undefined;
             return (
               <li
                 key={p.id}
@@ -400,18 +426,18 @@ export function BulkExportModal({
                     </span>
                   </span>
                 </button>
-                {(row?.message || canRetry) && (
-                  <div className="kxd-xrow-status" data-tone={toneOf(row?.phase)}>
+                {(message || canRetry) && (
+                  <div className="kxd-xrow-status" data-tone={preReason ? 'bad' : toneOf(row?.phase)}>
                     <span className="kxd-xrow-dot" aria-hidden="true" />
-                    <span data-testid={`bulk-export-status-${p.id}`} className="kxd-xrow-msg" title={row?.message ?? ''}>
-                      {row?.message ?? ''}
+                    <span data-testid={`bulk-export-status-${p.id}`} className="kxd-xrow-msg" title={message ?? ''}>
+                      {message ?? ''}
                     </span>
                     {canRetry && (
                       <button
                         type="button"
                         data-testid={`bulk-export-retry-${p.id}`}
                         className="kxd-xrow-retry"
-                        onClick={() => { void runner.retry(p.id); }}
+                        onClick={() => retryChecked([p.id])}
                       >
                         <RefreshCw size={11} aria-hidden="true" />
                         Retry
