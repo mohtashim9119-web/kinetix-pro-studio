@@ -196,7 +196,8 @@
    export folder as one full-width field-button. */
 /* Sized so the header matches Bulk Sync's (tabs + 40px field + sub-tabs). */
 .kxd-xs { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
-.kxd-xs-row { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); gap: 10px; }
+/* Resolution | Frame rate | Folder — one row. */
+.kxd-xs-row { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr) minmax(0, 3fr); gap: 8px; }
 .kxd-xs-field { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
 .kxd-xs-label {
   font-size: 9.5px; font-weight: 800; letter-spacing: 0.16em; text-transform: uppercase;
@@ -229,8 +230,8 @@
 .kxd-seg-unit { font-size: 9.5px; color: inherit; opacity: 0.6; }
 
 .kxd-folder-btn {
-  width: 100%; height: 34px; padding: 0 12px;
-  display: flex; align-items: center; gap: 9px; text-align: left;
+  width: 100%; height: 34px; padding: 0 10px;
+  display: flex; align-items: center; gap: 7px; text-align: left;
   background: var(--kxd-surface); border: 1px solid var(--kxd-line-strong); border-radius: 9px;
   color: var(--kxd-text);
   transition: background 0.12s ease, border-color 0.12s ease;
