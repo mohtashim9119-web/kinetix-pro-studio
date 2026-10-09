@@ -842,7 +842,8 @@ export function BulkProjectsModal({
         aria-label={BULK_COPY.modalTitle}
         className="flex flex-col h-full min-h-0"
       >
-        <div className="px-5 pt-4 pb-4 flex-shrink-0 border-b border-[var(--kx-line)] bg-[var(--kx-panel)]">
+        {/* The fixed top panel ends at the Active | Failed | Ready rule — no second line under it. */}
+        <div className="px-5 pt-4 flex-shrink-0 bg-[var(--kx-panel)]">
           <div className="flex items-center gap-2">
             <div className="flex-1 min-w-0">
               <WorkspaceTabs
