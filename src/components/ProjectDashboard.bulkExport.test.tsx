@@ -43,9 +43,8 @@ afterEach(() => {
   container.remove();
 });
 
-describe('dashboard Bulk Export button', () => {
-  it('sits next to New Project / Bulk Projects and opens the export drawer', async () => {
-    let opened = 0;
+describe('dashboard Bulk Export door', () => {
+  it('the header has no Bulk Export button; Bulk Export is a left-panel tab', async () => {
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
@@ -56,13 +55,14 @@ describe('dashboard Bulk Export button', () => {
           onSelectProject={() => {}}
           onNewProject={() => {}}
           onOpenAppSettings={() => {}}
-          onBulkExportOpen={() => { opened += 1; }}
         />,
       );
     });
-    const btn = container.querySelector<HTMLButtonElement>('[data-testid="dashboard-bulk-export"]');
-    expect(btn?.textContent).toBe('Bulk Export');
-    await act(async () => { btn!.click(); });
-    expect(opened).toBe(1);
+    expect(container.querySelector('[data-testid="dashboard-bulk-export"]')).toBeNull();
+    const tab = container.querySelector<HTMLButtonElement>('[data-testid="dashboard-left-tab-bulk-export"]');
+    expect(tab?.textContent).toBe('Bulk Export');
+    await act(async () => { tab!.click(); });
+    expect(tab!.getAttribute('aria-selected')).toBe('true');
+    expect(container.querySelector<HTMLElement>('[data-testid="dashboard-left-pane-bulk-export"]')!.hidden).toBe(false);
   });
 });

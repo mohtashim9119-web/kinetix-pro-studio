@@ -25,7 +25,7 @@
     0 0 0 1px var(--kxd-line-strong);
 
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   font-family: 'Inter', sans-serif;
   color: var(--kxd-text);
   background: radial-gradient(ellipse 1200px 500px at 20% -10%, rgba(232, 132, 61, 0.05), transparent 60%),
@@ -39,6 +39,54 @@
 @media (prefers-reduced-motion: reduce) {
   .kxd-root * { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
 }
+
+/* ---------- Two fixed panels ----------
+   Left 30% (Workspaces | Bulk Sync | Bulk Export — permanent, no close),
+   right 70% (the project grid). Dashboard view only: the editor never has them. */
+
+.kxd-left {
+  flex: 0 0 30%; width: 30%; min-width: 0;
+  display: flex; flex-direction: column;
+  border-right: 1px solid var(--kxd-line);
+  background: var(--kxd-void);
+}
+.kxd-left-head {
+  display: flex; align-items: center; gap: 10px;
+  padding: 20px 24px 14px; flex-shrink: 0;
+}
+.kxd-left-head h2 {
+  margin: 0; font-size: 13px; font-weight: 800;
+  text-transform: uppercase; letter-spacing: 0.2em; color: var(--kxd-text);
+  display: flex; align-items: center; gap: 10px;
+}
+.kxd-left-head h2::before {
+  content: ""; width: 4px; height: 16px; border-radius: 999px; background: var(--kxd-accent);
+}
+.kxd-tabs {
+  display: flex; gap: 4px; padding: 4px; margin: 0 20px 14px;
+  border: 1px solid var(--kxd-line-strong); border-radius: 12px;
+  background: var(--kxd-surface); flex-shrink: 0;
+}
+.kxd-tab {
+  flex: 1 1 0; min-width: 0; height: 32px; padding: 0 6px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  background: none; border: none; border-radius: 9px;
+  color: var(--kxd-text-dim); font-size: 10.5px; font-weight: 800;
+  text-transform: uppercase; letter-spacing: 0.08em; white-space: nowrap; overflow: hidden;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.kxd-tab:hover { color: var(--kxd-text); }
+.kxd-tab[aria-selected="true"] { background: var(--kxd-surface-raised); color: var(--kxd-text); box-shadow: 0 0 0 1px var(--kxd-line-strong); }
+.kxd-tab:focus-visible { outline: 2px solid var(--kxd-accent-hi); outline-offset: 1px; }
+.kxd-left-pane { flex: 1; min-height: 0; display: flex; flex-direction: column; border-top: 1px solid var(--kxd-line); }
+.kxd-left-pane[hidden] { display: none; }
+.kxd-pane-placeholder {
+  margin: 20px; padding: 32px 16px; text-align: center;
+  border: 1px dashed var(--kxd-line-strong); border-radius: var(--kxd-radius-md);
+  font-size: 12.5px; color: var(--kxd-text-faint);
+}
+
+.kxd-right { flex: 1 1 70%; min-width: 0; display: flex; flex-direction: column; }
 
 /* ---------- Topbar ---------- */
 

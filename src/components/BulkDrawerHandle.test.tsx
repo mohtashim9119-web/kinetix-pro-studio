@@ -7,7 +7,7 @@
 // Operator checklist (bulk UI):
 // 4. Open a project from a bulk row → editor shows zero bulk UI (no drawer,
 //    no left-edge handle, no badge, no dashboard bulk button).
-// 5. Back to the dashboard → Bulk Projects button + live progress intact.
+// 5. Back to the dashboard → the left panel's Bulk Sync tab + live progress intact.
 
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -24,9 +24,11 @@ describe('editor has no bulk affordances', () => {
     expect(app).toContain('hidden={bulkHidden || !showDashboard}');
   });
 
-  it('dashboard still renders the bulk button with progress', () => {
+  it('dashboard still renders the Bulk Sync tab with progress (no header bulk button)', () => {
     const dash = read('src/components/ProjectDashboard.tsx');
-    expect(dash).toContain('data-testid="dashboard-bulk"');
+    expect(dash).not.toContain('data-testid="dashboard-bulk"');
+    expect(dash).toContain('dashboard-left-tab-');
+    expect(dash).toContain("id: 'bulk-sync'");
     expect(dash).toContain('dashboard-bulk-count');
     expect(dash).toContain('ProgressRing');
     expect(dash).toContain('FailedDot');

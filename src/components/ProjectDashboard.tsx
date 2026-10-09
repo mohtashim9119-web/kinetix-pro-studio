@@ -60,14 +60,6 @@ interface Props {
    * cloud" action appears only when this is given.
    */
   parseProjectData?: CloudQueueDeps['parseProjectData'];
-  /**
-   * Bulk UI rebuild U3 — opens the bulk drawer. That is ALL the dashboard's
-   * bulk button does: it never asks a number (creating lives in the drawer).
-   * App hosts the drawer (it must outlive the dashboard while timelines are
-   * finished in the editor). A bulk project shows here only once it is built.
-   */
-  onBulkOpen?: () => void;
-  onBulkExportOpen?: () => void;
   /** Bumped by App when projects were created/removed behind the dashboard. */
   metasVersion?: number;
   /** The rows modal is open: the queue is shown there, not here too. */
@@ -78,6 +70,14 @@ interface Props {
   /** Ids just deleted, so the editor can drop one it still holds in memory. */
   onProjectsDeleted?: (ids: string[]) => void;
 }
+
+/** The dashboard's permanent left panel: three tabs, no close. */
+export type DashboardLeftTab = 'workspaces' | 'bulk-sync' | 'bulk-export';
+export const DASHBOARD_LEFT_TABS: readonly { id: DashboardLeftTab; label: string }[] = [
+  { id: 'workspaces', label: 'Workspaces' },
+  { id: 'bulk-sync', label: 'Bulk Sync' },
+  { id: 'bulk-export', label: 'Bulk Export' },
+];
 
 /** One curve for the panel's slide and the dashboard's glide, so they move as one. */
 export const DOCK_MOTION = { ms: 340, ease: 'cubic-bezier(.22, 1, .36, 1)' } as const;
@@ -150,8 +150,6 @@ export function ProjectDashboard({
   onOpenAppSettings,
   onAssetCleanupFailed,
   parseProjectData,
-  onBulkOpen,
-  onBulkExportOpen,
   metasVersion = 0,
   bulkOpen = false,
   bulkDockInset = 0,
@@ -164,6 +162,7 @@ export function ProjectDashboard({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [showBulkConfirm, setShowBulkConfirm] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
+  const [leftTab, setLeftTab] = useState<DashboardLeftTab>('workspaces');
   // The persistent batch: reachable from here until it is cleared, even after a reload.
   const batch = bulkBatchRunner(parseProjectData);
   const batchRows = useSyncExternalStore(l => batch.subscribe(l), () => batch.snapshot());
@@ -291,6 +290,52 @@ export function ProjectDashboard({
       className={`kxd-root fixed inset-0 ${showBulkConfirm ? Z.modal : Z.dashboard}`}
       style={{ paddingLeft: dockInset }}
     >
+      <aside className="kxd-left" data-testid="dashboard-left-panel" aria-label="Studio panel">
+        <div className="kxd-left-head">
+          <h2>Studio</h2>
+        </div>
+        <div role="tablist" aria-label="Studio panel tabs" className="kxd-tabs" data-testid="dashboard-left-tabs">
+          {DASHBOARD_LEFT_TABS.map(t => (
+            <button
+              key={t.id}
+              type="button"
+              role="tab"
+              id={`kxd-tab-${t.id}`}
+              aria-selected={leftTab === t.id}
+              aria-controls={`kxd-pane-${t.id}`}
+              data-testid={`dashboard-left-tab-${t.id}`}
+              className="kxd-tab"
+              onClick={() => setLeftTab(t.id)}
+            >
+              {t.label}
+              {/* The batch at a glance: a ring + n/m from the first Build Timeline until the
+                  batch is cleared (full ring when finished), a red dot when any row failed. */}
+              {t.id === 'bulk-sync' && batchRows.length > 0 && (
+                <span className="inline-flex items-center gap-1">
+                  <ProgressRing done={bulkSignal.done} total={bulkSignal.total} size={12} />
+                  <span data-testid="dashboard-bulk-count" className="text-[10px] tabular-nums">{`${bulkSignal.done}/${bulkSignal.total}`}</span>
+                </span>
+              )}
+              {t.id === 'bulk-sync' && bulkSignal.failed > 0 && <FailedDot count={bulkSignal.failed} />}
+            </button>
+          ))}
+        </div>
+        {DASHBOARD_LEFT_TABS.map(t => (
+          <div
+            key={t.id}
+            role="tabpanel"
+            id={`kxd-pane-${t.id}`}
+            aria-labelledby={`kxd-tab-${t.id}`}
+            data-testid={`dashboard-left-pane-${t.id}`}
+            className="kxd-left-pane"
+            hidden={leftTab !== t.id}
+          >
+            <p className="kxd-pane-placeholder">{t.label}</p>
+          </div>
+        ))}
+      </aside>
+
+      <section className="kxd-right" data-testid="dashboard-right-panel">
       <header className="kxd-topbar" data-flip="">
         <div className="kxd-brand">
           <div className="kxd-brand-mark">
@@ -318,37 +363,14 @@ export function ProjectDashboard({
         </div>
 
         <div className="kxd-actions">
-          {/* Bulk UI rebuild U3 — ONE bulk door, and it only ever opens the
-              drawer. It never asks a number: creating lives in the drawer. */}
-          {onBulkExportOpen && (
-            <button className="kxd-btn kxd-btn-quiet" data-testid="dashboard-bulk-export" onClick={onBulkExportOpen}>
-              Bulk Export
+          {parseProjectData && batchRows.some(r => r.phase === 'queued' || r.phase === 'cloud') && (
+            <button
+              className="kxd-btn kxd-btn-quiet"
+              data-testid="dashboard-stop-all"
+              onClick={() => { void batch.stopAllCloudWork(() => killAllMemberCloudJobs()); }}
+            >
+              {BULK_COPY.stopAll}
             </button>
-          )}
-          {onBulkOpen && parseProjectData && (
-            <>
-            <button className="kxd-btn kxd-btn-quiet" data-testid="dashboard-bulk" onClick={onBulkOpen}>
-              {BULK_COPY.button}
-              {/* The batch at a glance: a ring + n/m from the first Build Timeline until the
-                  batch is cleared (full ring when finished), a red dot when any row failed. */}
-              {batchRows.length > 0 && (
-                <span className="ml-2 inline-flex items-center gap-1 align-middle">
-                  <ProgressRing done={bulkSignal.done} total={bulkSignal.total} size={14} />
-                  <span data-testid="dashboard-bulk-count" className="text-[11px] tabular-nums">{`${bulkSignal.done}/${bulkSignal.total}`}</span>
-                </span>
-              )}
-              {bulkSignal.failed > 0 && <span className="ml-1.5 inline-flex align-middle"><FailedDot count={bulkSignal.failed} /></span>}
-            </button>
-            {batchRows.some(r => r.phase === 'queued' || r.phase === 'cloud') && (
-              <button
-                className="kxd-btn kxd-btn-quiet"
-                data-testid="dashboard-stop-all"
-                onClick={() => { void batch.stopAllCloudWork(() => killAllMemberCloudJobs()); }}
-              >
-                {BULK_COPY.stopAll}
-              </button>
-            )}
-            </>
           )}
           <button className="kxd-btn kxd-btn-accent" onClick={onNewProject}>
             <Plus size={14} strokeWidth={2.2} aria-hidden="true" />
@@ -577,6 +599,7 @@ export function ProjectDashboard({
           )}
         </div>
       </main>
+      </section>
 
 
       {showBulkConfirm && (

@@ -6904,8 +6904,6 @@ export default function App() {
       onOpenAppSettings={() => setShowAppSettingsModal(true)}
       onAssetCleanupFailed={showToast}
       parseProjectData={parseProjectData}
-      onBulkOpen={toggleBulkDrawer}
-      onBulkExportOpen={toggleExportDrawer}
       bulkDockInset={(bulkDrawerOpen || exportDrawerOpen) && bulkDockWide ? BULK_DRAWER_WIDTH : 0}
       metasVersion={dashboardVersion}
       bulkOpen={bulkMounted}
