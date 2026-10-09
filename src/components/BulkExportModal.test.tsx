@@ -163,4 +163,20 @@ describe('BulkExportModal — Dashboard revamp Stage 4 (Bulk Export tab)', () =>
     expect(pick).toHaveBeenCalledWith('Choose where exports are saved');
     expect(EXPORT_FOLDER_PICK_TITLE).not.toMatch(/original media/i);
   });
+
+  it('the header counts done / failed / blocked again (hidden while all are zero)', async () => {
+    const runner = new BulkExportRunner({
+      listProjects: () => ['a', 'b', 'c'].map(id => ({ id, name: id, lastExportPath: id === 'c' ? undefined : `/out/${id}.mp4` })),
+      loadProject: async id => ({ ...project(id), segments: [], assets: [], lastExportPath: id === 'c' ? undefined : `/out/${id}.mp4` }) as Project,
+      storage: mem(),
+      playChime: () => {},
+      execute: async ({ project: p }) => (p.id === 'b' ? { status: 'failed', detail: 'boom' } : { status: 'done' }),
+    });
+    await mount(runner);
+    expect(container.querySelector('[data-testid="bulk-export-counts"]')).toBeNull();
+    runner.setSelectedAll(true);
+    await act(async () => { await runner.startSelected(); });
+    await act(async () => { await new Promise(r => setTimeout(r, 10)); });
+    expect(container.querySelector('[data-testid="bulk-export-counts"]')!.textContent).toBe('1 done · 1 failed · 1 blocked');
+  });
 });

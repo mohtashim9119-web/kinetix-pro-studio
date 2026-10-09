@@ -286,6 +286,10 @@ export function BulkExportModal({
   const tabOf = (id: string): ExportTab => exportTabOf(byId.get(id)?.phase, verdicts.has(id));
   for (const p of inScope) tabCounts[tabOf(p.id)] += 1;
   const shown = inScope.filter(p => tabOf(p.id) === tab);
+  // done / failed / blocked across this workspace's rows (blocked includes the pre-check's).
+  const doneCount = inScope.filter(p => byId.get(p.id)?.phase === 'done').length;
+  const failedCount = inScope.filter(p => byId.get(p.id)?.phase === 'failed').length;
+  const blockedCount = inScope.filter(p => byId.get(p.id)?.phase === 'blocked' || (byId.get(p.id)?.phase ?? 'idle') === 'idle' && verdicts.has(p.id)).length;
   const allSelected = shown.length > 0 && shown.every(p => byId.get(p.id)?.selected);
   const someShownSelected = shown.some(p => byId.get(p.id)?.selected);
   // Retry all (Blocked tab): every row there — re-checked against fresh
@@ -367,6 +371,11 @@ export function BulkExportModal({
             {selected} selected
           </span>
           <span className="flex-1" />
+          {doneCount + failedCount + blockedCount > 0 && (
+            <span data-testid="bulk-export-counts" className="kxd-xctl-count">
+              {doneCount} done · {failedCount} failed · {blockedCount} blocked
+            </span>
+          )}
           {checking && <span className="kxd-xctl-checking" data-testid="bulk-export-checking">Checking projects…</span>}
           {rows.some(r => r.phase === 'queued' || r.phase === 'exporting') && (
             <button
