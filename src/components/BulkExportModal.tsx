@@ -6,7 +6,7 @@
 import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Z } from './overlayLayers';
 import type { BulkExportPhase, BulkExportRunner } from '../services/bulkExportQueue';
-import { FolderOpen, Image as ImageIcon, RefreshCw, SlidersHorizontal } from 'lucide-react';
+import { Check, FolderOpen, Image as ImageIcon, Minus, Play, RefreshCw, SlidersHorizontal } from 'lucide-react';
 import { loadAllMetas } from '../services/projectStore';
 import { ProjectCardThumb } from './ProjectCardThumb';
 import { formatDuration, useProjectDurations } from './projectDurations';
@@ -26,8 +26,6 @@ const PANE = 'flex flex-1 h-full w-full min-h-0 flex-col bg-[var(--kx-bg)]';
 const DRAWER_PALETTE = {
   WebkitFontSmoothing: 'subpixel-antialiased',
 } as React.CSSProperties;
-const LABEL = 'text-[10px] uppercase tracking-widest text-[var(--kx-muted)] font-bold block mb-2';
-const BTN_PRIMARY = 'flex-1 border border-transparent bg-[var(--kx-accent)] text-[#1a0f06] p-3 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-[var(--kx-accent-hover)] transition-all focus:outline-none focus:ring-2 focus:ring-[var(--kx-accent-line)] disabled:bg-[var(--kx-surface-2)] disabled:text-[var(--kx-faint)] disabled:border-[var(--kx-line-2)] disabled:cursor-not-allowed';
 
 export function BulkExportRunningNotice({ runner }: { runner: BulkExportRunner }): React.ReactElement | null {
   const notice = useSyncExternalStore(
@@ -172,6 +170,15 @@ function ExportSettingsHeader({
   );
 }
 
+/** The dashboard's selection mark (the grid's orange check), as a checkbox. */
+function KxCheck({ state }: { state: boolean | 'mixed' }): React.ReactElement {
+  return (
+    <span className="kxd-check" data-state={state === 'mixed' ? 'mixed' : state ? 'on' : 'off'} aria-hidden="true">
+      {state === 'mixed' ? <Minus size={10} strokeWidth={3.5} /> : <Check size={10} strokeWidth={3.5} />}
+    </span>
+  );
+}
+
 /** Status colour from the ladder's semantic set. */
 function toneOf(phase: BulkExportPhase | undefined): 'bad' | 'warn' | 'live' | 'good' | 'idle' {
   switch (phase) {
@@ -216,13 +223,16 @@ export function BulkExportModal({
   const byId = useMemo(() => new Map(rows.map(r => [r.id, r])), [rows]);
   // The count is the whole selection — what Start will run — whatever tab shows.
   const selected = catalog.filter(p => byId.get(p.id)?.selected).length;
-  const batchRows = rows.filter(r => r.phase !== 'idle');
   const wsRegistry = useMemo(() => injectedWorkspaces ?? workspaceRegistry(), [injectedWorkspaces]);
   const workspaceList = useWorkspaces(wsRegistry);
   const [wsFilterRaw, setWsFilter] = useState<WorkspaceFilter>('all');
   const wsFilter = resolveWorkspaceFilter(workspaceList, wsFilterRaw);
   const shown = catalog.filter(p => inWorkspace(workspaceList, wsFilter, p.id));
   const allSelected = shown.length > 0 && shown.every(p => byId.get(p.id)?.selected);
+  const someShownSelected = shown.some(p => byId.get(p.id)?.selected);
+  const retryableIds = shown
+    .filter(p => { const ph = byId.get(p.id)?.phase; return ph === 'failed' || ph === 'paused' || ph === 'waiting'; })
+    .map(p => p.id);
   // All: the runner's own select-all. A workspace: only the rows it shows.
   const selectAll = (on: boolean): void => {
     if (wsFilter === 'all') runner.setSelectedAll(on);
@@ -250,19 +260,47 @@ export function BulkExportModal({
             scopeName={wsFilter === 'all' ? null : workspaceList.find(w => w.id === wsFilter)?.name ?? null}
             store={exportSettings}
           />
-          <div className="mt-4 h-[30px] flex items-center justify-between gap-3">
-            <label className="flex items-center gap-2 text-[11px] text-[var(--kx-text)]">
-              <input
-                type="checkbox"
-                data-testid="bulk-export-select-all"
-                checked={allSelected}
-                onChange={e => { selectAll(e.target.checked); }}
-              />
-              Select all
-            </label>
-            <span data-testid="bulk-export-selected-count" className={`${LABEL} mb-0`}>
+          {/* Controls: selection on the left, the export actions on the right. */}
+          <div className="kxd-xctl">
+            <button
+              type="button"
+              role="checkbox"
+              aria-checked={someShownSelected && !allSelected ? 'mixed' : allSelected}
+              data-testid="bulk-export-select-all"
+              className="kxd-xctl-select"
+              disabled={shown.length === 0}
+              onClick={() => selectAll(!allSelected)}
+            >
+              <KxCheck state={someShownSelected && !allSelected ? 'mixed' : allSelected} />
+              <span>Select all</span>
+            </button>
+            <span data-testid="bulk-export-selected-count" className="kxd-xctl-count">
               {selected} selected
             </span>
+            <span className="flex-1" />
+            {retryableIds.length > 0 && (
+              <button
+                type="button"
+                data-testid="bulk-export-retry-all"
+                className="kxd-xctl-btn"
+                title="Retry every failed, paused or waiting export shown here"
+                onClick={() => { for (const id of retryableIds) void runner.retry(id); }}
+              >
+                <RefreshCw size={11} aria-hidden="true" />
+                {`Retry ${retryableIds.length}`}
+              </button>
+            )}
+            <button
+              type="button"
+              data-testid="bulk-export-start"
+              className="kxd-xctl-btn kxd-xctl-primary"
+              disabled={selected === 0}
+              title={selected === 0 ? 'Select projects to export' : `Export ${selected} selected project${selected === 1 ? '' : 's'}`}
+              onClick={() => { void runner.startSelected(); }}
+            >
+              <Play size={10} fill="currentColor" aria-hidden="true" />
+              {selected > 0 ? `Export ${selected}` : 'Export'}
+            </button>
           </div>
         </div>
         <ul className="flex-1 min-h-0 overflow-y-auto px-5 py-3 space-y-2 custom-scrollbar">
@@ -285,14 +323,16 @@ export function BulkExportModal({
                 data-phase={row?.phase ?? 'idle'}
                 className={`kx-bulk-row kxd-xrow${selectedRow ? ' is-selected' : ''}`}
               >
-                <label className="kxd-xrow-main">
-                  <input
-                    type="checkbox"
-                    className="kxd-xrow-check"
-                    data-testid={`bulk-export-check-${p.id}`}
-                    checked={selectedRow}
-                    onChange={e => { runner.setSelected(p.id, e.target.checked); }}
-                  />
+                <button
+                  type="button"
+                  role="checkbox"
+                  aria-checked={selectedRow}
+                  aria-label={`Select ${p.name}`}
+                  className="kxd-xrow-main"
+                  data-testid={`bulk-export-check-${p.id}`}
+                  onClick={() => { runner.setSelected(p.id, !selectedRow); }}
+                >
+                  <KxCheck state={selectedRow} />
                   <span className="kxd-xrow-thumb" aria-hidden="true">
                     {meta ? <ProjectCardThumb meta={meta} /> : <span className="kxd-art-empty"><ImageIcon size={14} strokeWidth={1.5} /></span>}
                   </span>
@@ -304,7 +344,7 @@ export function BulkExportModal({
                       <span>{scenes === 1 ? '1 scene' : `${scenes} scenes`}</span>
                     </span>
                   </span>
-                </label>
+                </button>
                 {(row?.message || canRetry) && (
                   <div className="kxd-xrow-status" data-tone={toneOf(row?.phase)}>
                     <span className="kxd-xrow-dot" aria-hidden="true" />
@@ -331,22 +371,6 @@ export function BulkExportModal({
             );
           })}
         </ul>
-        <div className="flex-shrink-0 px-6 py-4 border-t border-[var(--kx-line)] bg-[var(--kx-panel)]">
-          {batchRows.length > 0 && (
-            <p data-testid="bulk-export-summary" className="mb-3 text-[11px] text-[var(--kx-muted)]">
-              {rows.filter(r => r.phase === 'done').length} done · {rows.filter(r => r.phase === 'failed').length} failed · {rows.filter(r => r.phase === 'blocked').length} blocked
-            </p>
-          )}
-          <button
-            type="button"
-            data-testid="bulk-export-start"
-            className={BTN_PRIMARY}
-            disabled={selected === 0}
-            onClick={() => { void runner.startSelected(); }}
-          >
-            Start
-          </button>
-        </div>
       </div>
     </div>
   );
