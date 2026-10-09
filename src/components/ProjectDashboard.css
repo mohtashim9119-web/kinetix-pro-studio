@@ -734,7 +734,8 @@
 .kxd-card.is-selected .kxd-select-toggle { opacity: 1; background: var(--kxd-accent); border-color: var(--kxd-accent); }
 .kxd-card.is-selected .kxd-select-toggle > svg { opacity: 1; }
 .kxd-select-toggle:active { transform: scale(0.9); }
-.kxd-card.is-selected { box-shadow: var(--kxd-shadow-card), 0 0 0 2px var(--kxd-accent-low); }
+/* Selected: a neutral ring (no orange edge on project cards) — the orange check marks it. */
+.kxd-card.is-selected { box-shadow: var(--kxd-shadow-card), 0 0 0 2px rgba(255, 255, 255, 0.28); }
 
 .kxd-scene-badge {
   position: absolute; left: 10px; bottom: 10px; z-index: 2;
@@ -754,7 +755,6 @@
   border: 1px solid rgba(232, 132, 61, 0.4);
   padding: 3px 7px; border-radius: 5px;
 }
-.kxd-card.is-current { border-color: rgba(232, 132, 61, 0.45); }
 
 .kxd-card-body { padding: 10px 12px 12px; }
 .kxd-card-title {

@@ -138,12 +138,9 @@ body.resizing * {
 }
 
 /* Bulk drawer row — tokened orange border glow (dark + hover). */
-.kx-bulk-row {
-  box-shadow: 0 0 0 1px rgba(232, 132, 61, .22), 0 0 8px rgba(232, 132, 61, .12);
-}
-.kx-bulk-row:hover {
-  box-shadow: 0 0 0 1px rgba(232, 132, 61, .32), 0 0 11px rgba(232, 132, 61, .14);
-}
+/* Bulk row cards carry no orange edge (resting or hover): their border is
+   the dashboard's line, like every other card. Hook kept for row styling. */
+.kx-bulk-row { box-shadow: none; }
 
 .kx-bulk-bar {
   height: 5px;
