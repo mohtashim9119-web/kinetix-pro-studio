@@ -228,7 +228,7 @@ export function BulkExportModal({
             scopeName={wsFilter === 'all' ? null : workspaceList.find(w => w.id === wsFilter)?.name ?? null}
             store={exportSettings}
           />
-          <div className="mt-3 flex items-center justify-between gap-3">
+          <div className="mt-4 h-[30px] flex items-center justify-between gap-3">
             <label className="flex items-center gap-2 text-[11px] text-[var(--kx-text)]">
               <input
                 type="checkbox"
