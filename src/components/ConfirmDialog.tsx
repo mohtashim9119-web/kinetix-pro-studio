@@ -45,17 +45,19 @@ export function ConfirmDialog({
       role="dialog"
       aria-modal="true"
       aria-label={title}
-      className={`fixed inset-0 ${Z.dialog} flex items-center justify-center bg-black/80 backdrop-blur-sm`}
+      className={`kx-confirm fixed inset-0 ${Z.dialog} flex items-center justify-center bg-black/80 backdrop-blur-sm`}
     >
-      <div className="bg-[#111] border border-[#282828] rounded-2xl p-6 w-full max-w-sm shadow-2xl">
-        <h2 className="text-sm font-black uppercase tracking-[0.2em] mb-3">{title}</h2>
-        <p className="text-sm text-gray-300 mb-6">{body}</p>
+      {/* The kx-confirm-* hooks let the dashboard re-skin this onto its grey
+          ladder (ProjectDashboard.css); the editor keeps these classes. */}
+      <div className="kx-confirm-card bg-[#111] border border-[#282828] rounded-2xl p-6 w-full max-w-sm shadow-2xl">
+        <h2 className="kx-confirm-title text-sm font-black uppercase tracking-[0.2em] mb-3">{title}</h2>
+        <p className="kx-confirm-body text-sm text-gray-300 mb-6">{body}</p>
         <div className="space-y-2">
           <button
             type="button"
             data-testid="confirm-dialog-confirm"
             onClick={onConfirm}
-            className="w-full bg-[#F27D26] text-black font-bold text-sm py-2.5 rounded-xl hover:brightness-110 transition"
+            className="kx-confirm-ok w-full bg-[#F27D26] text-black font-bold text-sm py-2.5 rounded-xl hover:brightness-110 transition"
           >
             {confirmLabel}
           </button>
@@ -63,7 +65,7 @@ export function ConfirmDialog({
             type="button"
             data-testid="confirm-dialog-cancel"
             onClick={onCancel}
-            className="w-full text-gray-500 hover:text-white text-sm py-2 transition"
+            className="kx-confirm-cancel w-full text-gray-500 hover:text-white text-sm py-2 transition"
           >
             {cancelLabel}
           </button>

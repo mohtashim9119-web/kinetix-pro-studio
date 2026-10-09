@@ -781,6 +781,22 @@
 
 /* ---------- Confirm dialog ---------- */
 
+/* The shared ConfirmDialog (bulk row / media deletes), on the ladder while it
+   opens over the dashboard: a raised dialog, the dashboard's orange. */
+.kxd-root .kx-confirm { background: rgba(0, 0, 0, 0.7); backdrop-filter: none; }
+.kxd-root .kx-confirm-card {
+  background: var(--kxd-surface-raised);
+  border: 1px solid var(--kxd-line-strong);
+  border-radius: 14px;
+  box-shadow: var(--kxd-shadow-menu);
+}
+.kxd-root .kx-confirm-title { color: var(--kxd-text); }
+.kxd-root .kx-confirm-body { color: var(--kxd-text-dim); }
+.kxd-root .kx-confirm-ok { background: var(--kxd-accent); color: #1c0f04; }
+.kxd-root .kx-confirm-ok:hover { background: var(--kxd-accent-hi); filter: none; }
+.kxd-root .kx-confirm-cancel { color: var(--kxd-text-dim); }
+.kxd-root .kx-confirm-cancel:hover { color: var(--kxd-text); }
+
 .kxd-dialog-scrim {
   position: fixed; inset: 0; z-index: 300;
   background: rgba(0, 0, 0, 0.7);
