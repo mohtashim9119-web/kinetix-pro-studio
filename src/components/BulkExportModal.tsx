@@ -179,6 +179,29 @@ function KxCheck({ state }: { state: boolean | 'mixed' }): React.ReactElement {
   );
 }
 
+/** Active | Blocked | Finished — Bulk Sync's sub-tabs, for exports. Blocked
+ *  holds what needs the operator (blocked, failed, paused); once resolved and
+ *  retried a row moves back to Active, then Finished. */
+type ExportTab = 'active' | 'blocked' | 'finished';
+const EXPORT_TABS: readonly { id: ExportTab; label: string }[] = [
+  { id: 'active', label: 'Active' },
+  { id: 'blocked', label: 'Blocked' },
+  { id: 'finished', label: 'Finished' },
+];
+const EXPORT_TAB_KEY = 'kinetix:bulk-export-tab:v1';
+function exportTabOf(phase: BulkExportPhase | undefined): ExportTab {
+  if (phase === 'blocked' || phase === 'failed' || phase === 'paused') return 'blocked';
+  if (phase === 'done') return 'finished';
+  return 'active';
+}
+function readExportTab(): ExportTab {
+  try {
+    const raw = localStorage.getItem(EXPORT_TAB_KEY);
+    if (raw === 'active' || raw === 'blocked' || raw === 'finished') return raw;
+  } catch { /* storage unavailable */ }
+  return 'active';
+}
+
 /** Status colour from the ladder's semantic set. */
 function toneOf(phase: BulkExportPhase | undefined): 'bad' | 'warn' | 'live' | 'good' | 'idle' {
   switch (phase) {
@@ -227,16 +250,23 @@ export function BulkExportModal({
   const workspaceList = useWorkspaces(wsRegistry);
   const [wsFilterRaw, setWsFilter] = useState<WorkspaceFilter>('all');
   const wsFilter = resolveWorkspaceFilter(workspaceList, wsFilterRaw);
-  const shown = catalog.filter(p => inWorkspace(workspaceList, wsFilter, p.id));
+  const [tab, setTabRaw] = useState<ExportTab>(readExportTab);
+  const setTab = (next: ExportTab): void => {
+    try { localStorage.setItem(EXPORT_TAB_KEY, next); } catch { /* this session only */ }
+    setTabRaw(next);
+  };
+  const inScope = catalog.filter(p => inWorkspace(workspaceList, wsFilter, p.id));
+  const tabCounts: Record<ExportTab, number> = { active: 0, blocked: 0, finished: 0 };
+  for (const p of inScope) tabCounts[exportTabOf(byId.get(p.id)?.phase)] += 1;
+  const shown = inScope.filter(p => exportTabOf(byId.get(p.id)?.phase) === tab);
   const allSelected = shown.length > 0 && shown.every(p => byId.get(p.id)?.selected);
   const someShownSelected = shown.some(p => byId.get(p.id)?.selected);
-  const retryableIds = shown
-    .filter(p => { const ph = byId.get(p.id)?.phase; return ph === 'failed' || ph === 'paused' || ph === 'waiting'; })
-    .map(p => p.id);
-  // All: the runner's own select-all. A workspace: only the rows it shows.
+  // Retry all (Blocked tab): every row there — re-checked against fresh
+  // records, so a resolved one moves to Active, then Finished.
+  const retryableIds = tab === 'blocked' ? shown.map(p => p.id) : [];
+  // Select all selects exactly the rows this workspace + tab shows.
   const selectAll = (on: boolean): void => {
-    if (wsFilter === 'all') runner.setSelectedAll(on);
-    else for (const p of shown) runner.setSelected(p.id, on);
+    for (const p of shown) runner.setSelected(p.id, on);
   };
   return (
     <div
@@ -255,45 +285,17 @@ export function BulkExportModal({
             testIdPrefix="bulk-export-ws"
             label="Bulk Export workspaces"
           />
-          <ExportSettingsHeader
-            scope={wsFilter}
-            scopeName={wsFilter === 'all' ? null : workspaceList.find(w => w.id === wsFilter)?.name ?? null}
-            store={exportSettings}
-          />
-          {/* Controls: selection on the left, the export actions on the right. */}
-          <div className="kxd-xctl">
-            <button
-              type="button"
-              role="checkbox"
-              aria-checked={someShownSelected && !allSelected ? 'mixed' : allSelected}
-              data-testid="bulk-export-select-all"
-              className="kxd-xctl-select"
-              disabled={shown.length === 0}
-              onClick={() => selectAll(!allSelected)}
-            >
-              <KxCheck state={someShownSelected && !allSelected ? 'mixed' : allSelected} />
-              <span>Select all</span>
-            </button>
-            <span data-testid="bulk-export-selected-count" className="kxd-xctl-count">
-              {selected} selected
-            </span>
-            <span className="flex-1" />
-            {retryableIds.length > 0 && (
-              <button
-                type="button"
-                data-testid="bulk-export-retry-all"
-                className="kxd-xctl-btn"
-                title="Retry every failed, paused or waiting export shown here"
-                onClick={() => { for (const id of retryableIds) void runner.retry(id); }}
-              >
-                <RefreshCw size={11} aria-hidden="true" />
-                {`Retry ${retryableIds.length}`}
-              </button>
-            )}
+          {/* Row 2 mirrors Bulk Sync's (field + orange action): settings + Export. */}
+          <div className="kxd-xrow2">
+            <ExportSettingsHeader
+              scope={wsFilter}
+              scopeName={wsFilter === 'all' ? null : workspaceList.find(w => w.id === wsFilter)?.name ?? null}
+              store={exportSettings}
+            />
             <button
               type="button"
               data-testid="bulk-export-start"
-              className="kxd-xctl-btn kxd-xctl-primary"
+              className="kxd-xctl-btn kxd-xctl-primary kxd-xstart"
               disabled={selected === 0}
               title={selected === 0 ? 'Select projects to export' : `Export ${selected} selected project${selected === 1 ? '' : 's'}`}
               onClick={() => { void runner.startSelected(); }}
@@ -302,11 +304,61 @@ export function BulkExportModal({
               {selected > 0 ? `Export ${selected}` : 'Export'}
             </button>
           </div>
+          {/* Row 3: Active | Blocked | Finished — Bulk Sync's sub-tabs. */}
+          <div role="tablist" aria-label="Export rows" data-testid="bulk-export-tabs" className="kxd-subtabs mt-4">
+            {EXPORT_TABS.map(t => (
+              <button
+                key={t.id}
+                type="button"
+                role="tab"
+                aria-selected={tab === t.id}
+                data-testid={`bulk-export-tab-${t.id}`}
+                onClick={() => setTab(t.id)}
+                className="kxd-subtab"
+              >
+                <span className="kxd-subtab-label">{t.label}</span>
+                <span className="kxd-subtab-count" data-testid={`bulk-export-tab-count-${t.id}`}>{tabCounts[t.id]}</span>
+              </button>
+            ))}
+          </div>
         </div>
-        <ul className="flex-1 min-h-0 overflow-y-auto px-5 py-3 space-y-2 custom-scrollbar">
+        {/* List toolbar: selection on the left; Retry all on Blocked. */}
+        <div className="kxd-xctl">
+          <button
+            type="button"
+            role="checkbox"
+            aria-checked={someShownSelected && !allSelected ? 'mixed' : allSelected}
+            data-testid="bulk-export-select-all"
+            className="kxd-xctl-select"
+            disabled={shown.length === 0}
+            onClick={() => selectAll(!allSelected)}
+          >
+            <KxCheck state={someShownSelected && !allSelected ? 'mixed' : allSelected} />
+            <span>Select all</span>
+          </button>
+          <span data-testid="bulk-export-selected-count" className="kxd-xctl-count">
+            {selected} selected
+          </span>
+          <span className="flex-1" />
+          {retryableIds.length > 0 && (
+            <button
+              type="button"
+              data-testid="bulk-export-retry-all"
+              className="kxd-xctl-btn"
+              title="Re-check and retry every blocked export shown here — resolved ones move to Active"
+              onClick={() => { for (const id of retryableIds) void runner.retry(id); }}
+            >
+              <RefreshCw size={11} aria-hidden="true" />
+              {`Retry all (${retryableIds.length})`}
+            </button>
+          )}
+        </div>
+        <ul className="flex-1 min-h-0 overflow-y-auto px-5 pt-1 pb-3 space-y-2 custom-scrollbar">
           {shown.length === 0 && (
             <li data-testid="bulk-export-empty" className="rounded-xl border border-dashed border-[var(--kx-line-2)] px-4 py-6 text-center text-[12px] leading-snug text-[var(--kx-muted)]">
-              {wsFilter === 'all' ? 'No projects yet.' : 'No projects in this workspace yet.'}
+              {tab === 'blocked' ? 'Nothing blocked.'
+                : tab === 'finished' ? 'Nothing exported yet.'
+                : wsFilter === 'all' ? 'No projects yet.' : 'No projects in this workspace yet.'}
             </li>
           )}
           {shown.map(p => {

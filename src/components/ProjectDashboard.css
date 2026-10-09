@@ -222,7 +222,7 @@
 
 /* Bulk Export's control row (30px — Bulk Sync's sub-tab height): selection
    on the left, the export actions on the right. */
-.kxd-xctl { margin-top: 16px; height: 30px; display: flex; align-items: center; gap: 10px; }
+.kxd-xctl { flex-shrink: 0; height: 30px; margin: 10px 20px 6px; display: flex; align-items: center; gap: 10px; }
 .kxd-xctl-select {
   display: inline-flex; align-items: center; gap: 8px; height: 30px; padding: 0 2px;
   background: none; border: none; color: var(--kxd-text); font-size: 11.5px; font-weight: 500;
@@ -290,7 +290,10 @@
    line in the header; the controls open in a small popover below it. */
 /* Sized with the Select-all row to match Bulk Sync's header: 16 + 40 (its
    count field) + 16 + 30 (its sub-tabs). */
-.kxd-xsum-wrap { position: relative; margin-top: 16px; }
+/* Row 2: the settings line beside the orange Export (Bulk Sync's field + Add Projects). */
+.kxd-xrow2 { margin-top: 16px; display: flex; align-items: center; gap: 8px; }
+.kxd-xsum-wrap { position: relative; flex: 1; min-width: 0; }
+.kxd-xstart { height: 40px; padding: 0 16px; border-radius: 10px; }
 .kxd-xsum {
   width: 100%; height: 40px; padding: 0 12px;
   display: flex; align-items: center; gap: 8px; text-align: left;
