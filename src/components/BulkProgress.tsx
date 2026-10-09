@@ -5,7 +5,7 @@
 
 // Bulk UI rebuild — the batch's progress read-outs (the dashboard's Bulk Sync
 // tab): a small ring and a red dot with a count when any row failed. Same
-// palette as the bulk pane (orange progress on the #282828 line, the app's
+// palette as the bulk pane (the accent on the line colour — the dashboard's ladder — the app's
 // red for failure).
 
 import React from 'react';
@@ -27,9 +27,9 @@ export function ProgressRing({ done, total, size = 16 }: { done: number; total: 
       viewBox={`0 0 ${size} ${size}`}
       className="flex-shrink-0 -rotate-90"
     >
-      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="#282828" strokeWidth={stroke} />
+      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="var(--kx-line-2, #282828)" strokeWidth={stroke} />
       <circle
-        cx={size / 2} cy={size / 2} r={r} fill="none" stroke="#F27D26" strokeWidth={stroke}
+        cx={size / 2} cy={size / 2} r={r} fill="none" stroke="var(--kx-accent, #F27D26)" strokeWidth={stroke}
         strokeDasharray={c} strokeDashoffset={c * (1 - p)} strokeLinecap="round"
       />
     </svg>

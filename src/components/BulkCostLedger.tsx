@@ -70,7 +70,7 @@ export function BulkCostLedger({
         data-testid={`bulk-ledger-${projectId}`}
         data-ledger-root={projectId}
         onClick={() => { setLedgerOpen(open ? null : projectId); if (!open) onOpen?.(); }}
-        className="relative flex-shrink-0 w-7 h-7 flex items-center justify-center rounded-md text-[var(--kx-faint)] hover:text-white hover:bg-[var(--kx-hover)] transition-colors"
+        className="relative flex-shrink-0 w-7 h-7 flex items-center justify-center rounded-md text-[var(--kx-faint)] hover:text-[var(--kx-text)] hover:bg-[var(--kx-hover)] transition-colors"
       >
         <Coins size={14} />
         {summary.paid ? <span data-testid={`bulk-ledger-dot-${projectId}`} className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-[var(--kx-accent)]" /> : null}

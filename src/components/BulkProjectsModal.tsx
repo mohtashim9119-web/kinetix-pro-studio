@@ -8,7 +8,7 @@
 // lives in BULK_COPY (services/bulkContext.ts) for operator sign-off.
 //
 // U7.5b — styled in the app's own language, nothing new: the modal shell is
-// NewProjectModal's / SyncPausedDialog's (bg-[#111], border-[#282828],
+// NewProjectModal's / SyncPausedDialog's (now the dashboard's grey ladder,
 // rounded-2xl, uppercase tracked title, orange primary + bordered secondary);
 // a row is DropZonePanel's SlotRow (kx-surface card, accent-soft on drag-over)
 // with its Ready / Empty status chips as the four slot chips; the batch line
@@ -46,21 +46,10 @@ import { bulkDoneStatus } from '../services/syncLogSummary';
 /** Dashboard revamp — the Bulk Sync tab's pane (in flow, fills the left panel). */
 const PANE = 'flex flex-1 h-full w-full min-h-0 flex-col bg-[var(--kx-bg)]';
 /** The dashboard's own neutral palette, so panel and dashboard read as one surface. */
+/** Colours come from the dashboard's one grey ladder (ProjectDashboard.css maps
+ *  every --kx-* onto it). Only the text rendering is set here: the dashboard
+ *  root thins text (antialiased); the pane's small type needs normal weight. */
 const DRAWER_PALETTE = {
-  '--kx-bg': '#0a0a0b',
-  '--kx-panel': '#111113',
-  '--kx-surface': '#19191c',
-  '--kx-surface-2': '#1e1e21',
-  '--kx-hover': '#242428',
-  '--kx-line': 'rgba(255,255,255,.07)',
-  '--kx-line-2': 'rgba(255,255,255,.12)',
-  // The dashboard's warm text greys, not the editor's blue-greys: cool grey
-  // text on these warm surfaces read washed out (the "muted" look).
-  '--kx-text': '#f2f1ed',
-  '--kx-muted': '#a8a8b0',
-  '--kx-faint': '#707078',
-  // The dashboard root thins text (antialiased); the pane's small type needs
-  // the platform's normal weight to read crisp.
   WebkitFontSmoothing: 'subpixel-antialiased',
 } as React.CSSProperties;
 const SOUND_MUTE_KEY = 'kinetix:bulk-complete-sound-muted';
@@ -105,16 +94,18 @@ function writeSoundMuted(muted: boolean): void {
   try { sessionStorage.setItem(SOUND_MUTE_KEY, muted ? '1' : '0'); } catch { /* ignore */ }
 }
 // Build Timeline stays orange in both states; disabled is a quieter orange.
-const BTN_BUILD = 'border border-transparent bg-[var(--kx-accent)] text-[#1a0f06] rounded-xl text-[10px] font-black uppercase tracking-widest shadow-[0_4px_18px_rgba(255,138,60,.18)] hover:bg-[var(--kx-accent-hover)] transition-all focus:outline-none focus:ring-2 focus:ring-[var(--kx-accent-line)] disabled:opacity-55 disabled:shadow-none disabled:cursor-not-allowed disabled:hover:bg-[var(--kx-accent)]';
+const BTN_BUILD = 'border border-transparent bg-[var(--kx-accent)] text-[#1a0f06] rounded-xl text-[10px] font-black uppercase tracking-widest shadow-[0_4px_18px_rgba(232,132,61,.18)] hover:bg-[var(--kx-accent-hover)] transition-all focus:outline-none focus:ring-2 focus:ring-[var(--kx-accent-line)] disabled:opacity-55 disabled:shadow-none disabled:cursor-not-allowed disabled:hover:bg-[var(--kx-accent)]';
 // Build Timeline's grey twin (same shape and type, neutral surface).
 const BTN_SECONDARY = 'border border-[var(--kx-line-2)] bg-[var(--kx-surface-2)] text-[var(--kx-text)] rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-[var(--kx-hover)] hover:border-[rgba(255,255,255,.22)] transition-all focus:outline-none focus:ring-2 focus:ring-[var(--kx-accent-line)] disabled:opacity-55 disabled:cursor-not-allowed disabled:hover:bg-[var(--kx-surface-2)]';
 const FILE_LINE = 'flex items-center gap-2 px-3 py-1 text-[12px]';
 const FILE_KIND = 'w-20 flex-shrink-0 whitespace-nowrap text-[10px] uppercase tracking-widest text-[var(--kx-faint)]';
-const FILE_ICON = 'flex-shrink-0 w-6 h-6 flex items-center justify-center rounded text-[var(--kx-faint)] hover:text-white hover:bg-[var(--kx-hover)] transition-colors';
-const MSG_ARROW = 'w-5 h-6 flex items-center justify-center rounded text-[var(--kx-faint)] hover:text-white hover:bg-[var(--kx-hover)] transition-colors';
-const FIELD = 'bg-[var(--kx-bg)] border border-[var(--kx-line-2)] rounded-lg font-semibold text-[var(--kx-text)] placeholder:text-[var(--kx-faint)] placeholder:font-normal outline-none focus:border-[var(--kx-accent-line)] transition-colors disabled:cursor-not-allowed disabled:opacity-70';
-const ROW_BTN = 'flex-shrink-0 flex items-center gap-1.5 h-9 px-3 rounded-lg border border-[var(--kx-line-2)] bg-[var(--kx-surface)] text-[12px] font-semibold text-[var(--kx-text)] hover:bg-[var(--kx-hover)] hover:border-[rgba(255,255,255,.22)] transition-colors disabled:bg-transparent disabled:text-[var(--kx-faint)] disabled:cursor-not-allowed disabled:hover:border-[var(--kx-line-2)]';
-const ROW_BTN_SM = 'flex-shrink-0 h-7 px-2.5 rounded-md border border-[var(--kx-line-2)] bg-[var(--kx-surface)] text-[11px] font-semibold text-[var(--kx-text)] hover:bg-[var(--kx-hover)] hover:border-[rgba(255,255,255,.22)] transition-colors';
+const FILE_ICON = 'flex-shrink-0 w-6 h-6 flex items-center justify-center rounded text-[var(--kx-faint)] hover:text-[var(--kx-text)] hover:bg-[var(--kx-hover)] transition-colors';
+const MSG_ARROW = 'w-5 h-6 flex items-center justify-center rounded text-[var(--kx-faint)] hover:text-[var(--kx-text)] hover:bg-[var(--kx-hover)] transition-colors';
+// Page-level field on --kx-surface; inside a row card use FIELD_IN_CARD (recessed to page).
+const FIELD = 'bg-[var(--kx-surface)] border border-[var(--kx-line-2)] rounded-lg font-semibold text-[var(--kx-text)] placeholder:text-[var(--kx-faint)] placeholder:font-normal outline-none focus:border-[var(--kx-accent-line)] transition-colors disabled:cursor-not-allowed disabled:opacity-70';
+const FIELD_IN_CARD = FIELD.replace('bg-[var(--kx-surface)]', 'bg-[var(--kx-bg)]');
+const ROW_BTN = 'flex-shrink-0 flex items-center gap-1.5 h-9 px-3 rounded-lg border border-[var(--kx-line-2)] bg-[var(--kx-surface-2)] text-[12px] font-semibold text-[var(--kx-text)] hover:bg-[var(--kx-hover)] hover:border-[rgba(255,255,255,.22)] transition-colors disabled:bg-transparent disabled:text-[var(--kx-faint)] disabled:cursor-not-allowed disabled:hover:border-[var(--kx-line-2)]';
+const ROW_BTN_SM = 'flex-shrink-0 h-7 px-2.5 rounded-md border border-[var(--kx-line-2)] bg-[var(--kx-surface-2)] text-[11px] font-semibold text-[var(--kx-text)] hover:bg-[var(--kx-hover)] hover:border-[rgba(255,255,255,.22)] transition-colors';
 /** Copy for the group-free Bulk Sync tab (BULK_COPY's group sentences no longer apply). */
 const PANE_COPY = {
   countPlaceholder: 'How many new projects? Enter 2–30',
@@ -243,7 +234,7 @@ function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFi
       }}
       className={`kx-bulk-row rounded-xl border p-3.5 transition-colors ${over
         ? 'bg-[var(--kx-accent-soft)] border-[var(--kx-accent-line)]'
-        : 'bg-[var(--kx-panel)] border-[var(--kx-line-2)] hover:border-[rgba(255,255,255,.18)]'}`}
+        : 'bg-[var(--kx-surface)] border-[var(--kx-line-2)] hover:border-[rgba(255,255,255,.2)]'}`}
     >
       {/* Row 1 — name, Open, Rebuild, Upload. */}
       <div className="flex items-center gap-2">
@@ -257,7 +248,7 @@ function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFi
           disabled={locked}
           onChange={e => onName(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); }}
-          className={`${FIELD} h-9 min-w-0 flex-1 px-3 text-[13px]`}
+          className={`${FIELD_IN_CARD} h-9 min-w-0 flex-1 px-3 text-[13px]`}
         />
         <button
           type="button"
@@ -321,7 +312,7 @@ function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFi
             data-filled={row.slots[slot]}
             className={`${CHIP} ${row.slots[slot]
               ? 'bg-[var(--kx-ready-soft)] text-[var(--kx-ready)]'
-              : 'bg-[var(--kx-surface)] text-[var(--kx-muted)]'}`}
+              : 'bg-[var(--kx-surface-2)] text-[var(--kx-muted)]'}`}
           >
             <SlotIcon slot={slot} />
             {BULK_COPY.slot[slot]}
@@ -421,7 +412,7 @@ function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFi
                       aria-expanded={mediaOpen}
                       disabled={media.length === 0}
                       onClick={() => setMediaOpen(o => !o)}
-                      className={`flex-1 min-w-0 flex items-center gap-1 text-left ${media.length ? 'text-[var(--kx-text)] hover:text-white' : 'text-[var(--kx-faint)] cursor-default'}`}
+                      className={`flex-1 min-w-0 flex items-center gap-1 text-left ${media.length ? 'text-[var(--kx-text)] hover:text-[var(--kx-text)]' : 'text-[var(--kx-faint)] cursor-default'}`}
                     >
                       <span className="truncate">{media.length ? BULK_COPY.mediaCount(media.length) : BULK_COPY.notAdded}</span>
                       {media.length > 0 && (mediaOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />)}
@@ -483,7 +474,7 @@ function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFi
               type="button"
               data-testid={`bulk-replace-all-${row.projectId}`}
               onClick={() => replaceAllRef.current?.click()}
-              className="flex items-center gap-1.5 text-[11px] text-[var(--kx-muted)] hover:text-white transition-colors"
+              className="flex items-center gap-1.5 text-[11px] text-[var(--kx-muted)] hover:text-[var(--kx-text)] transition-colors"
             >
               <RefreshCw size={12} />
               {BULK_COPY.replaceAll}
@@ -860,7 +851,7 @@ export function BulkProjectsModal({
                 setSoundMuted(next);
                 writeSoundMuted(next);
               }}
-              className="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-lg text-[var(--kx-muted)] hover:text-white hover:bg-[var(--kx-hover)] transition-colors"
+              className="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-lg text-[var(--kx-muted)] hover:text-[var(--kx-text)] hover:bg-[var(--kx-hover)] transition-colors"
             >
               {soundMuted ? <VolumeX size={15} /> : <Volume2 size={15} />}
             </button>
@@ -869,7 +860,7 @@ export function BulkProjectsModal({
                 type="button"
                 data-testid="bulk-stop-all"
                 onClick={() => { void runner.stopAllCloudWork(() => killAllMemberCloudJobs()); }}
-                className="flex-shrink-0 h-8 px-3 rounded-lg border border-[var(--kx-line-2)] text-[11px] font-semibold text-[var(--kx-text)] hover:text-white hover:bg-[var(--kx-hover)] transition-colors"
+                className="flex-shrink-0 h-8 px-3 rounded-lg border border-[var(--kx-line-2)] text-[11px] font-semibold text-[var(--kx-text)] hover:text-[var(--kx-text)] hover:bg-[var(--kx-hover)] transition-colors"
               >
                 {BULK_COPY.stopAll}
               </button>
@@ -937,7 +928,7 @@ export function BulkProjectsModal({
             ))}
           </div>
         </div>
-        <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar px-5 py-4 bg-[var(--kx-surface)]" data-testid="bulk-groups">
+        <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar px-5 py-4" data-testid="bulk-groups">
           {drawerTab === 'failed-paused' && (
             <button
               type="button"
@@ -955,7 +946,7 @@ export function BulkProjectsModal({
                 type="button"
                 data-testid="bulk-cancel-scope"
                 onClick={cancelScoped}
-                className="flex-shrink-0 text-[11px] text-[var(--kx-muted)] hover:text-white transition-colors"
+                className="flex-shrink-0 text-[11px] text-[var(--kx-muted)] hover:text-[var(--kx-text)] transition-colors"
               >
                 {BULK_COPY.cancelAll}
               </button>
@@ -967,7 +958,7 @@ export function BulkProjectsModal({
                 type="button"
                 data-testid="bulk-clear-finished"
                 onClick={clearFinished}
-                className="flex-shrink-0 text-[11px] text-[var(--kx-muted)] hover:text-white transition-colors"
+                className="flex-shrink-0 text-[11px] text-[var(--kx-muted)] hover:text-[var(--kx-text)] transition-colors"
               >
                 {BULK_COPY.clearFinished}
               </button>

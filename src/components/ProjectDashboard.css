@@ -1,5 +1,15 @@
 /* Dashboard visual language. Tokens are scoped to .kxd-root rather than :root
-   so they cannot collide with the app-wide --kx-* palette the editor uses. */
+   so they cannot collide with the app-wide --kx-* palette the editor uses.
+
+   ONE grey ladder, used everywhere on the dashboard (both panels, the
+   Workspaces / Bulk Sync / Bulk Export panes, dialogs):
+     page    --kxd-void            #0a0a0b  panels, pane headers / footers
+     surface --kxd-surface         #19191c  every card, tab track, page-level input
+     raised  --kxd-surface-raised  #1e1e21  things on a card: buttons, chips, selected tab, dialogs
+     hover   --kxd-surface-hover   #212124
+   Inputs inside a card recess to page. Lines: --kxd-line / --kxd-line-strong.
+   Anything inside the dashboard that speaks the editor's --kx-* tokens is
+   mapped onto this ladder below, so there is no second palette in view. */
 
 .kxd-root {
   --kxd-void: #0a0a0b;
@@ -24,12 +34,29 @@
   --kxd-shadow-menu: 0 4px 10px rgba(0, 0, 0, 0.35), 0 24px 48px -12px rgba(0, 0, 0, 0.7),
     0 0 0 1px var(--kxd-line-strong);
 
+  /* The editor palette, re-pointed at the ladder (bulk panes, workspace tabs,
+     sync queue). Semantic colours (ready, slot types, danger) are untouched. */
+  --kx-bg: var(--kxd-void);
+  --kx-panel: var(--kxd-void);
+  --kx-surface: var(--kxd-surface);
+  --kx-surface-2: var(--kxd-surface-raised);
+  --kx-hover: var(--kxd-surface-hover);
+  --kx-line: var(--kxd-line);
+  --kx-line-2: var(--kxd-line-strong);
+  --kx-text: var(--kxd-text);
+  --kx-muted: var(--kxd-text-dim);
+  --kx-faint: var(--kxd-text-faint);
+  --kx-accent: var(--kxd-accent);
+  --kx-accent-2: var(--kxd-accent-hi);
+  --kx-accent-hover: var(--kxd-accent-hi);
+  --kx-accent-soft: var(--kxd-accent-wash);
+  --kx-accent-line: rgba(232, 132, 61, 0.45);
+
   display: flex;
   flex-direction: row;
   font-family: 'Inter', sans-serif;
   color: var(--kxd-text);
-  background: radial-gradient(ellipse 1200px 500px at 20% -10%, rgba(232, 132, 61, 0.05), transparent 60%),
-    var(--kxd-void);
+  background: var(--kxd-void);
   -webkit-font-smoothing: antialiased;
 }
 
@@ -101,9 +128,8 @@
   position: relative; isolation: isolate;
   display: flex; padding: var(--kxd-tab-pad); margin: 0 20px 16px;
   border-radius: 12px;
-  background: linear-gradient(180deg, #0d0d0f, #121214);
-  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.6), inset 0 0 0 1px rgba(255, 255, 255, 0.05),
-    0 1px 0 rgba(255, 255, 255, 0.03);
+  background: var(--kxd-surface);
+  box-shadow: inset 0 0 0 1px var(--kxd-line);
   flex-shrink: 0;
 }
 .kxd-tabs-thumb {
@@ -112,9 +138,8 @@
   width: calc((100% - 2 * var(--kxd-tab-pad)) / 3);
   transform: translateX(calc(var(--kxd-tab-i, 0) * 100%));
   border-radius: 9px;
-  background: linear-gradient(180deg, #27272b, #1d1d20);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07), 0 0 0 1px rgba(255, 255, 255, 0.08),
-    0 6px 14px -6px rgba(0, 0, 0, 0.8);
+  background: var(--kxd-surface-hover);
+  box-shadow: 0 0 0 1px var(--kxd-line-strong), 0 6px 14px -6px rgba(0, 0, 0, 0.8);
   transition: transform 0.26s cubic-bezier(.22, 1, .36, 1);
 }
 .kxd-tabs-thumb::after {
@@ -203,7 +228,7 @@
   padding: 14px 16px 10px 20px;
   background:
     radial-gradient(120% 140% at 100% 0%, var(--kxd-accent-wash), transparent 55%),
-    linear-gradient(180deg, var(--kxd-surface-raised), var(--kxd-surface));
+    var(--kxd-surface);
   border: 1px solid var(--kxd-line-strong);
   border-radius: var(--kxd-radius-md);
   box-shadow: var(--kxd-shadow-card);
@@ -363,7 +388,7 @@
 .kxd-pick-row.is-here { cursor: default; opacity: 0.6; }
 .kxd-pick-thumb {
   position: relative; flex-shrink: 0; width: 64px; aspect-ratio: 16 / 10;
-  border-radius: 6px; overflow: hidden; background: #141416;
+  border-radius: 6px; overflow: hidden; background: var(--kxd-surface-raised);
 }
 .kxd-pick-thumb .kxd-art-empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--kxd-text-faint); }
 .kxd-pick-name { flex: 1; min-width: 0; font-size: 13px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -660,7 +685,7 @@
   to { opacity: 1; transform: scale(1) translateY(0); }
 }
 
-.kxd-thumb { position: relative; aspect-ratio: 16 / 10; background: #141416; overflow: hidden; }
+.kxd-thumb { position: relative; aspect-ratio: 16 / 10; background: var(--kxd-surface-raised); overflow: hidden; }
 .kxd-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .kxd-card-thumb-host { position: absolute; inset: 0; z-index: 1; }
 .kxd-card-thumb-host img { width: 100%; height: 100%; object-fit: cover; display: block; }
@@ -743,7 +768,7 @@
   color: var(--kxd-text-faint);
   background-image:
     repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.025) 0px, rgba(255, 255, 255, 0.025) 1px, transparent 1px, transparent 14px),
-    radial-gradient(circle at 50% 40%, #1d1d20, #141416 70%);
+    linear-gradient(var(--kxd-surface-raised), var(--kxd-surface-raised));
 }
 .kxd-art-empty > svg { opacity: 0.7; }
 

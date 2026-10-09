@@ -11,18 +11,10 @@ import { inWorkspace, resolveWorkspaceFilter, useWorkspaces, workspaceRegistry, 
 
 /** Dashboard revamp — the Bulk Export tab's pane (in flow, fills the left panel). */
 const PANE = 'flex flex-1 h-full w-full min-h-0 flex-col bg-[var(--kx-bg)]';
+/** Colours come from the dashboard's one grey ladder (ProjectDashboard.css maps
+ *  every --kx-* onto it). Only the text rendering is set here: the dashboard
+ *  root thins text (antialiased); the pane's small type needs normal weight. */
 const DRAWER_PALETTE = {
-  '--kx-bg': '#0a0a0b',
-  '--kx-panel': '#111113',
-  '--kx-surface': '#19191c',
-  '--kx-surface-2': '#1e1e21',
-  '--kx-hover': '#242428',
-  '--kx-line': 'rgba(255,255,255,.07)',
-  '--kx-line-2': 'rgba(255,255,255,.12)',
-  // Same de-muting as Bulk Sync: warm text greys, normal text weight.
-  '--kx-text': '#f2f1ed',
-  '--kx-muted': '#a8a8b0',
-  '--kx-faint': '#707078',
   WebkitFontSmoothing: 'subpixel-antialiased',
 } as React.CSSProperties;
 const LABEL = 'text-[10px] uppercase tracking-widest text-[var(--kx-muted)] font-bold block mb-2';

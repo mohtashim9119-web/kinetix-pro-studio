@@ -48,8 +48,8 @@ export function WorkspaceTabs({
           className={prominent
             ? `flex-shrink-0 max-w-[240px] inline-flex items-center gap-2 h-9 pl-4 pr-2 rounded-[10px] border text-[13px] font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--kx-accent-line)] ${
               value === t.id
-                ? 'border-[var(--kx-accent-line)] bg-[var(--kx-accent-soft)] text-[var(--kx-accent-2)] shadow-[0_0_0_1px_rgba(255,138,60,.18),0_8px_20px_-10px_rgba(255,138,60,.45)]'
-                : 'border-[var(--kx-line-2)] bg-[rgba(255,255,255,.02)] text-[var(--kx-muted)] hover:text-[var(--kx-text)] hover:bg-[rgba(255,255,255,.05)] hover:border-[rgba(255,255,255,.22)]'
+                ? 'border-[var(--kx-accent-line)] bg-[var(--kx-accent-soft)] text-[var(--kx-accent-2)] shadow-[0_0_0_1px_rgba(232,132,61,.18),0_8px_20px_-10px_rgba(232,132,61,.45)]'
+                : 'border-[var(--kx-line-2)] bg-[var(--kx-surface)] text-[var(--kx-muted)] hover:text-[var(--kx-text)] hover:bg-[var(--kx-hover)] hover:border-[rgba(255,255,255,.22)]'
             }`
             : `flex-shrink-0 max-w-[180px] truncate h-7 px-3 rounded-full border text-[11px] font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--kx-accent-line)] ${
               value === t.id
@@ -62,7 +62,7 @@ export function WorkspaceTabs({
             <span
               data-testid={`${testIdPrefix}-count-${t.id}`}
               className={`flex-shrink-0 min-w-[22px] h-[20px] px-1.5 inline-flex items-center justify-center rounded-md font-mono text-[11px] tabular-nums ${
-                value === t.id ? 'bg-[rgba(255,138,60,.2)] text-[var(--kx-accent-2)]' : 'bg-[rgba(255,255,255,.06)] text-[var(--kx-faint)]'
+                value === t.id ? 'bg-[var(--kx-accent-soft)] text-[var(--kx-accent-2)]' : 'bg-[var(--kx-surface-2)] text-[var(--kx-faint)]'
               }`}
             >
               {counts[t.id] ?? 0}

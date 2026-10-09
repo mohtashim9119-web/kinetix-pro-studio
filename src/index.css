@@ -139,10 +139,10 @@ body.resizing * {
 
 /* Bulk drawer row — tokened orange border glow (dark + hover). */
 .kx-bulk-row {
-  box-shadow: 0 0 0 1px rgba(255, 138, 60, .22), 0 0 8px rgba(255, 138, 60, .12);
+  box-shadow: 0 0 0 1px rgba(232, 132, 61, .22), 0 0 8px rgba(232, 132, 61, .12);
 }
 .kx-bulk-row:hover {
-  box-shadow: 0 0 0 1px rgba(255, 138, 60, .32), 0 0 11px rgba(255, 138, 60, .14);
+  box-shadow: 0 0 0 1px rgba(232, 132, 61, .32), 0 0 11px rgba(232, 132, 61, .14);
 }
 
 .kx-bulk-bar {

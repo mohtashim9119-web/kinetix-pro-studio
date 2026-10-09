@@ -39,7 +39,7 @@ export function SyncQueuePanel({ queue = cloudSyncQueue }: { queue?: SyncQueue }
     <section
       data-testid="sync-queue-panel"
       aria-label={QUEUE_COPY.title}
-      className="mb-6 rounded-xl border border-[#282828] bg-[#111] p-4 text-[11px] text-gray-300"
+      className="mb-6 rounded-xl border border-[var(--kx-line-2)] bg-[var(--kx-surface)] p-4 text-[11px] text-[var(--kx-text)]"
     >
       <div className="flex items-center justify-between mb-2">
         <h2 className="text-[10px] font-black uppercase tracking-[0.2em]">{QUEUE_COPY.title}</h2>
@@ -60,10 +60,10 @@ export function SyncQueuePanel({ queue = cloudSyncQueue }: { queue?: SyncQueue }
           <li key={item.id} data-testid={`sync-queue-item-${item.id}`} data-status={item.status} className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <p className="truncate">
-                <span className="text-gray-500 mr-2">{item.position} of {total}</span>
+                <span className="text-[var(--kx-faint)] mr-2">{item.position} of {total}</span>
                 {item.label}
               </p>
-              <p className="text-[10px] text-gray-500 leading-snug">
+              <p className="text-[10px] text-[var(--kx-faint)] leading-snug">
                 {item.status === 'running' && item.phase ? item.phase : QUEUE_COPY.status[item.status]}
                 {item.status !== 'running' && item.detail ? ` — ${item.detail}` : ''}
               </p>
@@ -82,8 +82,8 @@ export function SyncQueuePanel({ queue = cloudSyncQueue }: { queue?: SyncQueue }
           </li>
         ))}
       </ol>
-      {line && <p className="mt-3 text-[10px] text-gray-400" data-testid="sync-queue-batch-line">{line}</p>}
-      <p className="mt-2 text-[9px] text-gray-600 leading-snug">{QUEUE_COPY.hint}</p>
+      {line && <p className="mt-3 text-[10px] text-[var(--kx-muted)]" data-testid="sync-queue-batch-line">{line}</p>}
+      <p className="mt-2 text-[9px] text-[var(--kx-faint)] leading-snug">{QUEUE_COPY.hint}</p>
     </section>
   );
 }
