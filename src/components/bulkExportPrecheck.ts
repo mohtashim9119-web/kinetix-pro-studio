@@ -4,23 +4,14 @@
  */
 
 // Bulk Export pre-check — run on every not-started (Ready) project as soon as
-// the pane shows, BEFORE the operator clicks Export, with full read access to
-// each stored project:
-//   1. the export queue's own Start checks (export path, media), via the same
-//      service functions it calls — so the verdict matches what Start would do;
-//   2. the project's sync log: any unresolved action (the sync log panel's own
-//      action groups — skipped scenes, mismatches, a stopped sync, offline
-//      media …, minus what the operator marked resolved).
-// A project with either goes to Blocked. View-side only: reads, never writes,
-// and never touches the queue.
+// the pane shows, BEFORE the operator clicks Export: a project whose sync log
+// has unresolved actions goes to Blocked. Decided by the sync log alone (the
+// operator's rule) — no media or export-path checks here. View-side only:
+// reads the stored record, never writes, never touches the queue.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { loadProject } from '../services/projectStore';
-import { settingsFromProject } from '../services/bulkExportSettings';
-import { preflightBulkExport } from '../services/bulkExportPreflight';
 import { buildSyncGroups } from '../services/syncLogGroups';
-import { getProjectAssetRecoveryStatus } from '../services/assetRecovery';
-import type { Asset } from '../types';
 
 /** The sync log panel's dismissals (the same store it reads and writes). */
 const SYNC_LOG_DISMISSED_KEY = 'kx-sync-log-dismissed';
@@ -35,58 +26,32 @@ function readDismissed(): Set<string> {
   }
 }
 
-/** The record's assets with `url` / `unresolved` set from real storage
- *  availability (the project-open path's own check). If storage cannot be
- *  read, nothing is marked offline — a pre-check never invents a block. */
-async function withStorageAvailability(projectId: string, assets: readonly Asset[]): Promise<Asset[]> {
-  let resolved: Map<string, boolean> | null = null;
-  try {
-    const status = await getProjectAssetRecoveryStatus(projectId);
-    if (status) resolved = new Map(status.assets.map(a => [a.assetId, a.resolved]));
-  } catch { resolved = null; }
-  return assets.map(a => {
-    const available = resolved ? resolved.get(a.id) === true : true;
-    // Any non-empty url means "has bytes" to the media check; it is never loaded here.
-    return available ? { ...a, url: a.url || 'stored:', unresolved: false } : { ...a, url: '', unresolved: true };
-  });
-}
-
-/** Why this project cannot export yet, or null when it is clear. */
-export async function precheckProject(id: string, lastExportPath?: string): Promise<string | null> {
+/**
+ * Why this project should wait, or null when it is clear — decided by its
+ * sync log alone: any unresolved action in its newest sync (the sync log
+ * panel's own action groups, minus items the operator marked resolved).
+ * Reads only the stored record; never loads media or touches storage.
+ */
+export async function precheckProject(id: string): Promise<string | null> {
   let loaded: Awaited<ReturnType<typeof loadProject>>;
   try {
     loaded = await loadProject(id);
-  } catch (err) {
-    return `Blocked — could not open the project: ${err instanceof Error ? err.message : String(err)}`;
+  } catch {
+    return null;
   }
-  if (!loaded) return 'Blocked — project missing';
+  if (!loaded) return null;
   const project = loaded.project;
-
-  const settings = settingsFromProject(project, new Date(), lastExportPath);
-  if ('blocked' in settings) return settings.blocked;
-
-  // A STORED record never carries media URLs (projectStore writes every asset
-  // with url ''), and may carry a stale `unresolved` flag from an old session —
-  // so judging media from the record says "offline" for every project. Ask
-  // storage instead, exactly as opening the project does: an asset is
-  // available when its bytes are in the cache or the native store.
-  const assets = await withStorageAvailability(id, project.assets);
-  const gate = preflightBulkExport(project.segments, assets);
-  if (gate.kind === 'block') return gate.message;
-
   const view = buildSyncGroups({
     log: project.syncLog ?? [],
     summaries: project.syncRunSummaries ?? [],
-    live: { segments: project.segments, assets, spots: project.spots ?? [] },
+    // No live media view: a stored record has no media URLs, so live media
+    // checks would call every asset offline. The log's own records decide.
     dismissed: readDismissed(),
   });
-  const newest = view.syncs[0];
-  const open = newest?.actions ?? [];
-  if (open.length > 0) {
-    const items = open.reduce((n, g) => n + g.items.length, 0);
-    return `Blocked — ${items === 1 ? '1 unresolved action' : `${items} unresolved actions`} in the sync log (${open[0]!.title})`;
-  }
-  return null;
+  const open = view.syncs[0]?.actions ?? [];
+  if (open.length === 0) return null;
+  const items = open.reduce((n, g) => n + g.items.length, 0);
+  return `Blocked — ${items === 1 ? '1 unresolved action' : `${items} unresolved actions`} in the sync log (${open[0]!.title})`;
 }
 
 export interface PrecheckTarget { id: string; savedAt?: number; lastExportPath?: string }
@@ -123,7 +88,7 @@ export function useExportPrecheck(targets: readonly PrecheckTarget[], nonce: num
     const out = new Map<string, string | null>();
     for (const id of ids) {
       const t = byId.current.get(id);
-      out.set(id, await precheckProject(id, t?.lastExportPath));
+      out.set(id, await precheckProject(id));
       checkedAt.current.set(id, `${t?.savedAt ?? 0}|${t?.lastExportPath ?? ''}`);
     }
     apply(out);
