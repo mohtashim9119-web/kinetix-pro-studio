@@ -33,7 +33,7 @@ import { bulkBatchRunner, cloudSyncQueue } from '../services/bulkSyncQueue';
 import {
   BULK_GROUP_MAX_ROWS, BULK_MAX_GROUPS, READY_TO_FINISH, isBatchRowFinal, type BatchRow, type BulkBatchRunner,
 } from '../services/bulkBatch';
-import { bulkFooterLine, cloudCostLine, type CloudQueueDeps } from '../services/cloudQueueJob';
+import { cloudCostLine, type CloudQueueDeps } from '../services/cloudQueueJob';
 import { collectDroppedFiles } from '../services/droppedFiles';
 import { missingSpineSlots } from '../services/buildTimelineGate';
 import { type QueueItem, type SyncQueue } from '../services/syncQueue';
@@ -691,7 +691,6 @@ export function BulkProjectsModal({
   const items = useMemo(() => new Map(snap.items.map(i => [i.id, i])), [snap.items]);
   const recordById = useMemo(() => new Map(records.map(r => [r.id, r])), [records]);
   const isComplete = (r: BulkRowState): boolean => !r.built && r.typedName.trim().length > 0 && missingSpineSlots(r.slots).length === 0;
-  const line = bulkFooterLine(records, queue.batchLine());
 
   useEffect(() => {
     const complete = new Set<string>();
@@ -1004,11 +1003,6 @@ export function BulkProjectsModal({
           >
             {BULK_COPY.build}
           </button>
-        </div>
-        <div className="px-6 pt-3 pb-5 flex-shrink-0 border-t border-[var(--kx-line)] bg-[var(--kx-panel)]" data-testid="bulk-footer">
-          {line && <p className="text-[11px] leading-snug text-[var(--kx-muted)] mb-1" data-testid="bulk-batch-line">{line}</p>}
-          {!cloud && <p className="text-[11px] leading-snug text-amber-300/90 mb-1">{BULK_COPY.notCloud}</p>}
-          <p className="text-[11px] leading-snug text-[var(--kx-faint)]">{BULK_COPY.footerNote}</p>
         </div>
       </div>
       {confirmDelete && (
