@@ -427,7 +427,11 @@ import { PreviewStage, type AutoGradeSampler, type PreviewStageHandle } from './
 import { SpeedBadge, SPEED_LADDER } from './components/SpeedBadge';
 import { ProjectDashboard } from './components/ProjectDashboard';
 import { BulkProjectsModal } from './components/BulkProjectsModal';
+import { BulkExportModal, BulkExportRunningNotice } from './components/BulkExportModal';
+import { BulkExportHost } from './components/BulkExportHost';
 import { bulkBatchRunner } from './services/bulkSyncQueue';
+import { BulkExportRunner } from './services/bulkExportQueue';
+import { readBulkExportDrawerOpen, writeBulkExportDrawerOpen } from './services/bulkExportPersist';
 import { cloudCostLine } from './services/cloudQueueJob';
 import { NewProjectModal, type NewProjectChoices } from './components/NewProjectModal';
 import { ProjectSettingsModal } from './components/ProjectSettingsModal';
@@ -2177,19 +2181,49 @@ export default function App() {
   // dashboard: finishing a timeline opens that project in the editor, which
   // unmounts the dashboard, and the modal must survive that.
   // The drawer's open state survives a reload: open before it, open after.
-  const [bulkMounted, setBulkMounted] = useState(readBulkDrawerOpen);
+  const [bulkMounted, setBulkMounted] = useState(() => readBulkExportDrawerOpen() ? false : readBulkDrawerOpen());
   const [bulkHidden, setBulkHidden] = useState(false);
+  const [exportMounted, setExportMounted] = useState(readBulkExportDrawerOpen);
+  const [exportHidden, setExportHidden] = useState(false);
   useEffect(() => { writeBulkDrawerOpen(bulkMounted && !bulkHidden); }, [bulkMounted, bulkHidden]);
+  useEffect(() => { writeBulkExportDrawerOpen(exportMounted && !exportHidden); }, [exportMounted, exportHidden]);
+  const bulkDrawerOpen = bulkMounted && !bulkHidden;
+  const exportDrawerOpen = exportMounted && !exportHidden;
   const openBulkDrawer = useCallback(() => {
+    setExportHidden(true);
     setBulkHidden(false);
     setBulkMounted(true);
   }, []);
-  const bulkDrawerOpen = bulkMounted && !bulkHidden;
-  // The dashboard's Bulk Projects button toggles the panel.
+  const openExportDrawer = useCallback(() => {
+    setBulkHidden(true);
+    setExportHidden(false);
+    setExportMounted(true);
+  }, []);
   const toggleBulkDrawer = useCallback(() => {
     if (bulkDrawerOpen) setBulkHidden(true);
     else openBulkDrawer();
   }, [bulkDrawerOpen, openBulkDrawer]);
+  const toggleExportDrawer = useCallback(() => {
+    if (exportDrawerOpen) setExportHidden(true);
+    else openExportDrawer();
+  }, [exportDrawerOpen, openExportDrawer]);
+  const bulkExport = useMemo(() => new BulkExportRunner({
+    listProjects: () => loadAllMetas().map(m => ({ id: m.id, name: m.name })),
+    loadProject: async (id) => (await loadProject(id))?.project ?? null,
+    execute: async () => ({ status: 'failed', detail: 'export host not mounted' }),
+    hasCheckpoint: async (p) => {
+      if (!isTauri()) return false;
+      try {
+        const outcome = await checkExistingCheckpoint(p, {
+          listResumableSessionIds: () => TauriFfmpeg.listResumableSessionIds(),
+          peekExportState: (sessionId) => TauriFfmpeg.peekExportState(sessionId),
+        });
+        return outcome.kind === 'unedited';
+      } catch {
+        return false;
+      }
+    },
+  }), []);
   // On the dashboard the panel DOCKS as its left column (the grid moves over to
   // make room) when the window is wide enough; on a narrow window it overlays.
   const [bulkDockWide, setBulkDockWide] = useState(() => typeof window === 'undefined' || window.matchMedia?.(`(min-width: ${BULK_DOCK_MIN_WIDTH}px)`).matches !== false);
@@ -6810,7 +6844,7 @@ export default function App() {
   useEffect(() => {
     const onInput = (e: Event): void => {
       const t = e.target;
-      if (t instanceof Element && t.closest('[data-testid="bulk-modal"]')) return;
+      if (t instanceof Element && (t.closest('[data-testid="bulk-modal"]') || t.closest('[data-testid="bulk-export-modal"]'))) return;
       lastEditorInputAtRef.current = Date.now();
     };
     document.addEventListener('pointerdown', onInput, true);
@@ -6848,7 +6882,8 @@ export default function App() {
       onAssetCleanupFailed={showToast}
       parseProjectData={parseProjectData}
       onBulkOpen={toggleBulkDrawer}
-      bulkDockInset={bulkDrawerOpen && bulkDockWide ? BULK_DRAWER_WIDTH : 0}
+      onBulkExportOpen={toggleExportDrawer}
+      bulkDockInset={(bulkDrawerOpen || exportDrawerOpen) && bulkDockWide ? BULK_DRAWER_WIDTH : 0}
       metasVersion={dashboardVersion}
       bulkOpen={bulkMounted}
       onProjectsDeleted={dropDeletedFromEditor}
@@ -7978,6 +8013,8 @@ export default function App() {
         )}
       </AnimatePresence>
 
+      <BulkExportRunningNotice runner={bulkExport} />
+
       {parallelGpuNotice && (
         <div className={`fixed top-4 right-4 ${Z.banner} relative max-w-sm rounded-xl border border-[#282828] bg-[#111] px-4 py-3 text-sm text-zinc-200 shadow-2xl`}>
           <p className="pr-6">{parallelGpuNotice}</p>
@@ -8057,6 +8094,15 @@ export default function App() {
           whichever view is up. The dashboard stays mounted behind it and is
           only unmounted once `handleNewProjectConfirm` swaps in the new
           project, so cancelling needs no view restore. */}
+      <BulkExportHost runner={bulkExport} />
+      {exportMounted && (
+        <BulkExportModal
+          runner={bulkExport}
+          hidden={exportHidden || !showDashboard}
+          docked={showDashboard && bulkDockWide}
+          onClose={() => setExportHidden(true)}
+        />
+      )}
       {bulkMounted && (
         <BulkProjectsModal
           hidden={bulkHidden || !showDashboard}
