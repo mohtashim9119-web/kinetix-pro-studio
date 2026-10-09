@@ -33,7 +33,7 @@ import { bulkBatchRunner, cloudSyncQueue } from '../services/bulkSyncQueue';
 import {
   READY_TO_FINISH, isBatchRowFinal, type BatchRow, type BulkBatchRunner,
 } from '../services/bulkBatch';
-import { cloudCostLine, type CloudQueueDeps } from '../services/cloudQueueJob';
+import { bulkFooterLine, cloudCostLine, type CloudQueueDeps } from '../services/cloudQueueJob';
 import { collectDroppedFiles } from '../services/droppedFiles';
 import { missingSpineSlots } from '../services/buildTimelineGate';
 import { type QueueItem, type SyncQueue } from '../services/syncQueue';
@@ -691,6 +691,8 @@ export function BulkProjectsModal({
   const cloud = readSyncEngineHost() === 'cloud';
   const items = useMemo(() => new Map(snap.items.map(i => [i.id, i])), [snap.items]);
   const recordById = useMemo(() => new Map(records.map(r => [r.id, r])), [records]);
+  // The batch's cost, small, in the sticky bar (never claims $0 while a row billed GPU time).
+  const costLine = bulkFooterLine(records, queue.batchLine());
   const isComplete = (r: BulkRowState): boolean => !r.built && r.typedName.trim().length > 0 && missingSpineSlots(r.slots).length === 0;
 
   useEffect(() => {
@@ -997,27 +999,30 @@ export function BulkProjectsModal({
         </div>
         {/* Sticky: Build Timeline is always in reach, whatever sub-tab or scroll.
             It builds the complete rows of the selected workspace (All: every row). */}
-        <div className="px-5 py-3 flex-shrink-0 flex items-center gap-3 border-t border-[var(--kx-line-2)] bg-[var(--kx-panel)] shadow-[0_-10px_24px_-12px_rgba(0,0,0,.8)]" data-testid="bulk-build-bar">
-          <button
-            type="button"
-            data-testid="bulk-add"
-            className={`${BTN_SECONDARY} flex-1 basis-0 h-10 px-5 flex items-center justify-center gap-1.5`}
-            disabled={!store}
-            onClick={addRow}
-          >
-            <Plus size={12} />
-            {BULK_COPY.addProject}
-          </button>
-          <button
-            type="button"
-            data-testid="bulk-build"
-            className={`${BTN_BUILD} flex-1 basis-0 h-10 px-5`}
-            disabled={!cloud || !scopedRows.some(isComplete)}
-            title={!cloud ? BULK_COPY.notCloud : !scopedRows.some(isComplete) ? BULK_COPY.buildNeeds : undefined}
-            onClick={() => build(scopedIds)}
-          >
-            {BULK_COPY.build}
-          </button>
+        <div className="px-5 py-3 flex-shrink-0 flex flex-col gap-2 border-t border-[var(--kx-line-2)] bg-[var(--kx-panel)] shadow-[0_-10px_24px_-12px_rgba(0,0,0,.8)]" data-testid="bulk-build-bar">
+          {costLine && <p className="text-[11px] leading-snug text-[var(--kx-muted)]" data-testid="bulk-batch-line">{costLine}</p>}
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              data-testid="bulk-add"
+              className={`${BTN_SECONDARY} flex-1 basis-0 h-10 px-5 flex items-center justify-center gap-1.5`}
+              disabled={!store}
+              onClick={addRow}
+            >
+              <Plus size={12} />
+              {BULK_COPY.addProject}
+            </button>
+            <button
+              type="button"
+              data-testid="bulk-build"
+              className={`${BTN_BUILD} flex-1 basis-0 h-10 px-5`}
+              disabled={!cloud || !scopedRows.some(isComplete)}
+              title={!cloud ? BULK_COPY.notCloud : !scopedRows.some(isComplete) ? BULK_COPY.buildNeeds : undefined}
+              onClick={() => build(scopedIds)}
+            >
+              {BULK_COPY.build}
+            </button>
+          </div>
         </div>
       </div>
       {confirmDelete && (
