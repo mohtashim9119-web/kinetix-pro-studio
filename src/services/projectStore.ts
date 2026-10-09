@@ -712,11 +712,12 @@ export function recordLastExportPath(id: string, path: string): boolean {
   try {
     const metas = loadAllMetas();
     const idx = metas.findIndex(m => m.id === id);
-    if (idx < 0) {
+    const current = metas[idx];
+    if (!current) {
       console.error(`[kinetix] Could not record the export path for project ${id}: it has no registry entry yet.`);
       return false;
     }
-    metas[idx] = { ...metas[idx], lastExportPath: path };
+    metas[idx] = { ...current, lastExportPath: path };
     localStorage.setItem(REGISTRY_KEY, JSON.stringify(metas));
     return true;
   } catch (err) {
