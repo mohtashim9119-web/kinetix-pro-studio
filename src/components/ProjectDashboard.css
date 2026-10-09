@@ -215,9 +215,13 @@
 .kxd-xpop {
   position: absolute; left: 0; right: 0; top: calc(100% + 6px); z-index: 30;
   padding: 12px; display: flex; flex-direction: column; gap: 10px;
-  background: var(--kxd-surface-raised); border: 1px solid var(--kxd-line-strong); border-radius: 10px;
+  /* Ladder: the popover is a card (surface); its tracks and field recess to page. */
+  background: var(--kxd-surface); border: 1px solid var(--kxd-line-strong); border-radius: 10px;
   box-shadow: var(--kxd-shadow-menu);
 }
+.kxd-xpop .kxd-seg { background: var(--kxd-void); }
+.kxd-xpop .kxd-folder-btn { background: var(--kxd-void); }
+.kxd-xpop .kxd-folder-btn:hover { background: var(--kxd-surface-hover); }
 .kxd-xpop-scope { margin: 0; font-size: 11px; color: var(--kxd-text-faint); }
 .kxd-xpop-row { display: grid; grid-template-columns: 76px minmax(0, 1fr); align-items: center; gap: 10px; }
 .kxd-xpop-label { font-size: 11px; color: var(--kxd-text-dim); }
