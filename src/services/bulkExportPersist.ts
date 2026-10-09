@@ -3,21 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-export const BULK_EXPORT_DRAWER_KEY = 'kinetix:bulk-export-drawer-open:v1';
 export const BULK_EXPORT_SELECTION_KEY = 'kinetix:bulk-export-selection:v1';
 export const BULK_EXPORT_BATCH_KEY = 'kinetix:bulk-export-batch:v1';
-
-export function readBulkExportDrawerOpen(storage: Pick<Storage, 'getItem'> | undefined = fallback()): boolean {
-  try { return storage?.getItem(BULK_EXPORT_DRAWER_KEY) === '1'; } catch { return false; }
-}
-
-export function writeBulkExportDrawerOpen(open: boolean, storage: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> | undefined = fallback()): void {
-  try {
-    if (!storage) return;
-    if (open) storage.setItem(BULK_EXPORT_DRAWER_KEY, '1');
-    else storage.removeItem(BULK_EXPORT_DRAWER_KEY);
-  } catch { /* ignore */ }
-}
 
 export function readBulkExportSelection(storage: Pick<Storage, 'getItem'> | undefined = fallback()): string[] {
   try {

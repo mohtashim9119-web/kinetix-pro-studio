@@ -4,8 +4,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { Z, Z_INDEX } from './overlayLayers';
 
-// The overlay scale is the contract that keeps the bulk drawer visible over the
-// dashboard page and under every modal. jsdom does not paint, so the order is
+// The overlay scale is the contract that keeps the dashboard page under every modal. jsdom does not paint, so the order is
 // pinned here at the source: the tokens, and the absence of raw overlay z-values.
 
 const SRC = join(process.cwd(), 'src');
@@ -27,7 +26,7 @@ const isComment = (line: string): boolean => /^\s*(\/\/|\*|\/\*)/.test(line);
 describe('overlay scale', () => {
   it('is the full ordered scale, strictly increasing', () => {
     expect(Object.keys(Z_INDEX)).toEqual([
-      'editorControls', 'reviewMapping', 'dashboard', 'drawer', 'modal', 'appSettings', 'relocation',
+      'editorControls', 'reviewMapping', 'dashboard', 'modal', 'appSettings', 'relocation',
       'popup', 'banner', 'blocker', 'dialog', 'previewFullscreen', 'devPanel',
     ]);
     const values = Object.values(Z_INDEX);
@@ -35,20 +34,18 @@ describe('overlay scale', () => {
     expect(new Set(values).size).toBe(values.length);
   });
 
-  it('keeps the ruled relationships: editor < dashboard < drawer < modal < app settings < toasts', () => {
+  it('keeps the ruled relationships: editor < dashboard < modal < app settings < toasts', () => {
     expect(Z_INDEX.editorControls).toBeLessThan(Z_INDEX.dashboard);
     expect(Z_INDEX.dashboard).toBe(200);
-    expect(Z_INDEX.drawer).toBe(201);
     expect(Z_INDEX.modal).toBe(205);
     expect(Z_INDEX.appSettings).toBe(210);
     expect(Z_INDEX.popup).toBe(300);
-    expect(Z_INDEX.dashboard).toBeLessThan(Z_INDEX.drawer);
-    expect(Z_INDEX.drawer).toBeLessThan(Z_INDEX.modal);
+    expect(Z_INDEX.dashboard).toBeLessThan(Z_INDEX.modal);
     expect(Z_INDEX.modal).toBeLessThan(Z_INDEX.appSettings);
     expect(Z_INDEX.appSettings).toBeLessThan(Z_INDEX.popup);
-    // A dialog that can open over the drawer must beat it, whatever its name.
+    // A dialog that can open over the dashboard must beat it, whatever its name.
     for (const above of ['modal', 'appSettings', 'relocation', 'popup', 'banner', 'blocker', 'dialog'] as const) {
-      expect(Z_INDEX[above]).toBeGreaterThan(Z_INDEX.drawer);
+      expect(Z_INDEX[above]).toBeGreaterThan(Z_INDEX.dashboard);
     }
   });
 
@@ -69,13 +66,12 @@ describe('overlay scale', () => {
     expect(offenders).toEqual([]);
   });
 
-  it('the drawer, the dashboard and every former z-200 modal sit on their ruled layers', () => {
+  it('the dashboard and every former z-200 modal sit on their ruled layers', () => {
     const src = (rel: string): string => readFileSync(join(SRC, rel), 'utf8');
     // Dashboard revamp — Bulk Sync is a pane inside the dashboard's left panel
     // (the dashboard's own stacking context), no longer a drawer layer of its own.
-    expect(src('components/BulkProjectsModal.tsx')).not.toContain('${Z.drawer}');
-    expect(src('components/BulkExportModal.tsx')).not.toContain('${Z.drawer}');
-    // (Its count popup is gone — Create Group is inline; its confirms are ConfirmDialog, on Z.dialog.)
+    expect(Object.keys(Z)).not.toContain('drawer');
+    // (Its count popup is gone — adding projects is inline; its confirms are ConfirmDialog, on Z.dialog.)
     expect(src('components/ConfirmDialog.tsx')).toContain('${Z.dialog}');
     expect(src('components/ProjectDashboard.tsx')).toContain('Z.dashboard');
     for (const rel of [
@@ -88,9 +84,9 @@ describe('overlay scale', () => {
     expect(src('components/AppSettingsModal.tsx')).toContain('${Z.appSettings}');
   });
 
-  it('the dashboard lifts itself above the drawer while its own confirm dialog is open', () => {
+  it('the dashboard lifts itself to the modal layer while its own confirm dialog is open', () => {
     // The dialog lives inside the dashboard's stacking context, so it can only
-    // beat the drawer if the whole dashboard does for that moment.
+    // beat the modals' siblings if the whole dashboard lifts for that moment.
     const dash = readFileSync(join(SRC, 'components/ProjectDashboard.tsx'), 'utf8');
     expect(dash).toMatch(/showBulkConfirm \? Z\.modal : Z\.dashboard/);
   });

@@ -9,17 +9,14 @@
 // class from `Z` below. The order is the contract (pinned by
 // overlayLayers.test.ts, which also scans the source for strays):
 //
-//   editor content (≤ 60) < review panel < DASHBOARD PAGE < BULK DRAWER <
-//   MODALS < app settings < relocation flow < popups < banners < blockers <
+//   editor content (≤ 60) < review panel < DASHBOARD PAGE < MODALS <
+//   app settings < relocation flow < popups < banners < blockers <
 //   dialogs < fullscreen preview < dev panel
 //
-// Why the drawer sits exactly between the dashboard and the modals: it is a
-// NON-modal side panel that must be visible and usable over the dashboard page
-// (it was painted over at z-40 — invisible in the real window), yet every
-// modal or dialog that can open over it must cover it. The dashboard paints
-// its OWN delete-confirm dialog inside its stacking context, so the dashboard
-// lifts itself to the modal layer while that dialog is open (see
-// `ProjectDashboard`), which covers the drawer for the duration.
+// The bulk panes are tabs inside the dashboard's left panel (the dashboard's
+// own stacking context), so there is no drawer layer. The dashboard paints
+// its OWN delete-confirm dialog inside that context, so it lifts itself to
+// the modal layer while that dialog is open (see `ProjectDashboard`).
 //
 // Tailwind needs whole class names in source to generate them, so every entry
 // carries its literal class string alongside its number; the test asserts the
@@ -33,7 +30,6 @@ export const Z_INDEX = {
   editorControls: 60,
   reviewMapping: 150,
   dashboard: 200,
-  drawer: 201,
   modal: 205,
   appSettings: 210,
   relocation: 220,
@@ -52,7 +48,6 @@ export const Z = {
   editorControls: 'z-[60]',
   reviewMapping: 'z-[150]',
   dashboard: 'z-[200]',
-  drawer: 'z-[201]',
   modal: 'z-[205]',
   appSettings: 'z-[210]',
   relocation: 'z-[220]',
