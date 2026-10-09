@@ -201,14 +201,19 @@
   transition: background 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease;
 }
 .kxd-xrow:hover { border-color: var(--kxd-line-strong); }
+.kxd-xrow.is-pickable { cursor: pointer; }
 .kxd-xrow.is-selected { box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.28); border-color: transparent; }
 .kxd-xrow-top { display: flex; align-items: center; gap: 6px; }
 .kxd-xrow-main {
-  flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; min-width: 0;
+  position: relative; flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; min-width: 0;
   padding: 0 0 0 4px; background: none; border: none; text-align: left; color: inherit; cursor: pointer;
 }
 .kxd-xrow-main:focus-visible { outline: 2px solid var(--kxd-accent-hi); outline-offset: 3px; border-radius: 6px; }
-.kxd-xrow:hover .kxd-check[data-state="off"] { border-color: rgba(255, 255, 255, 0.5); }
+/* The selection mark exists only on a selected Ready row: pinned over the
+   thumbnail's corner so nothing shifts when it appears. */
+.kxd-xrow-pick { position: absolute; left: 8px; top: 4px; z-index: 1; box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.45); }
+.kxd-xrow-when { font-size: 10.5px; color: var(--kxd-text-faint); }
+.kxd-xrow-open.is-always { opacity: 1; width: 24px; border-width: 1px; }
 
 /* The dashboard's selection mark (the grid's orange check) as a checkbox. */
 .kxd-check {

@@ -6,7 +6,7 @@
 import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Z } from './overlayLayers';
 import type { BulkExportPhase, BulkExportRunner } from '../services/bulkExportQueue';
-import { Check, FolderOpen, Clapperboard, ExternalLink, Minus, Play, RefreshCw, SlidersHorizontal, Square, X } from 'lucide-react';
+import { Check, FolderOpen, Clapperboard, ExternalLink, Play, RefreshCw, SlidersHorizontal, Trash2, X } from 'lucide-react';
 import { loadAllMetas } from '../services/projectStore';
 import { ProjectCardThumb } from './ProjectCardThumb';
 import { formatDuration, useProjectDurations } from './projectDurations';
@@ -174,28 +174,34 @@ function ExportSettingsHeader({
   );
 }
 
-/** The dashboard's selection mark (the grid's orange check), as a checkbox. */
-function KxCheck({ state }: { state: boolean | 'mixed' }): React.ReactElement {
+/** The dashboard's selection mark (the grid's orange check). Shown only on a selected row. */
+function KxCheck(): React.ReactElement {
   return (
-    <span className="kxd-check" data-state={state === 'mixed' ? 'mixed' : state ? 'on' : 'off'} aria-hidden="true">
-      {state === 'mixed' ? <Minus size={10} strokeWidth={3.5} /> : <Check size={10} strokeWidth={3.5} />}
+    <span className="kxd-check kxd-xrow-pick" data-state="on" aria-hidden="true">
+      <Check size={10} strokeWidth={3.5} />
     </span>
   );
 }
 
-/** Ready | Active | Blocked | Finished — Bulk Sync's sub-tabs, for exports.
- *  Ready: not started. Blocked holds what needs the operator (blocked, failed,
- *  paused); once resolved and retried a row moves to Active, then Finished. */
-type ExportTab = 'ready' | 'active' | 'blocked' | 'finished';
+/** Ready | Blocked | Active | Finished — Bulk Sync's sub-tabs, for exports.
+ *  Ready: not started (the only tab where projects can be selected). Blocked
+ *  holds what needs the operator (blocked, failed, paused, cancelled, waiting
+ *  on a sync); once resolved a row moves to Active, then Finished. */
+type ExportTab = 'ready' | 'blocked' | 'active' | 'finished';
 const EXPORT_TABS: readonly { id: ExportTab; label: string }[] = [
   { id: 'ready', label: 'Ready' },
-  { id: 'active', label: 'Active' },
   { id: 'blocked', label: 'Blocked' },
+  { id: 'active', label: 'Active' },
   { id: 'finished', label: 'Finished' },
 ];
+
+/** "Oct 10, 3:42 PM" — when a project last finished exporting. */
+function exportedAt(ms: number): string {
+  return new Date(ms).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
 const EXPORT_TAB_KEY = 'kinetix:bulk-export-tab:v1';
 function exportTabOf(phase: BulkExportPhase | undefined, preBlocked = false): ExportTab {
-  if (phase === 'blocked' || phase === 'failed' || phase === 'paused' || phase === 'cancelled') return 'blocked';
+  if (phase === 'blocked' || phase === 'failed' || phase === 'paused' || phase === 'cancelled' || phase === 'waiting') return 'blocked';
   // Not started, but the pre-check found something to resolve first.
   if ((phase === undefined || phase === 'idle') && preBlocked) return 'blocked';
   if (phase === 'done') return 'finished';
@@ -254,8 +260,10 @@ export function BulkExportModal({
   ));
   const rows = useSyncExternalStore(l => runner.subscribe(l), () => runner.snapshot());
   const byId = useMemo(() => new Map(rows.map(r => [r.id, r])), [rows]);
-  // The count is the whole selection — what Start will run — whatever tab shows.
-  const selected = catalog.filter(p => byId.get(p.id)?.selected).length;
+  // The count is what Start will run: selected Ready projects (the only
+  // selectable ones), whatever tab shows.
+  const isNotStarted = (id: string): boolean => { const ph = byId.get(id)?.phase; return ph === undefined || ph === 'idle'; };
+  const selected = catalog.filter(p => isNotStarted(p.id) && byId.get(p.id)?.selected).length;
   const wsRegistry = useMemo(() => injectedWorkspaces ?? workspaceRegistry(), [injectedWorkspaces]);
   const workspaceList = useWorkspaces(wsRegistry);
   const [wsFilterRaw, setWsFilter] = useState<WorkspaceFilter>('all');
@@ -278,6 +286,10 @@ export function BulkExportModal({
     for (const p of catalog) if (verdicts.has(p.id) && byId.get(p.id)?.selected) runner.setSelected(p.id, false);
     void runner.startSelected();
   };
+  // A changed export folder / setting can clear a "no export path" block: re-check.
+  const settingsStore = exportSettings ?? workspaceExportSettings();
+  const settingsVersion = useSyncExternalStore(l => settingsStore.subscribe(l), () => settingsStore.getVersion());
+  useEffect(() => { if (settingsVersion > 0) void runner.refresh(); }, [settingsVersion, runner]);
   const [tab, setTabRaw] = useState<ExportTab>(readExportTab);
   const setTab = (next: ExportTab): void => {
     try { localStorage.setItem(EXPORT_TAB_KEY, next); } catch { /* this session only */ }
@@ -288,15 +300,7 @@ export function BulkExportModal({
   const tabOf = (id: string): ExportTab => exportTabOf(byId.get(id)?.phase, verdicts.has(id));
   for (const p of inScope) tabCounts[tabOf(p.id)] += 1;
   const shown = inScope.filter(p => tabOf(p.id) === tab);
-  // done / failed / blocked across this workspace's rows (blocked includes the pre-check's).
-  const doneCount = inScope.filter(p => byId.get(p.id)?.phase === 'done').length;
-  const failedCount = inScope.filter(p => byId.get(p.id)?.phase === 'failed').length;
-  const blockedCount = inScope.filter(p => byId.get(p.id)?.phase === 'blocked' || (byId.get(p.id)?.phase ?? 'idle') === 'idle' && verdicts.has(p.id)).length;
   const allSelected = shown.length > 0 && shown.every(p => byId.get(p.id)?.selected);
-  const someShownSelected = shown.some(p => byId.get(p.id)?.selected);
-  // Retry all (Blocked tab): every row there — re-checked against fresh
-  // records, so a resolved one moves to Active, then Finished.
-  const retryableIds = tab === 'blocked' ? shown.map(p => p.id) : [];
   // Select all selects exactly the rows this workspace + tab shows.
   const selectAll = (on: boolean): void => {
     for (const p of shown) runner.setSelected(p.id, on);
@@ -355,55 +359,59 @@ export function BulkExportModal({
             ))}
           </div>
         </div>
-        {/* List toolbar: selection on the left; Retry all on Blocked. */}
-        <div className="kxd-xctl">
-          <button
-            type="button"
-            role="checkbox"
-            aria-checked={someShownSelected && !allSelected ? 'mixed' : allSelected}
-            data-testid="bulk-export-select-all"
-            className="kxd-xctl-select"
-            disabled={shown.length === 0}
-            onClick={() => selectAll(!allSelected)}
-          >
-            <KxCheck state={someShownSelected && !allSelected ? 'mixed' : allSelected} />
-            <span>Select all</span>
-          </button>
-          <span data-testid="bulk-export-selected-count" className="kxd-xctl-count">
-            {selected} selected
-          </span>
-          <span className="flex-1" />
-          {doneCount + failedCount + blockedCount > 0 && (
-            <span data-testid="bulk-export-counts" className="kxd-xctl-count">
-              {doneCount} done · {failedCount} failed · {blockedCount} blocked
-            </span>
-          )}
-          {checking && <span className="kxd-xctl-checking" data-testid="bulk-export-checking">Checking projects…</span>}
-          {rows.some(r => r.phase === 'queued' || r.phase === 'exporting') && (
-            <button
-              type="button"
-              data-testid="bulk-export-stop-all"
-              className="kxd-xctl-btn"
-              title="Cancel every queued export and stop the one running"
-              onClick={() => runner.stopAll()}
-            >
-              <Square size={10} fill="currentColor" aria-hidden="true" />
-              Stop all
-            </button>
-          )}
-          {retryableIds.length > 0 && (
-            <button
-              type="button"
-              data-testid="bulk-export-retry-all"
-              className="kxd-xctl-btn"
-              title="Re-check and retry every blocked export shown here — resolved ones move to Active"
-              onClick={() => retryChecked(retryableIds)}
-            >
-              <RefreshCw size={11} aria-hidden="true" />
-              {`Retry all (${retryableIds.length})`}
-            </button>
-          )}
-        </div>
+        {/* One action per tab, no status clutter (the tabs carry the counts):
+            Ready selects, Active cancels, Finished clears; Blocked has none. */}
+        {tab !== 'blocked' && shown.length > 0 && (
+          <div className="kxd-xctl">
+            {tab === 'ready' && (
+              <>
+                <button
+                  type="button"
+                  data-testid="bulk-export-select-all"
+                  className="kxd-xctl-select"
+                  onClick={() => selectAll(!allSelected)}
+                >
+                  {allSelected ? 'Deselect all' : 'Select all'}
+                </button>
+                {selected > 0 && (
+                  <span data-testid="bulk-export-selected-count" className="kxd-xctl-count">
+                    {selected} selected
+                  </span>
+                )}
+                <span className="flex-1" />
+                {checking && <span className="kxd-xctl-checking" data-testid="bulk-export-checking">Checking projects…</span>}
+              </>
+            )}
+            {tab === 'active' && (
+              <>
+                <span className="flex-1" />
+                <button
+                  type="button"
+                  data-testid="bulk-export-cancel-all"
+                  className="kxd-xctl-btn"
+                  title="Cancel every queued export shown here and stop the one running"
+                  onClick={() => { for (const p of shown) runner.cancel(p.id); }}
+                >
+                  Cancel all
+                </button>
+              </>
+            )}
+            {tab === 'finished' && (
+              <>
+                <span className="flex-1" />
+                <button
+                  type="button"
+                  data-testid="bulk-export-clear-all"
+                  className="kxd-xctl-btn"
+                  title="Clear the finished exports shown here — the files stay on disk"
+                  onClick={() => runner.clearFinished(shown.map(p => p.id))}
+                >
+                  Clear all
+                </button>
+              </>
+            )}
+          </div>
+        )}
         <ul className="flex-1 min-h-0 overflow-y-auto px-5 pt-1 pb-3 space-y-2 custom-scrollbar">
           {shown.length === 0 && (
             <li data-testid="bulk-export-empty" className="rounded-xl border border-dashed border-[var(--kx-line-2)] px-4 py-6 text-center text-[12px] leading-snug text-[var(--kx-muted)]">
@@ -421,51 +429,89 @@ export function BulkExportModal({
             const scenes = meta?.segmentCount ?? 0;
             const preReason = (row?.phase === undefined || row?.phase === 'idle') ? verdicts.get(p.id) : undefined;
             const message = row?.message ?? preReason;
-            const canRetry = row?.phase === 'failed' || row?.phase === 'paused' || row?.phase === 'waiting'
-              || row?.phase === 'blocked' || row?.phase === 'cancelled' || preReason !== undefined;
-            const canCancel = row?.phase === 'queued' || row?.phase === 'exporting';
+            // Retry only where it is the way forward (a failed / stopped / waiting
+            // export); a Blocked row clears itself once the cause is fixed.
+            const canRetry = row?.phase === 'failed' || row?.phase === 'paused' || row?.phase === 'waiting' || row?.phase === 'cancelled';
+            const pickable = tab === 'ready';
             const statusTone = preReason ? 'bad' : toneOf(row?.phase);
+            const body = (
+              <>
+                {pickable && selectedRow && <KxCheck />}
+                <span className="kxd-xrow-thumb" aria-hidden="true">
+                  {meta ? <ProjectCardThumb meta={meta} /> : <span className="kxd-art-empty"><Clapperboard size={14} strokeWidth={1.5} /></span>}
+                </span>
+                <span className="kxd-xrow-body">
+                  <span className="kxd-xrow-name" title={p.name}>{p.name}</span>
+                  <span className="kxd-xrow-meta">
+                    <span>{sec !== undefined ? formatDuration(sec) : '—'}</span>
+                    <span className="kxd-xrow-sep" aria-hidden="true">·</span>
+                    <span>{scenes === 1 ? '1 scene' : `${scenes} scenes`}</span>
+                  </span>
+                  {tab === 'finished' && row?.finishedAt !== undefined && (
+                    <span className="kxd-xrow-when" data-testid={`bulk-export-when-${p.id}`}>Exported {exportedAt(row.finishedAt)}</span>
+                  )}
+                </span>
+              </>
+            );
             return (
               <li
                 key={p.id}
                 data-testid={`bulk-export-row-${p.id}`}
                 data-phase={row?.phase ?? 'idle'}
-                className={`kx-bulk-row kxd-xrow${selectedRow ? ' is-selected' : ''}`}
+                className={`kx-bulk-row kxd-xrow${pickable ? ' is-pickable' : ''}${pickable && selectedRow ? ' is-selected' : ''}`}
+                onClick={pickable ? () => runner.setSelected(p.id, !selectedRow) : undefined}
               >
                 <div className="kxd-xrow-top">
-                  <button
-                    type="button"
-                    role="checkbox"
-                    aria-checked={selectedRow}
-                    aria-label={`Select ${p.name}`}
-                    className="kxd-xrow-main"
-                    data-testid={`bulk-export-check-${p.id}`}
-                    onClick={() => { runner.setSelected(p.id, !selectedRow); }}
-                  >
-                    <KxCheck state={selectedRow} />
-                    <span className="kxd-xrow-thumb" aria-hidden="true">
-                      {meta ? <ProjectCardThumb meta={meta} /> : <span className="kxd-art-empty"><Clapperboard size={14} strokeWidth={1.5} /></span>}
-                    </span>
-                    <span className="kxd-xrow-body">
-                      <span className="kxd-xrow-name" title={p.name}>{p.name}</span>
-                      <span className="kxd-xrow-meta">
-                        <span>{sec !== undefined ? formatDuration(sec) : '—'}</span>
-                        <span className="kxd-xrow-sep" aria-hidden="true">·</span>
-                        <span>{scenes === 1 ? '1 scene' : `${scenes} scenes`}</span>
-                      </span>
-                    </span>
-                  </button>
+                  {pickable ? (
+                    <button
+                      type="button"
+                      role="checkbox"
+                      aria-checked={selectedRow}
+                      aria-label={`Select ${p.name}`}
+                      className="kxd-xrow-main"
+                      data-testid={`bulk-export-check-${p.id}`}
+                    >
+                      {body}
+                    </button>
+                  ) : (
+                    <div className="kxd-xrow-main is-static">{body}</div>
+                  )}
                   <div className="kxd-xrow-actions">
-                    {onOpenProject && (
+                    {/* Ready: Open on hover. Blocked: Open, always there. */}
+                    {onOpenProject && (tab === 'ready' || tab === 'blocked') && (
                       <button
                         type="button"
-                        className="kxd-xrow-open"
+                        className={`kxd-xrow-open${tab === 'blocked' ? ' is-always' : ''}`}
                         data-testid={`bulk-export-open-${p.id}`}
                         aria-label={`Open ${p.name}`}
                         title="Open project"
-                        onClick={() => onOpenProject(p.id)}
+                        onClick={e => { e.stopPropagation(); onOpenProject(p.id); }}
                       >
                         <ExternalLink size={13} aria-hidden="true" />
+                      </button>
+                    )}
+                    {tab === 'active' && (
+                      <button
+                        type="button"
+                        className="kxd-xrow-open"
+                        data-testid={`bulk-export-cancel-${p.id}`}
+                        aria-label={`Cancel ${p.name}`}
+                        title="Cancel"
+                        onClick={() => runner.cancel(p.id)}
+                      >
+                        <X size={13} aria-hidden="true" />
+                      </button>
+                    )}
+                    {tab === 'finished' && (
+                      <button
+                        type="button"
+                        className="kxd-xrow-open"
+                        data-testid={`bulk-export-clear-${p.id}`}
+                        aria-label={`Clear ${p.name}`}
+                        title="Clear"
+                        onClick={() => runner.clearFinished([p.id])}
+                      >
+                        <Trash2 size={13} aria-hidden="true" />
                       </button>
                     )}
                     <span
@@ -476,22 +522,11 @@ export function BulkExportModal({
                     />
                   </div>
                 </div>
-                {(message || canRetry || canCancel) && (
+                {tab !== 'ready' && tab !== 'finished' && (message || canRetry) && (
                   <div className="kxd-xrow-status" data-tone={statusTone}>
                     <span data-testid={`bulk-export-status-${p.id}`} className="kxd-xrow-msg" title={message ?? ''}>
                       {message ?? ''}
                     </span>
-                    {canCancel && (
-                      <button
-                        type="button"
-                        data-testid={`bulk-export-cancel-${p.id}`}
-                        className="kxd-xrow-retry"
-                        onClick={() => runner.cancel(p.id)}
-                      >
-                        <X size={11} aria-hidden="true" />
-                        Cancel
-                      </button>
-                    )}
                     {canRetry && (
                       <button
                         type="button"

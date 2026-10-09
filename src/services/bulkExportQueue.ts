@@ -22,6 +22,8 @@ export interface BulkExportRow {
   phase: BulkExportPhase;
   message?: string;
   flags?: string[];
+  /** When the row last finished exporting (set once, on Done). */
+  finishedAt?: number;
 }
 
 export interface BulkExportExecutorInput {
@@ -198,6 +200,8 @@ export class BulkExportRunner {
     const jobs: QueueJob[] = [];
     for (const meta of chosen) {
       const row = this.ensureRow(meta.id);
+      // The selection is spent once Start takes it: only Ready rows are selectable.
+      row.selected = false;
       const syncing = pipelineConflict(meta.id, 'export');
       if (syncing) {
         row.phase = 'waiting';
@@ -216,6 +220,7 @@ export class BulkExportRunner {
       row.message = 'Queued';
       jobs.push(this.jobFor(verdict.project, verdict.settings, false));
     }
+    this.persistSelection();
     this.commit();
     if (jobs.length > 0) this.queue.enqueue(jobs);
   }
@@ -243,6 +248,19 @@ export class BulkExportRunner {
     row.phase = 'idle';
     row.message = undefined;
     row.flags = undefined;
+  }
+
+  /** Clear finished rows: each returns to Ready (not started), deselected. The
+   *  export files on disk are untouched. */
+  clearFinished(ids: readonly string[]): void {
+    const wanted = new Set(ids);
+    for (const row of this.rows.filter(r => wanted.has(r.id) && r.phase === 'done')) {
+      this.toReady(row);
+      row.finishedAt = undefined;
+      row.selected = false;
+    }
+    this.persistSelection();
+    this.commit();
   }
 
   /** Same fresh checks as Start (guard, path, media); every outcome lands on
@@ -314,7 +332,10 @@ export class BulkExportRunner {
       if (!row) continue;
       if (item.status === 'queued') { row.phase = 'queued'; row.message = 'Queued'; }
       else if (item.status === 'running') { row.phase = 'exporting'; row.message = item.phase || 'Exporting'; }
-      else if (item.status === 'done') { row.phase = 'done'; row.message = 'Done'; }
+      else if (item.status === 'done') {
+        if (row.phase !== 'done') row.finishedAt = item.finishedAt ?? Date.now();
+        row.phase = 'done'; row.message = 'Done';
+      }
       else if (item.status === 'failed') { row.phase = 'failed'; row.message = item.detail ? `Failed — Retry — ${item.detail}` : 'Failed — Retry'; }
       else if (item.status === 'paused' && item.reason === PIPELINE_BUSY_REASON) { row.phase = 'waiting'; row.message = item.detail; }
       else if (item.status === 'paused') { row.phase = 'paused'; row.message = 'Paused — Retry'; }

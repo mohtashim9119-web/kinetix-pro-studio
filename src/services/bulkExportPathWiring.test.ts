@@ -85,6 +85,8 @@ describe('lastExportPath wiring: manual export → bulk export', () => {
     await runner.refresh();
     expect(runner.snapshot().find(r => r.id === ID)).toMatchObject({ phase: 'idle', message: undefined });
 
+    // Ready again: the operator selects it (Start spent the earlier selection).
+    runner.setSelected(ID, true);
     await runner.startSelected();
     await vi.waitFor(() => expect(runner.snapshot().find(r => r.id === ID)?.phase).toBe('done'));
     expect(started).toEqual([ID]);

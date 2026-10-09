@@ -101,3 +101,18 @@ describe('Cancel / Stop all', () => {
     expect(h.chimes()).toBe(0);
   });
 });
+
+describe('Finished rows and spent selections', () => {
+  it('Done stamps when it finished; Start spends the selection; Clear returns the row to Ready, deselected', async () => {
+    const h = harness(['a']);
+    h.runner.setSelected('a', true);
+    await h.runner.startSelected();
+    expect(h.runner.snapshot()[0]!.selected).toBe(false);
+    await vi.waitFor(() => expect(phaseOf(h.runner, 'a')).toBe('exporting'));
+    h.releases.get('a')!();
+    await vi.waitFor(() => expect(phaseOf(h.runner, 'a')).toBe('done'));
+    expect(h.runner.snapshot()[0]!.finishedAt).toBeGreaterThan(0);
+    h.runner.clearFinished(['a']);
+    expect(h.runner.snapshot()[0]).toMatchObject({ phase: 'idle', selected: false, finishedAt: undefined });
+  });
+});
