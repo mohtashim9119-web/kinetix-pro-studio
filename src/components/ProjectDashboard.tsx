@@ -15,6 +15,7 @@ import { FailedDot, ProgressRing } from './BulkProgress';
 import { Z } from './overlayLayers';
 import { ProjectCardThumb } from './ProjectCardThumb';
 import { WorkspacesPane, type WorkspaceProject } from './WorkspacesPane';
+import { DASHBOARD_LEFT_TABS, type DashboardLeftTab } from './dashboardLeftTab';
 import { inWorkspace, resolveWorkspaceFilter, useWorkspaces, workspaceRegistry, type WorkspaceFilter } from './workspaceRegistry';
 import { WorkspaceTabs } from './WorkspaceTabs';
 import './ProjectDashboard.css';
@@ -67,9 +68,6 @@ interface Props {
   metasVersion?: number;
   /** The rows modal is open: the queue is shown there, not here too. */
   bulkOpen?: boolean;
-  /** The bulk panel is docked as the dashboard's left column: this many px
-   *  on the left belong to it, and the dashboard moves over to make room. */
-  bulkDockInset?: number;
   /** Ids just deleted, so the editor can drop one it still holds in memory. */
   onProjectsDeleted?: (ids: string[]) => void;
   /** The left panel's tab, when App owns it (it must know what is showing). */
@@ -83,13 +81,7 @@ interface Props {
   paneHosts?: Partial<Record<DashboardLeftTab, HTMLElement | null>>;
 }
 
-/** The dashboard's permanent left panel: three tabs, no close. */
-export type DashboardLeftTab = 'workspaces' | 'bulk-sync' | 'bulk-export';
-export const DASHBOARD_LEFT_TABS: readonly { id: DashboardLeftTab; label: string }[] = [
-  { id: 'workspaces', label: 'Workspaces' },
-  { id: 'bulk-sync', label: 'Bulk Sync' },
-  { id: 'bulk-export', label: 'Bulk Export' },
-];
+export { DASHBOARD_LEFT_TABS, type DashboardLeftTab };
 
 /** Adopts App's stable host element into this pane for as long as it is mounted. */
 function PaneHost({ host }: { host: HTMLElement }): React.ReactElement {
@@ -102,57 +94,6 @@ function PaneHost({ host }: { host: HTMLElement }): React.ReactElement {
     return () => { if (host.parentNode === el) el.removeChild(host); };
   }, [host]);
   return <div ref={slot} className="kxd-pane-host" />;
-}
-
-/** One curve for the panel's slide and the dashboard's glide, so they move as one. */
-export const DOCK_MOTION = { ms: 340, ease: 'cubic-bezier(.22, 1, .36, 1)' } as const;
-
-function measureFlip(root: HTMLElement | null): Map<HTMLElement, DOMRect> | null {
-  if (!root) return null;
-  const out = new Map<HTMLElement, DOMRect>();
-  root.querySelectorAll<HTMLElement>('[data-flip]').forEach(el => out.set(el, el.getBoundingClientRect()));
-  return out;
-}
-
-let flipRun = 0;
-function playFlip(from: Map<HTMLElement, DOMRect>): void {
-  if (typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
-  const moved: HTMLElement[] = [];
-  for (const [el, was] of from) {
-    if (!el.isConnected) continue;
-    const now = el.getBoundingClientRect();
-    const dx = was.left - now.left;
-    const dy = was.top - now.top;
-    if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) continue;
-    // Its own compositor layer for the glide: WebKit then moves a cached
-    // bitmap instead of repainting the card (thumbnail, border, shadow) each
-    // frame — that repaint is what flickered.
-    el.style.willChange = 'translate';
-    el.style.transition = 'none';
-    el.style.translate = `${dx}px ${dy}px`;
-    moved.push(el);
-  }
-  if (moved.length === 0) return;
-  // Commit the inverted positions (a forced style flush), then release them.
-  void moved[0]!.offsetWidth;
-  const run = String(++flipRun);
-  for (const el of moved) el.dataset.flipRun = run;
-  {
-    for (const el of moved) {
-      el.style.transition = `translate ${DOCK_MOTION.ms}ms ${DOCK_MOTION.ease}`;
-      el.style.translate = '0px 0px';
-      // A newer toggle mid-glide owns the element now; this run must not clear it.
-      const done = (): void => {
-        if (el.dataset.flipRun !== run) return;
-        delete el.dataset.flipRun;
-        el.style.transition = '';
-        el.style.translate = '';
-        el.style.willChange = '';
-      };
-      el.addEventListener('transitionend', done, { once: true });
-      setTimeout(done, DOCK_MOTION.ms + 80);
-    }
-  }
 }
 
 function formatDate(ts: number): string {
@@ -177,7 +118,6 @@ export function ProjectDashboard({
   parseProjectData,
   metasVersion = 0,
   bulkOpen = false,
-  bulkDockInset = 0,
   onProjectsDeleted,
   leftTab: controlledLeftTab,
   onLeftTabChange,
@@ -250,27 +190,6 @@ export function ProjectDashboard({
     return () => window.removeEventListener('keydown', handler);
   }, []);
 
-  // The bulk panel docks as this page's left column. The inset applies in ONE
-  // step (padding: the page background still fills the window, so nothing
-  // flashes behind it), and every header / card glides from where it was to
-  // where it lands (FLIP, translate only — no per-frame layout), in step with
-  // the panel's own slide.
-  // The dashboard's own delete confirm covers the panel too: full width while up.
-  const dockInset = showBulkConfirm ? 0 : bulkDockInset;
-  const rootRef = useRef<HTMLDivElement>(null);
-  const flipFrom = useRef<Map<HTMLElement, DOMRect> | null>(null);
-  const flipInset = useRef(dockInset);
-  if (flipInset.current !== dockInset) {
-    // FLIP "first": the old layout, read before React commits the new inset.
-    flipInset.current = dockInset;
-    flipFrom.current = measureFlip(rootRef.current);
-  }
-  useLayoutEffect(() => {
-    const from = flipFrom.current;
-    flipFrom.current = null;
-    if (from) playFlip(from);
-  }, [dockInset]);
-
   // 1.3.0 — an unbuilt bulk row is a drawer draft with no project record, so
   // it never reaches this grid; Build Timeline creates the record and that is
   // what flips the row onto it.
@@ -335,11 +254,7 @@ export function ProjectDashboard({
   }
 
   return (
-    <div
-      ref={rootRef}
-      className={`kxd-root fixed inset-0 ${showBulkConfirm ? Z.modal : Z.dashboard}`}
-      style={{ paddingLeft: dockInset }}
-    >
+    <div className={`kxd-root fixed inset-0 ${showBulkConfirm ? Z.modal : Z.dashboard}`}>
       <aside className="kxd-left" data-testid="dashboard-left-panel" aria-label="Studio panel">
         <div className="kxd-left-head">
           <h2>Studio</h2>
@@ -392,7 +307,7 @@ export function ProjectDashboard({
       </aside>
 
       <section className="kxd-right" data-testid="dashboard-right-panel">
-      <header className="kxd-topbar" data-flip="">
+      <header className="kxd-topbar">
         <div className="kxd-brand">
           <div className="kxd-brand-mark">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -511,7 +426,7 @@ export function ProjectDashboard({
         <div className="kxd-main-inner">
           {!bulkOpen && <SyncQueuePanel />}
           <div className="kxd-grid-frame" data-testid="project-grid-frame">
-          <div className="kxd-section-head" data-flip="">
+          <div className="kxd-section-head">
             <h1>Recent projects</h1>
             <div>
               {selectedCount > 0 ? (
@@ -549,7 +464,7 @@ export function ProjectDashboard({
             </div>
           </div>
 
-          <div className="kxd-ws-strip" data-flip="">
+          <div className="kxd-ws-strip">
             <WorkspaceTabs
               workspaces={workspaces}
               value={gridWs}
@@ -584,7 +499,7 @@ export function ProjectDashboard({
 
               return (
                 <article
-                  data-flip=""
+                 
                   key={meta.id}
                   data-testid={`project-card-${meta.id}`}
                   aria-busy={meta.id === openingProjectId ? true : undefined}

@@ -427,7 +427,8 @@ const DiagnosticLogModal = lazy(() =>
 import { Timeline } from './components/Timeline';
 import { PreviewStage, type AutoGradeSampler, type PreviewStageHandle } from './components/PreviewStage';
 import { SpeedBadge, SPEED_LADDER } from './components/SpeedBadge';
-import { ProjectDashboard, type DashboardLeftTab } from './components/ProjectDashboard';
+import { ProjectDashboard } from './components/ProjectDashboard';
+import { readDashboardLeftTab, writeDashboardLeftTab, type DashboardLeftTab } from './components/dashboardLeftTab';
 import { workspaceRegistry } from './components/workspaceRegistry';
 import { BulkProjectsModal } from './components/BulkProjectsModal';
 import { BulkExportModal, BulkExportRunningNotice } from './components/BulkExportModal';
@@ -435,7 +436,6 @@ import { BulkExportHost } from './components/BulkExportHost';
 import { bulkBatchRunner } from './services/bulkSyncQueue';
 import { BulkExportRunner } from './services/bulkExportQueue';
 import { claimPipeline, SYNC_BLOCKED_BY_EXPORT } from './services/pipelineGuard';
-import { readBulkExportDrawerOpen, writeBulkExportDrawerOpen } from './services/bulkExportPersist';
 import { cloudCostLine } from './services/cloudQueueJob';
 import { NewProjectModal, type NewProjectChoices } from './components/NewProjectModal';
 import { ProjectSettingsModal } from './components/ProjectSettingsModal';
@@ -572,20 +572,6 @@ type PendingVoiceoverSync = { file: File; asset: Asset; audioHash?: string };
 // ---------------------------------------------------------------------------
 // Module-level helpers for the atomic Apply Sync flow
 // ---------------------------------------------------------------------------
-
-const BULK_DRAWER_OPEN_KEY = 'kinetix:bulk-drawer-open:v1';
-/** The bulk panel's width, and the narrowest window it docks on (else it overlays). */
-const BULK_DRAWER_WIDTH = 480;
-const BULK_DOCK_MIN_WIDTH = 900;
-function readBulkDrawerOpen(): boolean {
-  try { return localStorage.getItem(BULK_DRAWER_OPEN_KEY) === '1'; } catch { return false; }
-}
-function writeBulkDrawerOpen(open: boolean): void {
-  try {
-    if (open) localStorage.setItem(BULK_DRAWER_OPEN_KEY, '1');
-    else localStorage.removeItem(BULK_DRAWER_OPEN_KEY);
-  } catch { /* storage unavailable: the drawer just starts closed */ }
-}
 
 /**
  * The staged media step of Build Timeline: commits the staged media files and
@@ -2181,57 +2167,27 @@ export default function App() {
   // The pure matcher's output lives here; the screen renders it verbatim.
   const [folderRelink, setFolderRelink] = useState<FolderRelinkView | null>(null);
   const [showNewProjectModal, setShowNewProjectModal] = useState(false);
-  // Wave 3 U7.5 — the Bulk Projects rows modal lives here, not in the
-  // dashboard: finishing a timeline opens that project in the editor, which
-  // unmounts the dashboard, and the modal must survive that.
-  // The drawer's open state survives a reload: open before it, open after.
-  const [bulkMounted, setBulkMounted] = useState(() => readBulkExportDrawerOpen() ? false : readBulkDrawerOpen());
-  const [bulkHidden, setBulkHidden] = useState(false);
-  const [exportMounted, setExportMounted] = useState(readBulkExportDrawerOpen);
-  const [exportHidden, setExportHidden] = useState(false);
-  useEffect(() => { writeBulkDrawerOpen(bulkMounted && !bulkHidden); }, [bulkMounted, bulkHidden]);
-  useEffect(() => { writeBulkExportDrawerOpen(exportMounted && !exportHidden); }, [exportMounted, exportHidden]);
-  const bulkDrawerOpen = bulkMounted && !bulkHidden;
-  const exportDrawerOpen = exportMounted && !exportHidden;
-  // Dashboard revamp — the dashboard's permanent left panel. Bulk Sync (and
-  // Bulk Export) stay mounted HERE, exactly as long as the old drawers did
-  // (from first open until reload), so their background work never depends
-  // on which tab is showing. Their content renders through a portal into a
-  // stable host element that the tab's pane adopts while the dashboard is up.
-  const [dashboardLeftTab, setDashboardLeftTab] = useState<DashboardLeftTab>(() => (
-    exportMounted ? 'bulk-export' : bulkMounted ? 'bulk-sync' : 'workspaces'
-  ));
+  // Dashboard revamp — the dashboard's permanent left panel (Workspaces |
+  // Bulk Sync | Bulk Export); the last active tab survives a reload.
+  // Bulk Sync and Bulk Export live HERE, not in the dashboard: finishing a
+  // timeline opens that project in the editor, which unmounts the dashboard,
+  // and they must survive that. Each mounts the first time its tab shows
+  // (or at boot, when the reload lands on it) and stays mounted until reload,
+  // as the old drawers did — so their background work never depends on which
+  // tab is showing. Their content renders through a portal into a stable host
+  // element that the tab's pane adopts while the dashboard is up.
+  const [dashboardLeftTab, setDashboardLeftTab] = useState<DashboardLeftTab>(readDashboardLeftTab);
+  useEffect(() => { writeDashboardLeftTab(dashboardLeftTab); }, [dashboardLeftTab]);
+  const [bulkMounted, setBulkMounted] = useState(() => dashboardLeftTab === 'bulk-sync');
+  const [exportMounted, setExportMounted] = useState(() => dashboardLeftTab === 'bulk-export');
   const [bulkSyncPaneHost] = useState<HTMLElement | null>(() => (typeof document === 'undefined' ? null : document.createElement('div')));
   const [bulkExportPaneHost] = useState<HTMLElement | null>(() => (typeof document === 'undefined' ? null : document.createElement('div')));
   useEffect(() => {
-    if (dashboardLeftTab === 'bulk-sync') {
-      setBulkHidden(false);
-      setBulkMounted(true);
-    } else if (dashboardLeftTab === 'bulk-export') {
-      setExportHidden(false);
-      setExportMounted(true);
-    }
+    if (dashboardLeftTab === 'bulk-sync') setBulkMounted(true);
+    else if (dashboardLeftTab === 'bulk-export') setExportMounted(true);
   }, [dashboardLeftTab]);
   const bulkSyncVisible = showDashboard && dashboardLeftTab === 'bulk-sync';
   const bulkExportVisible = showDashboard && dashboardLeftTab === 'bulk-export';
-  const openBulkDrawer = useCallback(() => {
-    setExportHidden(true);
-    setBulkHidden(false);
-    setBulkMounted(true);
-  }, []);
-  const openExportDrawer = useCallback(() => {
-    setBulkHidden(true);
-    setExportHidden(false);
-    setExportMounted(true);
-  }, []);
-  const toggleBulkDrawer = useCallback(() => {
-    if (bulkDrawerOpen) setBulkHidden(true);
-    else openBulkDrawer();
-  }, [bulkDrawerOpen, openBulkDrawer]);
-  const toggleExportDrawer = useCallback(() => {
-    if (exportDrawerOpen) setExportHidden(true);
-    else openExportDrawer();
-  }, [exportDrawerOpen, openExportDrawer]);
   const bulkExport = useMemo(() => new BulkExportRunner({
     listProjects: () => loadAllMetas().map(m => ({ id: m.id, name: m.name, lastExportPath: m.lastExportPath })),
     loadProject: async (id) => (await loadProject(id))?.project ?? null,
@@ -2249,17 +2205,6 @@ export default function App() {
       }
     },
   }), []);
-  // On the dashboard the panel DOCKS as its left column (the grid moves over to
-  // make room) when the window is wide enough; on a narrow window it overlays.
-  const [bulkDockWide, setBulkDockWide] = useState(() => typeof window === 'undefined' || window.matchMedia?.(`(min-width: ${BULK_DOCK_MIN_WIDTH}px)`).matches !== false);
-  useEffect(() => {
-    const mq = window.matchMedia?.(`(min-width: ${BULK_DOCK_MIN_WIDTH}px)`);
-    if (!mq) return;
-    const on = (): void => setBulkDockWide(mq.matches);
-    on();
-    mq.addEventListener?.('change', on);
-    return () => mq.removeEventListener?.('change', on);
-  }, []);
   const [dashboardVersion, setDashboardVersion] = useState(0);
   const [showProjectSettingsModal, setShowProjectSettingsModal] = useState(false);
   // WS2 T4.1 — the machine-global settings surface. Separate flag from
@@ -6927,7 +6872,6 @@ export default function App() {
       onOpenAppSettings={() => setShowAppSettingsModal(true)}
       onAssetCleanupFailed={showToast}
       parseProjectData={parseProjectData}
-      bulkDockInset={0}
       leftTab={dashboardLeftTab}
       onLeftTabChange={setDashboardLeftTab}
       paneHosts={{ 'bulk-sync': bulkSyncPaneHost, 'bulk-export': bulkExportPaneHost }}

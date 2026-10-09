@@ -166,24 +166,3 @@ describe('U6 — the Bulk Sync tab carries the batch signal', () => {
     expect(button.textContent).toBe('Bulk Sync');
   });
 });
-
-describe('1.3.1 — the bulk panel docks as the dashboard’s left column', () => {
-  it('the dashboard gives the panel its width on the left (padding: its background still fills the window)', async () => {
-    container = document.createElement('div');
-    document.body.appendChild(container);
-    root = createRoot(container);
-    const render = async (inset: number): Promise<void> => {
-      await act(async () => {
-        root.render(
-          <ProjectDashboard currentProjectId={null} onSelectProject={() => {}} onNewProject={() => {}} onOpenAppSettings={() => {}} parseProjectData={async () => []} bulkDockInset={inset} />,
-        );
-      });
-    };
-    await render(480);
-    const rootEl = container.querySelector('.kxd-root') as HTMLElement;
-    expect(rootEl.style.paddingLeft).toBe('480px');
-    expect(rootEl.style.left).toBe('');
-    await render(0);
-    expect(rootEl.style.paddingLeft).toBe('0px');
-  });
-});

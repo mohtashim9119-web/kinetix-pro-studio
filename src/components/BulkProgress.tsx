@@ -3,15 +3,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-// Bulk UI rebuild — the progress read-outs the drawer's group headers and the
-// dashboard's bulk button share: a small ring, "n/m done", and a red dot with
-// a count when any row failed. Same palette as the drawer (orange progress on
-// the #282828 line, the app's red for failure).
+// Bulk UI rebuild — the batch's progress read-outs (the dashboard's Bulk Sync
+// tab): a small ring and a red dot with a count when any row failed. Same
+// palette as the bulk pane (orange progress on the #282828 line, the app's
+// red for failure).
 
-import React, { useState } from 'react';
-import { ChevronDown, ChevronRight, Pencil } from 'lucide-react';
+import React from 'react';
 import { BULK_COPY } from '../services/bulkContext';
-import type { BulkGroup, BulkProgress } from '../services/bulkBatch';
 
 export function ProgressRing({ done, total, size = 16 }: { done: number; total: number; size?: number }): React.ReactElement {
   const stroke = 2.5;
@@ -49,75 +47,5 @@ export function FailedDot({ count }: { count: number }): React.ReactElement | nu
     >
       {count}
     </span>
-  );
-}
-
-export function BulkGroupHeader({ group, progress, onToggle, onRename, children }: {
-  group: BulkGroup;
-  progress: BulkProgress;
-  onToggle: () => void;
-  /** Rename in place (Enter / blur saves, Escape cancels). Absent: no rename. */
-  onRename?: (name: string) => void;
-  /** Group actions (Clear finished), right-aligned. */
-  children?: React.ReactNode;
-}): React.ReactElement {
-  const [draft, setDraft] = useState<string | null>(null);
-  const save = (): void => {
-    if (draft !== null && draft.trim() && draft.trim() !== group.name) onRename?.(draft.trim());
-    setDraft(null);
-  };
-  if (draft !== null) {
-    return (
-      <div data-testid={`bulk-group-${group.id}`} className="flex items-center gap-2 py-3">
-        <input
-          data-testid={`bulk-group-name-${group.id}`}
-          aria-label={BULK_COPY.groupNameLabel}
-          value={draft}
-          maxLength={60}
-          onChange={e => setDraft(e.target.value)}
-          onBlur={save}
-          onKeyDown={e => {
-            if (e.key === 'Enter') { e.preventDefault(); save(); }
-            if (e.key === 'Escape') { e.preventDefault(); setDraft(null); }
-          }}
-          className="h-7 min-w-0 flex-1 bg-[#1A1A1A] border border-[#333] px-2 rounded-md text-[12px] font-semibold text-[var(--kx-text)] outline-none focus:border-[#F27D26]"
-          // eslint-disable-next-line jsx-a11y/no-autofocus
-          autoFocus
-        />
-      </div>
-    );
-  }
-  return (
-    <div data-testid={`bulk-group-${group.id}`} className="flex items-center gap-2 py-3">
-      <button
-        type="button"
-        data-testid={`bulk-group-toggle-${group.id}`}
-        aria-expanded={!group.collapsed}
-        aria-label={group.collapsed ? BULK_COPY.expandGroup(group.name) : BULK_COPY.collapseGroup(group.name)}
-        onClick={onToggle}
-        className="flex min-w-0 flex-1 items-center gap-2 text-left text-gray-400 hover:text-white transition-colors focus:outline-none focus:ring-2 focus:ring-gray-500 rounded"
-      >
-        {group.collapsed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
-        <ProgressRing done={progress.done} total={progress.total} />
-        <span className="truncate text-[11px] font-black uppercase tracking-[0.2em] text-[var(--kx-text)]">{group.name}</span>
-        <span data-testid={`bulk-group-count-${group.id}`} className="flex-shrink-0 text-[11px] text-[var(--kx-muted)]">
-          {BULK_COPY.doneCount(progress.done, progress.total)}
-        </span>
-        <FailedDot count={progress.failed} />
-      </button>
-      {onRename && (
-        <button
-          type="button"
-          data-testid={`bulk-group-rename-${group.id}`}
-          aria-label={BULK_COPY.renameGroup(group.name)}
-          title={BULK_COPY.renameGroup(group.name)}
-          onClick={() => setDraft(group.name)}
-          className="flex-shrink-0 w-6 h-6 flex items-center justify-center rounded text-gray-500 hover:text-white transition-colors"
-        >
-          <Pencil size={12} />
-        </button>
-      )}
-      {children}
-    </div>
   );
 }
