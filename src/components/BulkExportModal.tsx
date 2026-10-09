@@ -73,7 +73,7 @@ function ExportSettingsHeader({
     <div className="kxd-xs" data-testid="bulk-export-settings" title={scopeLine}>
       <div className="kxd-xs-row">
         <div className="kxd-xs-field">
-          <span className="kxd-xs-label">Resolution</span>
+          <span className="kxd-xs-label">Res</span>
           <div className="kxd-seg" role="radiogroup" aria-label="Export resolution">
             {RESOLUTION_OPTIONS.map(r => (
               <button
@@ -91,7 +91,7 @@ function ExportSettingsHeader({
           </div>
         </div>
         <div className="kxd-xs-field">
-          <span className="kxd-xs-label">Frame rate</span>
+          <span className="kxd-xs-label">FPS</span>
           <div className="kxd-seg" role="radiogroup" aria-label="Export frame rate">
             {FPS_OPTIONS.map(f => (
               <button
@@ -104,7 +104,6 @@ function ExportSettingsHeader({
                 onClick={() => settingsStore.set(scope, { fps: f })}
               >
                 {f}
-                <span className="kxd-seg-unit">fps</span>
               </button>
             ))}
           </div>
@@ -120,7 +119,7 @@ function ExportSettingsHeader({
             onClick={() => { void chooseFolder(); }}
           >
             <FolderOpen size={11} aria-hidden="true" className="kxd-folder-icon" />
-            <span className="kxd-folder-path">{settings.folder ? shortFolder(settings.folder, 22) : 'Choose…'}</span>
+            <span className="kxd-folder-path">{settings.folder ? shortFolder(settings.folder, 40) : 'Choose…'}</span>
           </button>
         </div>
       </div>

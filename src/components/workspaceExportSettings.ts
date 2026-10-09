@@ -24,7 +24,8 @@ export interface WorkspaceExportSettings {
 }
 
 export const RESOLUTION_OPTIONS: readonly ResolutionTier[] = ['720p', '1080p'];
-export const FPS_OPTIONS: readonly ExportFps[] = [24, 30, 60];
+/** 60 fps is hidden from bulk export (operator ruling); a stored 60 reads as the default. */
+export const FPS_OPTIONS: readonly ExportFps[] = [24, 30];
 export const DEFAULT_EXPORT_SETTINGS: WorkspaceExportSettings = { resolution: DEFAULT_RESOLUTION_TIER, fps: 30, folder: null };
 
 type Store = Pick<Storage, 'getItem' | 'setItem'>;
