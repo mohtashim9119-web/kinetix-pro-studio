@@ -128,4 +128,27 @@ describe('BulkExportModal — Dashboard revamp Stage 4 (Bulk Export tab)', () =>
     await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="bulk-export-tab-blocked"]')!.click(); });
     expect(container.querySelector('[data-testid="bulk-export-status-n"]')!.textContent).toBe(BULK_EXPORT_NO_PATH);
   });
+
+  it('Cancel shows on a queued row and Stop all only while a batch is active', async () => {
+    const runner = new BulkExportRunner({
+      listProjects: () => [project('a'), project('b')].map(p => ({ id: p.id, name: p.name, lastExportPath: `/out/${p.id}.mp4` })),
+      loadProject: async id => ({ ...project(id), segments: [], assets: [] }),
+      storage: mem(),
+      playChime: () => {},
+      execute: input => new Promise(resolve => input.signal.addEventListener('abort', () => resolve({ status: 'failed', detail: 'cancelled' }))),
+    });
+    await mount(runner);
+    expect(container.querySelector('[data-testid="bulk-export-stop-all"]')).toBeNull();
+    runner.setSelectedAll(true);
+    await act(async () => { await runner.startSelected(); });
+    await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="bulk-export-tab-active"]')!.click(); });
+    expect(container.querySelector('[data-testid="bulk-export-cancel-b"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="bulk-export-stop-all"]')).not.toBeNull();
+    await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="bulk-export-cancel-b"]')!.click(); });
+    expect(runner.snapshot().find(r => r.id === 'b')?.phase).toBe('idle');
+    await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="bulk-export-stop-all"]')!.click(); });
+    await act(async () => { await new Promise(r => setTimeout(r, 0)); });
+    expect(runner.snapshot().find(r => r.id === 'a')?.phase).toBe('cancelled');
+    expect(container.querySelector('[data-testid="bulk-export-stop-all"]')).toBeNull();
+  });
 });

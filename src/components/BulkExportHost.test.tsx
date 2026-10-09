@@ -16,6 +16,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const hook = vi.hoisted(() => ({
   state: { pendingResumeOffer: null as unknown, pendingSealConsent: null as unknown, showExportSuccess: false, error: null as unknown, isExporting: false },
   startExport: vi.fn<(r?: unknown) => void>(),
+  cancelExport: vi.fn<() => void>(),
   resolveResumeChoice: vi.fn<(c: 'resume' | 'clean') => void>(),
   resolveSealConsent: vi.fn<(a: boolean) => void>(),
 }));
@@ -54,6 +55,7 @@ function mountHost(): (input: Partial<BulkExportExecutorInput>) => Promise<Queue
 beforeEach(() => {
   hook.state = { pendingResumeOffer: null, pendingSealConsent: null, showExportSuccess: false, error: null, isExporting: false };
   hook.startExport.mockReset();
+  hook.cancelExport.mockReset();
   hook.resolveResumeChoice.mockReset();
 });
 
@@ -126,6 +128,7 @@ describe('BulkExportHost loads real media around each export', () => {
     act(() => ac.abort());
     await p;
     expect(revoke).toHaveBeenCalledTimes(1);
+    expect(hook.cancelExport).toHaveBeenCalledTimes(1);
   });
 
   it('a media load failure parks the row with the reason and never starts the export', async () => {

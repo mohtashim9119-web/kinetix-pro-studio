@@ -13,7 +13,7 @@ import { PIPELINE_BUSY_REASON, pipelineConflict, runGuarded, waitingMessageFor }
 
 /** `waiting`: the project was syncing when this row would have run — parked,
  *  never silently skipped; Retry once the sync is over. */
-export type BulkExportPhase = 'idle' | 'queued' | 'exporting' | 'done' | 'failed' | 'blocked' | 'paused' | 'waiting';
+export type BulkExportPhase = 'idle' | 'queued' | 'exporting' | 'done' | 'failed' | 'blocked' | 'paused' | 'waiting' | 'cancelled';
 
 export interface BulkExportRow {
   id: string;
@@ -82,7 +82,7 @@ export class BulkExportRunner {
     this.queue = new SyncQueue({
       ...idleEngine,
       onDrain: () => {
-        if (this.chimeArmed && this.rows.some(r => r.phase === 'done' || r.phase === 'failed' || r.phase === 'blocked' || r.phase === 'waiting')) {
+        if (this.chimeArmed && this.rows.some(r => r.phase === 'done' || r.phase === 'failed' || r.phase === 'blocked' || r.phase === 'waiting' || r.phase === 'cancelled')) {
           this.chimeArmed = false;
           if (this.rows.some(r => r.phase === 'done')) (deps.playChime ?? playExportCompleteChime)();
         }
@@ -110,7 +110,7 @@ export class BulkExportRunner {
   runningCount(): { current: number; total: number; running: boolean } {
     const batch = this.rows.filter(r => r.phase !== 'idle');
     const live = batch.some(r => r.phase === 'exporting' || r.phase === 'queued');
-    const finished = batch.filter(r => r.phase === 'done' || r.phase === 'failed' || r.phase === 'blocked' || r.phase === 'waiting').length;
+    const finished = batch.filter(r => r.phase === 'done' || r.phase === 'failed' || r.phase === 'blocked' || r.phase === 'waiting' || r.phase === 'cancelled').length;
     const current = live ? Math.min(batch.length, finished + 1) : finished;
     return { current, total: batch.length, running: live };
   }
@@ -220,6 +220,31 @@ export class BulkExportRunner {
     if (jobs.length > 0) this.queue.enqueue(jobs);
   }
 
+  /** A batch is live while any row is queued or exporting (Stop all shows then). */
+  isActive(): boolean {
+    return this.rows.some(r => r.phase === 'queued' || r.phase === 'exporting');
+  }
+
+  /** Cancel one row. Queued: back to Ready at once, the queue unaffected.
+   *  Exporting: the export is aborted and the row parks "Cancelled — Retry"
+   *  (the engine keeps a checkpoint, so Retry resumes). No chime. */
+  cancel(id: string): void {
+    this.chimeArmed = false;
+    this.queue.cancel(id);
+  }
+
+  /** Cancel every queued row and abort the active one. */
+  stopAll(): void {
+    this.chimeArmed = false;
+    this.queue.cancelAll();
+  }
+
+  private toReady(row: BulkExportRow): void {
+    row.phase = 'idle';
+    row.message = undefined;
+    row.flags = undefined;
+  }
+
   /** Same fresh checks as Start (guard, path, media); every outcome lands on
    *  the row — a missing project or a throwing load is a visible block. */
   async retry(id: string): Promise<void> {
@@ -293,6 +318,11 @@ export class BulkExportRunner {
       else if (item.status === 'failed') { row.phase = 'failed'; row.message = item.detail ? `Failed — Retry — ${item.detail}` : 'Failed — Retry'; }
       else if (item.status === 'paused' && item.reason === PIPELINE_BUSY_REASON) { row.phase = 'waiting'; row.message = item.detail; }
       else if (item.status === 'paused') { row.phase = 'paused'; row.message = 'Paused — Retry'; }
+      else if (item.status === 'cancelled') {
+        // Never started: back to Ready, as if never queued. Started: parked.
+        if (item.startedAt === undefined) this.toReady(row);
+        else { row.phase = 'cancelled'; row.message = 'Cancelled — Retry'; }
+      }
     }
     this.commit();
   }

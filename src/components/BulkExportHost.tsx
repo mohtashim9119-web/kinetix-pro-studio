@@ -68,7 +68,7 @@ function BulkExportSlot({
 }): React.ReactElement {
   const resolution: ExportResolution = input.resolution ?? DEFAULT_RESOLUTION_TIER;
   const fps: ExportFps = input.fps;
-  const { state, startExport, resolveResumeChoice, resolveSealConsent } = useExport(
+  const { state, startExport, cancelExport, resolveResumeChoice, resolveSealConsent } = useExport(
     input.project,
     resolution,
     fps,
@@ -117,16 +117,20 @@ function BulkExportSlot({
     }
   }, [state.showExportSuccess, state.error, state.isExporting, onDone]);
 
+  // Cancel / Stop all: the engine's own cancel (worker first, then ffmpeg;
+  // a session with a resume manifest is kept), then the job settles. The
+  // queue records the row as cancelled, not failed.
   useEffect(() => {
-    if (input.signal.aborted) return;
     const onAbort = (): void => {
       if (finished.current) return;
       finished.current = true;
+      cancelExport();
       onDone({ status: 'failed', detail: 'cancelled' });
     };
+    if (input.signal.aborted) { onAbort(); return; }
     input.signal.addEventListener('abort', onAbort);
     return () => input.signal.removeEventListener('abort', onAbort);
-  }, [input.signal, onDone]);
+  }, [input.signal, onDone, cancelExport]);
 
   return <></>;
 }

@@ -6,7 +6,7 @@
 import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Z } from './overlayLayers';
 import type { BulkExportPhase, BulkExportRunner } from '../services/bulkExportQueue';
-import { Check, FolderOpen, Image as ImageIcon, Minus, Play, RefreshCw, SlidersHorizontal } from 'lucide-react';
+import { Check, FolderOpen, Image as ImageIcon, Minus, Play, RefreshCw, SlidersHorizontal, Square, X } from 'lucide-react';
 import { loadAllMetas } from '../services/projectStore';
 import { ProjectCardThumb } from './ProjectCardThumb';
 import { formatDuration, useProjectDurations } from './projectDurations';
@@ -192,7 +192,7 @@ const EXPORT_TABS: readonly { id: ExportTab; label: string }[] = [
 ];
 const EXPORT_TAB_KEY = 'kinetix:bulk-export-tab:v1';
 function exportTabOf(phase: BulkExportPhase | undefined, preBlocked = false): ExportTab {
-  if (phase === 'blocked' || phase === 'failed' || phase === 'paused') return 'blocked';
+  if (phase === 'blocked' || phase === 'failed' || phase === 'paused' || phase === 'cancelled') return 'blocked';
   // Not started, but the pre-check found something to resolve first.
   if ((phase === undefined || phase === 'idle') && preBlocked) return 'blocked';
   if (phase === 'done') return 'finished';
@@ -211,7 +211,7 @@ function readExportTab(): ExportTab {
 function toneOf(phase: BulkExportPhase | undefined): 'bad' | 'warn' | 'live' | 'good' | 'idle' {
   switch (phase) {
     case 'blocked': case 'failed': return 'bad';
-    case 'paused': case 'waiting': return 'warn';
+    case 'paused': case 'waiting': case 'cancelled': return 'warn';
     case 'queued': case 'exporting': return 'live';
     case 'done': return 'good';
     default: return 'idle';
@@ -365,6 +365,18 @@ export function BulkExportModal({
           </span>
           <span className="flex-1" />
           {checking && <span className="kxd-xctl-checking" data-testid="bulk-export-checking">Checking projects…</span>}
+          {rows.some(r => r.phase === 'queued' || r.phase === 'exporting') && (
+            <button
+              type="button"
+              data-testid="bulk-export-stop-all"
+              className="kxd-xctl-btn"
+              title="Cancel every queued export and stop the one running"
+              onClick={() => runner.stopAll()}
+            >
+              <Square size={10} fill="currentColor" aria-hidden="true" />
+              Stop all
+            </button>
+          )}
           {retryableIds.length > 0 && (
             <button
               type="button"
@@ -396,7 +408,8 @@ export function BulkExportModal({
             const preReason = (row?.phase === undefined || row?.phase === 'idle') ? verdicts.get(p.id) : undefined;
             const message = row?.message ?? preReason;
             const canRetry = row?.phase === 'failed' || row?.phase === 'paused' || row?.phase === 'waiting'
-              || row?.phase === 'blocked' || preReason !== undefined;
+              || row?.phase === 'blocked' || row?.phase === 'cancelled' || preReason !== undefined;
+            const canCancel = row?.phase === 'queued' || row?.phase === 'exporting';
             return (
               <li
                 key={p.id}
@@ -426,12 +439,23 @@ export function BulkExportModal({
                     </span>
                   </span>
                 </button>
-                {(message || canRetry) && (
+                {(message || canRetry || canCancel) && (
                   <div className="kxd-xrow-status" data-tone={preReason ? 'bad' : toneOf(row?.phase)}>
                     <span className="kxd-xrow-dot" aria-hidden="true" />
                     <span data-testid={`bulk-export-status-${p.id}`} className="kxd-xrow-msg" title={message ?? ''}>
                       {message ?? ''}
                     </span>
+                    {canCancel && (
+                      <button
+                        type="button"
+                        data-testid={`bulk-export-cancel-${p.id}`}
+                        className="kxd-xrow-retry"
+                        onClick={() => runner.cancel(p.id)}
+                      >
+                        <X size={11} aria-hidden="true" />
+                        Cancel
+                      </button>
+                    )}
                     {canRetry && (
                       <button
                         type="button"
