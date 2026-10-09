@@ -54,7 +54,8 @@ export class BulkExportRunner {
   constructor(
     private readonly deps: {
       loadProject: (id: string) => Promise<Project | null>;
-      listProjects: () => { id: string; name: string }[];
+      /** Read fresh on every Start, Retry and drawer open — never cached. */
+      listProjects: () => { id: string; name: string; lastExportPath?: string }[];
       execute: BulkExportExecutor;
       hasCheckpoint?: (project: Project) => Promise<boolean>;
       storage?: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
@@ -132,6 +133,43 @@ export class BulkExportRunner {
     writeBulkExportSelection(this.rows.filter(r => r.selected).map(r => r.id), this.storage);
   }
 
+  /** One project's pre-start verdict from FRESH reads (meta + stored record). */
+  private async evaluate(meta: { id: string; lastExportPath?: string }): Promise<
+    | { blocked: string; flags?: string[] }
+    | { project: Project; savedPath: string; flags: string[] }
+  > {
+    const project = await this.deps.loadProject(meta.id);
+    if (!project) return { blocked: 'Blocked — project missing' };
+    const settings = settingsFromProject(project, new Date(), meta.lastExportPath);
+    if ('blocked' in settings) return { blocked: settings.blocked };
+    const gate = preflightBulkExport(project.segments, project.assets);
+    if (gate.kind === 'block') return { blocked: gate.message, flags: [] };
+    return { project, savedPath: settings.savedPath, flags: gate.flags };
+  }
+
+  private freshMeta(id: string): { id: string; lastExportPath?: string } {
+    return this.deps.listProjects().find(p => p.id === id) ?? { id };
+  }
+
+  /** Drawer open: re-check every Blocked row against fresh metas and records,
+   *  so an export path confirmed (or media relinked) since the last Start
+   *  clears the stale block. Rows that are still blocked keep their reason. */
+  async refresh(): Promise<void> {
+    let changed = false;
+    for (const row of this.rows.filter(r => r.phase === 'blocked')) {
+      const verdict = await this.evaluate(this.freshMeta(row.id));
+      if ('blocked' in verdict) {
+        if (row.message !== verdict.blocked) { row.message = verdict.blocked; changed = true; }
+        continue;
+      }
+      row.phase = 'idle';
+      row.message = undefined;
+      row.flags = undefined;
+      changed = true;
+    }
+    if (changed) this.commit();
+  }
+
   async startSelected(): Promise<void> {
     const chosen = this.deps.listProjects().filter(p => this.ensureRow(p.id).selected);
     this.chimeArmed = true;
@@ -139,29 +177,17 @@ export class BulkExportRunner {
     const jobs: QueueJob[] = [];
     for (const meta of chosen) {
       const row = this.ensureRow(meta.id);
-      const project = await this.deps.loadProject(meta.id);
-      if (!project) {
+      const verdict = await this.evaluate(meta);
+      if ('blocked' in verdict) {
         row.phase = 'blocked';
-        row.message = 'Blocked — project missing';
+        row.message = verdict.blocked;
+        if (verdict.flags) row.flags = verdict.flags;
         continue;
       }
-      const settings = settingsFromProject(project);
-      if ('blocked' in settings) {
-        row.phase = 'blocked';
-        row.message = settings.blocked;
-        continue;
-      }
-      const gate = preflightBulkExport(project.segments, project.assets);
-      if (gate.kind === 'block') {
-        row.phase = 'blocked';
-        row.message = gate.message;
-        row.flags = [];
-        continue;
-      }
-      row.flags = gate.flags;
+      row.flags = verdict.flags;
       row.phase = 'queued';
       row.message = 'Queued';
-      jobs.push(this.jobFor(project, settings.savedPath, false));
+      jobs.push(this.jobFor(verdict.project, verdict.savedPath, false));
     }
     this.commit();
     if (jobs.length > 0) this.queue.enqueue(jobs);
@@ -170,7 +196,7 @@ export class BulkExportRunner {
   async retry(id: string): Promise<void> {
     const project = await this.deps.loadProject(id);
     if (!project) return;
-    const settings = settingsFromProject(project);
+    const settings = settingsFromProject(project, new Date(), this.freshMeta(id).lastExportPath);
     if ('blocked' in settings) {
       this.ensureRow(id).phase = 'blocked';
       this.ensureRow(id).message = settings.blocked;

@@ -310,6 +310,7 @@ import {
 } from './services/assetStore';
 import {
   saveProject,
+  recordLastExportPath,
   loadProject,
   loadProjectDetailed,
   adoptMirroredProjects,
@@ -2208,7 +2209,7 @@ export default function App() {
     else openExportDrawer();
   }, [exportDrawerOpen, openExportDrawer]);
   const bulkExport = useMemo(() => new BulkExportRunner({
-    listProjects: () => loadAllMetas().map(m => ({ id: m.id, name: m.name })),
+    listProjects: () => loadAllMetas().map(m => ({ id: m.id, name: m.name, lastExportPath: m.lastExportPath })),
     loadProject: async (id) => (await loadProject(id))?.project ?? null,
     execute: async () => ({ status: 'failed', detail: 'export host not mounted' }),
     hasCheckpoint: async (p) => {
@@ -3476,7 +3477,12 @@ export default function App() {
   const [mixedNativeFpsWarning, setMixedNativeFpsWarning] = useState(false);
   const previewRef = useRef<HTMLDivElement>(null);
 
+  // "Export once → path saved": at path CONFIRMATION (not completion), the
+  // path lands on the registry meta synchronously — Bulk Export reads it from
+  // there, undo-proof and without waiting for the debounced autosave — and on
+  // the project record as before (the picker's default directory).
   const onExportSavePath = useCallback((path: string) => {
+    recordLastExportPath(liveProjectRef.current.id, path);
     setProject(p => ({ ...p, lastExportPath: path }));
   }, []);
   const exportApi = useExport(project, exportResolution, exportFps, onExportSavePath);

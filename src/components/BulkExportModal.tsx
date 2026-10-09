@@ -50,7 +50,16 @@ export function BulkExportModal({
   docked?: boolean;
   onClose: () => void;
 }): React.ReactElement {
-  const catalog = useMemo(() => runner.listCatalog(), [runner]);
+  // Fresh on every open: the catalog and every Blocked row are re-read, never
+  // a snapshot from when the drawer first mounted.
+  const [opened, setOpened] = useState(0);
+  useEffect(() => {
+    if (hidden) return;
+    setOpened(n => n + 1);
+    void runner.refresh();
+  }, [hidden, runner]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const catalog = useMemo(() => runner.listCatalog(), [runner, opened]);
   const rows = useSyncExternalStore(l => runner.subscribe(l), () => runner.snapshot());
   const byId = useMemo(() => new Map(rows.map(r => [r.id, r])), [rows]);
   const selected = catalog.filter(p => byId.get(p.id)?.selected).length;

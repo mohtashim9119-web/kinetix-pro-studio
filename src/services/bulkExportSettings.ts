@@ -16,9 +16,15 @@ export interface BulkExportSettings {
 }
 
 /** Per-project settings the manual export already persists: last output
- *  path, native resolution tier, session default fps (30). No new fields. */
-export function settingsFromProject(project: Project, now: Date = new Date()): BulkExportSettings | { blocked: string } {
-  const savedPath = nextBulkExportPath(project.lastExportPath, project.name, now);
+ *  path, native resolution tier, session default fps (30). The path comes from
+ *  the registry meta first (written at path confirmation — fresh, undo-proof),
+ *  then the project record (projects exported before the meta field existed). */
+export function settingsFromProject(
+  project: Project,
+  now: Date = new Date(),
+  metaLastExportPath?: string,
+): BulkExportSettings | { blocked: string } {
+  const savedPath = nextBulkExportPath(metaLastExportPath ?? project.lastExportPath, project.name, now);
   if (!savedPath) return { blocked: BULK_EXPORT_NO_PATH };
   return {
     resolution: project.resolutionTier ?? DEFAULT_RESOLUTION_TIER,

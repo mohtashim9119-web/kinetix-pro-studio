@@ -700,6 +700,31 @@ export function upsertProjectMeta(meta: ProjectMeta): void {
   }
 }
 
+/**
+ * Records the output path a manual export just CONFIRMED on the project's
+ * registry meta — synchronously, at confirmation, so a failed export still
+ * knows its path for retry and Bulk Export reads it without waiting for the
+ * project autosave. Returns false (and says why on the console) when there is
+ * no registry entry to write to or the write failed; never silent.
+ */
+export function recordLastExportPath(id: string, path: string): boolean {
+  if (deletedProjectIds().has(id)) return false;
+  try {
+    const metas = loadAllMetas();
+    const idx = metas.findIndex(m => m.id === id);
+    if (idx < 0) {
+      console.error(`[kinetix] Could not record the export path for project ${id}: it has no registry entry yet.`);
+      return false;
+    }
+    metas[idx] = { ...metas[idx], lastExportPath: path };
+    localStorage.setItem(REGISTRY_KEY, JSON.stringify(metas));
+    return true;
+  } catch (err) {
+    console.error(`[kinetix] Could not record the export path for project ${id}:`, err);
+    return false;
+  }
+}
+
 /** Removes a project's stored record and its registry entry. */
 export async function deleteProjectData(id: string): Promise<void> {
   await commitTombstones([id]);

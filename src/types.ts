@@ -1201,6 +1201,10 @@ export interface ProjectMeta {
   thumbnailHash?: string;
   /** Asset id of the thumbnail source (used to re-derive the URL after reload). */
   thumbnailAssetId?: string;
+  /** Output path the last manual export CONFIRMED (`recordLastExportPath`).
+   *  Written at confirmation, outside the undoable project record, so Bulk
+   *  Export sees it even before (or despite an undo of) the project autosave. */
+  lastExportPath?: string;
 }
 
 export type TranscriptionStatus =
