@@ -438,6 +438,7 @@ import { BulkExportHost } from './components/BulkExportHost';
 import { bulkBatchRunner } from './services/bulkSyncQueue';
 import { BulkExportRunner } from './services/bulkExportQueue';
 import { withStorageAvailability } from './services/bulkExportMedia';
+import { exportSettingsForProject } from './components/workspaceExportSettings';
 import { claimPipeline, SYNC_BLOCKED_BY_EXPORT } from './services/pipelineGuard';
 import { cloudCostLine } from './services/cloudQueueJob';
 import { NewProjectModal, type NewProjectChoices } from './components/NewProjectModal';
@@ -2209,6 +2210,9 @@ export default function App() {
       const stored = (await loadProject(id))?.project;
       return stored ? withStorageAvailability(stored) : null;
     },
+    // Resolution / frame rate / folder come from the project's workspace; a
+    // project in none takes the All tab's settings.
+    exportSettingsFor: (id) => exportSettingsForProject(id),
     execute: async () => ({ status: 'failed', detail: 'export host not mounted' }),
     hasCheckpoint: async (p) => {
       if (!isTauri()) return false;

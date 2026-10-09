@@ -117,14 +117,15 @@ describe('BulkExportModal — Dashboard revamp Stage 4 (Bulk Export tab)', () =>
     expect(container.querySelector('[data-testid="bulk-export-selected-count"]')?.textContent).toContain('2 selected');
   });
 
-  it('OPEN bug kept as-is: a project with no saved export path still reads exactly "Blocked — no saved export path"', async () => {
-    expect(BULK_EXPORT_NO_PATH).toBe('Blocked — no saved export path');
+  it('a project with no workspace folder and no saved export path reads the new Blocked copy', async () => {
+    expect(BULK_EXPORT_NO_PATH).toBe("Blocked — no export path. Set a folder in this workspace's export settings, or open the project and export once.");
     const noPath = { ...project('n'), lastExportPath: undefined } as unknown as Project;
     const runner = runnerOf([noPath]);
     await mount(runner);
     await act(async () => { container.querySelector<HTMLInputElement>('[data-testid="bulk-export-check-n"]')!.click(); });
     await act(async () => { await runner.startSelected(); });
     await act(async () => { await new Promise(r => setTimeout(r, 0)); });
-    expect(container.querySelector('[data-testid="bulk-export-status-n"]')!.textContent).toBe('Blocked — no saved export path');
+    await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="bulk-export-tab-blocked"]')!.click(); });
+    expect(container.querySelector('[data-testid="bulk-export-status-n"]')!.textContent).toBe(BULK_EXPORT_NO_PATH);
   });
 });

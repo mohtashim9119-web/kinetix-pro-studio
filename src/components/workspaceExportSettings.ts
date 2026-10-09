@@ -6,13 +6,14 @@
 // Bulk Export — export defaults per workspace: resolution, fps and the folder
 // every export lands in. Keyed by workspace id; `all` holds the defaults for
 // projects that belong to no workspace. Written synchronously on every change
-// (crash-safe). View-layer state: nothing in the export queue reads it yet.
+// (crash-safe). The export queue reads it per project (see
+// `exportSettingsForProject`).
 
 import { useSyncExternalStore } from 'react';
 import type { ExportFps } from '../hooks/useExport';
 import type { ResolutionTier } from '../types';
 import { DEFAULT_RESOLUTION_TIER } from '../services/resolutionConfig';
-import type { WorkspaceFilter } from './workspaceRegistry';
+import { workspaceRegistry, type WorkspaceFilter, type WorkspaceRegistry } from './workspaceRegistry';
 
 export const WORKSPACE_EXPORT_SETTINGS_KEY = 'kinetix:workspace-export-settings:v1';
 
@@ -85,6 +86,16 @@ export function useWorkspaceExportSettings(
 ): WorkspaceExportSettings {
   useSyncExternalStore(l => store.subscribe(l), () => store.getVersion());
   return store.get(scope);
+}
+
+/** The export settings that apply to one project: its workspace's, or — for a
+ *  project in no workspace — the All tab's. */
+export function exportSettingsForProject(
+  projectId: string,
+  registry: WorkspaceRegistry = workspaceRegistry(),
+  store: WorkspaceExportSettingsStore = workspaceExportSettings(),
+): WorkspaceExportSettings {
+  return store.get(registry.workspaceOf(projectId)?.id ?? 'all');
 }
 
 /** "…/Exports/Statham" — the tail of a long path, which is the part that tells folders apart. */

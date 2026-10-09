@@ -5,7 +5,7 @@
 
 import { SyncQueue, type QueueJob, type QueueJobOutcome, type QueueRunContext } from './syncQueue';
 import { preflightBulkExport } from './bulkExportPreflight';
-import { settingsFromProject } from './bulkExportSettings';
+import { resolveBulkExportSettings, type BulkExportSettings, type WorkspaceExportChoice } from './bulkExportSettings';
 import { BULK_EXPORT_BATCH_KEY, readBulkExportSelection, writeBulkExportSelection } from './bulkExportPersist';
 import type { Project } from '../types';
 import { playExportCompleteChime } from './notificationSound';
@@ -41,7 +41,7 @@ export const BULK_EXPORT_NO_CHECKPOINT_CHECK = 'Could not check for a saved chec
 const errorText = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
 /** A load that THREW (as opposed to "not found") — a visible block with the reason. */
-const loadFailed = (err: unknown): { blocked: string } => ({ blocked: `Blocked — could not open the project: ${errorText(err)}` });
+const loadFailed = (err: unknown): { blocked: string; flags?: string[] } => ({ blocked: `Blocked — could not open the project: ${errorText(err)}` });
 
 const idleEngine = {
   workerSec: () => 0,
@@ -59,6 +59,9 @@ export class BulkExportRunner {
   private chimeArmed = false;
   private noticeDismissed = false;
   private noticeCache: string | null = null;
+  /** Output path each project's row last claimed — a second project with the
+   *  same name gets " (2)" instead of overwriting the first. */
+  private claimed = new Map<string, string>();
   private execute: BulkExportExecutor;
 
   constructor(
@@ -68,6 +71,9 @@ export class BulkExportRunner {
       listProjects: () => { id: string; name: string; lastExportPath?: string }[];
       execute: BulkExportExecutor;
       hasCheckpoint?: (project: Project) => Promise<boolean>;
+      /** The workspace export settings that apply to this project (unassigned →
+       *  the All tab's). Read fresh on every check — never cached. */
+      exportSettingsFor?: (id: string) => WorkspaceExportChoice | undefined;
       storage?: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
       playChime?: () => void;
     },
@@ -146,15 +152,20 @@ export class BulkExportRunner {
   /** One project's pre-start verdict from FRESH reads (meta + stored record). */
   private async evaluate(meta: { id: string; lastExportPath?: string }): Promise<
     | { blocked: string; flags?: string[] }
-    | { project: Project; savedPath: string; flags: string[] }
+    | { project: Project; settings: BulkExportSettings; flags: string[] }
   > {
     const project = await this.deps.loadProject(meta.id);
-    if (!project) return { blocked: 'Blocked — project missing' };
-    const settings = settingsFromProject(project, new Date(), meta.lastExportPath);
+    if (!project) return { blocked: 'Blocked — project missing', flags: undefined };
+    const takenByOthers = (path: string): boolean => {
+      for (const [id, claimed] of this.claimed) if (id !== meta.id && claimed === path) return true;
+      return false;
+    };
+    const settings = resolveBulkExportSettings(project, this.deps.exportSettingsFor?.(meta.id), meta.lastExportPath, takenByOthers);
     if ('blocked' in settings) return { blocked: settings.blocked };
     const gate = preflightBulkExport(project.segments, project.assets);
     if (gate.kind === 'block') return { blocked: gate.message, flags: [] };
-    return { project, savedPath: settings.savedPath, flags: gate.flags };
+    this.claimed.set(meta.id, settings.savedPath);
+    return { project, settings, flags: gate.flags };
   }
 
   private freshMeta(id: string): { id: string; lastExportPath?: string } {
@@ -203,7 +214,7 @@ export class BulkExportRunner {
       row.flags = verdict.flags;
       row.phase = 'queued';
       row.message = 'Queued';
-      jobs.push(this.jobFor(verdict.project, verdict.savedPath, false));
+      jobs.push(this.jobFor(verdict.project, verdict.settings, false));
     }
     this.commit();
     if (jobs.length > 0) this.queue.enqueue(jobs);
@@ -240,10 +251,10 @@ export class BulkExportRunner {
     row.phase = 'queued';
     row.message = 'Queued';
     this.commit();
-    this.queue.enqueue([this.jobFor(verdict.project, verdict.savedPath, resume)]);
+    this.queue.enqueue([this.jobFor(verdict.project, verdict.settings, resume)]);
   }
 
-  private jobFor(project: Project, savedPath: string, resume: boolean): QueueJob {
+  private jobFor(project: Project, settings: BulkExportSettings, resume: boolean): QueueJob {
     return {
       id: project.id,
       label: project.name,
@@ -251,9 +262,9 @@ export class BulkExportRunner {
       // Start); the claim covers the whole export and is always released.
       run: (ctx: QueueRunContext): Promise<QueueJobOutcome> => runGuarded(project.id, 'export', () => this.execute({
           project,
-          savedPath,
-          resolution: project.resolutionTier,
-          fps: 30,
+          savedPath: settings.savedPath,
+          resolution: settings.resolution,
+          fps: settings.fps,
           resume,
           signal: ctx.signal,
           setPhase: ctx.setPhase,
