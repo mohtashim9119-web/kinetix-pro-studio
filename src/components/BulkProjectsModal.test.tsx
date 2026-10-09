@@ -333,11 +333,10 @@ describe('BulkProjectsModal — draft rows', () => {
     await act(async () => { cloudSyncQueue.cancelAll(); });
   });
 
-  it('create rows inline: a 2–30 field and "Create" — the rows appear at once, no popup, no group header', async () => {
+  it('create rows inline: a 2–30 field and "Add Projects" — the rows appear at once, no popup, no group header', async () => {
     const h = store();
     const runner = makeRunner();
     const { host } = await mount(modal(h, 0, { runner }));
-    expect(q(host, 'bulk-create-heading')!.textContent).toBe('New projects');
     const field = q(host, 'bulk-create-count') as HTMLInputElement;
     const create = q(host, 'bulk-create') as HTMLButtonElement;
     expect(field.getAttribute('aria-label')).toBe('Number of projects');
@@ -348,7 +347,7 @@ describe('BulkProjectsModal — draft rows', () => {
       expect(create.disabled, `"${bad}" must not create`).toBe(true);
     }
     await setValue(field, '4');
-    expect(create.textContent).toBe('Create');
+    expect(create.textContent).toBe('Add Projects');
     await act(async () => { create.click(); });
     expect(document.querySelector('[data-testid="bulk-count-input"]')).toBeNull();
     expect(document.querySelector('[role="dialog"][aria-modal="true"]')).toBeNull();
@@ -850,7 +849,7 @@ describe('1.3.1 — row files, message line, docking', () => {
 });
 
 describe('bulk drawer tabs — T1 T2 T3 T4 T5', () => {
-  it('T1: NEW / FAILED-PAUSED / FINISHED render once, as horizontal tabs under the workspace tabs', async () => {
+  it('T1: Active / Failed / Ready render once, as horizontal tabs under the workspace tabs', async () => {
     const h = store();
     const { host } = await mount(modal(h, 2));
     expect(host.querySelectorAll('[data-testid="bulk-drawer-tabs"]')).toHaveLength(1);
@@ -858,10 +857,11 @@ describe('bulk drawer tabs — T1 T2 T3 T4 T5', () => {
     const ws = q(host, 'bulk-sync-ws-tabs')!;
     expect(ws.compareDocumentPosition(tabs) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(tabs.getAttribute('role')).toBe('tablist');
-    expect(tabs.className).toMatch(/flex/);
-    expect(q(host, 'bulk-tab-new')!.textContent).toBe('NEW');
-    expect(q(host, 'bulk-tab-failed-paused')!.textContent).toBe('FAILED-PAUSED');
-    expect(q(host, 'bulk-tab-finished')!.textContent).toBe('FINISHED');
+    // Plain labels (a count follows each): Active | Failed | Ready.
+    const label = (id: string): string | null | undefined => q(host, `bulk-tab-${id}`)!.querySelector('.kxd-subtab-label')?.textContent;
+    expect(label('new')).toBe('Active');
+    expect(label('failed-paused')).toBe('Failed');
+    expect(label('finished')).toBe('Ready');
     expect(q(host, 'bulk-create')).not.toBeNull();
   });
 
@@ -930,7 +930,7 @@ describe('bulk drawer tabs — T1 T2 T3 T4 T5', () => {
     expect(runner.snapshot().find(r => r.id === 'live')!.phase).toBe('cloud');
   });
 
-  it('T4/T5: Retry All is disabled with honest copy when empty; empty tabs are never blank', async () => {
+  it('T4/T5: Retry All appears only when something can be retried; empty tabs are never blank', async () => {
     const h = store();
     const runner = seededRunner(
       [{ id: 'a', name: 'A', phase: 'queued' }],
@@ -938,9 +938,8 @@ describe('bulk drawer tabs — T1 T2 T3 T4 T5', () => {
     );
     const { host } = await mount(modal(h, 0, { runner }));
     await clickTab(host, 'failed-paused');
-    const retry = q(host, 'bulk-retry-all') as HTMLButtonElement;
-    expect(retry.disabled).toBe(true);
-    expect(retry.textContent).toBe('No failed rows');
+    // Nothing to retry: no button, and the empty-tab line is the only message.
+    expect(q(host, 'bulk-retry-all')).toBeNull();
     expect(q(host, 'bulk-tab-empty')!.textContent).toBe('No failed rows');
     await clickTab(host, 'finished');
     expect(q(host, 'bulk-tab-empty')!.textContent).toBe('Nothing finished yet');

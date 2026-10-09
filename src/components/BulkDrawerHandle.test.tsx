@@ -31,7 +31,7 @@ describe('editor has no bulk affordances', () => {
     const dash = read('src/components/ProjectDashboard.tsx');
     expect(dash).not.toContain('data-testid="dashboard-bulk"');
     expect(dash).toContain('dashboard-left-tab-');
-    expect(dash).toContain("id: 'bulk-sync'");
+    expect(dash).toContain("t.id === 'bulk-sync'");
     expect(dash).toContain('dashboard-bulk-count');
     expect(dash).toContain('ProgressRing');
     expect(dash).toContain('FailedDot');

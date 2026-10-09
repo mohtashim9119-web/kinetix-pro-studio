@@ -85,7 +85,8 @@ describe('right panel — workspace tabs above the grid', () => {
     reg.assign(['p1', 'p3'], w.id);
     await mount();
     const strip = container.querySelector('[data-testid="grid-ws-tabs"]')!;
-    expect([...strip.querySelectorAll('[role="tab"]')].map(t => t.textContent)).toEqual(['All', 'Cooking']);
+    // Each tab reads its name, then the number of projects it holds.
+    expect([...strip.querySelectorAll('[role="tab"]')].map(t => t.textContent)).toEqual(['All3', 'Cooking2']);
     expect(cards()).toEqual(['p1', 'p2', 'p3']);
     await act(async () => { container.querySelector<HTMLButtonElement>(`[data-testid="grid-ws-${w.id}"]`)!.click(); });
     expect(cards()).toEqual(['p1', 'p3']);

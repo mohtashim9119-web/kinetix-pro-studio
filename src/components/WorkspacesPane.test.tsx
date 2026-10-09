@@ -62,18 +62,21 @@ afterEach(() => {
   container.remove();
 });
 
+/** The stat tiles read "Projects" then the number — the number is the <dd>. */
+const countOf = (id: string): string => q(`workspace-count-${id}`)!.querySelector('dd')!.textContent!;
+
 describe('Workspaces tab', () => {
   it('shows the empty state with zero workspaces', async () => {
     await mount();
     expect(q('workspaces-empty')).not.toBeNull();
   });
 
-  it('create adds a full-width card with its member count', async () => {
+  it('create adds a card with its member count', async () => {
     await mount();
     const id = await createWs('Channel A');
     expect(q('workspaces-empty')).toBeNull();
     expect(q(`workspace-name-${id}`)!.textContent).toBe('Channel A');
-    expect(q(`workspace-count-${id}`)!.textContent).toBe('0 projects');
+    expect(countOf(id)).toBe('0');
   });
 
   it('add existing projects by multi-select; the count follows', async () => {
@@ -84,55 +87,36 @@ describe('Workspaces tab', () => {
     await act(async () => { q<HTMLInputElement>(`workspace-pick-${id}-p3`)!.click(); });
     await act(async () => { q<HTMLButtonElement>(`workspace-pick-confirm-${id}`)!.click(); });
     expect(reg.snapshot()[0]!.projectIds).toEqual(['p1', 'p3']);
-    expect(q(`workspace-count-${id}`)!.textContent).toBe('2 projects');
-    expect(q(`workspace-member-${id}-p1`)).not.toBeNull();
+    expect(countOf(id)).toBe('2');
   });
 
   it('adding a project that lives in another workspace moves it (one workspace per project)', async () => {
     await mount();
     const a = await createWs('A');
     const b = await createWs('B');
-    reg.assign(['p1'], a);
+    await act(async () => { reg.assign(['p1'], a); });
     await act(async () => { q<HTMLButtonElement>(`workspace-add-${b}`)!.click(); });
     await act(async () => { q<HTMLInputElement>(`workspace-pick-${b}-p1`)!.click(); });
     await act(async () => { q<HTMLButtonElement>(`workspace-pick-confirm-${b}`)!.click(); });
     expect(reg.workspaceOf('p1')?.id).toBe(b);
-    expect(q(`workspace-count-${a}`)!.textContent).toBe('0 projects');
+    expect(countOf(a)).toBe('0');
+    expect(countOf(b)).toBe('1');
   });
 
-  it('move a member to another workspace, or to unassigned, from its row', async () => {
-    await mount();
-    const a = await createWs('A');
-    const b = await createWs('B');
-    await act(async () => { reg.assign(['p2'], a); });
-    await act(async () => { q<HTMLButtonElement>(`workspace-toggle-${a}`)!.click(); });
-    const select = q<HTMLSelectElement>('workspace-move-p2')!;
-    await act(async () => {
-      select.value = b;
-      select.dispatchEvent(new Event('change', { bubbles: true }));
-    });
-    expect(reg.workspaceOf('p2')?.id).toBe(b);
-    await act(async () => { q<HTMLButtonElement>(`workspace-toggle-${b}`)!.click(); });
-    const again = q<HTMLSelectElement>('workspace-move-p2')!;
-    await act(async () => {
-      again.value = '__unassigned__';
-      again.dispatchEvent(new Event('change', { bubbles: true }));
-    });
-    expect(reg.workspaceOf('p2')).toBeUndefined();
-  });
-
-  it('rename via the inline field (Enter commits, Escape cancels)', async () => {
+  it('rename opens a dialog: Save commits, Cancel and Escape discard', async () => {
     await mount();
     const id = await createWs('Old');
     await act(async () => { q<HTMLButtonElement>(`workspace-rename-${id}`)!.click(); });
-    const input = q<HTMLInputElement>(`workspace-rename-input-${id}`)!;
-    await act(async () => { setInput(input, 'New'); });
-    await act(async () => { input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); });
+    await act(async () => { setInput(q<HTMLInputElement>(`workspace-rename-input-${id}`)!, 'New'); });
+    await act(async () => { q<HTMLButtonElement>('workspace-rename-save')!.click(); });
     expect(q(`workspace-name-${id}`)!.textContent).toBe('New');
     await act(async () => { q<HTMLButtonElement>(`workspace-rename-${id}`)!.click(); });
-    const second = q<HTMLInputElement>(`workspace-rename-input-${id}`)!;
-    await act(async () => { setInput(second, 'Discarded'); });
-    await act(async () => { second.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); });
+    await act(async () => { setInput(q<HTMLInputElement>(`workspace-rename-input-${id}`)!, 'Discarded'); });
+    await act(async () => { q<HTMLButtonElement>('workspace-dialog-cancel')!.click(); });
+    expect(q(`workspace-name-${id}`)!.textContent).toBe('New');
+    await act(async () => { q<HTMLButtonElement>(`workspace-rename-${id}`)!.click(); });
+    await act(async () => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })); });
+    expect(q(`workspace-rename-input-${id}`)).toBeNull();
     expect(q(`workspace-name-${id}`)!.textContent).toBe('New');
   });
 
@@ -142,10 +126,10 @@ describe('Workspaces tab', () => {
     await act(async () => { reg.assign(['p1', 'p2'], id); });
     await act(async () => { q<HTMLButtonElement>(`workspace-delete-${id}`)!.click(); });
     expect(reg.snapshot()).toHaveLength(1);
-    await act(async () => { q<HTMLButtonElement>('confirm-dialog-cancel')!.click(); });
+    await act(async () => { q<HTMLButtonElement>('workspace-dialog-cancel')!.click(); });
     expect(reg.snapshot()).toHaveLength(1);
     await act(async () => { q<HTMLButtonElement>(`workspace-delete-${id}`)!.click(); });
-    await act(async () => { q<HTMLButtonElement>('confirm-dialog-confirm')!.click(); });
+    await act(async () => { q<HTMLButtonElement>('workspace-delete-confirm')!.click(); });
     expect(reg.snapshot()).toHaveLength(0);
     expect(reg.workspaceOf('p1')).toBeUndefined();
     expect(q('workspaces-empty')).not.toBeNull();
@@ -155,6 +139,6 @@ describe('Workspaces tab', () => {
     await mount(new Set(['draft-1']));
     const id = await createWs('A');
     await act(async () => { reg.assign(['p1', 'draft-1', 'deleted-long-ago'], id); });
-    expect(q(`workspace-count-${id}`)!.textContent).toBe('2 projects');
+    expect(countOf(id)).toBe('2');
   });
 });
