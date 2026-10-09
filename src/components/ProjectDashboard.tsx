@@ -15,7 +15,8 @@ import { FailedDot, ProgressRing } from './BulkProgress';
 import { Z } from './overlayLayers';
 import { ProjectCardThumb } from './ProjectCardThumb';
 import { WorkspacesPane, type WorkspaceProject } from './WorkspacesPane';
-import { workspaceRegistry } from './workspaceRegistry';
+import { inWorkspace, resolveWorkspaceFilter, useWorkspaces, workspaceRegistry, type WorkspaceFilter } from './workspaceRegistry';
+import { WorkspaceTabs } from './WorkspaceTabs';
 import './ProjectDashboard.css';
 
 /**
@@ -189,6 +190,9 @@ export function ProjectDashboard({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [showBulkConfirm, setShowBulkConfirm] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
+  const workspaces = useWorkspaces();
+  const [gridWsRaw, setGridWs] = useState<WorkspaceFilter>('all');
+  const gridWs = resolveWorkspaceFilter(workspaces, gridWsRaw);
   const [ownLeftTab, setOwnLeftTab] = useState<DashboardLeftTab>('workspaces');
   const leftTab = controlledLeftTab ?? ownLeftTab;
   const setLeftTab = (tab: DashboardLeftTab): void => {
@@ -282,7 +286,8 @@ export function ProjectDashboard({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const draftIds = React.useMemo(() => new Set(unbuiltBulkRowIds()), [metas, batchRows]);
 
-  const filtered = metas.filter(m => m.name.toLowerCase().includes(search.trim().toLowerCase()));
+  const filtered = metas.filter(m =>
+    inWorkspace(workspaces, gridWs, m.id) && m.name.toLowerCase().includes(search.trim().toLowerCase()));
   const visibleIds = filtered.map(m => m.id);
   const allVisibleSelected = visibleIds.length > 0 && visibleIds.every(id => selectedIds.has(id));
   const selectedCount = selectedIds.size;
@@ -505,6 +510,7 @@ export function ProjectDashboard({
       <main className="kxd-main custom-scrollbar">
         <div className="kxd-main-inner">
           {!bulkOpen && <SyncQueuePanel />}
+          <div className="kxd-grid-frame" data-testid="project-grid-frame">
           <div className="kxd-section-head" data-flip="">
             <h1>Recent projects</h1>
             <div>
@@ -541,6 +547,16 @@ export function ProjectDashboard({
                 </span>
               )}
             </div>
+          </div>
+
+          <div className="kxd-ws-strip" data-flip="">
+            <WorkspaceTabs
+              workspaces={workspaces}
+              value={gridWs}
+              onChange={setGridWs}
+              testIdPrefix="grid-ws"
+              label="Project workspaces"
+            />
           </div>
 
           {/* Project grid — inert for the duration of an in-flight open, so a
@@ -644,10 +660,13 @@ export function ProjectDashboard({
               <p>
                 {search.trim()
                   ? 'No projects match your search.'
-                  : 'No projects yet — create your first one.'}
+                  : gridWs !== 'all'
+                    ? 'No projects in this workspace yet.'
+                    : 'No projects yet — create your first one.'}
               </p>
             </div>
           )}
+          </div>
         </div>
       </main>
       </section>

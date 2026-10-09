@@ -389,12 +389,23 @@
 
 /* Fixed-width cards: the bulk panel opening or closing changes how many fit
    in a row, never their size. */
-.kxd-grid { display: grid; grid-template-columns: repeat(auto-fill, 252px); justify-content: start; gap: 22px; }
+/* Five cards per row, centred in the right panel with equal room either side.
+   Below the default width the columns shrink together (still five a row). */
+.kxd-grid-frame {
+  --kxd-card-w: 196px;
+  --kxd-grid-gap: 16px;
+  width: 100%;
+  max-width: calc(5 * var(--kxd-card-w) + 4 * var(--kxd-grid-gap));
+  margin: 0 auto;
+}
+.kxd-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: var(--kxd-grid-gap); }
+.kxd-ws-strip { margin: 0 0 18px; }
 
 .kxd-card {
+  min-width: 0;
   background: var(--kxd-surface);
   border: 1px solid var(--kxd-line);
-  border-radius: var(--kxd-radius-lg);
+  border-radius: var(--kxd-radius-md);
   overflow: hidden;
   box-shadow: var(--kxd-shadow-card);
   transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
@@ -480,12 +491,12 @@
 }
 .kxd-card.is-current { border-color: rgba(232, 132, 61, 0.45); }
 
-.kxd-card-body { padding: 13px 15px 15px; }
+.kxd-card-body { padding: 10px 12px 12px; }
 .kxd-card-title {
-  font-size: 14.5px; font-weight: 600; margin: 0 0 4px; color: var(--kxd-text);
+  font-size: 13px; font-weight: 600; margin: 0 0 3px; color: var(--kxd-text);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.kxd-card-date { font-size: 12px; color: var(--kxd-text-faint); }
+.kxd-card-date { font-size: 11px; color: var(--kxd-text-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 .kxd-art-empty {
   display: flex; align-items: center; justify-content: center; height: 100%;
@@ -547,6 +558,6 @@
   .kxd-search { order: 3; max-width: none; }
   .kxd-brand-sub { display: none; }
   .kxd-main-inner { padding: 28px 20px 60px; }
-  .kxd-grid { grid-template-columns: repeat(auto-fill, 160px); gap: 14px; }
+  .kxd-grid-frame { --kxd-grid-gap: 10px; }
   .kxd-section-head { flex-wrap: wrap; gap: 10px; }
 }
