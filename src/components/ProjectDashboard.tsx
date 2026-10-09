@@ -9,11 +9,13 @@ import { bulkBatchRunner, queueProjectsForCloudSync } from '../services/bulkSync
 import type { CloudQueueDeps } from '../services/cloudQueueJob';
 import { SyncQueuePanel } from './SyncQueuePanel';
 import { BULK_COPY } from '../services/bulkContext';
-import { batchProgress } from '../services/bulkBatch';
+import { batchProgress, unbuiltBulkRowIds } from '../services/bulkBatch';
 import { killAllMemberCloudJobs } from '../services/cloudSyncEngine';
 import { FailedDot, ProgressRing } from './BulkProgress';
 import { Z } from './overlayLayers';
 import { ProjectCardThumb } from './ProjectCardThumb';
+import { WorkspacesPane, type WorkspaceProject } from './WorkspacesPane';
+import { workspaceRegistry } from './workspaceRegistry';
 import './ProjectDashboard.css';
 
 /**
@@ -238,6 +240,18 @@ export function ProjectDashboard({
   // 1.3.0 — an unbuilt bulk row is a drawer draft with no project record, so
   // it never reaches this grid; Build Timeline creates the record and that is
   // what flips the row onto it.
+  // Workspaces place built projects and bulk records (named); unbuilt drafts
+  // are members too, counted but not listed by name.
+  const workspaceProjects = React.useMemo<WorkspaceProject[]>(() => {
+    const seen = new Set(metas.map(m => m.id));
+    return [
+      ...metas.map(m => ({ id: m.id, name: m.name })),
+      ...batchRows.filter(r => !seen.has(r.id)).map(r => ({ id: r.id, name: r.name })),
+    ];
+  }, [metas, batchRows]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const draftIds = React.useMemo(() => new Set(unbuiltBulkRowIds()), [metas, batchRows]);
+
   const filtered = metas.filter(m => m.name.toLowerCase().includes(search.trim().toLowerCase()));
   const visibleIds = filtered.map(m => m.id);
   const allVisibleSelected = visibleIds.length > 0 && visibleIds.every(id => selectedIds.has(id));
@@ -269,6 +283,7 @@ export function ProjectDashboard({
     setMetas(prev => prev.filter(m => !ids.includes(m.id)));
     setSelectedIds(new Set());
     bulkBatchRunner(parseProjectData).forget(ids);
+    workspaceRegistry().forget(ids);
     onProjectsDeleted?.(ids);
     void (async () => {
       const cleanupFailures: string[] = [];
@@ -330,7 +345,11 @@ export function ProjectDashboard({
             className="kxd-left-pane"
             hidden={leftTab !== t.id}
           >
-            <p className="kxd-pane-placeholder">{t.label}</p>
+            {t.id === 'workspaces' ? (
+              <WorkspacesPane projects={workspaceProjects} draftIds={draftIds} />
+            ) : (
+              <p className="kxd-pane-placeholder">{t.label}</p>
+            )}
           </div>
         ))}
       </aside>
