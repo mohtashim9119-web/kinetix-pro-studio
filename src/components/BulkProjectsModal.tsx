@@ -105,6 +105,9 @@ const MSG_ARROW = 'w-5 h-6 flex items-center justify-center rounded text-[var(--
 const FIELD = 'bg-[var(--kx-surface)] border border-[var(--kx-line-2)] rounded-lg font-semibold text-[var(--kx-text)] placeholder:text-[var(--kx-faint)] placeholder:font-normal outline-none focus:border-[var(--kx-accent-line)] transition-colors disabled:cursor-not-allowed disabled:opacity-70';
 const FIELD_IN_CARD = FIELD.replace('bg-[var(--kx-surface)]', 'bg-[var(--kx-bg)]');
 const ROW_BTN = 'flex-shrink-0 flex items-center gap-1.5 h-9 px-3 rounded-lg border border-[var(--kx-line-2)] bg-[var(--kx-surface-2)] text-[12px] font-semibold text-[var(--kx-text)] hover:bg-[var(--kx-hover)] hover:border-[rgba(255,255,255,.22)] transition-colors disabled:bg-transparent disabled:text-[var(--kx-faint)] disabled:cursor-not-allowed disabled:hover:border-[var(--kx-line-2)]';
+// Row 1's controls share one height — the name field's — and Open / Upload one width.
+const ROW_CTRL = 'h-9 min-h-0 py-0 box-border';
+const ROW_PAIR = 'w-[96px] justify-center';
 // The row's primary action (Upload): the dashboard orange, faded when disabled (like Build Timeline).
 const ROW_BTN_ACCENT = 'flex-shrink-0 flex items-center gap-1.5 h-9 px-3 rounded-lg border border-transparent bg-[var(--kx-accent)] text-[12px] font-semibold text-[#1a0f06] hover:bg-[var(--kx-accent-hover)] transition-colors disabled:opacity-55 disabled:cursor-not-allowed disabled:hover:bg-[var(--kx-accent)]';
 const ROW_BTN_SM = 'flex-shrink-0 h-7 px-2.5 rounded-md border border-[var(--kx-line-2)] bg-[var(--kx-surface-2)] text-[11px] font-semibold text-[var(--kx-text)] hover:bg-[var(--kx-hover)] hover:border-[rgba(255,255,255,.22)] transition-colors';
@@ -250,7 +253,7 @@ function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFi
           disabled={locked}
           onChange={e => onName(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); }}
-          className={`${FIELD_IN_CARD} h-9 min-w-0 flex-1 px-3 text-[13px]`}
+          className={`${FIELD_IN_CARD} ${ROW_CTRL} min-w-0 flex-1 px-3 text-[13px]`}
         />
         <button
           type="button"
@@ -258,7 +261,7 @@ function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFi
           disabled={!openable}
           title={openable ? undefined : BULK_COPY.openWhenReady}
           onClick={phase === 'cloud-done' ? onFinish : onOpen}
-          className={`${ROW_BTN} ${openable
+          className={`${ROW_BTN} ${ROW_CTRL} ${ROW_PAIR} ${openable
             ? 'border-[var(--kx-accent-line)] text-[var(--kx-accent-2)] hover:bg-[var(--kx-accent-soft)]'
             : ''}`}
         >
@@ -287,7 +290,7 @@ function BulkRow({ row, item, skippedReason, record, onName, onFiles, onRemoveFi
             title={BULK_COPY.upload}
             disabled={locked || running}
             onClick={() => setMenuOpen(o => !o)}
-            className={ROW_BTN_ACCENT}
+            className={`${ROW_BTN_ACCENT} ${ROW_CTRL} ${ROW_PAIR}`}
           >
             <Upload size={13} />
             {BULK_COPY.upload}
