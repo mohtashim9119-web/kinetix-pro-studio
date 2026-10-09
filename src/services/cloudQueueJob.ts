@@ -192,7 +192,14 @@ export function createCloudProjectJob(
     loading ??= (async (): Promise<Loaded | string> => {
       const stored = await deps.loadProject(meta.id);
       if (!stored) return 'the project could not be opened';
-      const staged = deps.loadStaged ? await deps.loadStaged(meta.id).catch(() => null) : null;
+      // A read that FAILED is a reason, never a silent fall-back to the
+      // project's stored text (that would sync the wrong script).
+      let staged: StagedFiles | null = null;
+      try {
+        staged = deps.loadStaged ? await deps.loadStaged(meta.id) : null;
+      } catch (err) {
+        return `the staged files could not be read (${err instanceof Error ? err.message : String(err)})`;
+      }
       const why = queueIneligibleReason(stored.project, staged);
       if (why) return why;
       // Staged text wins over persisted text, as it does at Apply Sync.
@@ -264,7 +271,7 @@ export function createCloudProjectJob(
 
     let cloudJobId: string | undefined;
 
-    const pause = (record: Omit<FaPauseRecord, 'projectId' | 'syncRunId' | 'timestamp' | 'host' | 'audioHash'>): QueueJobOutcome => {
+    const pause = async (record: Omit<FaPauseRecord, 'projectId' | 'syncRunId' | 'timestamp' | 'host' | 'audioHash'>): Promise<QueueJobOutcome> => {
       const syncRunId = mintSyncLogId();
       const timestamp = Date.now();
       saveFaPause({
@@ -300,8 +307,17 @@ export function createCloudProjectJob(
           aborted: true, abortReason: 'fa-paused',
         },
       );
-      void (deps.saveProject ?? saveProject)(next).catch(() => undefined);
-      return { status: 'paused', reason: record.reason, detail: record.detail };
+      // The pause itself stands either way; a sync-log write that failed is
+      // said on the row, not dropped.
+      let logNote = '';
+      try {
+        const saved = await (deps.saveProject ?? saveProject)(next);
+        if (!saved.ok) logNote = ' (the sync log entry could not be saved)';
+      } catch (err) {
+        logNote = ` (the sync log entry could not be saved: ${err instanceof Error ? err.message : String(err)})`;
+      }
+      if (logNote) console.error(`[kinetix] bulk pause for ${project.id}:${logNote}`);
+      return { status: 'paused', reason: record.reason, detail: logNote ? `${record.detail ?? record.reason}${logNote}` : record.detail };
     };
 
     ctx.setPhase(PHASE_TEXT.checking);

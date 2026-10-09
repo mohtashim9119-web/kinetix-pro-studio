@@ -103,7 +103,7 @@ describe('BulkExportRunner', () => {
     runner.setSelectedAll(true);
     await runner.startSelected();
     await vi.waitFor(() => expect(runner.snapshot().find(r => r.id === 'ok')?.phase).toBe('done'));
-    expect(runner.snapshot().find(r => r.id === 'bad')).toMatchObject({ phase: 'failed', message: 'Failed — Retry' });
+    expect(runner.snapshot().find(r => r.id === 'bad')).toMatchObject({ phase: 'failed', message: 'Failed — Retry — boom' });
     expect(order).toEqual(['bad', 'ok']);
   });
 

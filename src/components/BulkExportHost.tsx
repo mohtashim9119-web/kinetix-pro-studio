@@ -51,18 +51,27 @@ function BulkExportSlot({
   const finished = useRef(false);
 
   useEffect(() => {
-    const payload = buildExportSpotPayload(input.project, { projectDefault: input.project.spotDefaultGeometry });
-    startExport({
-      savedPath: input.savedPath,
-      silent: true,
-      spotRenderSpecs: payload.request?.spotRenderSpecs,
-    });
+    // A kickoff that throws must still settle the job (a hang stalls the
+    // whole serial queue with no visible row state).
+    try {
+      const payload = buildExportSpotPayload(input.project, { projectDefault: input.project.spotDefaultGeometry });
+      startExport({
+        savedPath: input.savedPath,
+        silent: true,
+        spotRenderSpecs: payload.request?.spotRenderSpecs,
+      });
+    } catch (err) {
+      finished.current = true;
+      onDone({ status: 'failed', detail: err instanceof Error ? err.message : String(err) });
+    }
     // One kickoff per mounted slot.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Bulk export shows no resume dialog, so an offer is always answered here:
+  // resume on a Retry that found a checkpoint, otherwise a clean start.
   useEffect(() => {
-    if (state.pendingResumeOffer && input.resume) resolveResumeChoice('resume');
+    if (state.pendingResumeOffer) resolveResumeChoice(input.resume ? 'resume' : 'clean');
   }, [state.pendingResumeOffer, input.resume, resolveResumeChoice]);
 
   useEffect(() => {

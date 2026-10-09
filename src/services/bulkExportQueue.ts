@@ -36,6 +36,13 @@ export interface BulkExportExecutorInput {
 
 export type BulkExportExecutor = (input: BulkExportExecutorInput) => Promise<QueueJobOutcome>;
 
+export const BULK_EXPORT_NO_CHECKPOINT_CHECK = 'Could not check for a saved checkpoint — exporting from the start';
+
+const errorText = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+
+/** A load that THREW (as opposed to "not found") — a visible block with the reason. */
+const loadFailed = (err: unknown): { blocked: string } => ({ blocked: `Blocked — could not open the project: ${errorText(err)}` });
+
 const idleEngine = {
   workerSec: () => 0,
   usdPerSec: 0,
@@ -186,7 +193,7 @@ export class BulkExportRunner {
         row.message = waitingMessageFor(syncing);
         continue;
       }
-      const verdict = await this.evaluate(meta);
+      const verdict = await this.evaluate(meta).catch(loadFailed);
       if ('blocked' in verdict) {
         row.phase = 'blocked';
         row.message = verdict.blocked;
@@ -202,22 +209,38 @@ export class BulkExportRunner {
     if (jobs.length > 0) this.queue.enqueue(jobs);
   }
 
+  /** Same fresh checks as Start (guard, path, media); every outcome lands on
+   *  the row — a missing project or a throwing load is a visible block. */
   async retry(id: string): Promise<void> {
-    const project = await this.deps.loadProject(id);
-    if (!project) return;
-    const settings = settingsFromProject(project, new Date(), this.freshMeta(id).lastExportPath);
-    if ('blocked' in settings) {
-      this.ensureRow(id).phase = 'blocked';
-      this.ensureRow(id).message = settings.blocked;
+    const row = this.ensureRow(id);
+    const syncing = pipelineConflict(id, 'export');
+    if (syncing) {
+      row.phase = 'waiting';
+      row.message = waitingMessageFor(syncing);
       this.commit();
       return;
     }
-    const resume = (await this.deps.hasCheckpoint?.(project)) === true;
-    const row = this.ensureRow(id);
+    const verdict = await this.evaluate(this.freshMeta(id)).catch(loadFailed);
+    if ('blocked' in verdict) {
+      row.phase = 'blocked';
+      row.message = verdict.blocked;
+      if (verdict.flags) row.flags = verdict.flags;
+      this.commit();
+      return;
+    }
+    let resume = false;
+    const flags = [...verdict.flags];
+    try {
+      resume = (await this.deps.hasCheckpoint?.(verdict.project)) === true;
+    } catch (err) {
+      console.warn('[bulk-export] checkpoint check failed; exporting from the start:', err);
+      flags.push(BULK_EXPORT_NO_CHECKPOINT_CHECK);
+    }
+    row.flags = flags;
     row.phase = 'queued';
     row.message = 'Queued';
     this.commit();
-    this.queue.enqueue([this.jobFor(project, settings.savedPath, resume)]);
+    this.queue.enqueue([this.jobFor(verdict.project, verdict.savedPath, resume)]);
   }
 
   private jobFor(project: Project, savedPath: string, resume: boolean): QueueJob {
@@ -256,7 +279,7 @@ export class BulkExportRunner {
       if (item.status === 'queued') { row.phase = 'queued'; row.message = 'Queued'; }
       else if (item.status === 'running') { row.phase = 'exporting'; row.message = item.phase || 'Exporting'; }
       else if (item.status === 'done') { row.phase = 'done'; row.message = 'Done'; }
-      else if (item.status === 'failed') { row.phase = 'failed'; row.message = 'Failed — Retry'; }
+      else if (item.status === 'failed') { row.phase = 'failed'; row.message = item.detail ? `Failed — Retry — ${item.detail}` : 'Failed — Retry'; }
       else if (item.status === 'paused' && item.reason === PIPELINE_BUSY_REASON) { row.phase = 'waiting'; row.message = item.detail; }
       else if (item.status === 'paused') { row.phase = 'paused'; row.message = 'Paused — Retry'; }
     }

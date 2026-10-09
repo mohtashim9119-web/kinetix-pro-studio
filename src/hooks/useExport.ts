@@ -1103,8 +1103,20 @@ export function useExport(
       setState(prev => ({ ...IDLE_STATE, error: { kind: 'project_busy', message: EXPORT_BLOCKED_BY_SYNC }, elapsedSec: prev.elapsedSec }));
       return;
     }
-    void runExport(snapshot).finally(release);
-  }, [runExport]);
+    // A rejection the pipeline did not turn into state is still an error the
+    // user sees (and that ends a bulk row) — never an unhandled rejection.
+    void runExport(snapshot)
+      .catch((err: unknown) => {
+        console.error('[export] run failed outside the pipeline\'s own handling:', err);
+        stopElapsedTimer();
+        setState(prev => ({
+          ...prev,
+          isExporting: false,
+          error: { kind: 'unknown', message: 'The export stopped unexpectedly.', cause: err instanceof Error ? err.message : String(err) },
+        }));
+      })
+      .finally(release);
+  }, [runExport, stopElapsedTimer]);
 
   const startExport = useCallback((request?: ExportStartRequest): void => {
     if (!isTauri()) {
@@ -1117,51 +1129,61 @@ export function useExport(
       return;
     }
     void (async () => {
-      // Step 1: prompt for destination BEFORE any rendering work begins.
-      // If the user cancels nothing is wasted. Bulk export passes savedPath
-      // from the project's last export directory and skips the picker.
-      let savedPath = request?.savedPath ?? null;
-      if (!savedPath) {
-        const ts = new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-');
-        const defaultName = `${project.name.replace(/\s+/g, '_')}_${ts}.mp4`;
-        const defaultDir = project.lastExportPath
-          ? parentDir(project.lastExportPath)
-          : null;
-        savedPath = await invoke<string | null>('pick_save_path', {
-          defaultName,
-          defaultDir,
-        });
-      }
-      if (!savedPath) return; // user cancelled — nothing rendered, nothing wasted
+      try {
+        // Step 1: prompt for destination BEFORE any rendering work begins.
+        // If the user cancels nothing is wasted. Bulk export passes savedPath
+        // from the project's last export directory and skips the picker.
+        let savedPath = request?.savedPath ?? null;
+        if (!savedPath) {
+          const ts = new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-');
+          const defaultName = `${project.name.replace(/\s+/g, '_')}_${ts}.mp4`;
+          const defaultDir = project.lastExportPath
+            ? parentDir(project.lastExportPath)
+            : null;
+          savedPath = await invoke<string | null>('pick_save_path', {
+            defaultName,
+            defaultDir,
+          });
+        }
+        if (!savedPath) return; // user cancelled — nothing rendered, nothing wasted
 
-      // WS3 STEP 10 (H9) — reject an impossible destination HERE, at second
-      // zero, rather than after a 30+ minute render finds out the delivery
-      // copy cannot land. Windows-only (see exportDestinationPath.ts) — a
-      // macOS/Linux savedPath is never rejected by this check.
-      const pathIssue = checkExportDestinationPathLength(savedPath);
-      if (pathIssue) {
+        // WS3 STEP 10 (H9) — reject an impossible destination HERE, at second
+        // zero, rather than after a 30+ minute render finds out the delivery
+        // copy cannot land. Windows-only (see exportDestinationPath.ts) — a
+        // macOS/Linux savedPath is never rejected by this check.
+        const pathIssue = checkExportDestinationPathLength(savedPath);
+        if (pathIssue) {
+          setState(prev => ({
+            ...IDLE_STATE,
+            error: { kind: 'destination_path', message: pathIssue },
+            elapsedSec: prev.elapsedSec,
+          }));
+          return;
+        }
+
+        // Step 2: remember path immediately so retryExport and the toast can use it.
+        onSavePath(savedPath);
+
+        // Step 3: render and write.
+        const snapshot: ExportSnapshot = {
+          project,
+          resolution: exportResolution,
+          fps: exportFps,
+          savedPath,
+          spotRenderSpecs: request?.spotRenderSpecs,
+          silent: request?.silent === true,
+        };
+        lastSnapshotRef.current = snapshot;
+        runClaimed(snapshot);
+      } catch (err) {
+        // The save picker (or anything before the run) failed: say so.
+        console.error('[export] could not start:', err);
         setState(prev => ({
           ...IDLE_STATE,
-          error: { kind: 'destination_path', message: pathIssue },
+          error: { kind: 'unknown', message: 'The export could not start.', cause: err instanceof Error ? err.message : String(err) },
           elapsedSec: prev.elapsedSec,
         }));
-        return;
       }
-
-      // Step 2: remember path immediately so retryExport and the toast can use it.
-      onSavePath(savedPath);
-
-      // Step 3: render and write.
-      const snapshot: ExportSnapshot = {
-        project,
-        resolution: exportResolution,
-        fps: exportFps,
-        savedPath,
-        spotRenderSpecs: request?.spotRenderSpecs,
-        silent: request?.silent === true,
-      };
-      lastSnapshotRef.current = snapshot;
-      runClaimed(snapshot);
     })();
   }, [project, exportResolution, exportFps, runExport, onSavePath, runClaimed]);
 
