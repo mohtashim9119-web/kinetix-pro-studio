@@ -437,6 +437,7 @@ import { BulkExportModal, BulkExportRunningNotice } from './components/BulkExpor
 import { BulkExportHost } from './components/BulkExportHost';
 import { bulkBatchRunner } from './services/bulkSyncQueue';
 import { BulkExportRunner } from './services/bulkExportQueue';
+import { withStorageAvailability } from './services/bulkExportMedia';
 import { claimPipeline, SYNC_BLOCKED_BY_EXPORT } from './services/pipelineGuard';
 import { cloudCostLine } from './services/cloudQueueJob';
 import { NewProjectModal, type NewProjectChoices } from './components/NewProjectModal';
@@ -2202,7 +2203,12 @@ export default function App() {
   const bulkExportVisible = leftPanelShown && dashboardLeftTab === 'bulk-export';
   const bulkExport = useMemo(() => new BulkExportRunner({
     listProjects: () => loadAllMetas().map(m => ({ id: m.id, name: m.name, lastExportPath: m.lastExportPath })),
-    loadProject: async (id) => (await loadProject(id))?.project ?? null,
+    // A stored record has no media URLs: availability comes from storage, so
+    // "url ''" no longer reads as offline (Start, Retry, pane-open checks).
+    loadProject: async (id) => {
+      const stored = (await loadProject(id))?.project;
+      return stored ? withStorageAvailability(stored) : null;
+    },
     execute: async () => ({ status: 'failed', detail: 'export host not mounted' }),
     hasCheckpoint: async (p) => {
       if (!isTauri()) return false;

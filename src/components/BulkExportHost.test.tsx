@@ -31,11 +31,14 @@ import { BulkExportRunner, type BulkExportExecutorInput } from '../services/bulk
 import type { QueueJobOutcome } from '../services/syncQueue';
 import type { Project } from '../types';
 
+/** The executor loads media (async) before the slot mounts. */
+const settle = (): Promise<void> => act(async () => { for (let i = 0; i < 5; i++) await Promise.resolve(); });
+
 function mountHost(): (input: Partial<BulkExportExecutorInput>) => Promise<QueueJobOutcome> {
   let executor!: (input: BulkExportExecutorInput) => Promise<QueueJobOutcome>;
   const runner = { setExecutor: (fn: typeof executor) => { executor = fn; } } as unknown as BulkExportRunner;
   const root = createRoot(document.createElement('div'));
-  act(() => root.render(<BulkExportHost runner={runner} />));
+  act(() => root.render(<BulkExportHost runner={runner} loadMedia={async p => ({ project: p, revoke: () => {} })} />));
   return input => {
     let p!: Promise<QueueJobOutcome>;
     act(() => {
@@ -61,17 +64,76 @@ describe('BulkExportHost always settles', () => {
     await expect(run({})).resolves.toEqual({ status: 'failed', detail: 'Export is only available in the desktop app.' });
   });
 
-  it('a resume offer on a fresh Start is answered "clean", not left hanging', () => {
+  it('a resume offer on a fresh Start is answered "clean", not left hanging', async () => {
     hook.state = { ...hook.state, pendingResumeOffer: { sessionId: 's' }, isExporting: true };
     const run = mountHost();
     void run({ resume: false });
+    await settle();
     expect(hook.resolveResumeChoice).toHaveBeenCalledWith('clean');
   });
 
-  it('a resume offer on Retry-with-checkpoint is answered "resume"', () => {
+  it('a resume offer on Retry-with-checkpoint is answered "resume"', async () => {
     hook.state = { ...hook.state, pendingResumeOffer: { sessionId: 's' }, isExporting: true };
     const run = mountHost();
     void run({ resume: true });
+    await settle();
     expect(hook.resolveResumeChoice).toHaveBeenCalledWith('resume');
+  });
+});
+
+describe('BulkExportHost loads real media around each export', () => {
+  function mountWith(loadMedia: (p: Project) => Promise<{ project: Project; revoke: () => void }>): (input?: Partial<BulkExportExecutorInput>) => Promise<QueueJobOutcome> {
+    let executor!: (input: BulkExportExecutorInput) => Promise<QueueJobOutcome>;
+    const runner = { setExecutor: (fn: typeof executor) => { executor = fn; } } as unknown as BulkExportRunner;
+    const root = createRoot(document.createElement('div'));
+    act(() => root.render(<BulkExportHost runner={runner} loadMedia={loadMedia} />));
+    return input => {
+      let p!: Promise<QueueJobOutcome>;
+      act(() => {
+        p = executor({
+          project: { id: 'P', name: 'P' } as Project, savedPath: '/o/P.mp4', resolution: '1080p', fps: 30,
+          resume: false, signal: new AbortController().signal, setPhase: () => {}, ...input,
+        });
+      });
+      return p;
+    };
+  }
+  const media = (revoke: () => void) => async (p: Project) => ({ project: { ...p, name: 'LOADED' } as Project, revoke });
+
+  it('exports the media-loaded project and revokes after success', async () => {
+    const revoke = vi.fn();
+    hook.state = { ...hook.state, showExportSuccess: true };
+    const run = mountWith(media(revoke));
+    await expect(run()).resolves.toEqual({ status: 'done' });
+    expect(revoke).toHaveBeenCalledTimes(1);
+  });
+
+  it('revokes after a failed export', async () => {
+    const revoke = vi.fn();
+    hook.startExport.mockImplementation(() => { throw new Error('boom'); });
+    const run = mountWith(media(revoke));
+    await expect(run()).resolves.toEqual({ status: 'failed', detail: 'boom' });
+    expect(revoke).toHaveBeenCalledTimes(1);
+  });
+
+  it('revokes when the export is aborted', async () => {
+    const revoke = vi.fn();
+    hook.startExport.mockImplementation(() => {});
+    const ac = new AbortController();
+    const run = mountWith(media(revoke));
+    const p = run({ signal: ac.signal });
+    await settle();
+    act(() => ac.abort());
+    await p;
+    expect(revoke).toHaveBeenCalledTimes(1);
+  });
+
+  it('a media load failure parks the row with the reason and never starts the export', async () => {
+    hook.startExport.mockReset();
+    const run = mountWith(async () => { throw new Error('media could not be loaded from storage for 2 scenes'); });
+    await expect(run()).resolves.toEqual({
+      status: 'failed', detail: "could not load the project's media — media could not be loaded from storage for 2 scenes",
+    });
+    expect(hook.startExport).not.toHaveBeenCalled();
   });
 });

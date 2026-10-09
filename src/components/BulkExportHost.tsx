@@ -9,17 +9,43 @@ import type { BulkExportExecutorInput, BulkExportRunner } from '../services/bulk
 import { buildExportSpotPayload } from '../services/spots/exportSpecs';
 import { DEFAULT_RESOLUTION_TIER } from '../services/resolutionConfig';
 import type { QueueJobOutcome } from '../services/syncQueue';
+import { loadProjectMedia, type LoadedProjectMedia } from '../services/bulkExportMedia';
+import type { Project } from '../types';
 
-export function BulkExportHost({ runner }: { runner: BulkExportRunner }): React.ReactElement {
+const errorText = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+
+export function BulkExportHost({
+  runner, loadMedia = loadProjectMedia,
+}: {
+  runner: BulkExportRunner;
+  /** Loads a project's real media for one export (default: storage → blob URLs). */
+  loadMedia?: (project: Project) => Promise<LoadedProjectMedia>;
+}): React.ReactElement {
   const [job, setJob] = useState<BulkExportExecutorInput | null>(null);
   const resolveRef = useRef<((o: QueueJobOutcome) => void) | null>(null);
 
   useEffect(() => {
-    runner.setExecutor(async (input) => new Promise((resolve) => {
-      resolveRef.current = resolve;
-      setJob(input);
-    }));
-  }, [runner]);
+    runner.setExecutor(async (input) => {
+      // The stored record has no media URLs: load the real media first, the
+      // way opening the project does. A load failure parks the row with the
+      // reason; the queue advances. The URLs are freed on every exit.
+      let media: LoadedProjectMedia;
+      try {
+        media = await loadMedia(input.project);
+      } catch (err) {
+        return { status: 'failed', detail: `could not load the project's media — ${errorText(err)}` };
+      }
+      try {
+        if (input.signal.aborted) return { status: 'failed', detail: 'cancelled' };
+        return await new Promise<QueueJobOutcome>((resolve) => {
+          resolveRef.current = resolve;
+          setJob({ ...input, project: media.project });
+        });
+      } finally {
+        media.revoke();
+      }
+    });
+  }, [runner, loadMedia]);
 
   if (!job) return <></>;
   return (
