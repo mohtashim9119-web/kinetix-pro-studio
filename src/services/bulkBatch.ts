@@ -129,9 +129,6 @@ export function unbuiltBulkRowIds(storage: Pick<Storage, 'getItem'> | undefined 
 // Bulk UI rebuild U1 — GROUPS. A group is what one "Create Group" made: a
 // name, a collapse toggle and its rows (draft ids and built records alike).
 export const BULK_GROUP_MIN_ROWS = 2;
-export const BULK_GROUP_MAX_ROWS = 30;
-/** Groups that may exist at a time (operator ruling, 1.3.1). */
-export const BULK_MAX_GROUPS = 5;
 
 export interface BulkGroup {
   id: string;
@@ -251,12 +248,9 @@ export class BulkBatchRunner {
     return `Group ${n}`;
   }
 
-  canCreateGroup(): boolean { return this.groupList.length < BULK_MAX_GROUPS; }
-
-  /** A new group over these (draft) row ids: 2–30 rows, at most 10 groups. */
+  /** A new batch over these (draft) row ids: at least 2, no upper limit. */
   createGroup(rowIds: readonly string[], name?: string): BulkGroup | undefined {
-    if (!this.canCreateGroup()) return undefined;
-    if (rowIds.length < BULK_GROUP_MIN_ROWS || rowIds.length > BULK_GROUP_MAX_ROWS) return undefined;
+    if (rowIds.length < BULK_GROUP_MIN_ROWS) return undefined;
     const group: BulkGroup = { id: crypto.randomUUID(), name: name?.trim() || this.nextGroupName(), collapsed: false, rowIds: [...rowIds] };
     this.groupList.push(group);
     this.commit();
@@ -264,8 +258,7 @@ export class BulkBatchRunner {
   }
 
   /** Rows outside any group (drafts saved before groups, or a seed) get one,
-   *  so every row has its group's Build Timeline. Bypasses the create limits:
-   *  these rows already exist. */
+   *  so every row has its group's Build Timeline. These rows already exist. */
   adoptRows(rowIds: readonly string[]): BulkGroup | undefined {
     const grouped = new Set(this.groupList.flatMap(g => g.rowIds));
     const loose = rowIds.filter(id => !grouped.has(id));
@@ -276,10 +269,10 @@ export class BulkBatchRunner {
     return { ...group, rowIds: [...group.rowIds] };
   }
 
-  /** One more row in a group, up to 30. */
+  /** One more row in a batch. */
   addRowToGroup(groupId: string, rowId: string): boolean {
     const group = this.groupList.find(g => g.id === groupId);
-    if (!group || group.rowIds.length >= BULK_GROUP_MAX_ROWS) return false;
+    if (!group) return false;
     if (!group.rowIds.includes(rowId)) group.rowIds.push(rowId);
     this.commit();
     return true;

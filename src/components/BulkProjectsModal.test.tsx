@@ -189,15 +189,26 @@ describe('BulkProjectsModal — draft rows', () => {
     expect((await chip()).getAttribute('data-filled')).toBe('true');
   });
 
-  it('Add project appends a row to the newest batch with room, and stops at 30', async () => {
+  it('Add project always appends to the newest batch — no 30-row ceiling, never disabled by size', async () => {
     const h = store();
     const runner = makeRunner();
-    runner.createGroup(h.store.createDrafts(29));
+    runner.createGroup(h.store.createDrafts(30));
     const { host } = await mount(modal(h, 0, { runner }));
     await act(async () => { (q(host, 'bulk-add') as HTMLButtonElement).click(); });
-    expect(rowIds(host)).toHaveLength(30);
-    expect(runner.groups()[0]!.rowIds).toHaveLength(30);
-    expect((q(host, 'bulk-add') as HTMLButtonElement).disabled).toBe(true);
+    await act(async () => { (q(host, 'bulk-add') as HTMLButtonElement).click(); });
+    expect(rowIds(host)).toHaveLength(32);
+    expect(runner.groups()).toHaveLength(1);
+    expect(runner.groups()[0]!.rowIds).toHaveLength(32);
+    expect((q(host, 'bulk-add') as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('Add project with no batch yet starts one', async () => {
+    const h = store();
+    const runner = makeRunner();
+    const { host } = await mount(modal(h, 0, { runner }));
+    await act(async () => { (q(host, 'bulk-add') as HTMLButtonElement).click(); });
+    expect(runner.groups()).toHaveLength(1);
+    expect(runner.groups()[0]!.rowIds).toHaveLength(1);
   });
 
   it('wrong files can be removed one by one, or all at once (Clear files), and a whole row can be removed', async () => {
@@ -349,13 +360,15 @@ describe('BulkProjectsModal — draft rows', () => {
     expect(runner.groups()[0]!.rowIds).toHaveLength(5);
   });
 
-  it('at most 5 unfinished batches at a time (runner rule): at 5, "Create" is off and says why', async () => {
+  it('no batch cap: with 5+ unfinished batches "Create" still works and nothing says "Limit reached"', async () => {
     const h = store();
     const runner = makeRunner();
-    for (let g = 0; g < 5; g += 1) runner.createGroup([`g${g}a`, `g${g}b`]);
+    for (let g = 0; g < 6; g += 1) runner.createGroup([`g${g}a`, `g${g}b`]);
     const { host } = await mount(modal(h, 0, { runner }));
-    expect((q(host, 'bulk-create') as HTMLButtonElement).disabled).toBe(true);
-    expect(host.textContent).toContain('Up to 5 unfinished batches');
+    await setValue(q(host, 'bulk-create-count') as HTMLInputElement, '2');
+    expect((q(host, 'bulk-create') as HTMLButtonElement).disabled).toBe(false);
+    expect(host.textContent).not.toContain('Limit reached');
+    expect(host.textContent).not.toContain('Up to 5');
   });
 
   it('the group UI is gone: no group header, rename, collapse, per-group Build / Cancel / Clear', async () => {

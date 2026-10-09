@@ -31,7 +31,7 @@ import { BulkRowStore, defaultBulkRowDeps, type BulkRowState } from '../services
 import type { Project } from '../types';
 import { bulkBatchRunner, cloudSyncQueue } from '../services/bulkSyncQueue';
 import {
-  BULK_GROUP_MAX_ROWS, BULK_MAX_GROUPS, READY_TO_FINISH, isBatchRowFinal, type BatchRow, type BulkBatchRunner,
+  READY_TO_FINISH, isBatchRowFinal, type BatchRow, type BulkBatchRunner,
 } from '../services/bulkBatch';
 import { cloudCostLine, type CloudQueueDeps } from '../services/cloudQueueJob';
 import { collectDroppedFiles } from '../services/droppedFiles';
@@ -115,10 +115,8 @@ const ROW_BTN_SM = 'flex-shrink-0 h-7 px-2.5 rounded-md border border-[var(--kx-
 const PANE_COPY = {
   countPlaceholder: 'How many new projects? Enter 2–30',
   create: 'Add Projects',
-  batchesFull: (_max: number): string => 'Limit reached — clear Ready rows (or finish some) to add more projects.',
   empty: 'No projects yet. Add some above.',
   emptyWorkspace: 'No bulk projects in this workspace yet.',
-  addFull: `This set is full (${BULK_GROUP_MAX_ROWS}) — use Add Projects above.`,
 };
 const CHIP = 'flex-shrink-0 flex items-center gap-1 whitespace-nowrap text-[11px] font-semibold px-1.5 py-0.5 rounded-[6px]';
 
@@ -637,7 +635,7 @@ export function BulkProjectsModal({
     let live = true;
     void defaultBulkRowDeps(createBlankProject).then(deps => {
       if (!live) return;
-      const created = new BulkRowStore(deps, BULK_MAX_GROUPS * BULK_GROUP_MAX_ROWS);
+      const created = new BulkRowStore(deps);
       void created.hydrate();
       setStore(created);
     });
@@ -667,20 +665,23 @@ export function BulkProjectsModal({
   const seenComplete = useRef<Set<string> | null>(null);
   const count = parseBulkCount(countRaw, BULK_MAX_PROJECTS, BULK_MIN_PROJECTS);
   const createRows = (): void => {
-    if (!store || count === null || !runner.canCreateGroup()) return;
+    if (!store || count === null) return;
     const ids = store.createDrafts(count);
     if (!runner.createGroup(ids)) { void Promise.all(ids.map(id => store.discardRow(id))); return; }
     // Created under a workspace tab: the new rows belong to that workspace.
     if (wsFilter !== 'all') wsRegistry.assign(ids, wsFilter);
     setCountRaw('');
   };
-  // One more row, into the newest batch with room (a batch holds up to 30).
-  const addTarget = [...groups].reverse().find(g => g.rowIds.length < BULK_GROUP_MAX_ROWS);
+  // One more row, always into the newest batch (the first row starts one).
+  const addTarget = groups[groups.length - 1];
   const addRow = (): void => {
-    if (!addTarget) return;
     const id = store?.addRow();
     if (!id) return;
-    if (!runner.addRowToGroup(addTarget.id, id)) { void store?.discardRow(id); return; }
+    if (addTarget) {
+      if (!runner.addRowToGroup(addTarget.id, id)) { void store?.discardRow(id); return; }
+    } else {
+      runner.adoptRows([id]);
+    }
     if (wsFilter !== 'all') wsRegistry.assign([id], wsFilter);
   };
   // While this window is open, finished cloud work is turned into real timelines.
@@ -893,10 +894,9 @@ export function BulkProjectsModal({
                 min={BULK_MIN_PROJECTS}
                 max={BULK_MAX_PROJECTS}
                 step={1}
-                aria-label={BULK_COPY.groupCountLabel}
+                aria-label={BULK_COPY.countLabel}
                 placeholder={PANE_COPY.countPlaceholder}
                 value={countRaw}
-                disabled={!runner.canCreateGroup()}
                 onChange={e => setCountRaw(e.target.value)}
                 className={`${FIELD} flex-1 min-w-0 h-10 px-3 text-[13px]`}
               />
@@ -904,15 +904,13 @@ export function BulkProjectsModal({
                 type="submit"
                 data-testid="bulk-create"
                 className={`${BTN_BUILD} flex-none h-10 px-5 py-0 flex items-center gap-1.5`}
-                disabled={!store || count === null || !runner.canCreateGroup()}
+                disabled={!store || count === null}
               >
                 <Plus size={12} strokeWidth={2.6} />
                 {PANE_COPY.create}
               </button>
             </form>
-            {!runner.canCreateGroup() ? (
-              <p className="mt-2 text-[11px] leading-snug text-[var(--kx-faint)]">{PANE_COPY.batchesFull(BULK_MAX_GROUPS)}</p>
-            ) : countRaw.trim() !== '' && count === null ? (
+            {countRaw.trim() !== '' && count === null ? (
               <p className="mt-2 text-[11px] leading-snug text-amber-300">{BULK_COPY.quantityInvalid(BULK_MAX_PROJECTS)}</p>
             ) : null}
           </div>
@@ -1004,8 +1002,7 @@ export function BulkProjectsModal({
             type="button"
             data-testid="bulk-add"
             className={`${BTN_SECONDARY} flex-1 basis-0 h-10 px-5 flex items-center justify-center gap-1.5`}
-            disabled={!store || !addTarget}
-            title={groups.length > 0 && !addTarget ? PANE_COPY.addFull : undefined}
+            disabled={!store}
             onClick={addRow}
           >
             <Plus size={12} />

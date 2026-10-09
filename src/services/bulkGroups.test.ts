@@ -9,7 +9,7 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import {
-  BULK_GROUP_MAX_ROWS, BULK_GROUP_MIN_ROWS, BULK_MAX_GROUPS, BulkBatchRunner, groupProgress, batchProgress,
+  BULK_GROUP_MIN_ROWS, BulkBatchRunner, groupProgress, batchProgress,
 } from './bulkBatch';
 import { SyncQueue, type QueueEngine } from './syncQueue';
 
@@ -23,15 +23,13 @@ const boot = (disk: ReturnType<typeof memory>, exists: (id: string) => boolean =
 const ids = (n: number, p = 'r'): string[] => Array.from({ length: n }, (_, i) => `${p}${i}`);
 
 describe('bulk groups', () => {
-  it('limits: 2–30 rows per group, at most 5 groups at a time', () => {
-    expect([BULK_GROUP_MIN_ROWS, BULK_GROUP_MAX_ROWS, BULK_MAX_GROUPS]).toEqual([2, 30, 5]);
+  it('no caps: a batch needs 2+ rows, but there is no row limit and no batch limit', () => {
+    expect(BULK_GROUP_MIN_ROWS).toBe(2);
     const runner = boot(memory());
     expect(runner.createGroup(ids(1))).toBeUndefined();
-    expect(runner.createGroup(ids(31))).toBeUndefined();
-    for (let g = 0; g < 5; g += 1) expect(runner.createGroup(ids(2, `g${g}-`))).toBeDefined();
-    expect(runner.createGroup(ids(2, 'x'))).toBeUndefined();
-    expect(runner.canCreateGroup()).toBe(false);
-    expect(runner.groups()).toHaveLength(5);
+    expect(runner.createGroup(ids(45, 'big'))).toBeDefined();
+    for (let g = 0; g < 8; g += 1) expect(runner.createGroup(ids(2, `g${g}-`))).toBeDefined();
+    expect(runner.groups()).toHaveLength(9);
   });
 
   it('each group has a name and a collapse toggle; both persist across a restart', () => {
@@ -58,11 +56,12 @@ describe('bulk groups', () => {
     expect(runner.groups()[0]!.collapsed).toBe(false);
   });
 
-  it('adding a row stops at 30; removing a row empties its record AND its group slot; an empty group goes', () => {
+  it('adding a row has no ceiling; removing a row empties its record AND its group slot; an empty group goes', () => {
     const runner = boot(memory());
-    const g = runner.createGroup(ids(29))!;
+    const g = runner.createGroup(ids(30))!;
     expect(runner.addRowToGroup(g.id, 'extra')).toBe(true);
-    expect(runner.addRowToGroup(g.id, 'one-too-many')).toBe(false);
+    expect(runner.addRowToGroup(g.id, 'one-too-many')).toBe(true);
+    expect(runner.groups().find(gr => gr.id === g.id)!.rowIds).toHaveLength(32);
     const small = runner.createGroup(['x', 'y'])!;
     runner.start([{ id: 'x', name: 'X' }]);
     runner.removeRow('x');

@@ -25,7 +25,7 @@ import { FA_PROJECT_DEFAULT_ON, shouldPersistFaChoice } from './faGate';
 import { lookupCloudCache, rememberCloudLookupPeek } from './cloudGateway';
 import { cloudTranscribeLanguage } from './cloudSyncEngine';
 
-/** One "Create Group" makes one group of 2–30 rows (bulkBatch.ts). */
+/** One "Add Projects" entry takes 2–30 new projects at a time. */
 export const BULK_MAX_PROJECTS = 30;
 export const BULK_MIN_PROJECTS = 2;
 
@@ -67,16 +67,10 @@ export const BULK_COPY = {
   addProject: 'Add project',
   clearFinished: 'Clear finished',
   batchButton: (n: number): string => `Bulk builds (${n})`,
-  /** 1.3.1 — a group is created inline: a 2–30 field and one button, no popup. */
-  newGroup: 'New group',
-  groupCountLabel: 'Number of projects',
-  groupCountPlaceholder: '2–30',
-  createGroup: 'Create Group',
-  groupsFull: (max: number): string => `Up to ${max} groups at a time. Clear a finished group to make room.`,
-  renameGroup: (name: string): string => `Rename ${name}`,
-  groupNameLabel: 'Group name',
+  /** Projects are added inline: a 2–30 field and one button, no popup. */
+  countLabel: 'Number of projects',
   footerNote: 'Builds keep running while this panel is hidden.',
-  emptyDrawer: 'No groups yet. Create one above.',
+  emptyDrawer: 'No projects yet. Add some above.',
   removeProject: 'Delete project',
   deleteRowTitle: 'Delete this project?',
   deleteRowBody: (name: string, created: boolean): string =>
@@ -99,7 +93,7 @@ export const BULK_COPY = {
   filesToggle: (n: number): string => `${n} file${n === 1 ? '' : 's'}`,
   skipped: (why: string): string => `Skipped — ${why}`,
   notCloud: 'Bulk build runs on the Cloud engine (App Settings → Sync Engine).',
-  /** Bulk UI rebuild — group headers and the dashboard signal. */
+  /** Progress counts and the dashboard signal. */
   doneCount: (done: number, total: number): string => `${done}/${total} done`,
   ringLabel: (done: number, total: number): string => `${done} of ${total} done`,
   failedCount: (n: number): string => `${n} failed`,
@@ -108,8 +102,6 @@ export const BULK_COPY = {
   /** The project's sync log entry for its bulk cloud work. */
   billingLog: (cost: string): string => `Cloud billing (bulk build): ${cost}.`,
   rebuild: 'Rebuild',
-  collapseGroup: (name: string): string => `Collapse ${name}`,
-  expandGroup: (name: string): string => `Expand ${name}`,
 } as const;
 
 /** Why a row cannot be built yet (name + the three spine slots), or undefined. */
