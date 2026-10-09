@@ -58,7 +58,8 @@ import { mintSyncLogId, appendSyncLogEntries, buildFaPausedEntry } from './syncL
 import { BUILD_TIMELINE_COPY, missingSpineSlots, type BuildTimelineSlots } from './buildTimelineGate';
 import { stagesToRun, type BulkCheckpoint } from './bulkBatch';
 import { lookupBatchTranscriptTyped } from './bulkFinish';
-import { CLOUD_USD_PER_WORKER_SEC, formatUsd, type QueueEngine, type QueueJob, type QueueJobOutcome } from './syncQueue';
+import { CLOUD_USD_PER_WORKER_SEC, formatUsd, type QueueEngine, type QueueJob, type QueueJobOutcome, type QueueRunContext } from './syncQueue';
+import { runGuarded } from './pipelineGuard';
 
 export { CLOUD_USD_PER_WORKER_SEC };
 
@@ -224,163 +225,167 @@ export function createCloudProjectJob(
     id: meta.id,
     label: meta.name,
     prepare: async () => { await load(); },
-    async run(ctx): Promise<QueueJobOutcome> {
-      const chained = ctx.carry.get();
-      ctx.carry.set(undefined);
-      const token = typeof chained === 'string' && chained ? chained : undefined;
-      const letGo = (): void => { if (token) void releaseCloudJob(token).catch(() => undefined); };
+    // One pipeline per project: a project mid-export parks Waiting before
+    // anything is opened or sent (the queue advances to the next row).
+    run: (ctx): Promise<QueueJobOutcome> => runGuarded(meta.id, 'sync', () => runClaimed(ctx)),
+  };
 
-      ctx.setPhase('Opening the project…');
-      const loaded = await load();
-      if (typeof loaded === 'string') {
-        letGo();
-        // Not enough to sync is the project's own state, not a queue error.
-        return { status: 'skipped', detail: `Can’t sync yet: ${loaded}.` };
-      }
-      const { project, asset, file, audioHash, durationSec } = loaded;
-      const voiceover: Asset = { ...asset, file };
+  async function runClaimed(ctx: QueueRunContext): Promise<QueueJobOutcome> {
+    const chained = ctx.carry.get();
+    ctx.carry.set(undefined);
+    const token = typeof chained === 'string' && chained ? chained : undefined;
+    const letGo = (): void => { if (token) void releaseCloudJob(token).catch(() => undefined); };
 
-      const resolution = await resolveSyncEngine(project, 'cloud');
-      const scriptHash = await computeScriptHash(project.script, project.sceneDetails);
-      const spine = { audioHash, scriptHash, engineKey: resolution.key };
-      const contentKey = `${audioHash}|${scriptHash}|${resolution.key}`;
-      const contentChanged = meta.contentKey !== undefined && meta.contentKey !== contentKey;
-      const plan = stagesToRun(meta.checkpoint, contentChanged);
-      deps.noteContent?.(meta.id, contentKey);
-      if (!plan.includes('transcribe') && !plan.includes('align')) {
-        letGo();
-        return { status: 'done', detail: 'Ready — press Build Timeline to reveal it.' };
-      }
-      if (project.lastSyncSpine && spineEquals(project.lastSyncSpine, spine)) {
-        letGo();
-        return { status: 'skipped', detail: 'Already built on the cloud engine.' };
-      }
+    ctx.setPhase('Opening the project…');
+    const loaded = await load();
+    if (typeof loaded === 'string') {
+      letGo();
+      // Not enough to sync is the project's own state, not a queue error.
+      return { status: 'skipped', detail: `Can’t sync yet: ${loaded}.` };
+    }
+    const { project, asset, file, audioHash, durationSec } = loaded;
+    const voiceover: Asset = { ...asset, file };
 
-      let cloudJobId: string | undefined;
+    const resolution = await resolveSyncEngine(project, 'cloud');
+    const scriptHash = await computeScriptHash(project.script, project.sceneDetails);
+    const spine = { audioHash, scriptHash, engineKey: resolution.key };
+    const contentKey = `${audioHash}|${scriptHash}|${resolution.key}`;
+    const contentChanged = meta.contentKey !== undefined && meta.contentKey !== contentKey;
+    const plan = stagesToRun(meta.checkpoint, contentChanged);
+    deps.noteContent?.(meta.id, contentKey);
+    if (!plan.includes('transcribe') && !plan.includes('align')) {
+      letGo();
+      return { status: 'done', detail: 'Ready — press Build Timeline to reveal it.' };
+    }
+    if (project.lastSyncSpine && spineEquals(project.lastSyncSpine, spine)) {
+      letGo();
+      return { status: 'skipped', detail: 'Already built on the cloud engine.' };
+    }
 
-      const pause = (record: Omit<FaPauseRecord, 'projectId' | 'syncRunId' | 'timestamp' | 'host' | 'audioHash'>): QueueJobOutcome => {
-        const syncRunId = mintSyncLogId();
-        const timestamp = Date.now();
-        saveFaPause({
-          ...record, projectId: project.id, syncRunId, timestamp, host: 'cloud', audioHash,
+    let cloudJobId: string | undefined;
+
+    const pause = (record: Omit<FaPauseRecord, 'projectId' | 'syncRunId' | 'timestamp' | 'host' | 'audioHash'>): QueueJobOutcome => {
+      const syncRunId = mintSyncLogId();
+      const timestamp = Date.now();
+      saveFaPause({
+        ...record, projectId: project.id, syncRunId, timestamp, host: 'cloud', audioHash,
+      });
+      if (cloudJobId) {
+        void pauseCloudJob(cloudJobId, {
+          id: syncRunId,
+          kind: record.reason,
+          question: record.detail ?? record.reason,
+          options: ['retry', 'local', 'whisper', 'cancel'],
+          projectId: project.id,
+          host: 'cloud',
+          audioHash,
+          stage: record.stage,
+          timestamp,
+          detail: record.detail,
+        }).catch((err: unknown) => {
+          const cloud = toCloudError(err);
+          noteCloudClientFinding({
+            code: 'pause-unsupported',
+            display: cloud.kind === 'protocol'
+              ? 'Pause is not supported on this sync server'
+              : describeCloudError(cloud),
+          });
         });
-        if (cloudJobId) {
-          void pauseCloudJob(cloudJobId, {
-            id: syncRunId,
-            kind: record.reason,
-            question: record.detail ?? record.reason,
-            options: ['retry', 'local', 'whisper', 'cancel'],
-            projectId: project.id,
-            host: 'cloud',
-            audioHash,
-            stage: record.stage,
-            timestamp,
-            detail: record.detail,
-          }).catch((err: unknown) => {
-            const cloud = toCloudError(err);
-            noteCloudClientFinding({
-              code: 'pause-unsupported',
-              display: cloud.kind === 'protocol'
-                ? 'Pause is not supported on this sync server'
-                : describeCloudError(cloud),
-            });
-          });
-        }
-        const next = appendSyncLogEntries(
-          project,
-          [buildFaPausedEntry(syncRunId, record.reason, record.detail, timestamp)],
-          {
-            syncRunId, timestamp, totalSegments: 0, coveredSegments: 0, skippedSegments: 0,
-            aborted: true, abortReason: 'fa-paused',
-          },
-        );
-        void (deps.saveProject ?? saveProject)(next).catch(() => undefined);
-        return { status: 'paused', reason: record.reason, detail: record.detail };
-      };
+      }
+      const next = appendSyncLogEntries(
+        project,
+        [buildFaPausedEntry(syncRunId, record.reason, record.detail, timestamp)],
+        {
+          syncRunId, timestamp, totalSegments: 0, coveredSegments: 0, skippedSegments: 0,
+          aborted: true, abortReason: 'fa-paused',
+        },
+      );
+      void (deps.saveProject ?? saveProject)(next).catch(() => undefined);
+      return { status: 'paused', reason: record.reason, detail: record.detail };
+    };
 
-      ctx.setPhase(PHASE_TEXT.checking);
-      // Live phase from the gateway's own job states (queued = waiting for a GPU).
-      const offPhase = onCloudPhase(audioHash, phase => ctx.setPhase(PHASE_TEXT[phase]));
+    ctx.setPhase(PHASE_TEXT.checking);
+    // Live phase from the gateway's own job states (queued = waiting for a GPU).
+    const offPhase = onCloudPhase(audioHash, phase => ctx.setPhase(PHASE_TEXT[phase]));
+    try {
+      let tokens;
       try {
-        let tokens;
-        try {
-          if (!plan.includes('transcribe')) {
-            // 1.5.2 — a gateway failure throws typed (handled below), never reads as a miss.
-            const cached = await lookupBatchTranscriptTyped(audioHash, project.language);
-            if (!cached) throw new Error('checkpoint said the transcript was cached, but the lookup missed');
-            tokens = cached.tokens;
-            if (token) letGo();
-          } else {
-          const tr = await transcribeForHost({
-            host: 'cloud', asset: voiceover, durationSecs: durationSec, language: project.language,
-            onProgress: () => {}, signal: ctx.signal, audioHash,
-            hold: resolution.gateOpen, holdJobId: token,
-            projectId: project.id, rowId: meta.id,
-            gpuLane: 'bulk',
-          });
-          tokens = tr.tokens;
-          if (tr.jobId) {
-            cloudJobId = tr.jobId;
-            deps.noteCloudJob?.(meta.id, tr.jobId);
-          }
-          if (token && !tr.handedOff) {
-            // The kept container was not used (cache hit or the hold closed).
-            // A cache hit hands it straight on to the alignment; otherwise let go.
-            if (tr.cached && resolution.gateOpen) adoptHeldContainer(audioHash, token);
-            else letGo();
-          }
-          }
-        } catch (err) {
-          if (err instanceof DOMException && err.name === 'AbortError') {
-            if (ctx.signal.aborted) { letGo(); throw err; }
-            return { status: 'skipped', detail: 'detached' };
-          }
-          if (err instanceof CloudStageError) {
-            const report = cloudFailureReport(err.cloud);
-            if (err.cloud.kind === 'auth' || err.cloud.kind === 'notConfigured') {
-              letGo();
-              return pause({ reason: report.pauseReason, detail: report.display, stage: 'transcribe' });
-            }
-            if (cloudJobId) ctx.carry.set(cloudJobId);
-            else letGo();
-            return { status: 'failed', detail: report.display };
+        if (!plan.includes('transcribe')) {
+          // 1.5.2 — a gateway failure throws typed (handled below), never reads as a miss.
+          const cached = await lookupBatchTranscriptTyped(audioHash, project.language);
+          if (!cached) throw new Error('checkpoint said the transcript was cached, but the lookup missed');
+          tokens = cached.tokens;
+          if (token) letGo();
+        } else {
+        const tr = await transcribeForHost({
+          host: 'cloud', asset: voiceover, durationSecs: durationSec, language: project.language,
+          onProgress: () => {}, signal: ctx.signal, audioHash,
+          hold: resolution.gateOpen, holdJobId: token,
+          projectId: project.id, rowId: meta.id,
+          gpuLane: 'bulk',
+        });
+        tokens = tr.tokens;
+        if (tr.jobId) {
+          cloudJobId = tr.jobId;
+          deps.noteCloudJob?.(meta.id, tr.jobId);
+        }
+        if (token && !tr.handedOff) {
+          // The kept container was not used (cache hit or the hold closed).
+          // A cache hit hands it straight on to the alignment; otherwise let go.
+          if (tr.cached && resolution.gateOpen) adoptHeldContainer(audioHash, token);
+          else letGo();
+        }
+        }
+      } catch (err) {
+        if (err instanceof DOMException && err.name === 'AbortError') {
+          if (ctx.signal.aborted) { letGo(); throw err; }
+          return { status: 'skipped', detail: 'detached' };
+        }
+        if (err instanceof CloudStageError) {
+          const report = cloudFailureReport(err.cloud);
+          if (err.cloud.kind === 'auth' || err.cloud.kind === 'notConfigured') {
+            letGo();
+            return pause({ reason: report.pauseReason, detail: report.display, stage: 'transcribe' });
           }
           if (cloudJobId) ctx.carry.set(cloudJobId);
           else letGo();
-          return { status: 'failed', detail: err instanceof Error ? err.message : String(err) };
+          return { status: 'failed', detail: report.display };
         }
-
-        if (!resolution.gateOpen) return { status: 'done', detail: 'Transcript ready (High-Precision off).' };
-
-        if (ctx.hasNext) requestHoldAfterAlign(audioHash);
-        ctx.setPhase(PHASE_TEXT.planning);
-        const outcome = await runCloudSyncIntent({
-          spineKey: `${audioHash}|${scriptHash}|${resolution.key}`,
-          voiceover, audioHash, audioDurationSec: durationSec, tokens,
-          language: resolveFaLanguage(project),
-          projectId: project.id,
-          rowId: meta.id,
-          prepareSegments: () => deps.parseProjectData(
-            project.script, project.sceneDetails, project.assets, durationSec, project.segments, project.defaultTextOverlay ?? false,
-          ),
-          gpuLane: 'bulk',
-        }, ctx.signal);
-
-        const kept = takeHeldAlign(audioHash);
-        if (outcome.status === 'ready') {
-          ctx.carry.set(kept);
-          return { status: 'done', detail: 'Ready — press Build Timeline to reveal it.' };
-        }
-        if (kept) void releaseCloudJob(kept).catch(() => undefined);
-        if (outcome.status === 'cancelled') {
-          if (ctx.signal.aborted) throw new DOMException('Aborted', 'AbortError');
-          return { status: 'skipped', detail: 'detached' };
-        }
-        if (outcome.status === 'paused') return pause({ reason: outcome.faRun.reason, detail: outcome.faRun.detail });
-        return { status: 'skipped', detail: outcome.reason };
-      } finally {
-        offPhase();
+        if (cloudJobId) ctx.carry.set(cloudJobId);
+        else letGo();
+        return { status: 'failed', detail: err instanceof Error ? err.message : String(err) };
       }
-    },
-  };
+
+      if (!resolution.gateOpen) return { status: 'done', detail: 'Transcript ready (High-Precision off).' };
+
+      if (ctx.hasNext) requestHoldAfterAlign(audioHash);
+      ctx.setPhase(PHASE_TEXT.planning);
+      const outcome = await runCloudSyncIntent({
+        spineKey: `${audioHash}|${scriptHash}|${resolution.key}`,
+        voiceover, audioHash, audioDurationSec: durationSec, tokens,
+        language: resolveFaLanguage(project),
+        projectId: project.id,
+        rowId: meta.id,
+        prepareSegments: () => deps.parseProjectData(
+          project.script, project.sceneDetails, project.assets, durationSec, project.segments, project.defaultTextOverlay ?? false,
+        ),
+        gpuLane: 'bulk',
+      }, ctx.signal);
+
+      const kept = takeHeldAlign(audioHash);
+      if (outcome.status === 'ready') {
+        ctx.carry.set(kept);
+        return { status: 'done', detail: 'Ready — press Build Timeline to reveal it.' };
+      }
+      if (kept) void releaseCloudJob(kept).catch(() => undefined);
+      if (outcome.status === 'cancelled') {
+        if (ctx.signal.aborted) throw new DOMException('Aborted', 'AbortError');
+        return { status: 'skipped', detail: 'detached' };
+      }
+      if (outcome.status === 'paused') return pause({ reason: outcome.faRun.reason, detail: outcome.faRun.detail });
+      return { status: 'skipped', detail: outcome.reason };
+    } finally {
+      offPhase();
+    }
+  }
 }

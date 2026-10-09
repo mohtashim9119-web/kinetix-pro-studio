@@ -136,7 +136,7 @@ export function BulkExportModal({
                 {(row?.flags ?? []).map(f => (
                   <p key={f} data-testid={`bulk-export-flag-${p.id}`} className="mt-1 text-[11px] text-[var(--kx-warning,#e6b450)]">{f}</p>
                 ))}
-                {row?.phase === 'failed' || row?.phase === 'paused' ? (
+                {row?.phase === 'failed' || row?.phase === 'paused' || row?.phase === 'waiting' ? (
                   <button
                     type="button"
                     data-testid={`bulk-export-retry-${p.id}`}

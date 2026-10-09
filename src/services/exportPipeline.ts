@@ -79,6 +79,9 @@ export type ExportErrorKind =
    * not ask for.
    */
   | 'resume_adoption_failed'
+  /** One pipeline per project (`pipelineGuard.ts`): this project is syncing,
+   *  so the export was refused before the picker or any rendering. */
+  | 'project_busy'
   | 'unknown';
 
 /**

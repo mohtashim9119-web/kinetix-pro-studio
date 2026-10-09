@@ -26,6 +26,7 @@
 
 import { laterCheckpoint } from './bulkStageChecklist';
 import type { QueueItem, SyncQueue } from './syncQueue';
+import { claimPipeline, onPipelineReleased, WAITING_FOR_EXPORT } from './pipelineGuard';
 import type { BulkSyncSummary } from './syncLogSummary';
 
 export type BatchPhase =
@@ -214,6 +215,8 @@ export class BulkBatchRunner {
     this.storage = deps.storage ?? (typeof localStorage !== 'undefined' ? localStorage : undefined);
     this.load();
     deps.queue.subscribe(() => this.onQueue());
+    // A finish parked behind an export picks up the moment a pipeline frees.
+    onPipelineReleased(() => this.pumpFinish(r => r.message === WAITING_FOR_EXPORT));
   }
 
   subscribe(l: () => void): () => void { this.listeners.add(l); return () => { this.listeners.delete(l); }; }
@@ -530,10 +533,11 @@ export class BulkBatchRunner {
   // Rows finish ONE AT A TIME on one promise chain — never stacked. Finish
   // runs in the background as soon as the finalizer is wired: no editor, no
   // drawer, no screen flip.
-  private pumpFinish(): void {
+  private pumpFinish(only?: (row: BatchRow) => boolean): void {
     if (!this.finalize) return;
     for (const row of this.rows) {
       if (row.phase !== 'cloud-done' || this.finishing.has(row.id)) continue;
+      if (only && !only(row)) continue;
       this.finishing.add(row.id);
       this.chain = this.chain.then(() => this.finishOne(row.id, false));
     }
@@ -579,27 +583,35 @@ export class BulkBatchRunner {
       // Window closed since this was queued: leave it for next time.
       if (!this.finalize) return;
       if (!this.deps.exists(id)) { this.forget([id]); return; }
-      this.set(id, 'finishing');
-      let result: FinishResult;
-      const builtFrom = Date.now();
-      try { result = await this.finalize(id, { userInitiated }); } catch (err) { result = { ok: false, message: err instanceof Error ? err.message : String(err) }; }
-      const after = this.rows.find(r => r.id === id);
-      if (!after) return; // deleted meanwhile
-      if (result.deferred) {
-        after.phase = 'cloud-done';
-        after.awaitingOpen = true;
-        after.message = READY_TO_FINISH;
-        this.commit();
-        return;
-      }
-      this.set(id, result.ok ? 'done' : 'finish-failed', result.ok ? undefined : result.message);
-      if (result.ok) {
-        try { this.deps.onBuilt?.(id, (Date.now() - builtFrom) / 1000); } catch { /* display-only hook */ }
-        const row = this.rows.find(r => r.id === id);
-        if (row) row.checkpoint = 'ready';
-        if (row && result.syncSummary) row.syncSummary = result.syncSummary;
-        this.commit();
-        if (row) for (const l of this.readyListeners) l({ id: row.id, name: row.name });
+      // One pipeline per project: Build Timeline never runs while this project
+      // exports. Parked visibly; re-pumped when the export releases.
+      const release = claimPipeline(id, 'sync');
+      if (!release) { this.set(id, 'cloud-done', WAITING_FOR_EXPORT); return; }
+      try {
+        this.set(id, 'finishing');
+        let result: FinishResult;
+        const builtFrom = Date.now();
+        try { result = await this.finalize(id, { userInitiated }); } catch (err) { result = { ok: false, message: err instanceof Error ? err.message : String(err) }; }
+        const after = this.rows.find(r => r.id === id);
+        if (!after) return; // deleted meanwhile
+        if (result.deferred) {
+          after.phase = 'cloud-done';
+          after.awaitingOpen = true;
+          after.message = READY_TO_FINISH;
+          this.commit();
+          return;
+        }
+        this.set(id, result.ok ? 'done' : 'finish-failed', result.ok ? undefined : result.message);
+        if (result.ok) {
+          try { this.deps.onBuilt?.(id, (Date.now() - builtFrom) / 1000); } catch { /* display-only hook */ }
+          const row = this.rows.find(r => r.id === id);
+          if (row) row.checkpoint = 'ready';
+          if (row && result.syncSummary) row.syncSummary = result.syncSummary;
+          this.commit();
+          if (row) for (const l of this.readyListeners) l({ id: row.id, name: row.name });
+        }
+      } finally {
+        release();
       }
     } finally {
       this.finishing.delete(id);

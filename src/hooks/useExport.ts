@@ -32,6 +32,7 @@ import { probeGpuCapabilities, type GpuCapabilityReport } from '../services/webc
 import { readUiState, patchUiState } from '../services/uiStateStore';
 import { resolveDimensions, DEFAULT_ASPECT_RATIO } from '../services/resolutionConfig';
 import { playExportCompleteChime } from '../services/notificationSound';
+import { claimPipeline, pipelineConflict, EXPORT_BLOCKED_BY_SYNC } from '../services/pipelineGuard';
 
 /** Export quality tier — the same closed set as the project's own native
  *  resolutionTier (services/resolutionConfig.ts); dimensions are always
@@ -1093,9 +1094,27 @@ export function useExport(
     if (!snapshot.silent) void playExportCompleteChime();
   }, [teardown, startElapsedTimer, stopElapsedTimer]);
 
+  /** runExport under the per-project guard: the 'export' claim is held for
+   *  the whole run and released however it ends. A sync that started while
+   *  the save picker was open refuses the run with a visible error. */
+  const runClaimed = useCallback((snapshot: ExportSnapshot): void => {
+    const release = claimPipeline(snapshot.project.id, 'export');
+    if (!release) {
+      setState(prev => ({ ...IDLE_STATE, error: { kind: 'project_busy', message: EXPORT_BLOCKED_BY_SYNC }, elapsedSec: prev.elapsedSec }));
+      return;
+    }
+    void runExport(snapshot).finally(release);
+  }, [runExport]);
+
   const startExport = useCallback((request?: ExportStartRequest): void => {
     if (!isTauri()) {
       throw new Error('Export is only available in the desktop app.');
+    }
+    // One pipeline per project: refused up front (before the picker) while
+    // this project syncs — a clear error, never a silent no-op.
+    if (pipelineConflict(project.id, 'export')) {
+      setState(prev => ({ ...IDLE_STATE, error: { kind: 'project_busy', message: EXPORT_BLOCKED_BY_SYNC }, elapsedSec: prev.elapsedSec }));
+      return;
     }
     void (async () => {
       // Step 1: prompt for destination BEFORE any rendering work begins.
@@ -1142,9 +1161,9 @@ export function useExport(
         silent: request?.silent === true,
       };
       lastSnapshotRef.current = snapshot;
-      void runExport(snapshot);
+      runClaimed(snapshot);
     })();
-  }, [project, exportResolution, exportFps, runExport, onSavePath]);
+  }, [project, exportResolution, exportFps, runExport, onSavePath, runClaimed]);
 
   const cancelExport = useCallback((): void => {
     if (tauriBackendRef.current === null) {
@@ -1244,8 +1263,8 @@ export function useExport(
     // Tear down any lingering backend before re-spawning. Fire-and-forget:
     // retryExport is sync; runExport creates a fresh session regardless.
     void teardown(false, 'retry-teardown');
-    void runExport(snapshot);
-  }, [runExport, teardown]);
+    runClaimed(snapshot);
+  }, [runClaimed, teardown]);
 
   const dismissSuccess = useCallback((): void => {
     setState(prev => ({ ...prev, showExportSuccess: false }));

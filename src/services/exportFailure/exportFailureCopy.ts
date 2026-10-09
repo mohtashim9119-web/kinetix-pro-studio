@@ -91,6 +91,10 @@ export const EXPORT_FAILURE_COPY = {
     title: 'Spot media is missing',
     body: 'A picture-in-picture clip named for export could not be loaded. The export was refused rather than dropping the spot.',
   },
+  project_busy: {
+    title: 'Project is syncing',
+    body: 'This project is syncing — export is blocked until the sync finishes. Export again once the sync is done.',
+  },
   spot_path_refused: {
     title: 'Export refused to drop spots',
     body: 'This export would skip picture-in-picture spots the selected path cannot render, so it was refused before encoding started.',

@@ -9,8 +9,11 @@ import { settingsFromProject } from './bulkExportSettings';
 import { BULK_EXPORT_BATCH_KEY, readBulkExportSelection, writeBulkExportSelection } from './bulkExportPersist';
 import type { Project } from '../types';
 import { playExportCompleteChime } from './notificationSound';
+import { PIPELINE_BUSY_REASON, pipelineConflict, runGuarded, waitingMessageFor } from './pipelineGuard';
 
-export type BulkExportPhase = 'idle' | 'queued' | 'exporting' | 'done' | 'failed' | 'blocked' | 'paused';
+/** `waiting`: the project was syncing when this row would have run — parked,
+ *  never silently skipped; Retry once the sync is over. */
+export type BulkExportPhase = 'idle' | 'queued' | 'exporting' | 'done' | 'failed' | 'blocked' | 'paused' | 'waiting';
 
 export interface BulkExportRow {
   id: string;
@@ -66,7 +69,7 @@ export class BulkExportRunner {
     this.queue = new SyncQueue({
       ...idleEngine,
       onDrain: () => {
-        if (this.chimeArmed && this.rows.some(r => r.phase === 'done' || r.phase === 'failed' || r.phase === 'blocked')) {
+        if (this.chimeArmed && this.rows.some(r => r.phase === 'done' || r.phase === 'failed' || r.phase === 'blocked' || r.phase === 'waiting')) {
           this.chimeArmed = false;
           if (this.rows.some(r => r.phase === 'done')) (deps.playChime ?? playExportCompleteChime)();
         }
@@ -94,7 +97,7 @@ export class BulkExportRunner {
   runningCount(): { current: number; total: number; running: boolean } {
     const batch = this.rows.filter(r => r.phase !== 'idle');
     const live = batch.some(r => r.phase === 'exporting' || r.phase === 'queued');
-    const finished = batch.filter(r => r.phase === 'done' || r.phase === 'failed' || r.phase === 'blocked').length;
+    const finished = batch.filter(r => r.phase === 'done' || r.phase === 'failed' || r.phase === 'blocked' || r.phase === 'waiting').length;
     const current = live ? Math.min(batch.length, finished + 1) : finished;
     return { current, total: batch.length, running: live };
   }
@@ -177,6 +180,12 @@ export class BulkExportRunner {
     const jobs: QueueJob[] = [];
     for (const meta of chosen) {
       const row = this.ensureRow(meta.id);
+      const syncing = pipelineConflict(meta.id, 'export');
+      if (syncing) {
+        row.phase = 'waiting';
+        row.message = waitingMessageFor(syncing);
+        continue;
+      }
       const verdict = await this.evaluate(meta);
       if ('blocked' in verdict) {
         row.phase = 'blocked';
@@ -215,8 +224,9 @@ export class BulkExportRunner {
     return {
       id: project.id,
       label: project.name,
-      run: async (ctx: QueueRunContext): Promise<QueueJobOutcome> => {
-        return this.execute({
+      // Claimed when the row actually runs (a sync may have started since
+      // Start); the claim covers the whole export and is always released.
+      run: (ctx: QueueRunContext): Promise<QueueJobOutcome> => runGuarded(project.id, 'export', () => this.execute({
           project,
           savedPath,
           resolution: project.resolutionTier,
@@ -224,8 +234,7 @@ export class BulkExportRunner {
           resume,
           signal: ctx.signal,
           setPhase: ctx.setPhase,
-        });
-      },
+        })),
     };
   }
 
@@ -248,6 +257,7 @@ export class BulkExportRunner {
       else if (item.status === 'running') { row.phase = 'exporting'; row.message = item.phase || 'Exporting'; }
       else if (item.status === 'done') { row.phase = 'done'; row.message = 'Done'; }
       else if (item.status === 'failed') { row.phase = 'failed'; row.message = 'Failed — Retry'; }
+      else if (item.status === 'paused' && item.reason === PIPELINE_BUSY_REASON) { row.phase = 'waiting'; row.message = item.detail; }
       else if (item.status === 'paused') { row.phase = 'paused'; row.message = 'Paused — Retry'; }
     }
     this.commit();

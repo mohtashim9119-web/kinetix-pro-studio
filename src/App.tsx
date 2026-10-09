@@ -432,6 +432,7 @@ import { BulkExportModal, BulkExportRunningNotice } from './components/BulkExpor
 import { BulkExportHost } from './components/BulkExportHost';
 import { bulkBatchRunner } from './services/bulkSyncQueue';
 import { BulkExportRunner } from './services/bulkExportQueue';
+import { claimPipeline, SYNC_BLOCKED_BY_EXPORT } from './services/pipelineGuard';
 import { readBulkExportDrawerOpen, writeBulkExportDrawerOpen } from './services/bulkExportPersist';
 import { cloudCostLine } from './services/cloudQueueJob';
 import { NewProjectModal, type NewProjectChoices } from './components/NewProjectModal';
@@ -4034,7 +4035,23 @@ export default function App() {
     handleVoiceoverStaged(pending.file, { rerun: true });
   }, [dismissError, handleVoiceoverStaged]);
 
+  // One pipeline per project (`pipelineGuard.ts`): Apply Sync on a project
+  // that is exporting (bulk or manual) is refused with a visible message and
+  // keeps the staged files; otherwise the 'sync' claim covers the whole run.
   const handleApplySyncFromFiles = async (): Promise<ApplySyncResult> => {
+    const releaseSync = claimPipeline(liveProjectRef.current.id, 'sync');
+    if (!releaseSync) {
+      showToast(SYNC_BLOCKED_BY_EXPORT);
+      return { ok: false, message: SYNC_BLOCKED_BY_EXPORT, holdStaged: true };
+    }
+    try {
+      return await applySyncFromFilesClaimed();
+    } finally {
+      releaseSync();
+    }
+  };
+
+  const applySyncFromFilesClaimed = async (): Promise<ApplySyncResult> => {
     // THE ONE READ OF THE LIVE STAGED STATE, and it is the first statement on
     // purpose. Everything below uses this local snapshot, so the panel is free
     // to clear its slots the instant it hands control over here (it does —

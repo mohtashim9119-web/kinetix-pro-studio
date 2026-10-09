@@ -21,6 +21,7 @@ const ALL_KINDS = [
   'resume_adoption_failed',
   'spot_asset_missing',
   'spot_path_refused',
+  'project_busy',
 ] as const satisfies readonly ExportErrorKind[];
 
 type MissingKind = Exclude<ExportErrorKind, (typeof ALL_KINDS)[number]>;
