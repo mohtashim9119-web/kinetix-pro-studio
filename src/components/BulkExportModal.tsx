@@ -19,6 +19,9 @@ import {
 } from './workspaceExportSettings';
 import { inWorkspace, resolveWorkspaceFilter, useWorkspaces, workspaceRegistry, type WorkspaceFilter, type WorkspaceRegistry } from './workspaceRegistry';
 
+/** The export-folder picker's dialog title (not the relink one). */
+export const EXPORT_FOLDER_PICK_TITLE = 'Choose where exports are saved';
+
 /** Dashboard revamp — the Bulk Export tab's pane (in flow, fills the left panel). */
 const PANE = 'flex flex-1 h-full w-full min-h-0 flex-col bg-[var(--kx-bg)]';
 /** Colours come from the dashboard's one grey ladder (ProjectDashboard.css maps
@@ -80,7 +83,7 @@ function ExportSettingsHeader({
   const chooseFolder = async (): Promise<void> => {
     setPicking(true);
     try {
-      const picked = await relinkPickFolder();
+      const picked = await relinkPickFolder(EXPORT_FOLDER_PICK_TITLE);
       if (picked) settingsStore.set(scope, { folder: picked });
     } finally {
       setPicking(false);

@@ -52,15 +52,27 @@ pub struct RelinkCandidateFile {
     pub duration: Option<f64>,
 }
 
+/// The dialog title when the caller names none (the relink flows).
+const DEFAULT_PICK_FOLDER_TITLE: &str = "Pick the folder your original media lives in";
+
 /// Opens a native "select folder" dialog and returns the chosen path, or
 /// `None` if the operator cancelled. Pure UI — no filesystem side effects.
+/// `title` is optional: callers other than relink (e.g. the export folder
+/// picker) name their own; relink passes none and keeps its title.
 #[tauri::command]
-pub async fn relink_pick_folder() -> Result<Option<String>, String> {
+pub async fn relink_pick_folder(title: Option<String>) -> Result<Option<String>, String> {
     let handle = rfd::AsyncFileDialog::new()
-        .set_title("Pick the folder your original media lives in")
+        .set_title(pick_folder_title(title.as_deref()))
         .pick_folder()
         .await;
     Ok(handle.map(|p| p.path().to_string_lossy().into_owned()))
+}
+
+fn pick_folder_title(requested: Option<&str>) -> &str {
+    match requested.map(str::trim) {
+        Some(t) if !t.is_empty() => t,
+        _ => DEFAULT_PICK_FOLDER_TITLE,
+    }
 }
 
 fn infer_media_type(path: &Path) -> Option<&'static str> {
@@ -179,6 +191,13 @@ fn seed() -> u128 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pick_folder_title_uses_the_callers_name_or_the_relink_default() {
+        assert_eq!(pick_folder_title(Some("Choose where exports are saved")), "Choose where exports are saved");
+        assert_eq!(pick_folder_title(None), "Pick the folder your original media lives in");
+        assert_eq!(pick_folder_title(Some("   ")), "Pick the folder your original media lives in");
+    }
 
     #[test]
     fn infer_media_type_recognizes_common_media_extensions() {

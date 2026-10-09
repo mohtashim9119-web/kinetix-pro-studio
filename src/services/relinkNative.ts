@@ -22,10 +22,11 @@ export interface RelinkCandidateFile {
   duration: number | null;
 }
 
-/** Opens a native folder dialog. Returns the chosen path, or `null` if cancelled. */
-export async function relinkPickFolder(): Promise<string | null> {
+/** Opens a native folder dialog. Returns the chosen path, or `null` if cancelled.
+ *  `title` names the dialog; without one it asks for the original media (relink). */
+export async function relinkPickFolder(title?: string): Promise<string | null> {
   if (!isTauri()) return null;
-  return invoke<string | null>('relink_pick_folder');
+  return invoke<string | null>('relink_pick_folder', { title: title ?? null });
 }
 
 /** Lists the media files in `folderPath` with best-effort duration probes. */

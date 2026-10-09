@@ -2,8 +2,11 @@
 import React from 'react';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { describe, it, expect, afterEach } from 'vitest';
-import { BulkExportModal } from './BulkExportModal';
+import { describe, it, expect, afterEach, vi } from 'vitest';
+
+const pick = vi.hoisted(() => vi.fn());
+vi.mock('../services/relinkNative', () => ({ relinkPickFolder: pick }));
+import { BulkExportModal, EXPORT_FOLDER_PICK_TITLE } from './BulkExportModal';
 import { BulkExportRunner } from '../services/bulkExportQueue';
 import { BULK_EXPORT_NO_PATH } from '../services/bulkExportSettings';
 import { WorkspaceRegistry } from './workspaceRegistry';
@@ -150,5 +153,14 @@ describe('BulkExportModal — Dashboard revamp Stage 4 (Bulk Export tab)', () =>
     await act(async () => { await new Promise(r => setTimeout(r, 0)); });
     expect(runner.snapshot().find(r => r.id === 'a')?.phase).toBe('cancelled');
     expect(container.querySelector('[data-testid="bulk-export-stop-all"]')).toBeNull();
+  });
+
+  it('the export-folder picker is titled for exports, not for relinking media', async () => {
+    pick.mockResolvedValue('/Exports/Out');
+    await mount(runnerOf([project('a')]));
+    await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="bulk-export-settings-summary"]')!.click(); });
+    await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="bulk-export-folder"]')!.click(); });
+    expect(pick).toHaveBeenCalledWith('Choose where exports are saved');
+    expect(EXPORT_FOLDER_PICK_TITLE).not.toMatch(/original media/i);
   });
 });
