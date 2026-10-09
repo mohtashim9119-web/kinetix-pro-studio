@@ -192,6 +192,56 @@
 }
 .kxd-subtab[aria-selected="true"] .kxd-subtab-count { color: var(--kxd-accent-hi); }
 .kxd-subtab:focus-visible { outline: 2px solid var(--kxd-accent-hi); outline-offset: 2px; border-radius: 3px; }
+/* Bulk Export rows: a project card on the ladder — thumbnail, name, duration
+   and scenes; status under it in a semantic tone. Selection is the neutral
+   ring the grid uses (no orange edges on project cards). */
+.kxd-xrow {
+  list-style: none; padding: 8px; border-radius: 10px;
+  background: var(--kxd-surface); border: 1px solid var(--kxd-line);
+  transition: background 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease;
+}
+.kxd-xrow:hover { border-color: var(--kxd-line-strong); }
+.kxd-xrow.is-selected { box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.28); border-color: transparent; }
+.kxd-xrow-main { display: flex; align-items: center; gap: 10px; min-width: 0; cursor: pointer; }
+.kxd-xrow-check { flex-shrink: 0; width: 14px; height: 14px; margin: 0 2px 0 4px; accent-color: var(--kxd-accent); cursor: pointer; }
+.kxd-xrow-thumb {
+  position: relative; flex-shrink: 0; width: 72px; aspect-ratio: 16 / 10;
+  border-radius: 6px; overflow: hidden; background: var(--kxd-surface-raised);
+  box-shadow: inset 0 0 0 1px var(--kxd-line);
+}
+.kxd-xrow-thumb .kxd-art-empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
+.kxd-xrow-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.kxd-xrow-name {
+  font-size: 13px; font-weight: 600; color: var(--kxd-text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.kxd-xrow-meta {
+  display: flex; align-items: center; gap: 6px;
+  font-family: 'JetBrains Mono', monospace; font-size: 10.5px; color: var(--kxd-text-faint);
+}
+.kxd-xrow-sep { color: var(--kxd-text-faint); }
+.kxd-xrow-status {
+  margin: 8px 0 0; padding: 6px 8px 0 4px; border-top: 1px solid var(--kxd-line);
+  display: flex; align-items: center; gap: 7px; min-width: 0;
+  font-size: 11px; color: var(--kxd-text-dim);
+}
+.kxd-xrow-dot { flex-shrink: 0; width: 6px; height: 6px; border-radius: 50%; background: var(--kxd-text-faint); }
+.kxd-xrow-msg { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kxd-xrow-status[data-tone="bad"] .kxd-xrow-dot { background: #f0a09d; }
+.kxd-xrow-status[data-tone="bad"] .kxd-xrow-msg { color: #f0a09d; }
+.kxd-xrow-status[data-tone="warn"] .kxd-xrow-dot { background: var(--kxd-accent-hi); }
+.kxd-xrow-status[data-tone="live"] .kxd-xrow-dot { background: var(--kxd-accent); box-shadow: 0 0 6px rgba(232, 132, 61, 0.6); }
+.kxd-xrow-status[data-tone="live"] .kxd-xrow-msg { color: var(--kxd-text); }
+.kxd-xrow-status[data-tone="good"] .kxd-xrow-dot { background: var(--kx-ready); }
+.kxd-xrow-retry {
+  flex-shrink: 0; display: inline-flex; align-items: center; gap: 4px;
+  height: 22px; padding: 0 8px; border-radius: 6px;
+  background: var(--kxd-surface-raised); border: 1px solid var(--kxd-line-strong);
+  color: var(--kxd-text); font-size: 10.5px; font-weight: 600;
+}
+.kxd-xrow-retry:hover { background: var(--kxd-surface-hover); }
+.kxd-xrow-flag { margin: 4px 0 0 17px; font-size: 10.5px; line-height: 1.4; color: var(--kxd-accent-hi); }
+
 /* Bulk Export's export settings (per workspace) — low focus: one quiet summary
    line in the header; the controls open in a small popover below it. */
 /* Sized with the Select-all row to match Bulk Sync's header: 16 + 40 (its

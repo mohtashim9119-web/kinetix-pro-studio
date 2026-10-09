@@ -5,8 +5,11 @@
 
 import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Z } from './overlayLayers';
-import type { BulkExportRunner } from '../services/bulkExportQueue';
-import { FolderOpen, SlidersHorizontal } from 'lucide-react';
+import type { BulkExportPhase, BulkExportRunner } from '../services/bulkExportQueue';
+import { FolderOpen, Image as ImageIcon, RefreshCw, SlidersHorizontal } from 'lucide-react';
+import { loadAllMetas } from '../services/projectStore';
+import { ProjectCardThumb } from './ProjectCardThumb';
+import { formatDuration, useProjectDurations } from './projectDurations';
 import { WorkspaceTabs } from './WorkspaceTabs';
 import { relinkPickFolder } from '../services/relinkNative';
 import {
@@ -169,6 +172,17 @@ function ExportSettingsHeader({
   );
 }
 
+/** Status colour from the ladder's semantic set. */
+function toneOf(phase: BulkExportPhase | undefined): 'bad' | 'warn' | 'live' | 'good' | 'idle' {
+  switch (phase) {
+    case 'blocked': case 'failed': return 'bad';
+    case 'paused': case 'waiting': return 'warn';
+    case 'queued': case 'exporting': return 'live';
+    case 'done': return 'good';
+    default: return 'idle';
+  }
+}
+
 export function BulkExportModal({
   runner, hidden = false, workspaces: injectedWorkspaces, exportSettings,
 }: {
@@ -190,6 +204,14 @@ export function BulkExportModal({
   }, [hidden, runner]);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const catalog = useMemo(() => runner.listCatalog(), [runner, opened]);
+  // The dashboard's own records (thumbnail, scene count, save time), re-read
+  // with the catalog; durations load from each record, cached by save time.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const metaById = useMemo(() => new Map(loadAllMetas().map(m => [m.id, m])), [opened]);
+  const durations = useProjectDurations(useMemo(
+    () => catalog.map(p => ({ id: p.id, savedAt: metaById.get(p.id)?.savedAt })),
+    [catalog, metaById],
+  ));
   const rows = useSyncExternalStore(l => runner.subscribe(l), () => runner.snapshot());
   const byId = useMemo(() => new Map(rows.map(r => [r.id, r])), [rows]);
   // The count is the whole selection — what Start will run — whatever tab shows.
@@ -243,7 +265,7 @@ export function BulkExportModal({
             </span>
           </div>
         </div>
-        <ul className="flex-1 min-h-0 overflow-y-auto px-4 py-3 space-y-2 custom-scrollbar">
+        <ul className="flex-1 min-h-0 overflow-y-auto px-5 py-3 space-y-2 custom-scrollbar">
           {shown.length === 0 && (
             <li data-testid="bulk-export-empty" className="rounded-xl border border-dashed border-[var(--kx-line-2)] px-4 py-6 text-center text-[12px] leading-snug text-[var(--kx-muted)]">
               {wsFilter === 'all' ? 'No projects yet.' : 'No projects in this workspace yet.'}
@@ -251,37 +273,60 @@ export function BulkExportModal({
           )}
           {shown.map(p => {
             const row = byId.get(p.id);
+            const meta = metaById.get(p.id);
+            const selectedRow = row?.selected === true;
+            const sec = durations.get(p.id);
+            const scenes = meta?.segmentCount ?? 0;
+            const canRetry = row?.phase === 'failed' || row?.phase === 'paused' || row?.phase === 'waiting';
             return (
               <li
                 key={p.id}
                 data-testid={`bulk-export-row-${p.id}`}
-                className="kx-bulk-row rounded-xl border p-3.5 bg-[var(--kx-surface)] border-[var(--kx-line-2)]"
+                data-phase={row?.phase ?? 'idle'}
+                className={`kx-bulk-row kxd-xrow${selectedRow ? ' is-selected' : ''}`}
               >
-                <div className="flex items-center gap-2">
+                <label className="kxd-xrow-main">
                   <input
                     type="checkbox"
+                    className="kxd-xrow-check"
                     data-testid={`bulk-export-check-${p.id}`}
-                    checked={row?.selected === true}
+                    checked={selectedRow}
                     onChange={e => { runner.setSelected(p.id, e.target.checked); }}
                   />
-                  <span className="flex-1 min-w-0 truncate text-[13px] font-semibold text-[var(--kx-text)]">{p.name}</span>
-                </div>
-                <p data-testid={`bulk-export-status-${p.id}`} className="mt-2 text-[11px] text-[var(--kx-muted)]">
-                  {row?.message ?? ''}
-                </p>
+                  <span className="kxd-xrow-thumb" aria-hidden="true">
+                    {meta ? <ProjectCardThumb meta={meta} /> : <span className="kxd-art-empty"><ImageIcon size={14} strokeWidth={1.5} /></span>}
+                  </span>
+                  <span className="kxd-xrow-body">
+                    <span className="kxd-xrow-name" title={p.name}>{p.name}</span>
+                    <span className="kxd-xrow-meta">
+                      <span>{sec !== undefined ? formatDuration(sec) : '—'}</span>
+                      <span className="kxd-xrow-sep" aria-hidden="true">·</span>
+                      <span>{scenes === 1 ? '1 scene' : `${scenes} scenes`}</span>
+                    </span>
+                  </span>
+                </label>
+                {(row?.message || canRetry) && (
+                  <div className="kxd-xrow-status" data-tone={toneOf(row?.phase)}>
+                    <span className="kxd-xrow-dot" aria-hidden="true" />
+                    <span data-testid={`bulk-export-status-${p.id}`} className="kxd-xrow-msg" title={row?.message ?? ''}>
+                      {row?.message ?? ''}
+                    </span>
+                    {canRetry && (
+                      <button
+                        type="button"
+                        data-testid={`bulk-export-retry-${p.id}`}
+                        className="kxd-xrow-retry"
+                        onClick={() => { void runner.retry(p.id); }}
+                      >
+                        <RefreshCw size={11} aria-hidden="true" />
+                        Retry
+                      </button>
+                    )}
+                  </div>
+                )}
                 {(row?.flags ?? []).map(f => (
-                  <p key={f} data-testid={`bulk-export-flag-${p.id}`} className="mt-1 text-[11px] text-[var(--kx-warning,#e6b450)]">{f}</p>
+                  <p key={f} data-testid={`bulk-export-flag-${p.id}`} className="kxd-xrow-flag">{f}</p>
                 ))}
-                {row?.phase === 'failed' || row?.phase === 'paused' || row?.phase === 'waiting' ? (
-                  <button
-                    type="button"
-                    data-testid={`bulk-export-retry-${p.id}`}
-                    className="mt-2 text-[11px] font-semibold text-[var(--kx-accent-2)]"
-                    onClick={() => { void runner.retry(p.id); }}
-                  >
-                    Retry
-                  </button>
-                ) : null}
               </li>
             );
           })}
