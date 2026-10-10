@@ -94,7 +94,10 @@ describe('1.5.3 — a voiceover always carries its audio MIME type', () => {
   });
 
   it('the project-open rehydrate goes through the repair', () => {
+    // The rehydrate is the shared media preparation (opening a project AND Bulk Export).
+    const prep = readFileSync(resolve(import.meta.dirname, 'projectMediaPreparation.ts'), 'utf-8');
+    expect(prep).toMatch(/playableAudioBlob\(bytes\.blob, asset\.name, asset\.type\)/);
     const app = readFileSync(resolve(import.meta.dirname, '..', 'App.tsx'), 'utf-8');
-    expect(app).toMatch(/playableAudioBlob\(stored\.blob, asset\.name, asset\.type\)/);
+    expect(app).toMatch(/prepareProjectMedia\(saved\.project\.id/);
   });
 });
