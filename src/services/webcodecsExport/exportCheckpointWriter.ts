@@ -42,6 +42,7 @@ import {
   exportLifetimeBudgetOf,
   recordBoundaryRewind,
   recordHardwareFailover,
+  recordPieceCompleted,
   recordResumeAttempt,
   recordRotationSeen,
   serializeExportState,
@@ -112,6 +113,18 @@ export interface ExportCheckpointWriter {
    *  whether a checkpoint was actually written for it (see
    *  `ExportStateManifest.rotationsSeen`'s own doc comment). */
   noteRotation(): void;
+  /**
+   * Makes sure a manifest exists for a piece that writes no rotation
+   * checkpoints (plain / canvas tiers), so the session is resumable at all.
+   * A no-op when one already exists.
+   */
+  ensureManifest(pieceIndex: number): void;
+  /**
+   * Records that pieces `0..pieceIndex` are fully rendered (any tier) and
+   * persists it. A resume then restarts at piece `pieceIndex + 1` instead of
+   * piece 0, with no fence — finished pieces are proven by picture count.
+   */
+  notePieceCompleted(pieceIndex: number): void;
   /** The manifest as it stands — for tests and diagnostics. */
   snapshot(): ExportStateManifest | null;
   /** Number of writes actually issued — for tests and diagnostics. */
@@ -135,6 +148,9 @@ export function createExportCheckpointWriter(
   let hash: string | null = null;
   /** A `beginPiece` that arrived before the hash did. */
   let deferredPieceIndex: number | null = null;
+  /** Finished pieces reported before any manifest existed (the hash was still
+   *  pending); applied to the first manifest built. */
+  let pendingCompletedPieces = 0;
 
   const pump = (): void => {
     if (!enabled || inFlight || !dirty || manifest === null) return;
@@ -169,6 +185,9 @@ export function createExportCheckpointWriter(
       // disk is always the export-lifetime budget and a resume from ANY piece
       // seeds `exportPipelineWebCodecs.ts`'s in-process gates correctly.
       carriedBudget: exportLifetimeBudgetOf(manifest),
+      // Finished pieces are an export-lifetime fact too: the piece-scoped
+      // reset must not forget them.
+      completedPieces: Math.max(manifest?.completedPieces ?? 0, pendingCompletedPieces),
     });
     dirty = true;
     pump();
@@ -213,6 +232,20 @@ export function createExportCheckpointWriter(
       hash = existing.sourceTimelineHash;
       deferredPieceIndex = null;
       manifest = existing;
+    },
+    ensureManifest(nextPieceIndex: number): void {
+      if (!enabled || manifest !== null || deferredPieceIndex !== null) return;
+      pieceIndex = nextPieceIndex;
+      if (hash === null) { deferredPieceIndex = nextPieceIndex; return; }
+      startManifest(nextPieceIndex);
+    },
+    notePieceCompleted(donePieceIndex: number): void {
+      if (!enabled) return;
+      pendingCompletedPieces = Math.max(pendingCompletedPieces, donePieceIndex + 1);
+      if (manifest === null) return;
+      manifest = recordPieceCompleted(manifest, donePieceIndex);
+      dirty = true;
+      pump();
     },
     record(row): void {
       // A rotation that beats the hash produces no checkpoint. It cannot

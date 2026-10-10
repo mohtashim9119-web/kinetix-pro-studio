@@ -3324,7 +3324,22 @@ export async function exportProjectWebCodecs(
       });
       continue;
     }
-    const frameOffsetForThisPiece = framesCompletedBase;
+    // A piece resumed MID-WAY reports its frames from the resume point, so the
+    // bar starts at the resumed position instead of falling back to the piece's
+    // start.
+    const resumedFramesInThisPiece = resume !== null && resume.pieceIndex === pieceIndex ? resume.cumulativePictures : 0;
+    const frameOffsetForThisPiece = framesCompletedBase + resumedFramesInThisPiece;
+    if (resume !== null && resume.pieceIndex === pieceIndex) {
+      // First report of a resumed run: where it actually starts.
+      onProgress({
+        type: 'encoding_segment',
+        index: pieceIndex,
+        total: pieces.length,
+        frame: frameOffsetForThisPiece,
+        totalFrames: totalExpectedFramesOverall,
+        cumulative: true,
+      });
+    }
     // WS3 — the encoder-session plan for this piece, once the worker reports
     // it. Held here so `onFrameProgress` can carry it: the piece count alone
     // cannot show that the session bound engaged, because the bound does not
@@ -3347,6 +3362,14 @@ export async function exportProjectWebCodecs(
           : {}),
       });
     };
+
+    // Piece-boundary resume (cumulativePictures 0): nothing in this piece is
+    // checkpointed, so any surviving partial file — whatever the tier — is
+    // discarded and the piece is re-rendered from its first frame, never
+    // appended to.
+    if (resume !== null && resume.pieceIndex === pieceIndex && resume.cumulativePictures === 0) {
+      await ffmpeg.deleteFile(`piece_${pieceIndex}.h264`).catch(() => undefined);
+    }
 
     if (plan.tier === 'gl') {
       const referencedAssets: Asset[] = [];
@@ -3866,8 +3889,10 @@ export async function exportProjectWebCodecs(
           });
         }
       }
+      checkpointWriter.notePieceCompleted(pieceIndex);
       pieceFiles.push(runFile);
     } else if (plan.tier === 'plain') {
+      checkpointWriter.ensureManifest(pieceIndex);
       const segment = plan.segments[0]!;
       const asset = assetMap.get(segment.assetId!)!; // presence already verified above
       const result = await encodeTier1Piece(ffmpeg, segment, asset, globalConfig, fps, width, height, pieceIndex, pieces.length);
@@ -3876,13 +3901,16 @@ export async function exportProjectWebCodecs(
         activeFfmpeg = null;
         return { ok: false, error: result.error };
       }
+      checkpointWriter.notePieceCompleted(pieceIndex);
       pieceFiles.push(result.h264File);
     } else {
+      checkpointWriter.ensureManifest(pieceIndex);
       const result = await encodeCanvasPiece(ffmpeg, plan, project, assetMap, globalConfig, fps, width, height, pieceIndex, pieces.length, onFrameProgress);
       if (!result.ok) {
         activeFfmpeg = null;
         return { ok: false, error: result.error };
       }
+      checkpointWriter.notePieceCompleted(pieceIndex);
       pieceFiles.push(result.h264File);
     }
 

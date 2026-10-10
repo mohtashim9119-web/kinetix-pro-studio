@@ -1644,6 +1644,22 @@ pub fn ffmpeg_prepare_checkpoint_resume(
     Ok(result)
 }
 
+/// Opens a re-entered session for bitstream work WITHOUT a checkpoint fence —
+/// the piece-boundary resume (whole pieces finished, nothing inside the next
+/// one checkpointed). No bitstream byte is touched here: the caller verifies
+/// every finished piece by picture count before relying on it, and the
+/// in-progress piece's partial file is deleted and re-rendered, never
+/// appended to. A checkpoint resume must keep using
+/// `ffmpeg_prepare_checkpoint_resume`, which repairs the torn tail first.
+#[tauri::command]
+pub fn ffmpeg_clear_resume_fence(
+    session_id: String,
+    state: tauri::State<'_, FfmpegSessionState>,
+) -> Result<(), String> {
+    state.resume_pending.lock().unwrap().remove(&session_id);
+    Ok(())
+}
+
 fn prepare_checkpoint_resume_inner(
     full: &Path,
     path: &str,

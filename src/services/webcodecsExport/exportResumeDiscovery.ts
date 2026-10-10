@@ -61,6 +61,10 @@ export interface ResumeSessionHandle {
     path: string,
     checkpoint: ExportCheckpointRecord,
   ): Promise<AnnexbCheckpointRepairResult>;
+  /** Piece-boundary resume only: lifts the native resume fence without a
+   *  checkpoint (see `TauriFfmpeg.clearResumeFence`). Optional so test fakes
+   *  and checkpoint-only callers can omit it. */
+  clearResumeFence?(): Promise<void>;
   /** Exact, caller-supplied cut. Never applies the conservative final-AU drop
    *  — see `finalAuDropConfinement.test.ts`. Used ONLY after the fence has
    *  cleared, to step back from the verified offset to the rotation seam. */
@@ -170,6 +174,14 @@ export interface ResumeRejection {
    * ordinary silent case — see the validation kind's own doc comment.
    */
   neverCheckpointed?: boolean;
+  /**
+   * True when the manifest matched this timeline but nothing had been durably
+   * recorded yet (no checkpoint, no finished piece): the export was
+   * interrupted too early to resume. Typed, like the others, so the UI can say
+   * "No checkpoint yet — restarting from the beginning" instead of restarting
+   * silently.
+   */
+  noCheckpointYet?: boolean;
 }
 
 export interface ResumeDiscoveryResult {
@@ -203,17 +215,31 @@ async function selectCheckpoint(
   serialized: Uint8Array,
   expected: ExportCheckpointExpectedIdentity,
 ): Promise<
-  | { ok: true; manifest: ExportStateManifest; checkpoint: ExportCheckpointRecord; pieceFile: string }
-  | { ok: false; reason: string; budgetExhausted?: boolean; neverCheckpointed?: boolean }
+  | { ok: true; kind: 'checkpoint'; manifest: ExportStateManifest; checkpoint: ExportCheckpointRecord; pieceFile: string }
+  | { ok: true; kind: 'piece'; manifest: ExportStateManifest; completedPieces: number }
+  | { ok: false; reason: string; budgetExhausted?: boolean; neverCheckpointed?: boolean; noCheckpointYet?: boolean }
 > {
   const provisional = validateExportState(serialized, expected, Number.MAX_SAFE_INTEGER);
+  if (provisional.kind === 'resume_at_piece') {
+    return { ok: true, kind: 'piece', manifest: provisional.manifest, completedPieces: provisional.completedPieces };
+  }
   if (provisional.kind !== 'resume') {
     return {
       ok: false,
       reason: provisional.reason,
       budgetExhausted: provisional.kind === 'recovery_budget_exhausted',
       neverCheckpointed: provisional.kind === 'never_checkpointed',
+      noCheckpointYet: provisional.kind === 'no_checkpoint_yet',
     };
+  }
+  // Pieces finished AFTER the newest checkpoint's piece (or that checkpoint's
+  // own piece, finished): resume at the start of the next piece. No fence — a
+  // closing checkpoint sits at end-of-file, which the native fence's
+  // conservative final-AU repair cannot accept, and finished pieces are
+  // proven by picture count anyway.
+  const completed = provisional.manifest.completedPieces ?? 0;
+  if (completed > provisional.checkpoint.pieceIndex) {
+    return { ok: true, kind: 'piece', manifest: provisional.manifest, completedPieces: completed };
   }
 
   const pieceFile = pieceFileName(provisional.checkpoint.pieceIndex);
@@ -228,9 +254,10 @@ async function selectCheckpoint(
   if (validated.kind !== 'resume') {
     return {
       ok: false,
-      reason: validated.reason,
+      reason: 'reason' in validated ? validated.reason : 'checkpoint no longer fits the surviving file',
       budgetExhausted: validated.kind === 'recovery_budget_exhausted',
       neverCheckpointed: validated.kind === 'never_checkpointed',
+      noCheckpointYet: validated.kind === 'no_checkpoint_yet',
     };
   }
   // A manifest is piece-scoped, so the authoritative selection cannot name a
@@ -241,6 +268,7 @@ async function selectCheckpoint(
   }
   return {
     ok: true,
+    kind: 'checkpoint',
     manifest: validated.manifest,
     checkpoint: validated.checkpoint,
     pieceFile,
@@ -282,6 +310,7 @@ export async function evaluateResumeCandidate(
       budgetExhausted?: boolean;
       liveClaimBlocked?: boolean;
       neverCheckpointed?: boolean;
+      noCheckpointYet?: boolean;
     }
 > {
   // WS3 STEP 8 (H5) — claim-aware reentry. Read-only inspection FIRST, before
@@ -329,6 +358,56 @@ export async function evaluateResumeCandidate(
 
   const selected = await selectCheckpoint(session, serialized, target.expected);
   if (!selected.ok) return selected;
+
+  // ── Piece-boundary resume: whole pieces are finished, nothing inside the
+  // next one is checkpointed. No fence (nothing to fence); the finished pieces
+  // are proven by picture count exactly as the checkpoint path proves them. ──
+  if (selected.kind === 'piece') {
+    const n = selected.completedPieces;
+    if (n > target.pieceExpectedFrames.length) {
+      return { ok: false, reason: 'manifest records more finished pieces than the current plan has' };
+    }
+    if (!session.clearResumeFence) {
+      return { ok: false, reason: 'this session cannot lift the resume fence for a piece-boundary resume' };
+    }
+    try {
+      await session.clearResumeFence();
+    } catch (err) {
+      return { ok: false, reason: `could not open the session for a piece-boundary resume: ${message(err)}` };
+    }
+    let rendered = 0;
+    for (let i = 0; i < n; i++) {
+      const expectedFrames = target.pieceExpectedFrames[i]!;
+      let pictures: number;
+      try {
+        pictures = await countPictures(session, pieceFileName(i));
+      } catch (err) {
+        return { ok: false, reason: `earlier piece ${i} is unreadable: ${message(err)}` };
+      }
+      if (pictures !== expectedFrames) {
+        return { ok: false, reason: `earlier piece ${i} holds ${pictures} pictures, plan expects ${expectedFrames}` };
+      }
+      rendered += pictures;
+    }
+    const m = selected.manifest;
+    return {
+      ok: true,
+      value: {
+        sessionId,
+        manifest: m,
+        checkpoint: {
+          pieceIndex: n, encoderSessionIndex: 0, byteOffset: 0, seamByteOffset: 0, cumulativePictures: 0,
+          fps: m.fps, width: m.width, height: m.height, sourceTimelineHash: m.sourceTimelineHash,
+        },
+        repair: { pictures: 0, vclNals: 0, bytesRemoved: 0, keptBytes: 0 },
+        pieceFile: pieceFileName(n),
+        appendFromByteOffset: 0,
+        picturesAlreadyRendered: rendered,
+        picturesTotal: target.pieceExpectedFrames.reduce((a, b) => a + b, 0),
+        staleClaimRecovered,
+      },
+    };
+  }
 
   const { checkpoint, manifest, pieceFile } = selected;
   if (checkpoint.pieceIndex >= target.pieceExpectedFrames.length) {
@@ -504,6 +583,7 @@ export async function discoverResumableExport(
       ...(outcome.budgetExhausted ? { budgetExhausted: true } : {}),
       ...(outcome.liveClaimBlocked ? { liveClaimBlocked: true } : {}),
       ...(outcome.neverCheckpointed ? { neverCheckpointed: true } : {}),
+      ...(outcome.noCheckpointYet ? { noCheckpointYet: true } : {}),
     });
   }
   return { resumable: null, rejected };

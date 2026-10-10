@@ -204,6 +204,18 @@ export interface ExportStateManifest extends ExportRecoveryBudget {
    * `MAX_ENCODER_SESSION_FRAMES`) never trips it.
    */
   rotationsSeen?: number;
+  /**
+   * How many pieces, counted from piece 0 in order, were FULLY rendered when
+   * this manifest was last written (any tier — GL, canvas or plain). Unlike a
+   * checkpoint it names no byte offset and needs no native fence: a finished
+   * piece's file is proven at resume by picture count against the plan, so
+   * "resume at piece N" is safe without one. It is what makes a cancel in a
+   * piece's first seconds (before any rotation checkpoint exists) resume at
+   * the START of that piece instead of the start of the export, and what lets
+   * plain/canvas pieces — which write no checkpoints — be resumed at all.
+   * Carried across the piece-scoped manifest reset. Absent = 0.
+   */
+  completedPieces?: number;
   /** ffmpeg session id (`kinetix-export-{uuid}`). */
   sessionId: string;
   projectId: string;
@@ -279,6 +291,26 @@ export type ExportCheckpointValidation =
        */
       kind: 'never_checkpointed';
       reason: string;
+    }
+  | {
+      /**
+       * The manifest matches this timeline and nothing has been durably
+       * recorded yet: no checkpoint, no finished piece. A cancel or crash
+       * this early has nothing to resume from — the export restarts from the
+       * beginning, and the operator must be TOLD so (never a silent 0%).
+       */
+      kind: 'no_checkpoint_yet';
+      reason: string;
+    }
+  | {
+      /**
+       * Whole pieces are finished but no checkpoint exists inside the next
+       * one: resume at the START of piece `completedPieces`. Fence-free — the
+       * finished pieces are verified by picture count.
+       */
+      kind: 'resume_at_piece';
+      manifest: ExportStateManifest;
+      completedPieces: number;
     };
 
 export type ExportCheckpointPreparation =
@@ -312,7 +344,9 @@ export type ExportCheckpointPreparation =
        *  as `clean`/`recovery_budget_exhausted`. */
       kind: 'never_checkpointed';
       reason: string;
-    };
+    }
+  | { kind: 'no_checkpoint_yet'; reason: string }
+  | { kind: 'resume_at_piece'; manifest: ExportStateManifest; completedPieces: number };
 
 /**
  * Resume handshake seam (CC call site lives in exportPipelineWebCodecs.ts /
@@ -583,6 +617,14 @@ export function recordRotationSeen(manifest: ExportStateManifest): ExportStateMa
   };
 }
 
+/** Marks pieces `0..pieceIndex` as fully rendered. Monotonic: never goes down. */
+export function recordPieceCompleted(manifest: ExportStateManifest, pieceIndex: number): ExportStateManifest {
+  return {
+    ...manifest,
+    completedPieces: Math.max(manifest.completedPieces ?? 0, pieceIndex + 1),
+  };
+}
+
 export function recordResumeAttempt(manifest: ExportStateManifest): ExportStateManifest {
   const budget = normalizeRecoveryBudget(manifest);
   return {
@@ -626,6 +668,8 @@ export function createExportStateManifest(params: {
    * manifest inherits. Omitted (a first piece) means zero.
    */
   carriedBudget?: ExportLifetimeBudget;
+  /** Pieces already fully rendered before this manifest starts (carried like the budget). */
+  completedPieces?: number;
 }): ExportStateManifest {
   const carried = params.carriedBudget ?? ZERO_LIFETIME_BUDGET;
   return {
@@ -638,6 +682,7 @@ export function createExportStateManifest(params: {
     height: params.height,
     checkpoints: [],
     rotationsSeen: 0,
+    completedPieces: params.completedPieces ?? 0,
     boundaryRewindsUsed: carried.boundaryRewindsUsed,
     hardwareFailoverUsed: carried.hardwareFailoverUsed,
     checkpointResumeAttempts: 0,
@@ -772,11 +817,13 @@ export function validateExportState(
   const checkpointResumeAttempts = optionalNonNegativeInteger(value.checkpointResumeAttempts);
   const totalRecoveryAttempts = optionalNonNegativeInteger(value.totalRecoveryAttempts);
   const rotationsSeen = optionalNonNegativeInteger(value.rotationsSeen);
+  const completedPieces = optionalNonNegativeInteger(value.completedPieces);
   if (
     boundaryRewindsUsed === null ||
     checkpointResumeAttempts === null ||
     totalRecoveryAttempts === null ||
     rotationsSeen === null ||
+    completedPieces === null ||
     (value.hardwareFailoverUsed !== undefined &&
       typeof value.hardwareFailoverUsed !== 'boolean')
   ) {
@@ -838,6 +885,25 @@ export function validateExportState(
   // the more specific, more concerning diagnosis (the export rotated but
   // NEVER durably checkpointed), not to be folded into the silent-and-
   // ordinary "no checkpoint fits the current file length" bucket.
+  if (checkpoints.length === 0 && (completedPieces ?? 0) > 0) {
+    return {
+      kind: 'resume_at_piece',
+      manifest: {
+        schemaVersion: EXPORT_STATE_SCHEMA_VERSION,
+        sessionId: value.sessionId,
+        projectId: value.projectId,
+        sourceTimelineHash: value.sourceTimelineHash,
+        fps: value.fps,
+        width: value.width,
+        height: value.height,
+        checkpoints,
+        rotationsSeen: rotationsSeen ?? 0,
+        completedPieces: completedPieces ?? 0,
+        ...normalizeRecoveryBudget(recoveryBudget),
+      },
+      completedPieces: completedPieces ?? 0,
+    };
+  }
   if (checkpoints.length === 0 && (rotationsSeen ?? 0) > 0) {
     return {
       kind: 'never_checkpointed',
@@ -845,6 +911,12 @@ export function validateExportState(
     };
   }
 
+  if (checkpoints.length === 0) {
+    return {
+      kind: 'no_checkpoint_yet',
+      reason: 'the export was interrupted before its first checkpoint — nothing to resume from yet',
+    };
+  }
   const checkpoint = [...checkpoints]
     .reverse()
     .find((row) => row.byteOffset <= annexbFileLength);
@@ -864,6 +936,7 @@ export function validateExportState(
       height: value.height,
       checkpoints,
       rotationsSeen: rotationsSeen ?? 0,
+      completedPieces: completedPieces ?? 0,
       ...normalizeRecoveryBudget(recoveryBudget),
     },
     checkpoint,

@@ -571,6 +571,21 @@ export class TauriFfmpeg implements FfmpegLike {
   }
 
   /**
+   * Piece-boundary resume: opens a re-entered session for bitstream work with
+   * no checkpoint fence (nothing is checkpointed inside the next piece). The
+   * caller must verify the finished pieces by picture count and re-render the
+   * in-progress piece from scratch — never append to a surviving partial file.
+   */
+  async clearResumeFence(): Promise<void> {
+    this.#assertAlive();
+    try {
+      await invoke<void>('ffmpeg_clear_resume_fence', { sessionId: this.#sessionId });
+    } catch (err) {
+      throw new Error(typeof err === 'string' ? err : String(err));
+    }
+  }
+
+  /**
    * Stream-concatenates `piecePaths` (in order) into a single `outputPath` via
    * the native `ffmpeg_concat_annexb_pieces` command — only 2 file descriptors
    * are ever open (one read, one write), independent of piece count. Replaces

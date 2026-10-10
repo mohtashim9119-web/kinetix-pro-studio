@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { createHash } from 'node:crypto';
 import {
   appendExportCheckpoint,
+  recordPieceCompleted,
   buildSourceTimelineHash,
   canonicalTimelineJson,
   createExportStateManifest,
@@ -645,10 +646,34 @@ describe('never_checkpointed — the checkpoint-coverage gap (C7)', () => {
   it('does NOT fire for the ordinary single-session export — zero rotations, zero checkpoints, silent', () => {
     const manifest = JSON.stringify(createExportStateManifest({ sessionId, ...expected }));
     const result = validateExportState(manifest, expected, 0);
-    // rotationsSeen defaults to 0, so this is the ordinary "no checkpoint
-    // fits" clean case, not the alarming never_checkpointed one.
+    // rotationsSeen defaults to 0, so this is not the alarming
+    // never_checkpointed one: it is the typed "interrupted before the first
+    // checkpoint" case, which the UI must say out loud (never a silent 0%).
     expect(result.kind).not.toBe('never_checkpointed');
-    expect(result.kind).toBe('clean');
+    expect(result.kind).toBe('no_checkpoint_yet');
+  });
+
+  it('whole pieces finished + no checkpoint yet inside the next → resume at that piece (fence-free)', () => {
+    let m = createExportStateManifest({ sessionId, ...expected });
+    m = recordPieceCompleted(m, 0);
+    m = recordPieceCompleted(m, 1);
+    const result = validateExportState(JSON.stringify(m), expected, 0);
+    expect(result.kind).toBe('resume_at_piece');
+    if (result.kind === 'resume_at_piece') expect(result.completedPieces).toBe(2);
+  });
+
+  it('recordPieceCompleted never goes backwards, and a new piece\'s manifest inherits the count', () => {
+    let m = createExportStateManifest({ sessionId, ...expected });
+    m = recordPieceCompleted(m, 3);
+    expect(recordPieceCompleted(m, 1).completedPieces).toBe(4);
+    expect(createExportStateManifest({ sessionId, ...expected, completedPieces: 4 }).completedPieces).toBe(4);
+  });
+
+  it('a different timeline never resumes at a piece boundary (identity is checked first)', () => {
+    let m = createExportStateManifest({ sessionId, ...expected });
+    m = recordPieceCompleted(m, 0);
+    const other = validateExportState(JSON.stringify(m), { ...expected, sourceTimelineHash: 'f'.repeat(64) }, 0);
+    expect(other.kind).toBe('clean');
   });
 
   it('does NOT fire when rotations happened AND at least one checkpoint landed', () => {

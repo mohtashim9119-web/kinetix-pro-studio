@@ -640,6 +640,7 @@ pub fn run() {
             ffmpeg::ffmpeg_truncate_annexb,
             ffmpeg::ffmpeg_truncate_annexb_to_offset,
             ffmpeg::ffmpeg_prepare_checkpoint_resume,
+            ffmpeg::ffmpeg_clear_resume_fence,
             ffmpeg::ffmpeg_concat_annexb_pieces,
             ffmpeg::ffmpeg_delete_file,
             ffmpeg::ffmpeg_exec,
