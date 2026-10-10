@@ -652,6 +652,7 @@ pub fn run() {
             ffmpeg::probe_audio_duration,
             ffmpeg::probe_video_fps,
             ffmpeg::reveal_in_finder,
+            ffmpeg::file_exists,
             whisper::whisper_transcribe,
             whisper::whisper_stage_audio_raw,
             whisper::whisper_cancel,

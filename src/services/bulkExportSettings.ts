@@ -35,31 +35,39 @@ function joinPath(dir: string, file: string): string {
   return `${dir.replace(/[\\/]+$/, '')}${sep}${file}`;
 }
 
+/** Same file regardless of separator style (`\\` vs `/`). */
+export function samePath(a: string, b: string): boolean {
+  return a.replace(/\\/g, '/') === b.replace(/\\/g, '/');
+}
+
 /** `<dir>/<name>.mp4`, or " (2)", " (3)" … until `taken` no longer holds the path. */
-export function uniqueExportPath(dir: string, projectName: string, taken: (path: string) => boolean): string {
+export async function uniqueExportPath(
+  dir: string, projectName: string, taken: (path: string) => boolean | Promise<boolean>,
+): Promise<string> {
   const base = sanitizeFileName(projectName);
   let candidate = joinPath(dir, `${base}.mp4`);
-  for (let n = 2; taken(candidate); n++) candidate = joinPath(dir, `${base} (${n}).mp4`);
+  for (let n = 2; await taken(candidate); n++) candidate = joinPath(dir, `${base} (${n}).mp4`);
   return candidate;
 }
 
 /**
  * Per field: the workspace's export settings → the project's own → defaults.
  * Folder: the workspace folder → the folder of the project's last export →
- * blocked. fps is the workspace's (24/30). `taken`: paths already claimed.
+ * blocked. fps is the workspace's (24/30). `taken`: paths already claimed, or
+ * (the queue's) already on disk and not this project's own previous export.
  */
-export function resolveBulkExportSettings(
+export async function resolveBulkExportSettings(
   project: Project,
   workspace: WorkspaceExportChoice | undefined,
   metaLastExportPath: string | undefined,
-  taken: (path: string) => boolean = () => false,
-): BulkExportSettings | { blocked: string } {
+  taken: (path: string) => boolean | Promise<boolean> = () => false,
+): Promise<BulkExportSettings | { blocked: string }> {
   const lastExport = metaLastExportPath ?? project.lastExportPath;
   const dir = workspace?.folder ?? (lastExport ? parentDir(lastExport) : null);
   if (!dir) return { blocked: BULK_EXPORT_NO_PATH };
   return {
     resolution: workspace?.resolution ?? project.resolutionTier ?? DEFAULT_RESOLUTION_TIER,
     fps: workspace?.fps ?? 30,
-    savedPath: uniqueExportPath(dir, project.name, taken),
+    savedPath: await uniqueExportPath(dir, project.name, taken),
   };
 }

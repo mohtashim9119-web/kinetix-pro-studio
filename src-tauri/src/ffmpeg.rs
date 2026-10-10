@@ -2526,12 +2526,33 @@ pub async fn reveal_in_finder(path: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Whether a regular file already exists at `path` (a directory or a missing
+/// path is `false`). Bulk Export asks this before choosing an output name, so
+/// a new export never silently overwrites an unrelated file. Read-only.
+#[tauri::command]
+pub fn file_exists(path: String) -> bool {
+    std::path::Path::new(&path).is_file()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::atomic::Ordering;
     use std::thread;
     use std::time::Duration;
+
+    #[test]
+    fn file_exists_is_true_only_for_an_existing_regular_file() {
+        let dir = std::env::temp_dir().join(format!("kinetix-file-exists-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("a.mp4");
+        std::fs::write(&file, b"x").unwrap();
+        assert!(file_exists(file.to_string_lossy().into_owned()));
+        assert!(!file_exists(dir.join("missing.mp4").to_string_lossy().into_owned()));
+        // A directory is not a file an export would overwrite.
+        assert!(!file_exists(dir.to_string_lossy().into_owned()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     // ── WS3 Round 28 (D4) — export session temp directory must live under
     //    the configured storage root, never a hardcoded `std::env::temp_dir()`.

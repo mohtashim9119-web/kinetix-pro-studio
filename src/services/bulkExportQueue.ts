@@ -5,10 +5,11 @@
 
 import { SyncQueue, type QueueJob, type QueueJobOutcome, type QueueRunContext } from './syncQueue';
 import { preflightBulkExport } from './bulkExportPreflight';
-import { resolveBulkExportSettings, type BulkExportSettings, type WorkspaceExportChoice } from './bulkExportSettings';
+import { resolveBulkExportSettings, samePath, type BulkExportSettings, type WorkspaceExportChoice } from './bulkExportSettings';
 import { BULK_EXPORT_BATCH_KEY, readBulkExportSelection, writeBulkExportSelection } from './bulkExportPersist';
 import type { Project } from '../types';
 import { playExportCompleteChime } from './notificationSound';
+import { fileExists } from './nativeFileExists';
 import { PIPELINE_BUSY_REASON, pipelineConflict, runGuarded, waitingMessageFor } from './pipelineGuard';
 
 /** `waiting`: the project was syncing when this row would have run — parked,
@@ -100,6 +101,8 @@ export class BulkExportRunner {
       listProjects: () => { id: string; name: string; lastExportPath?: string }[];
       execute: BulkExportExecutor;
       hasCheckpoint?: (project: Project) => Promise<boolean>;
+      /** Whether a file is already on disk (default: the native `file_exists`). */
+      fileExists?: (path: string) => Promise<boolean>;
       /** The workspace export settings that apply to this project (unassigned →
        *  the All tab's). Read fresh on every check — never cached. */
       exportSettingsFor?: (id: string) => WorkspaceExportChoice | undefined;
@@ -193,11 +196,17 @@ export class BulkExportRunner {
   > {
     const project = await this.deps.loadProject(meta.id);
     if (!project) return { blocked: 'Blocked — project missing', flags: undefined };
-    const takenByOthers = (path: string): boolean => {
+    // The recorded last export path is this project's own file: re-exporting
+    // onto it is an update (overwrite). Any OTHER existing file, or a path a
+    // different project's row has claimed, gets " (2)", " (3)" …
+    const ownPath = meta.lastExportPath ?? project.lastExportPath;
+    const exists = this.deps.fileExists ?? fileExists;
+    const taken = async (path: string): Promise<boolean> => {
       for (const [id, claimed] of this.claimed) if (id !== meta.id && claimed === path) return true;
-      return false;
+      if (!(await exists(path))) return false;
+      return !(ownPath !== undefined && samePath(path, ownPath));
     };
-    const settings = resolveBulkExportSettings(project, this.deps.exportSettingsFor?.(meta.id), meta.lastExportPath, takenByOthers);
+    const settings = await resolveBulkExportSettings(project, this.deps.exportSettingsFor?.(meta.id), meta.lastExportPath, taken);
     if ('blocked' in settings) return { blocked: settings.blocked };
     const gate = preflightBulkExport(project.segments, project.assets);
     if (gate.kind === 'block') return { blocked: gate.message, flags: [] };
