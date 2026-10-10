@@ -10,6 +10,7 @@ import { buildExportSpotPayload } from '../services/spots/exportSpecs';
 import { DEFAULT_RESOLUTION_TIER } from '../services/resolutionConfig';
 import type { QueueJobOutcome } from '../services/syncQueue';
 import { awaitExportTeardown } from '../services/exportTeardownLatch';
+import { MediaLoadTimeoutError } from '../services/projectMediaPreparation';
 import { loadProjectMedia, type LoadedProjectMedia } from '../services/bulkExportMedia';
 import type { Project } from '../types';
 
@@ -38,6 +39,8 @@ export function BulkExportHost({
       try {
         media = await loadMedia(input.project);
       } catch (err) {
+        // A hung probe reads "Failed — Retry — media would not load" as it is.
+        if (err instanceof MediaLoadTimeoutError) return { status: 'failed', detail: err.message };
         return { status: 'failed', detail: `could not load the project's media — ${errorText(err)}` };
       }
       try {

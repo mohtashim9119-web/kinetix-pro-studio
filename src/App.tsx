@@ -329,7 +329,7 @@ import {
   reportAssetResolutionFailure,
   clearLoadFailure,
 } from './services/projectStore';
-import { getMediaDuration, prepareProjectMedia } from './services/projectMediaPreparation';
+import { getMediaDuration, MediaLoadTimeoutError, prepareProjectMedia } from './services/projectMediaPreparation';
 import { migrateIndexedDbAssetsToNative } from './services/migrateAssetsToNative';
 import { backfillAssetContentHashes } from './services/backfillAssetContentHashes';
 import { getProjectAssetRecoveryStatus, relinkAsset, attachNewAssetToSegment, attachNewAssetToSegmentFromPath } from './services/assetRecovery';
@@ -6574,7 +6574,19 @@ export default function App() {
           project.assets.forEach(a => { if (a.url) URL.revokeObjectURL(a.url); });
           revokedOutgoing = true;
         },
+      }).catch((err: unknown) => {
+        // Fail loud, not an endless "Loading media…": the project stays closed
+        // and the current one is left as it was. A media probe that never
+        // answered reads exactly as it does in Bulk Export.
+        console.error('[kinetix] Cannot switch to project — media preparation failed:', id, err);
+        showToast(
+          err instanceof MediaLoadTimeoutError
+            ? `This project could not be opened — ${err.message}. Try again.`
+            : `This project could not be opened — could not load the project's media — ${err instanceof Error ? err.message : String(err)}`,
+        );
+        return null;
       });
+      if (!prepared) return;
       if (!revokedOutgoing) project.assets.forEach(a => { if (a.url) URL.revokeObjectURL(a.url); });
       const rehydratedAssets = prepared.assets;
 

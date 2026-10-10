@@ -28,6 +28,7 @@ vi.mock('../services/spots/exportSpecs', () => ({ buildExportSpotPayload: () => 
 import { createRoot } from 'react-dom/client';
 import { act } from 'react';
 import { BulkExportHost } from './BulkExportHost';
+import { MediaLoadTimeoutError } from '../services/projectMediaPreparation';
 import { trackExportTeardown } from '../services/exportTeardownLatch';
 import { BulkExportRunner, type BulkExportExecutorInput } from '../services/bulkExportQueue';
 import type { QueueJobOutcome } from '../services/syncQueue';
@@ -193,3 +194,29 @@ describe('BulkExportHost serialises the cancelled row\'s teardown before the nex
     expect(hook.startExport).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('BulkExportHost media load timeout', () => {
+  it('a media load that times out parks the row "media would not load" and never starts the export', async () => {
+    hook.startExport.mockReset();
+    const run = mountHost2(async () => { throw new MediaLoadTimeoutError(); });
+    await expect(run()).resolves.toEqual({ status: 'failed', detail: 'media would not load' });
+    expect(hook.startExport).not.toHaveBeenCalled();
+  });
+});
+
+function mountHost2(loadMedia: (p: Project) => Promise<{ project: Project; revoke: () => void }>): () => Promise<QueueJobOutcome> {
+  let executor!: (input: BulkExportExecutorInput) => Promise<QueueJobOutcome>;
+  const runner = { setExecutor: (fn: typeof executor) => { executor = fn; } } as unknown as BulkExportRunner;
+  const root = createRoot(document.createElement('div'));
+  act(() => root.render(<BulkExportHost runner={runner} loadMedia={loadMedia} />));
+  return () => {
+    let p!: Promise<QueueJobOutcome>;
+    act(() => {
+      p = executor({
+        project: { id: 'P', name: 'P' } as Project, savedPath: '/o/P.mp4', resolution: '1080p', fps: 30,
+        resume: false, signal: new AbortController().signal, setPhase: () => {}, setProgress: () => {},
+      });
+    });
+    return p;
+  };
+}
