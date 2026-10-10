@@ -234,13 +234,6 @@
 /* Bulk Export's control row (30px — Bulk Sync's sub-tab height): selection
    on the left, the export actions on the right. */
 .kxd-xctl { flex-shrink: 0; height: 30px; margin: 10px 20px 6px; display: flex; align-items: center; gap: 10px; }
-.kxd-xctl-select {
-  display: inline-flex; align-items: center; gap: 8px; height: 30px; padding: 0 2px;
-  background: none; border: none; color: var(--kxd-text); font-size: 11.5px; font-weight: 500;
-}
-.kxd-xctl-select:disabled { opacity: 0.5; cursor: default; }
-.kxd-xctl-select:hover .kxd-check[data-state="off"] { border-color: rgba(255, 255, 255, 0.5); }
-.kxd-xctl-select:focus-visible { outline: 2px solid var(--kxd-accent-hi); outline-offset: 2px; border-radius: 6px; }
 .kxd-xctl-count {
   font-family: 'JetBrains Mono', monospace; font-size: 10.5px; color: var(--kxd-text-faint);
   padding-left: 10px; border-left: 1px solid var(--kxd-line-strong); line-height: 14px;
