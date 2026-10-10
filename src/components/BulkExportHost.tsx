@@ -17,6 +17,10 @@ import type { Project } from '../types';
 
 /** Shown on the row when a Retry has nothing to continue from. */
 export const RESTART_NOTE = 'No checkpoint yet — restarting from the beginning';
+/** A survivor existed but could not be used (claim held, cut bitstream, spent budget…) — never dressed up as "no checkpoint yet". */
+export const COULD_NOT_RESUME_NOTE = "Couldn't resume the saved checkpoint — restarting from the beginning";
+/** A Retry that was offered nothing and given no reason. */
+export const NOTHING_FOUND_NOTE = "Couldn't find a usable checkpoint — restarting from the beginning";
 
 const errorText = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
@@ -102,7 +106,7 @@ function BulkExportSlot({
     const stage = state.stageLabel || 'Starting…';
     // Encoding began on a Retry that was never offered a checkpoint: say so.
     if (!startInfo.current && input.resume && state.stage?.type === 'encoding_segment') {
-      startInfo.current = { note: RESTART_NOTE };
+      startInfo.current = { note: state.resumeRefusalNotice ? COULD_NOT_RESUME_NOTE : NOTHING_FOUND_NOTE };
     }
     input.setPhase(stage);
     report(state.progress, stage);
@@ -113,8 +117,8 @@ function BulkExportSlot({
   useEffect(() => {
     if (finished.current || startInfo.current) return;
     const notice = state.resumeRefusalNotice;
-    if (notice?.kind === 'no_checkpoint_yet') {
-      startInfo.current = { note: RESTART_NOTE };
+    if (notice) {
+      startInfo.current = { note: notice.kind === 'no_checkpoint_yet' ? RESTART_NOTE : COULD_NOT_RESUME_NOTE };
       report(0, 'Starting…');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -27,7 +27,7 @@ vi.mock('../services/spots/exportSpecs', () => ({ buildExportSpotPayload: () => 
 
 import { createRoot } from 'react-dom/client';
 import { act } from 'react';
-import { BulkExportHost, RESTART_NOTE } from './BulkExportHost';
+import { BulkExportHost, RESTART_NOTE, COULD_NOT_RESUME_NOTE, NOTHING_FOUND_NOTE } from './BulkExportHost';
 import { MediaLoadTimeoutError } from '../services/projectMediaPreparation';
 import { trackExportTeardown } from '../services/exportTeardownLatch';
 import { BulkExportRunner, type BulkExportExecutorInput } from '../services/bulkExportQueue';
@@ -272,6 +272,16 @@ describe('BulkExportHost: an honest start (resume vs restart)', () => {
     expect(RESTART_NOTE).toBe('No checkpoint yet — restarting from the beginning');
   });
 
+  it('a survivor that could not be used (e.g. its claim is held) is NOT dressed up as "no checkpoint yet"', async () => {
+    hook.startExport.mockReset();
+    hook.state = { ...hook.state, isExporting: true, resumeRefusalNotice: { kind: 'live_claim_blocked', sessionId: 's', reason: 'another window is using this session' } } as typeof hook.state;
+    const h = mountWithProgress(true);
+    h.start();
+    await settle();
+    expect(h.setProgress).toHaveBeenCalledWith(expect.objectContaining({ note: COULD_NOT_RESUME_NOTE }));
+    expect(h.setProgress).not.toHaveBeenCalledWith(expect.objectContaining({ note: RESTART_NOTE }));
+  });
+
   it('a Retry whose export begins encoding with no offer and no notice still says it restarted', async () => {
     hook.startExport.mockReset();
     hook.state = {
@@ -281,7 +291,7 @@ describe('BulkExportHost: an honest start (resume vs restart)', () => {
     const h = mountWithProgress(true);
     h.start();
     await settle();
-    expect(h.setProgress).toHaveBeenCalledWith(expect.objectContaining({ note: RESTART_NOTE }));
+    expect(h.setProgress).toHaveBeenCalledWith(expect.objectContaining({ note: NOTHING_FOUND_NOTE }));
   });
 
   it('a fresh Start carries no resume/restart note at all', async () => {

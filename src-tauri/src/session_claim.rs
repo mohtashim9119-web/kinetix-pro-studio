@@ -637,6 +637,12 @@ pub fn destroy_session_dir(dir: &Path, force: bool) -> Result<DestroySessionOutc
         return Ok(DestroySessionOutcome { disposition: "not_found".to_string() });
     }
     if !force && has_manifest(dir) {
+        // The session survives for a later resume, so THIS process is done with
+        // it: let go of its claim, exactly as `retain_session_for_resume` does.
+        // Left held, the still-running app reads as a live foreign holder
+        // ("another window is using this session") and the very next Retry's
+        // discovery refuses to resume it — a silent restart from 0%.
+        let _ = release_session_claim(dir);
         return Ok(DestroySessionOutcome { disposition: "refused_manifest".to_string() });
     }
     let _ = release_session_claim(dir);
@@ -1085,6 +1091,25 @@ mod tests {
         assert!(dir.exists(), "manifest'd session must survive an unforced destroy");
         assert!(dir.join("piece_0.h264").is_file());
         assert!(dir.join("export_state.json").is_file());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_retained_session_releases_this_processs_claim_so_retry_can_resume_it() {
+        // The live incident: cancel (non-forced destroy, manifest present), then
+        // Retry in the SAME app run. The claim used to stay held by this very
+        // process, which reads as `live`, so discovery refused the session.
+        let id = Uuid::new_v4().to_string();
+        let dir = std::env::temp_dir().join(format!("kinetix-export-{id}"));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("export_state.json"), b"{}").unwrap();
+        acquire_session_claim(&dir, &id).unwrap();
+        assert_eq!(read_session_claim_view(&dir, &id).unwrap().holder_liveness, "live");
+        let outcome = destroy_session_dir(&dir, false).unwrap();
+        assert_eq!(outcome.disposition, "refused_manifest");
+        assert!(dir.join("export_state.json").is_file());
+        assert_eq!(read_session_claim_view(&dir, &id).unwrap().holder_liveness, "unclaimed");
         let _ = fs::remove_dir_all(&dir);
     }
 
