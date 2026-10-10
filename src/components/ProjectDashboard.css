@@ -25,6 +25,10 @@
   --kxd-accent-hi: #f5a35f;
   --kxd-accent-low: #8a4c22;
   --kxd-accent-wash: rgba(232, 132, 61, 0.12);
+  /* One orange for "selected / select-all": every surface uses these three. */
+  --kxd-sel-bg: var(--kxd-accent-wash);
+  --kxd-sel-border: rgba(232, 132, 61, 0.45);
+  --kxd-sel-text: var(--kxd-accent-hi);
   --kxd-danger-wash: rgba(193, 68, 63, 0.14);
   --kxd-radius-lg: 16px;
   --kxd-radius-md: 10px;
@@ -202,10 +206,7 @@
 }
 .kxd-xrow:hover { border-color: var(--kxd-line-strong); }
 .kxd-xrow.is-pickable { cursor: pointer; }
-.kxd-xrow.is-selected {
-  background: var(--kxd-accent-wash); border-color: var(--kx-accent-line);
-  box-shadow: 0 0 0 1px rgba(232, 132, 61, 0.16);
-}
+.kxd-xrow.is-selected { background: var(--kxd-sel-bg); border-color: var(--kxd-sel-border); }
 .kxd-xrow-top { display: flex; align-items: center; gap: 6px; }
 .kxd-xrow-main {
   position: relative; flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; min-width: 0;
@@ -1058,16 +1059,13 @@
 }
 
 /* Select all / Deselect all — a small rounded button (not a pill, so it never
-   reads as a workspace tab) in the same orange family as the active tab:
-   hairline accent border, soft wash, accent text; brighter on hover. */
+   reads as a workspace tab) in the SAME selected orange as a selected row
+   (--kxd-sel-*), in both states. */
 .kxd-selall {
   flex-shrink: 0; display: inline-flex; align-items: center; height: 28px; padding: 0 12px;
-  border-radius: 8px; border: 1px solid var(--kx-accent-line); background: var(--kxd-accent-wash);
-  color: var(--kxd-accent-hi); font-size: 11.5px; font-weight: 600; line-height: 1; white-space: nowrap;
-  box-shadow: 0 0 0 1px rgba(232, 132, 61, 0.1), 0 6px 16px -10px rgba(232, 132, 61, 0.5);
-  transition: background 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease;
+  border-radius: 8px; border: 1px solid var(--kxd-sel-border); background: var(--kxd-sel-bg);
+  color: var(--kxd-sel-text); font-size: 11.5px; font-weight: 600; line-height: 1; white-space: nowrap;
+  transition: filter 0.12s ease;
 }
-.kxd-selall:hover { border-color: rgba(232, 132, 61, 0.7); background: rgba(232, 132, 61, 0.2); }
+.kxd-selall:hover { filter: brightness(1.25); }
 .kxd-selall:focus-visible { outline: 2px solid var(--kxd-accent-hi); outline-offset: 2px; }
-/* Everything selected: the button itself turns solid-ish orange ("Deselect all"). */
-.kxd-selall[data-active="true"] { background: rgba(232, 132, 61, 0.28); border-color: var(--kxd-accent); color: #ffd9b8; }
