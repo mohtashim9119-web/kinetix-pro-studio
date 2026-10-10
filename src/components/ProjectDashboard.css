@@ -1122,3 +1122,14 @@
 .kxd-xsort-menu .kxd-menu-item[aria-selected="true"] { color: var(--kxd-text); }
 /* The two small icons sit close together (the toolbar's 10px gap is too wide for them). */
 .kxd-xicon + .kxd-xsort-wrap { margin-left: -8px; }
+
+/* Reordering the queued exports. */
+.kxd-xrow { position: relative; }
+.kxd-xrow-grip { cursor: grab; touch-action: none; }
+.kxd-xrow-grip:active { cursor: grabbing; }
+.kxd-xrow.is-dragging { opacity: 0.45; }
+.kxd-xrow.drop-before::before, .kxd-xrow.drop-end::after {
+  content: ''; position: absolute; left: 0; right: 0; height: 2px; border-radius: 2px; background: #f2f2f2; pointer-events: none;
+}
+.kxd-xrow.drop-before::before { top: -5px; }
+.kxd-xrow.drop-end::after { bottom: -5px; }

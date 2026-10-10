@@ -305,11 +305,13 @@ describe('BulkExportModal — Dashboard revamp Stage 4 (Bulk Export tab)', () =>
   it('clock and ETA read plainly', () => {
     expect(clock(134)).toBe('2:14');
     expect(clock(3725)).toBe('1:02:05');
-    // It took 2 minutes to reach 20% -> 10 minutes in all -> 8 minutes left at that moment.
-    expect(etaText(0, 120_000, 120_000)).toBe('8m 00s left');
-    expect(etaText(0, 120_000, 300_000)).toBe('5m 00s left');   // counts down
-    expect(etaText(0, 120_000, 600_000)).toBe('finishing…');
-    expect(etaText(0, undefined, 60_000)).toBeNull();            // before 20%: no number
+    // 5% took 30 s -> 10 minutes in all -> ~10 minutes left at that moment, counting down.
+    expect(etaText(0, 30_000, 30_000)).toBe('~10 minutes left');
+    expect(etaText(0, 30_000, 330_000)).toBe('~5 minutes left');
+    expect(etaText(0, 30_000, 570_000)).toBe('~1 minute left');
+    expect(etaText(0, 30_000, 700_000)).toBe('finishing…');
+    expect(etaText(0, 1_800_000, 1_800_000)).toBe('~9 h 30 min left');   // 5% took 30 min -> 10 h in all
+    expect(etaText(0, undefined, 60_000)).toBeNull();               // before 5%: no number
   });
 
   it('Export switches to Active; a cancelled export lands in Failed; a finished one shows how long it took', async () => {
@@ -433,5 +435,42 @@ describe('BulkExportModal — Dashboard revamp Stage 4 (Bulk Export tab)', () =>
     expect(retryAll.textContent).toBe('Retry all');
     await act(async () => { retryAll.click(); await new Promise(r => setTimeout(r, 30)); });
     expect(runner.snapshot().every(r => r.phase !== 'idle')).toBe(true);
+  });
+
+  it('Active: drag a queued export by its grip to reorder; the running one cannot be dragged', async () => {
+    const ids = ['a', 'b', 'c', 'd'];
+    const runner = new BulkExportRunner({
+      listProjects: () => ids.map(id => ({ id, name: id, lastExportPath: `/out/${id}.mp4` })),
+      loadProject: async id => ({ ...project(id), segments: [], assets: [] }),
+      storage: mem(),
+      playChime: () => {},
+      execute: input => new Promise(resolve => input.signal.addEventListener('abort', () => resolve({ status: 'failed', detail: 'cancelled' }))),
+    });
+    await mount(runner);
+    runner.setSelectedAll(true);
+    await act(async () => { await runner.startSelected(); });
+    await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="bulk-export-tab-active"]')!.click(); });
+    const order = (): string[] => [...container.querySelectorAll('[data-testid^="bulk-export-row-"]')].map(el => el.getAttribute('data-testid')!.replace('bulk-export-row-', ''));
+    expect(order()).toEqual(['a', 'b', 'c', 'd']);
+    expect(container.querySelector('[data-testid="bulk-export-grip-a"]')).toBeNull();   // running
+    // jsdom has no layout: stub each row's box (100px tall, stacked).
+    ids.forEach((id, i) => {
+      container.querySelector<HTMLElement>(`[data-testid="bulk-export-row-${id}"]`)!.getBoundingClientRect =
+        () => ({ top: i * 100, bottom: i * 100 + 90, left: 0, right: 300, width: 300, height: 90, x: 0, y: i * 100, toJSON: () => ({}) });
+    });
+    const pointer = (type: string, y: number): Event => Object.assign(new MouseEvent(type, { bubbles: true, clientY: y }), {});
+    await act(async () => { container.querySelector('[data-testid="bulk-export-grip-d"]')!.dispatchEvent(pointer('pointerdown', 330)); });
+    await act(async () => { window.dispatchEvent(pointer('pointermove', 120)); });       // above b's middle (145)
+    await act(async () => { window.dispatchEvent(pointer('pointerup', 120)); });
+    expect(order()).toEqual(['a', 'd', 'b', 'c']);
+    // Keyboard: Alt+ArrowDown moves one step; Alt+ArrowUp cannot pass the running export.
+    await act(async () => {
+      container.querySelector('[data-testid="bulk-export-grip-d"]')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', altKey: true, bubbles: true }));
+    });
+    expect(order()).toEqual(['a', 'b', 'd', 'c']);
+    await act(async () => {
+      container.querySelector('[data-testid="bulk-export-grip-b"]')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', altKey: true, bubbles: true }));
+    });
+    expect(order()).toEqual(['a', 'b', 'd', 'c']);
   });
 });

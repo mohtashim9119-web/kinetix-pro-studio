@@ -6,12 +6,13 @@
 import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Z } from './overlayLayers';
 import type { BulkExportPhase, BulkExportProgress, BulkExportRunner } from '../services/bulkExportQueue';
-import { ArrowDownUp, Check, FolderOpen, Search, Clapperboard, ExternalLink, Play, RefreshCw, SlidersHorizontal, Trash2, X } from 'lucide-react';
+import { ArrowDownUp, Check, FolderOpen, GripVertical, Search, Clapperboard, ExternalLink, Play, RefreshCw, SlidersHorizontal, Trash2, X } from 'lucide-react';
 import { loadAllMetas } from '../services/projectStore';
 import { ProjectCardThumb } from './ProjectCardThumb';
 import { formatDuration, useProjectDurations } from './projectDurations';
 import { useExportPrecheck } from './bulkExportPrecheck';
 import { stepSmoothPercent } from './smoothPercent';
+import { dropTarget, moveQueued } from './queueReorder';
 import { ConfirmDialog } from './ConfirmDialog';
 import { WorkspaceTabs } from './WorkspaceTabs';
 import { relinkPickFolder } from '../services/relinkNative';
@@ -307,18 +308,22 @@ export function tookText(sec: number): string {
   return `${Math.floor(s / 3600)}h ${String(Math.floor((s % 3600) / 60)).padStart(2, '0')}m`;
 }
 
-/** Remaining time once the export has reached 20%: how long it took to get
- *  there, times five, is the whole run; what is left of it counts down. Before
- *  20% there is nothing trustworthy to say (setup and warm-up skew early
- *  speed), so this returns null and the UI says "Estimating…". */
-export function etaText(startedAt: number, reached20At: number | undefined, now: number): string | null {
-  if (reached20At === undefined) return null;
-  const total = (reached20At - startedAt) * 5;
-  const left = Math.max(0, Math.round((startedAt + total - now) / 1000));
-  if (left < 1) return 'finishing…';
-  if (left < 60) return `${left}s left`;
-  if (left < 3600) return `${Math.floor(left / 60)}m ${String(left % 60).padStart(2, '0')}s left`;
-  return `${Math.floor(left / 3600)}h ${String(Math.floor((left % 3600) / 60)).padStart(2, '0')}m left`;
+/** Remaining time once the export has reached 5%: how long it took to get
+ *  there, times twenty, is the whole run; what is left of it counts down, in
+ *  whole minutes ("~4 minutes left"). Before 5% there is nothing honest to say
+ *  (setup and warm-up skew early speed), so this returns null and the UI says
+ *  "Estimating…". */
+export function etaText(startedAt: number, reached5At: number | undefined, now: number): string | null {
+  if (reached5At === undefined) return null;
+  const total = (reached5At - startedAt) * 20;
+  const leftSec = (startedAt + total - now) / 1000;
+  if (leftSec <= 0) return 'finishing…';
+  const minutes = Math.ceil(leftSec / 60);
+  if (minutes < 2) return '~1 minute left';
+  if (minutes < 60) return `~${minutes} minutes left`;
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return `~${h} h${m ? ` ${m} min` : ''} left`;
 }
 
 /** An Active row: live bar; elapsed | time left and the percent; resolution,
@@ -373,7 +378,7 @@ function ActiveProgress({
   const pct = Math.floor(value);
   const starting = progress.pct <= 0;
   const elapsed = (now - progress.startedAt) / 1000;
-  const eta = etaText(progress.startedAt, progress.reached20At, now);
+  const eta = etaText(progress.startedAt, progress.reached5At, now);
   return (
     <div className="kxd-xrow-prog" data-testid={`bulk-export-progress-${id}`}>
       <div className="kx-bulk-bar" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={starting ? undefined : pct} aria-label="Export progress">
@@ -520,6 +525,41 @@ export function BulkExportModal({
   const settingsStore = exportSettings ?? workspaceExportSettings();
   const settingsVersion = useSyncExternalStore(l => settingsStore.subscribe(l), () => settingsStore.getVersion());
   useEffect(() => { if (settingsVersion > 0) void runner.refresh(); }, [settingsVersion, runner]);
+  // Drag to reorder the queued exports (pointer events — no native DnD, which is
+  // unreliable in the desktop webview). The running export is never movable.
+  const rowEls = useRef(new Map<string, HTMLElement>());
+  const [drag, setDrag] = useState<{ id: string; before: string | null } | null>(null);
+  const queuedIdsRef = useRef<string[]>([]);
+  useEffect(() => {
+    if (!drag) return;
+    const dragId = drag.id;
+    const onMove = (e: PointerEvent): void => {
+      const rects = queuedIdsRef.current.flatMap(id => {
+        const el = rowEls.current.get(id);
+        if (!el) return [];
+        const r = el.getBoundingClientRect();
+        return [{ id, top: r.top, bottom: r.bottom }];
+      });
+      const before = dropTarget(e.clientY, rects, dragId);
+      setDrag(d => (d && d.before !== before ? { ...d, before } : d));
+    };
+    const onUp = (): void => {
+      setDrag(d => {
+        if (d) runner.reorderQueue(moveQueued(queuedIdsRef.current, d.id, d.before));
+        return null;
+      });
+    };
+    const onKey = (e: KeyboardEvent): void => { if (e.key === 'Escape') setDrag(null); };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('keydown', onKey);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [drag?.id, runner]);
   // Cancelling an export is destructive: always asked first (one row or all).
   const [confirmCancel, setConfirmCancel] = useState<{ ids: string[]; name?: string; running: boolean } | null>(null);
   const [tab, setTabRaw] = useState<ExportTab>(readExportTab);
@@ -557,6 +597,7 @@ export function BulkExportModal({
   const shown = tab === 'ready'
     ? tabRows.filter(p => !q || p.name.toLowerCase().includes(q)).sort(readyOrder)
     : tabRows;
+  queuedIdsRef.current = tab === 'active' ? shown.filter(p => byId.get(p.id)?.phase === 'queued').map(p => p.id) : [];
   const allSelected = shown.length > 0 && shown.every(p => byId.get(p.id)?.selected);
   // Select all selects exactly the rows this workspace + tab shows.
   const selectAll = (on: boolean): void => {
@@ -729,9 +770,10 @@ export function BulkExportModal({
             return (
               <li
                 key={p.id}
+                ref={el => { if (el) rowEls.current.set(p.id, el); else rowEls.current.delete(p.id); }}
                 data-testid={`bulk-export-row-${p.id}`}
                 data-phase={row?.phase ?? 'idle'}
-                className={`kx-bulk-row kxd-xrow${pickable ? ' is-pickable' : ''}${pickable && selectedRow ? ' is-selected' : ''}`}
+                className={`kx-bulk-row kxd-xrow${pickable ? ' is-pickable' : ''}${pickable && selectedRow ? ' is-selected' : ''}${drag?.id === p.id ? ' is-dragging' : ''}${drag && drag.before === p.id ? ' drop-before' : ''}${drag && drag.before === null && p.id === queuedIdsRef.current[queuedIdsRef.current.length - 1] && drag.id !== p.id ? ' drop-end' : ''}`}
                 onClick={pickable ? () => runner.setSelected(p.id, !selectedRow) : undefined}
               >
                 <div className="kxd-xrow-top">
@@ -761,6 +803,27 @@ export function BulkExportModal({
                         onClick={e => { e.stopPropagation(); onOpenProject(p.id); }}
                       >
                         <ExternalLink size={13} aria-hidden="true" />
+                      </button>
+                    )}
+                    {tab === 'active' && row?.phase === 'queued' && (
+                      <button
+                        type="button"
+                        className="kxd-xrow-open kxd-xrow-grip"
+                        data-testid={`bulk-export-grip-${p.id}`}
+                        aria-label={`Reorder ${p.name} (drag, or Alt+Arrow up / down)`}
+                        title="Drag to reorder"
+                        onPointerDown={e => { e.preventDefault(); setDrag({ id: p.id, before: null }); }}
+                        onKeyDown={e => {
+                          if (!e.altKey || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return;
+                          e.preventDefault();
+                          const ids = queuedIdsRef.current;
+                          const at = ids.indexOf(p.id);
+                          if (at < 0) return;
+                          if (e.key === 'ArrowUp' && at > 0) runner.reorderQueue(moveQueued(ids, p.id, ids[at - 1]!));
+                          if (e.key === 'ArrowDown' && at < ids.length - 1) runner.reorderQueue(moveQueued(ids, p.id, ids[at + 2] ?? null));
+                        }}
+                      >
+                        <GripVertical size={13} aria-hidden="true" />
                       </button>
                     )}
                     {tab === 'finished' && (
