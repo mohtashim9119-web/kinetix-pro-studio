@@ -158,10 +158,10 @@ describe('BulkExportModal — Dashboard revamp Stage 4 (Bulk Export tab)', () =>
     expect(container.querySelector('[data-testid="bulk-export-status-n"]')!.textContent).toBe(BULK_EXPORT_NO_PATH);
   });
 
-  it('tabs are ordered Ready | Blocked | Active | Finished', async () => {
+  it('tabs are ordered Ready | Blocked | Failed | Active | Finished', async () => {
     await mount(runnerOf([project('a')]));
     const labels = [...container.querySelectorAll('[data-testid="bulk-export-tabs"] .kxd-subtab-label')].map(e => e.textContent);
-    expect(labels).toEqual(['Ready', 'Blocked', 'Active', 'Finished']);
+    expect(labels).toEqual(['Ready', 'Blocked', 'Failed', 'Active', 'Finished']);
     expect(container.querySelector('[data-testid="bulk-export-counts"]')).toBeNull();
     expect(container.querySelector('[data-testid="bulk-export-retry-all"]')).toBeNull();
   });
@@ -234,5 +234,26 @@ describe('BulkExportModal — Dashboard revamp Stage 4 (Bulk Export tab)', () =>
     const thumb = container.querySelector('[data-testid="bulk-export-row-a"] .kxd-xrow-thumb')!;
     expect(thumb.querySelector('img')).toBeNull();
     expect(thumb.querySelector('.kxd-art-empty svg')).not.toBeNull();
+  });
+
+  it('a failed export lands in Failed (not Blocked) with its reason, Open and Retry', async () => {
+    const runner = new BulkExportRunner({
+      listProjects: () => [{ id: 'f', name: 'f', lastExportPath: '/out/f.mp4' }],
+      loadProject: async id => ({ ...project(id), segments: [], assets: [] }),
+      storage: mem(),
+      playChime: () => {},
+      execute: async () => ({ status: 'failed', detail: 'disk full' }),
+    });
+    await mount(runner, undefined, false, () => {});
+    runner.setSelected('f', true);
+    await act(async () => { await runner.startSelected(); });
+    await act(async () => { await new Promise(r => setTimeout(r, 10)); });
+    expect(container.querySelector('[data-testid="bulk-export-tab-count-failed"]')!.textContent).toBe('1');
+    expect(container.querySelector('[data-testid="bulk-export-tab-count-blocked"]')!.textContent).toBe('0');
+    await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="bulk-export-tab-failed"]')!.click(); });
+    expect(container.querySelector('[data-testid="bulk-export-status-f"]')!.textContent).toContain('disk full');
+    expect(container.querySelector('[data-testid="bulk-export-retry-f"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="bulk-export-open-f"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="bulk-export-select-all"]')).toBeNull();
   });
 });

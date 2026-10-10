@@ -183,14 +183,16 @@ function KxCheck(): React.ReactElement {
   );
 }
 
-/** Ready | Blocked | Active | Finished — Bulk Sync's sub-tabs, for exports.
+/** Ready | Blocked | Failed | Active | Finished — Bulk Sync's sub-tabs, for exports.
  *  Ready: not started (the only tab where projects can be selected). Blocked
- *  holds what needs the operator (blocked, failed, paused, cancelled, waiting
- *  on a sync); once resolved a row moves to Active, then Finished. */
-type ExportTab = 'ready' | 'blocked' | 'active' | 'finished';
+ *  holds what needs the operator before an export can start (blocked, paused,
+ *  cancelled, waiting on a sync); Failed holds exports that ran and failed
+ *  (Retry); once resolved a row moves to Active, then Finished. */
+type ExportTab = 'ready' | 'blocked' | 'failed' | 'active' | 'finished';
 const EXPORT_TABS: readonly { id: ExportTab; label: string }[] = [
   { id: 'ready', label: 'Ready' },
   { id: 'blocked', label: 'Blocked' },
+  { id: 'failed', label: 'Failed' },
   { id: 'active', label: 'Active' },
   { id: 'finished', label: 'Finished' },
 ];
@@ -201,7 +203,8 @@ function exportedAt(ms: number): string {
 }
 const EXPORT_TAB_KEY = 'kinetix:bulk-export-tab:v1';
 function exportTabOf(phase: BulkExportPhase | undefined, preBlocked = false): ExportTab {
-  if (phase === 'blocked' || phase === 'failed' || phase === 'paused' || phase === 'cancelled' || phase === 'waiting') return 'blocked';
+  if (phase === 'failed') return 'failed';
+  if (phase === 'blocked' || phase === 'paused' || phase === 'cancelled' || phase === 'waiting') return 'blocked';
   // Not started, but the pre-check found something to resolve first.
   if ((phase === undefined || phase === 'idle') && preBlocked) return 'blocked';
   if (phase === 'done') return 'finished';
@@ -211,7 +214,7 @@ function exportTabOf(phase: BulkExportPhase | undefined, preBlocked = false): Ex
 function readExportTab(): ExportTab {
   try {
     const raw = localStorage.getItem(EXPORT_TAB_KEY);
-    if (raw === 'ready' || raw === 'active' || raw === 'blocked' || raw === 'finished') return raw;
+    if (raw === 'ready' || raw === 'active' || raw === 'blocked' || raw === 'failed' || raw === 'finished') return raw;
   } catch { /* storage unavailable */ }
   return 'ready';
 }
@@ -296,7 +299,7 @@ export function BulkExportModal({
     setTabRaw(next);
   };
   const inScope = catalog.filter(p => inWorkspace(workspaceList, wsFilter, p.id));
-  const tabCounts: Record<ExportTab, number> = { ready: 0, active: 0, blocked: 0, finished: 0 };
+  const tabCounts: Record<ExportTab, number> = { ready: 0, blocked: 0, failed: 0, active: 0, finished: 0 };
   const tabOf = (id: string): ExportTab => exportTabOf(byId.get(id)?.phase, verdicts.has(id));
   for (const p of inScope) tabCounts[tabOf(p.id)] += 1;
   const shown = inScope.filter(p => tabOf(p.id) === tab);
@@ -360,8 +363,8 @@ export function BulkExportModal({
           </div>
         </div>
         {/* One action per tab, no status clutter (the tabs carry the counts):
-            Ready selects, Active cancels, Finished clears; Blocked has none. */}
-        {tab !== 'blocked' && shown.length > 0 && (
+            Ready selects, Active cancels, Finished clears; Blocked and Failed have none. */}
+        {tab !== 'blocked' && tab !== 'failed' && shown.length > 0 && (
           <div className="kxd-xctl">
             {tab === 'ready' && (
               <>
@@ -417,6 +420,7 @@ export function BulkExportModal({
           {shown.length === 0 && (
             <li data-testid="bulk-export-empty" className="rounded-xl border border-dashed border-[var(--kx-line-2)] px-4 py-6 text-center text-[12px] leading-snug text-[var(--kx-muted)]">
               {tab === 'blocked' ? 'Nothing blocked.'
+                : tab === 'failed' ? 'No failed exports.'
                 : tab === 'finished' ? 'Nothing exported yet.'
                 : tab === 'active' ? 'Nothing exporting right now.'
                 : wsFilter === 'all' ? 'No projects yet.' : 'No projects in this workspace yet.'}
@@ -478,11 +482,11 @@ export function BulkExportModal({
                     <div className="kxd-xrow-main is-static">{body}</div>
                   )}
                   <div className="kxd-xrow-actions">
-                    {/* Ready: Open on hover. Blocked: Open, always there. */}
-                    {onOpenProject && (tab === 'ready' || tab === 'blocked') && (
+                    {/* Ready: Open on hover. Blocked / Failed: Open, always there. */}
+                    {onOpenProject && (tab === 'ready' || tab === 'blocked' || tab === 'failed') && (
                       <button
                         type="button"
-                        className={`kxd-xrow-open${tab === 'blocked' ? ' is-always' : ''}`}
+                        className={`kxd-xrow-open${tab === 'blocked' || tab === 'failed' ? ' is-always' : ''}`}
                         data-testid={`bulk-export-open-${p.id}`}
                         aria-label={`Open ${p.name}`}
                         title="Open project"
