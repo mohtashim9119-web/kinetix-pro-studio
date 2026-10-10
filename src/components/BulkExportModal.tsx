@@ -193,6 +193,14 @@ export function clock(sec: number): string {
   return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${r}` : `${m}:${r}`;
 }
 
+/** "4m 12s" — how long an export took. */
+export function tookText(sec: number): string {
+  const s = Math.max(0, Math.round(sec));
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, '0')}s`;
+  return `${Math.floor(s / 3600)}h ${String(Math.floor((s % 3600) / 60)).padStart(2, '0')}m`;
+}
+
 /** "~3m 20s left" from the rate measured since encoding began; null until
  *  there is enough to go on (2 points and 5 s of encoding). */
 export function etaText(pct: number, base: { pct: number; at: number } | undefined, now: number): string | null {
@@ -287,9 +295,9 @@ function ActiveProgress({
 
 /** Ready | Blocked | Failed | Active | Finished — Bulk Sync's sub-tabs, for exports.
  *  Ready: not started (the only tab where projects can be selected). Blocked
- *  holds what needs the operator before an export can start (blocked, paused,
- *  cancelled, waiting on a sync); Failed holds exports that ran and failed
- *  (Retry); once resolved a row moves to Active, then Finished. */
+ *  holds what needs the operator before an export can start (blocked, waiting
+ *  on a sync); Failed holds exports that ran and did not finish — failed,
+ *  cancelled, interrupted (Retry); once resolved a row moves to Active, then Finished. */
 type ExportTab = 'ready' | 'blocked' | 'failed' | 'active' | 'finished';
 const EXPORT_TABS: readonly { id: ExportTab; label: string }[] = [
   { id: 'ready', label: 'Ready' },
@@ -305,8 +313,10 @@ function exportedAt(ms: number): string {
 }
 const EXPORT_TAB_KEY = 'kinetix:bulk-export-tab:v1';
 function exportTabOf(phase: BulkExportPhase | undefined, preBlocked = false): ExportTab {
-  if (phase === 'failed') return 'failed';
-  if (phase === 'blocked' || phase === 'paused' || phase === 'cancelled' || phase === 'waiting') return 'blocked';
+  // An export that ran and did not finish — failed, cancelled, or interrupted
+  // (paused by a reload) — is a Failed one: Retry resumes it.
+  if (phase === 'failed' || phase === 'cancelled' || phase === 'paused') return 'failed';
+  if (phase === 'blocked' || phase === 'waiting') return 'blocked';
   // Not started, but the pre-check found something to resolve first.
   if ((phase === undefined || phase === 'idle') && preBlocked) return 'blocked';
   if (phase === 'done') return 'finished';
@@ -390,7 +400,10 @@ export function BulkExportModal({
   /** Export skips anything the pre-check holds in Blocked. */
   const startExport = (): void => {
     for (const p of catalog) if (verdicts.has(p.id) && byId.get(p.id)?.selected) runner.setSelected(p.id, false);
-    void runner.startSelected();
+    // Follow the work: whatever Start queued is on the Active tab.
+    void runner.startSelected().then(() => {
+      if (runner.isActive()) setTab('active');
+    });
   };
   // A changed export folder / setting can clear a "no export path" block: re-check.
   const settingsStore = exportSettings ?? workspaceExportSettings();
@@ -556,7 +569,7 @@ export function BulkExportModal({
                     <span>{scenes === 1 ? '1 scene' : `${scenes} scenes`}</span>
                   </span>
                   {tab === 'finished' && row?.finishedAt !== undefined && (
-                    <span className="kxd-xrow-when" data-testid={`bulk-export-when-${p.id}`}>Exported {exportedAt(row.finishedAt)}</span>
+                    <span className="kxd-xrow-when" data-testid={`bulk-export-when-${p.id}`}>Exported {exportedAt(row.finishedAt)}{row.exportMs !== undefined ? ` · took ${tookText(row.exportMs / 1000)}` : ''}</span>
                   )}
                 </span>
               </>

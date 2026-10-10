@@ -24,6 +24,8 @@ export interface BulkExportRow {
   flags?: string[];
   /** When the row last finished exporting (set once, on Done). */
   finishedAt?: number;
+  /** How long that export took, ms (its own run, queue wait excluded). */
+  exportMs?: number;
 }
 
 /** Live numbers for the export that is running (never persisted). */
@@ -287,6 +289,7 @@ export class BulkExportRunner {
     for (const row of this.rows.filter(r => wanted.has(r.id) && r.phase === 'done')) {
       this.toReady(row);
       row.finishedAt = undefined;
+      row.exportMs = undefined;
       row.selected = false;
     }
     this.persistSelection();
@@ -383,7 +386,10 @@ export class BulkExportRunner {
       if (item.status === 'queued') { row.phase = 'queued'; row.message = 'Queued'; }
       else if (item.status === 'running') { row.phase = 'exporting'; row.message = item.phase || 'Exporting'; }
       else if (item.status === 'done') {
-        if (row.phase !== 'done') row.finishedAt = item.finishedAt ?? Date.now();
+        if (row.phase !== 'done') {
+          row.finishedAt = item.finishedAt ?? Date.now();
+          row.exportMs = item.startedAt !== undefined ? Math.max(0, row.finishedAt - item.startedAt) : undefined;
+        }
         row.phase = 'done'; row.message = 'Done';
       }
       else if (item.status === 'failed') { row.phase = 'failed'; row.message = item.detail ? `Failed — Retry — ${item.detail}` : 'Failed — Retry'; }

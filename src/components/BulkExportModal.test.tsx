@@ -6,7 +6,7 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 
 const pick = vi.hoisted(() => vi.fn());
 vi.mock('../services/relinkNative', () => ({ relinkPickFolder: pick }));
-import { BulkExportModal, EXPORT_FOLDER_PICK_TITLE, clock, etaText } from './BulkExportModal';
+import { BulkExportModal, EXPORT_FOLDER_PICK_TITLE, clock, etaText, tookText } from './BulkExportModal';
 import { BulkExportRunner } from '../services/bulkExportQueue';
 import { BULK_EXPORT_NO_PATH } from '../services/bulkExportSettings';
 import { WorkspaceRegistry } from './workspaceRegistry';
@@ -296,5 +296,52 @@ describe('BulkExportModal — Dashboard revamp Stage 4 (Bulk Export tab)', () =>
     expect(etaText(50, base, 80_000)).toBe('~1m 40s left'); // 40% in 80 s -> 50% left = 100 s
     expect(etaText(90, base, 80_000)).toBe('~10s left');    // 80% in 80 s -> 10% left = 10 s
     expect(etaText(50, undefined, 80_000)).toBeNull();
+  });
+
+  it('Export switches to Active; a cancelled export lands in Failed; a finished one shows how long it took', async () => {
+    let release!: () => void;
+    const runner = new BulkExportRunner({
+      listProjects: () => ['a', 'b'].map(id => ({ id, name: id, lastExportPath: `/out/${id}.mp4` })),
+      loadProject: async id => ({ ...project(id), segments: [], assets: [] }),
+      storage: mem(),
+      playChime: () => {},
+      execute: input => new Promise(resolve => {
+        if (input.project.id === 'a') { release = () => resolve({ status: 'done' }); }
+        input.signal.addEventListener('abort', () => resolve({ status: 'failed', detail: 'cancelled' }));
+      }),
+    });
+    await mount(runner);
+    await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="bulk-export-tab-ready"]')!.click(); });
+    await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="bulk-export-select-all"]')!.click(); });
+    await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="bulk-export-start"]')!.click(); });
+    await act(async () => { await new Promise(r => setTimeout(r, 10)); });
+    expect(container.querySelector('[data-testid="bulk-export-tab-active"]')!.getAttribute('aria-selected')).toBe('true');
+    await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="bulk-export-cancel-b"]')!.click(); });
+    await act(async () => { release(); await new Promise(r => setTimeout(r, 10)); });
+    expect(runner.snapshot().find(r => r.id === 'a')?.exportMs).toBeGreaterThanOrEqual(0);
+    await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="bulk-export-tab-finished"]')!.click(); });
+    expect(container.querySelector('[data-testid="bulk-export-when-a"]')!.textContent).toMatch(/· took \d/);
+  });
+
+  it('cancelled and interrupted exports sit in Failed, not Blocked', async () => {
+    const runner = new BulkExportRunner({
+      listProjects: () => [{ id: 'c', name: 'c', lastExportPath: '/out/c.mp4' }],
+      loadProject: async id => ({ ...project(id), segments: [], assets: [] }),
+      storage: mem(),
+      playChime: () => {},
+      execute: input => new Promise(resolve => input.signal.addEventListener('abort', () => resolve({ status: 'failed', detail: 'cancelled' }))),
+    });
+    await mount(runner);
+    runner.setSelected('c', true);
+    await act(async () => { await runner.startSelected(); });
+    await act(async () => { runner.cancel('c'); await new Promise(r => setTimeout(r, 10)); });
+    expect(container.querySelector('[data-testid="bulk-export-tab-count-failed"]')!.textContent).toBe('1');
+    expect(container.querySelector('[data-testid="bulk-export-tab-count-blocked"]')!.textContent).toBe('0');
+  });
+
+  it('took-time reads plainly', () => {
+    expect(tookText(42)).toBe('42s');
+    expect(tookText(252)).toBe('4m 12s');
+    expect(tookText(3900)).toBe('1h 05m');
   });
 });
