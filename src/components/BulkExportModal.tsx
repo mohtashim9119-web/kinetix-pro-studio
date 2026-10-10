@@ -5,7 +5,7 @@
 
 import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Z } from './overlayLayers';
-import type { BulkExportPhase, BulkExportRunner } from '../services/bulkExportQueue';
+import type { BulkExportPhase, BulkExportProgress, BulkExportRunner } from '../services/bulkExportQueue';
 import { Check, FolderOpen, Clapperboard, ExternalLink, Play, RefreshCw, SlidersHorizontal, Trash2, X } from 'lucide-react';
 import { loadAllMetas } from '../services/projectStore';
 import { ProjectCardThumb } from './ProjectCardThumb';
@@ -183,6 +183,86 @@ function KxCheck(): React.ReactElement {
   );
 }
 
+/** "2:14" — an elapsed clock. */
+export function clock(sec: number): string {
+  const s = Math.max(0, Math.floor(sec));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const r = String(s % 60).padStart(2, '0');
+  return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${r}` : `${m}:${r}`;
+}
+
+/** "~3m 20s left" from the share done so far; null until there is enough to go on. */
+export function etaText(pct: number, elapsedSec: number): string | null {
+  if (pct < 3 || pct >= 100 || elapsedSec < 3) return null;
+  const left = Math.round(elapsedSec * (100 - pct) / pct);
+  if (left < 60) return `~${Math.max(1, left)}s left`;
+  if (left < 3600) return `~${Math.floor(left / 60)}m ${String(left % 60).padStart(2, '0')}s left`;
+  return `~${Math.floor(left / 3600)}h ${String(Math.floor((left % 3600) / 60)).padStart(2, '0')}m left`;
+}
+
+/** An Active row: live bar, stage, timer + ETA, what is being written, Cancel. */
+function ActiveProgress({
+  id, phase, progress, onCancel,
+}: {
+  id: string;
+  phase: BulkExportPhase | undefined;
+  progress: BulkExportProgress | undefined;
+  onCancel: () => void;
+}): React.ReactElement {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (phase !== 'exporting') return;
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [phase]);
+  const cancel = (
+    <button type="button" className="kxd-xrow-retry" data-testid={`bulk-export-cancel-${id}`} onClick={onCancel}>
+      <X size={11} aria-hidden="true" />
+      Cancel
+    </button>
+  );
+  if (phase !== 'exporting' || !progress) {
+    return (
+      <div className="kxd-xrow-prog" data-testid={`bulk-export-progress-${id}`}>
+        <div className="kxd-xrow-prog-line">
+          <span className="kxd-xrow-prog-stage" data-testid={`bulk-export-status-${id}`}>Waiting in the queue</span>
+          {cancel}
+        </div>
+      </div>
+    );
+  }
+  const pct = Math.round(progress.pct);
+  const elapsed = (now - progress.startedAt) / 1000;
+  const eta = etaText(progress.pct, elapsed);
+  const starting = progress.pct <= 0;
+  return (
+    <div className="kxd-xrow-prog" data-testid={`bulk-export-progress-${id}`}>
+      <div className="kx-bulk-bar" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={starting ? undefined : pct} aria-label="Export progress">
+        <div
+          className="kx-bulk-bar-fill kxd-xrow-bar-fill"
+          data-kind={starting ? 'indeterminate' : 'determinate'}
+          data-glow="true"
+          style={{ width: `${starting ? 42 : pct}%` }}
+        >
+          <span className="kx-bulk-bar-sheen" aria-hidden="true" />
+        </div>
+      </div>
+      <div className="kxd-xrow-prog-line">
+        <span className="kxd-xrow-pct" data-testid={`bulk-export-pct-${id}`}>{starting ? '—' : `${pct}%`}</span>
+        <span className="kxd-xrow-prog-stage" data-testid={`bulk-export-status-${id}`} title={progress.stage}>{progress.stage}</span>
+        <span className="kxd-xrow-prog-time" data-testid={`bulk-export-time-${id}`}>
+          {clock(elapsed)}{eta ? ` · ${eta}` : ''}
+        </span>
+      </div>
+      <div className="kxd-xrow-prog-line is-meta">
+        <span className="kxd-xrow-prog-file" title={progress.fileName}>{progress.resolution} · {progress.fps} fps → {progress.fileName}</span>
+        {cancel}
+      </div>
+    </div>
+  );
+}
+
 /** Ready | Blocked | Failed | Active | Finished — Bulk Sync's sub-tabs, for exports.
  *  Ready: not started (the only tab where projects can be selected). Blocked
  *  holds what needs the operator before an export can start (blocked, paused,
@@ -263,6 +343,7 @@ export function BulkExportModal({
   ));
   const rows = useSyncExternalStore(l => runner.subscribe(l), () => runner.snapshot());
   const byId = useMemo(() => new Map(rows.map(r => [r.id, r])), [rows]);
+  const liveProgress = useSyncExternalStore(l => runner.subscribeProgress(l), () => runner.progressSnapshot());
   // The count is what Start will run: selected Ready projects (the only
   // selectable ones), whatever tab shows.
   const isNotStarted = (id: string): boolean => { const ph = byId.get(id)?.phase; return ph === undefined || ph === 'idle'; };
@@ -495,18 +576,6 @@ export function BulkExportModal({
                         <ExternalLink size={13} aria-hidden="true" />
                       </button>
                     )}
-                    {tab === 'active' && (
-                      <button
-                        type="button"
-                        className="kxd-xrow-open"
-                        data-testid={`bulk-export-cancel-${p.id}`}
-                        aria-label={`Cancel ${p.name}`}
-                        title="Cancel"
-                        onClick={() => runner.cancel(p.id)}
-                      >
-                        <X size={13} aria-hidden="true" />
-                      </button>
-                    )}
                     {tab === 'finished' && (
                       <button
                         type="button"
@@ -527,7 +596,10 @@ export function BulkExportModal({
                     />
                   </div>
                 </div>
-                {tab !== 'ready' && tab !== 'finished' && (message || canRetry) && (
+                {tab === 'active' && (
+                  <ActiveProgress id={p.id} phase={row?.phase} progress={liveProgress.get(p.id)} onCancel={() => runner.cancel(p.id)} />
+                )}
+                {tab !== 'ready' && tab !== 'finished' && tab !== 'active' && (message || canRetry) && (
                   <div className="kxd-xrow-status" data-tone={statusTone}>
                     <span data-testid={`bulk-export-status-${p.id}`} className="kxd-xrow-msg" title={message ?? ''}>
                       {message ?? ''}

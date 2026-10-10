@@ -26,6 +26,20 @@ export interface BulkExportRow {
   finishedAt?: number;
 }
 
+/** Live numbers for the export that is running (never persisted). */
+export interface BulkExportProgress {
+  /** 0–100. */
+  pct: number;
+  /** What the engine is doing now ("Encoding segment 3 / 20"). */
+  stage: string;
+  /** Wall-clock ms when this export started (timer / ETA base). */
+  startedAt: number;
+  resolution: string;
+  fps: number;
+  /** Output file name (not the folder). */
+  fileName: string;
+}
+
 export interface BulkExportExecutorInput {
   project: Project;
   savedPath: string;
@@ -34,6 +48,8 @@ export interface BulkExportExecutorInput {
   resume: boolean;
   signal: AbortSignal;
   setPhase(text: string): void;
+  /** Live progress for the row's progress bar, timer and ETA. */
+  setProgress(p: { pct: number; stage: string }): void;
 }
 
 export type BulkExportExecutor = (input: BulkExportExecutorInput) => Promise<QueueJobOutcome>;
@@ -64,6 +80,9 @@ export class BulkExportRunner {
   /** Output path each project's row last claimed — a second project with the
    *  same name gets " (2)" instead of overwriting the first. */
   private claimed = new Map<string, string>();
+  private progress = new Map<string, BulkExportProgress>();
+  private progressView: ReadonlyMap<string, BulkExportProgress> = new Map();
+  private progressListeners = new Set<() => void>();
   private execute: BulkExportExecutor;
 
   constructor(
@@ -103,6 +122,14 @@ export class BulkExportRunner {
 
   setExecutor(fn: BulkExportExecutor): void {
     this.execute = fn;
+  }
+
+  /** Live progress of running exports, apart from the rows (no storage writes at frame rate). */
+  subscribeProgress(l: () => void): () => void { this.progressListeners.add(l); return () => { this.progressListeners.delete(l); }; }
+  progressSnapshot(): ReadonlyMap<string, BulkExportProgress> { return this.progressView; }
+  private publishProgress(): void {
+    this.progressView = new Map(this.progress);
+    for (const l of this.progressListeners) l();
   }
 
   subscribe(l: () => void): () => void { this.listeners.add(l); return () => { this.listeners.delete(l); }; }
@@ -303,7 +330,13 @@ export class BulkExportRunner {
       label: project.name,
       // Claimed when the row actually runs (a sync may have started since
       // Start); the claim covers the whole export and is always released.
-      run: (ctx: QueueRunContext): Promise<QueueJobOutcome> => runGuarded(project.id, 'export', () => this.execute({
+      run: (ctx: QueueRunContext): Promise<QueueJobOutcome> => runGuarded(project.id, 'export', () => {
+        this.progress.set(project.id, {
+          pct: 0, stage: 'Starting…', startedAt: Date.now(), resolution: settings.resolution, fps: settings.fps,
+          fileName: settings.savedPath.split(/[\\/]/).pop() ?? settings.savedPath,
+        });
+        this.publishProgress();
+        return this.execute({
           project,
           savedPath: settings.savedPath,
           resolution: settings.resolution,
@@ -311,7 +344,14 @@ export class BulkExportRunner {
           resume,
           signal: ctx.signal,
           setPhase: ctx.setPhase,
-        })),
+          setProgress: p => {
+            const cur = this.progress.get(project.id);
+            if (!cur) return;
+            this.progress.set(project.id, { ...cur, pct: Math.max(0, Math.min(100, p.pct)), stage: p.stage || cur.stage });
+            this.publishProgress();
+          },
+        });
+      }),
     };
   }
 
@@ -327,6 +367,11 @@ export class BulkExportRunner {
 
   private onQueue(): void {
     const snap = this.queue.snapshot();
+    let progressChanged = false;
+    for (const item of snap.items) {
+      if (item.status !== 'running' && this.progress.delete(item.id)) progressChanged = true;
+    }
+    if (progressChanged) this.publishProgress();
     for (const item of snap.items) {
       const row = this.rows.find(r => r.id === item.id);
       if (!row) continue;

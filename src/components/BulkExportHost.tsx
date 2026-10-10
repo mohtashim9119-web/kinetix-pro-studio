@@ -30,6 +30,7 @@ export function BulkExportHost({
       // way opening the project does. A load failure parks the row with the
       // reason; the queue advances. The URLs are freed on every exit.
       let media: LoadedProjectMedia;
+      input.setPhase('Loading media…');
       try {
         media = await loadMedia(input.project);
       } catch (err) {
@@ -75,6 +76,14 @@ function BulkExportSlot({
     () => {},
   );
   const finished = useRef(false);
+
+  // Live progress for the Active row: bar, stage text, timer / ETA.
+  useEffect(() => {
+    if (finished.current || typeof state.progress !== 'number') return;
+    const stage = state.stageLabel || 'Starting…';
+    input.setPhase(stage);
+    input.setProgress({ pct: state.progress, stage });
+  }, [state.progress, state.stageLabel, input]);
 
   useEffect(() => {
     // A kickoff that throws must still settle the job (a hang stalls the

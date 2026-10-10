@@ -45,7 +45,7 @@ function mountHost(): (input: Partial<BulkExportExecutorInput>) => Promise<Queue
     act(() => {
       p = executor({
         project: { id: 'P', name: 'P' } as Project, savedPath: '/o/P.mp4', resolution: '1080p', fps: 30,
-        resume: false, signal: new AbortController().signal, setPhase: () => {}, ...input,
+        resume: false, signal: new AbortController().signal, setPhase: () => {}, setProgress: () => {}, ...input,
       });
     });
     return p;
@@ -94,7 +94,7 @@ describe('BulkExportHost loads real media around each export', () => {
       act(() => {
         p = executor({
           project: { id: 'P', name: 'P' } as Project, savedPath: '/o/P.mp4', resolution: '1080p', fps: 30,
-          resume: false, signal: new AbortController().signal, setPhase: () => {}, ...input,
+          resume: false, signal: new AbortController().signal, setPhase: () => {}, setProgress: () => {}, ...input,
         });
       });
       return p;
@@ -138,5 +138,26 @@ describe('BulkExportHost loads real media around each export', () => {
       status: 'failed', detail: "could not load the project's media — media could not be loaded from storage for 2 scenes",
     });
     expect(hook.startExport).not.toHaveBeenCalled();
+  });
+});
+
+describe('BulkExportHost reports live progress', () => {
+  it('forwards the engine\'s percent and stage to the row (bar, timer, ETA)', async () => {
+    hook.state = { ...hook.state, progress: 42, stageLabel: 'Encoding segment 3 / 20', isExporting: true } as typeof hook.state;
+    const setProgress = vi.fn();
+    const setPhase = vi.fn();
+    let executor!: (input: BulkExportExecutorInput) => Promise<QueueJobOutcome>;
+    const runner = { setExecutor: (fn: typeof executor) => { executor = fn; } } as unknown as BulkExportRunner;
+    const root = createRoot(document.createElement('div'));
+    act(() => root.render(<BulkExportHost runner={runner} loadMedia={async p => ({ project: p, revoke: () => {} })} />));
+    act(() => {
+      void executor({
+        project: { id: 'P', name: 'P' } as Project, savedPath: '/o/P.mp4', resolution: '1080p', fps: 30,
+        resume: false, signal: new AbortController().signal, setPhase, setProgress,
+      });
+    });
+    await settle();
+    expect(setProgress).toHaveBeenCalledWith({ pct: 42, stage: 'Encoding segment 3 / 20' });
+    expect(setPhase).toHaveBeenCalledWith('Encoding segment 3 / 20');
   });
 });

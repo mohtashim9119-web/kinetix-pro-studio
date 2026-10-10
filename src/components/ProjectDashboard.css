@@ -1069,3 +1069,13 @@
 }
 .kxd-selall:hover { filter: brightness(1.25); }
 .kxd-selall:focus-visible { outline: 2px solid var(--kxd-accent-hi); outline-offset: 2px; }
+
+/* Active export: live bar (Bulk Sync's), stage, timer + ETA, output, Cancel. */
+.kxd-xrow-prog { margin: 8px 0 0; padding: 10px 6px 2px 4px; border-top: 1px solid var(--kxd-line); display: flex; flex-direction: column; gap: 7px; }
+.kxd-xrow-bar-fill { transition: width 0.5s linear; }
+.kxd-xrow-prog-line { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 11px; color: var(--kxd-text-dim); }
+.kxd-xrow-pct { flex-shrink: 0; min-width: 34px; font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 700; color: var(--kxd-accent-hi); font-variant-numeric: tabular-nums; }
+.kxd-xrow-prog-stage { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--kxd-text); }
+.kxd-xrow-prog-time { flex-shrink: 0; font-family: 'JetBrains Mono', monospace; font-size: 10.5px; color: var(--kxd-text-faint); font-variant-numeric: tabular-nums; }
+.kxd-xrow-prog-line.is-meta { font-size: 10.5px; color: var(--kxd-text-faint); }
+.kxd-xrow-prog-file { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: 'JetBrains Mono', monospace; }

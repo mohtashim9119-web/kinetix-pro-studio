@@ -6,7 +6,7 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 
 const pick = vi.hoisted(() => vi.fn());
 vi.mock('../services/relinkNative', () => ({ relinkPickFolder: pick }));
-import { BulkExportModal, EXPORT_FOLDER_PICK_TITLE } from './BulkExportModal';
+import { BulkExportModal, EXPORT_FOLDER_PICK_TITLE, clock, etaText } from './BulkExportModal';
 import { BulkExportRunner } from '../services/bulkExportQueue';
 import { BULK_EXPORT_NO_PATH } from '../services/bulkExportSettings';
 import { WorkspaceRegistry } from './workspaceRegistry';
@@ -255,5 +255,42 @@ describe('BulkExportModal — Dashboard revamp Stage 4 (Bulk Export tab)', () =>
     expect(container.querySelector('[data-testid="bulk-export-retry-f"]')).not.toBeNull();
     expect(container.querySelector('[data-testid="bulk-export-open-f"]')).not.toBeNull();
     expect(container.querySelector('[data-testid="bulk-export-select-all"]')).toBeNull();
+  });
+
+  it('Active shows a live bar, percent, stage, timer + ETA, the output file and Cancel', async () => {
+    let report!: (p: { pct: number; stage: string }) => void;
+    const runner = new BulkExportRunner({
+      listProjects: () => [{ id: 'a', name: 'a', lastExportPath: '/out/a.mp4' }],
+      loadProject: async id => ({ ...project(id), segments: [], assets: [] }),
+      storage: mem(),
+      playChime: () => {},
+      execute: input => new Promise(resolve => {
+        report = input.setProgress;
+        input.signal.addEventListener('abort', () => resolve({ status: 'failed', detail: 'cancelled' }));
+      }),
+    });
+    await mount(runner);
+    runner.setSelected('a', true);
+    await act(async () => { await runner.startSelected(); });
+    await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="bulk-export-tab-active"]')!.click(); });
+    expect(container.querySelector('[data-testid="bulk-export-pct-a"]')!.textContent).toBe('—');
+    await act(async () => { report({ pct: 42, stage: 'Encoding segment 3 / 20' }); });
+    const bar = container.querySelector('[data-testid="bulk-export-progress-a"] [role="progressbar"]')!;
+    expect(bar.getAttribute('aria-valuenow')).toBe('42');
+    expect(container.querySelector('[data-testid="bulk-export-pct-a"]')!.textContent).toBe('42%');
+    expect(container.querySelector('[data-testid="bulk-export-status-a"]')!.textContent).toBe('Encoding segment 3 / 20');
+    expect(container.querySelector('[data-testid="bulk-export-time-a"]')!.textContent).toMatch(/^\d+:\d{2}/);
+    expect(container.querySelector('[data-testid="bulk-export-progress-a"]')!.textContent).toContain('→ a.mp4');
+    await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="bulk-export-cancel-a"]')!.click(); });
+    await act(async () => { await new Promise(r => setTimeout(r, 0)); });
+    expect(runner.progressSnapshot().has('a')).toBe(false);
+  });
+
+  it('clock and ETA read plainly', () => {
+    expect(clock(134)).toBe('2:14');
+    expect(clock(3725)).toBe('1:02:05');
+    expect(etaText(2, 60)).toBeNull();
+    expect(etaText(50, 100)).toBe('~1m 40s left');
+    expect(etaText(90, 90)).toBe('~10s left');
   });
 });
