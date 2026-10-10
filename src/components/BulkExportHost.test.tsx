@@ -28,6 +28,7 @@ vi.mock('../services/spots/exportSpecs', () => ({ buildExportSpotPayload: () => 
 import { createRoot } from 'react-dom/client';
 import { act } from 'react';
 import { BulkExportHost } from './BulkExportHost';
+import { trackExportTeardown } from '../services/exportTeardownLatch';
 import { BulkExportRunner, type BulkExportExecutorInput } from '../services/bulkExportQueue';
 import type { QueueJobOutcome } from '../services/syncQueue';
 import type { Project } from '../types';
@@ -159,5 +160,34 @@ describe('BulkExportHost reports live progress', () => {
     await settle();
     expect(setProgress).toHaveBeenCalledWith({ pct: 42, stage: 'Encoding segment 3 / 20' });
     expect(setPhase).toHaveBeenCalledWith('Encoding segment 3 / 20');
+  });
+});
+
+describe('BulkExportHost serialises the cancelled row\'s teardown before the next start', () => {
+  it('cancel active row → the next row starts only after the teardown resolves', async () => {
+    let releaseTeardown!: () => void;
+    hook.startExport.mockReset();
+    hook.startExport.mockImplementation(() => {});
+    // The engine's cancel is fire-and-forget: it registers its teardown on the latch.
+    hook.cancelExport.mockImplementation(() => {
+      trackExportTeardown(new Promise<void>(res => { releaseTeardown = res; }));
+    });
+    const run = mountHost();
+    const ac = new AbortController();
+    const first = run({ signal: ac.signal });
+    await settle();
+    expect(hook.startExport).toHaveBeenCalledTimes(1);
+    act(() => ac.abort());
+    await first;
+    expect(hook.cancelExport).toHaveBeenCalledTimes(1);
+
+    hook.startExport.mockClear();
+    void run({});
+    await settle();
+    expect(hook.startExport, 'the next row launched while the old session was still tearing down').not.toHaveBeenCalled();
+
+    releaseTeardown();
+    await settle();
+    expect(hook.startExport).toHaveBeenCalledTimes(1);
   });
 });

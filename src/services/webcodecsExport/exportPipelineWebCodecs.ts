@@ -396,7 +396,13 @@ let activeFfmpeg: WebCodecsFfmpeg | null = null;
  * idempotent (`TauriFfmpeg`'s own doc comment), so a caller that also tears
  * down its own ffmpeg handle afterward is safe.
  */
-export async function cancelExportWebCodecs(): Promise<void> {
+export function cancelExportWebCodecs(): Promise<void> {
+  const teardown = cancelExportWebCodecsInner();
+  trackExportTeardown(teardown);
+  return teardown;
+}
+
+async function cancelExportWebCodecsInner(): Promise<void> {
   logExportEvent('cancelled', 'cancelExportWebCodecs invoked');
   const worker = activeWorker;
   const ffmpeg = activeFfmpeg;
@@ -667,6 +673,7 @@ interface PiecePlan {
 export { MAX_ENCODER_SESSION_FRAMES } from './encoderSessionPlan';
 
 import { MAX_ENCODER_SESSION_FRAMES } from './encoderSessionPlan';
+import { trackExportTeardown } from '../exportTeardownLatch';
 
 /** Absolute frame index of `sec` on the grid anchored at `originSec`. */
 function gridFrame(sec: number, originSec: number, fps: number): number {

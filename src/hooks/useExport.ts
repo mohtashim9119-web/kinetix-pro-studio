@@ -16,6 +16,7 @@ import { findResumeOffer, type ResumeOffer, type ResumeRefusalNotice } from '../
 import { recordExportSessionCreated, forgetExportSession } from '../services/webcodecsExport/exportSessionLedger';
 import { readCleanupNotices, clearCleanupNotices, recordCleanupFailure, type CleanupNotice } from '../services/webcodecsExport/exportCleanupNotices';
 import { logExportEvent } from '../services/exportDiagnosticLog';
+import { trackExportTeardown } from '../services/exportTeardownLatch';
 import { normalizeSaveSessionFileResult } from '../services/tauriFfmpeg';
 import { checkExportDestinationPathLength } from '../services/exportDestinationPath';
 import { TauriFfmpeg, type DestroySessionOutcome, type OrphanSweepReport, type RetainForResumeReport, type SessionDiskSnapshot } from '../services/tauriFfmpeg';
@@ -1226,7 +1227,9 @@ export function useExport(
     // an already-deleted temp dir.
     const backend = tauriBackendRef.current;
     const wasWebCodecsPath = activePathRef.current === 'webcodecs';
-    void (async () => {
+    // Registered on the teardown latch: a bulk queue's NEXT start awaits it,
+    // so the old session's kill/destroy never overlaps the next export.
+    trackExportTeardown((async () => {
       if (wasWebCodecsPath) {
         // Plan §9.1 cancel sequence: post 'cancel' to the worker + terminate
         // it FIRST, then kill+destroy the same ffmpeg session the pipeline
@@ -1269,7 +1272,7 @@ export function useExport(
       // one cancelExportWebCodecs() already did (TauriFfmpeg.destroy()'s own
       // doc comment: safe to call more than once) — never a second live kill.
       await teardown(false, 'cancel');
-    })();
+    })());
     setState(prev => ({
       isExporting: false,
       stage: null,

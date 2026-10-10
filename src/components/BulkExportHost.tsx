@@ -9,6 +9,7 @@ import type { BulkExportExecutorInput, BulkExportRunner } from '../services/bulk
 import { buildExportSpotPayload } from '../services/spots/exportSpecs';
 import { DEFAULT_RESOLUTION_TIER } from '../services/resolutionConfig';
 import type { QueueJobOutcome } from '../services/syncQueue';
+import { awaitExportTeardown } from '../services/exportTeardownLatch';
 import { loadProjectMedia, type LoadedProjectMedia } from '../services/bulkExportMedia';
 import type { Project } from '../types';
 
@@ -30,6 +31,9 @@ export function BulkExportHost({
       // way opening the project does. A load failure parks the row with the
       // reason; the queue advances. The URLs are freed on every exit.
       let media: LoadedProjectMedia;
+      // The previous row's cancel tears its ffmpeg session down in the
+      // background: the next start waits for that to finish, never overlaps it.
+      await awaitExportTeardown();
       input.setPhase('Loading media…');
       try {
         media = await loadMedia(input.project);
