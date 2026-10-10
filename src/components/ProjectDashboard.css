@@ -1119,3 +1119,5 @@
 }
 .kxd-xsort-menu .kxd-menu-item { font-size: 12px; padding: 7px 8px; }
 .kxd-xsort-menu .kxd-menu-item[aria-selected="true"] { color: var(--kxd-text); }
+/* The two small icons sit close together (the toolbar's 10px gap is too wide for them). */
+.kxd-xicon + .kxd-xsort-wrap { margin-left: -8px; }
