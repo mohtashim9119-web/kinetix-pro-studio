@@ -599,7 +599,7 @@ export function BulkExportModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [drag?.id, runner]);
   // Cancelling an export is destructive: always asked first (one row or all).
-  const [confirmCancel, setConfirmCancel] = useState<{ ids: string[]; name?: string; running: boolean } | null>(null);
+  const [confirmCancel, setConfirmCancel] = useState<{ ids: string[]; name?: string; running: boolean; all?: boolean } | null>(null);
   const [tab, setTabRaw] = useState<ExportTab>(readExportTab);
   const setTab = (next: ExportTab): void => {
     try { localStorage.setItem(EXPORT_TAB_KEY, next); } catch { /* this session only */ }
@@ -724,7 +724,6 @@ export function BulkExportModal({
                   type="button"
                   data-testid="bulk-export-select-all"
                   className="kxd-selall"
-                  data-active={allSelected}
                   onClick={() => selectAll(!allSelected)}
                 >
                   {allSelected ? 'Deselect all' : 'Select all'}
@@ -758,7 +757,7 @@ export function BulkExportModal({
                   data-testid="bulk-export-cancel-all"
                   className="kxd-selall"
                   title="Cancel every queued export shown here and stop the one running"
-                  onClick={() => setConfirmCancel({ ids: shown.map(p => p.id), running: shown.some(p => byId.get(p.id)?.phase === 'exporting') })}
+                  onClick={() => setConfirmCancel({ all: true, ids: shown.map(p => p.id), running: shown.some(p => byId.get(p.id)?.phase === 'exporting') })}
                 >
                   Cancel all
                 </button>
@@ -973,7 +972,12 @@ export function BulkExportModal({
           confirmLabel={confirmCancel.ids.length === 1 ? 'Cancel export' : 'Cancel all exports'}
           cancelLabel="Keep exporting"
           onCancel={() => setConfirmCancel(null)}
-          onConfirm={() => { const ids = confirmCancel.ids; setConfirmCancel(null); for (const id of ids) runner.cancel(id); }}
+          onConfirm={() => {
+            const { ids, all } = confirmCancel;
+            setConfirmCancel(null);
+            // Cancel all is the runner's one stop-all path; a single row is its own cancel.
+            if (all) runner.stopAll(ids); else runner.cancel(ids[0]!);
+          }}
         />
       )}
     </div>

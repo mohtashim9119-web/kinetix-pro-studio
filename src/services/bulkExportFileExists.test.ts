@@ -6,6 +6,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { BulkExportRunner } from './bulkExportQueue';
 import type { Asset, Project, VideoSegment } from '../types';
+import { selectAll } from './bulkExportTestUtil';
 
 const mem = (): Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> => {
   const m = new Map<string, string>();
@@ -28,7 +29,7 @@ async function pathsFor(projects: Project[], onDisk: string[], folder = '/out'):
     storage: mem(), playChime: () => {},
     execute: async ({ project: p, savedPath }) => { saved[p.id] = savedPath; return { status: 'done' }; },
   });
-  runner.setSelectedAll(true);
+  selectAll(runner);
   await runner.startSelected();
   await vi.waitFor(() => expect(Object.keys(saved)).toHaveLength(projects.length));
   return saved;

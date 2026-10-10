@@ -4,6 +4,7 @@ import { BULK_EXPORT_BATCH_KEY } from './bulkExportPersist';
 import { BULK_EXPORT_OFFLINE, BULK_EXPORT_SOFT_FLAG } from './bulkExportPreflight';
 import { BULK_EXPORT_NO_PATH } from './bulkExportSettings';
 import type { Asset, Project, VideoSegment } from '../types';
+import { selectAll } from './bulkExportTestUtil';
 
 const mem = (): Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> => {
   const m = new Map<string, string>();
@@ -43,7 +44,7 @@ describe('BulkExportRunner', () => {
         return { status: 'done' };
       },
     });
-    runner.setSelectedAll(true);
+    selectAll(runner);
     await runner.startSelected();
     await vi.waitFor(() => {
       expect(runner.snapshot().filter(r => r.phase === 'done').map(r => r.id).sort()).toEqual(['a', 'b']);
@@ -62,7 +63,7 @@ describe('BulkExportRunner', () => {
       playChime: () => {},
       execute: async ({ project: p }) => { started.push(p.id); return { status: 'done' }; },
     });
-    runner.setSelectedAll(true);
+    selectAll(runner);
     await runner.startSelected();
     await vi.waitFor(() => expect(runner.snapshot().find(r => r.id === 'ok')?.phase).toBe('done'));
     expect(runner.snapshot().find(r => r.id === 'off')).toMatchObject({ phase: 'blocked', message: BULK_EXPORT_OFFLINE });
@@ -100,7 +101,7 @@ describe('BulkExportRunner', () => {
         return { status: 'done' };
       },
     });
-    runner.setSelectedAll(true);
+    selectAll(runner);
     await runner.startSelected();
     await vi.waitFor(() => expect(runner.snapshot().find(r => r.id === 'ok')?.phase).toBe('done'));
     expect(runner.snapshot().find(r => r.id === 'bad')).toMatchObject({ phase: 'failed', message: 'Failed — Retry — boom' });
@@ -152,7 +153,7 @@ describe('BulkExportRunner', () => {
       playChime: () => { chimes += 1; },
       execute: async () => ({ status: 'done' }),
     });
-    runner.setSelectedAll(true);
+    selectAll(runner);
     await runner.startSelected();
     await vi.waitFor(() => expect(runner.snapshot().every(r => r.phase === 'done')).toBe(true));
     await flush();

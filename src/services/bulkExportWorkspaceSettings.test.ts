@@ -13,6 +13,7 @@ import { BULK_EXPORT_NO_PATH } from './bulkExportSettings';
 import { WorkspaceRegistry } from '../components/workspaceRegistry';
 import { WorkspaceExportSettingsStore, exportSettingsForProject } from '../components/workspaceExportSettings';
 import type { Asset, Project, VideoSegment } from '../types';
+import { selectAll } from './bulkExportTestUtil';
 
 const mem = (): Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> => {
   const m = new Map<string, string>();
@@ -68,7 +69,7 @@ describe('workspace export settings reach the queue', () => {
     const ws = registry.create('W');
     registry.assign(['a', 'b'], ws.id);
     store.set(ws.id, { folder: '/out' });
-    runner.setSelectedAll(true);
+    selectAll(runner);
     await runner.startSelected();
     await done(runner, 2);
     expect(runs.map(r => r.savedPath).sort()).toEqual(['/out/Clip (2).mp4', '/out/Clip.mp4']);

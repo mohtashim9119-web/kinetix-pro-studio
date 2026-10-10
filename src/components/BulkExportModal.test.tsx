@@ -23,6 +23,7 @@ import { BulkExportRunner } from '../services/bulkExportQueue';
 import { BULK_EXPORT_NO_PATH } from '../services/bulkExportSettings';
 import { WorkspaceRegistry } from './workspaceRegistry';
 import type { Project } from '../types';
+import { selectAll } from '../services/bulkExportTestUtil';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -205,7 +206,7 @@ describe('BulkExportModal — Dashboard revamp Stage 4 (Bulk Export tab)', () =>
       execute: input => new Promise(resolve => input.signal.addEventListener('abort', () => resolve({ status: 'failed', detail: 'cancelled' }))),
     });
     await mount(runner);
-    runner.setSelectedAll(true);
+    selectAll(runner);
     await act(async () => { await runner.startSelected(); });
     await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="bulk-export-tab-active"]')!.click(); });
     expect(container.querySelector('[data-testid="bulk-export-select-all"]')).toBeNull();
@@ -224,11 +225,35 @@ describe('BulkExportModal — Dashboard revamp Stage 4 (Bulk Export tab)', () =>
     expect(container.querySelector('[data-testid="bulk-export-cancel-all"]')).toBeNull();
   });
 
+  it('the Cancel-all confirm dialog\'s one action is runner.stopAll(ids) — a per-row Cancel stays runner.cancel(id)', async () => {
+    const runner = new BulkExportRunner({
+      listProjects: () => [project('a'), project('b'), project('c')].map(p => ({ id: p.id, name: p.name, lastExportPath: `/out/${p.id}.mp4` })),
+      loadProject: async id => ({ ...project(id), segments: [], assets: [] }),
+      storage: mem(), playChime: () => {},
+      execute: input => new Promise(resolve => input.signal.addEventListener('abort', () => resolve({ status: 'failed', detail: 'cancelled' }))),
+    });
+    const stopAll = vi.spyOn(runner, 'stopAll');
+    const cancel = vi.spyOn(runner, 'cancel');
+    await mount(runner);
+    selectAll(runner);
+    await act(async () => { await runner.startSelected(); });
+    await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="bulk-export-tab-active"]')!.click(); });
+    await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="bulk-export-cancel-c"]')!.click(); });
+    await confirmDialog();
+    expect(cancel).toHaveBeenCalledWith('c');
+    expect(stopAll).not.toHaveBeenCalled();
+    await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="bulk-export-cancel-all"]')!.click(); });
+    await confirmDialog();
+    expect(stopAll).toHaveBeenCalledTimes(1);
+    expect(stopAll.mock.calls[0]![0]).toEqual(['a', 'b']);
+    expect(cancel).toHaveBeenCalledTimes(1);   // Cancel all adds no per-row loop of its own
+  });
+
   it('Blocked: Open and the reason only — no select, no Retry; Finished: when, per-row Clear and Clear all', async () => {
     const noPath = { ...project('n'), lastExportPath: undefined } as unknown as Project;
     const runner = runnerOf([project('a'), noPath]);
     await mount(runner, undefined, false, () => {});
-    runner.setSelectedAll(true);
+    selectAll(runner);
     await act(async () => { await runner.startSelected(); });
     await act(async () => { await new Promise(r => setTimeout(r, 10)); });
     await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="bulk-export-tab-blocked"]')!.click(); });
@@ -477,7 +502,7 @@ describe('BulkExportModal — Dashboard revamp Stage 4 (Bulk Export tab)', () =>
       execute: async () => ({ status: 'failed', detail: 'disk full' }),
     });
     await mount(runner);
-    runner.setSelectedAll(true);
+    selectAll(runner);
     await act(async () => { await runner.startSelected(); });
     await act(async () => { await new Promise(r => setTimeout(r, 10)); });
     await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="bulk-export-tab-failed"]')!.click(); });
@@ -500,7 +525,7 @@ describe('BulkExportModal — Dashboard revamp Stage 4 (Bulk Export tab)', () =>
       execute: input => new Promise(resolve => input.signal.addEventListener('abort', () => resolve({ status: 'failed', detail: 'cancelled' }))),
     });
     await mount(runner);
-    runner.setSelectedAll(true);
+    selectAll(runner);
     await act(async () => { await runner.startSelected(); });
     await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="bulk-export-tab-active"]')!.click(); });
     const order = (): string[] => [...container.querySelectorAll('[data-testid^="bulk-export-row-"]')].map(el => el.getAttribute('data-testid')!.replace('bulk-export-row-', ''));
@@ -540,7 +565,7 @@ describe('BulkExportModal — Dashboard revamp Stage 4 (Bulk Export tab)', () =>
       execute: input => new Promise(resolve => input.signal.addEventListener('abort', () => resolve({ status: 'failed', detail: 'cancelled' }))),
     });
     await mount(runner);
-    runner.setSelectedAll(true);
+    selectAll(runner);
     await act(async () => { await runner.startSelected(); });
     await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="bulk-export-tab-active"]')!.click(); });
     const badge = container.querySelector('[data-testid="bulk-export-status-b"]')!;
@@ -557,7 +582,7 @@ describe('BulkExportModal — Dashboard revamp Stage 4 (Bulk Export tab)', () =>
       storage: mem(), playChime: () => {}, execute: async () => ({ status: 'done' }),
     });
     await mount(runner);
-    runner.setSelectedAll(true);
+    selectAll(runner);
     await act(async () => { await runner.startSelected(); });
     await act(async () => { await new Promise(r => setTimeout(r, 20)); });
     await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="bulk-export-tab-blocked"]')!.click(); });

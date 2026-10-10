@@ -181,14 +181,6 @@ export class BulkExportRunner {
     this.commit();
   }
 
-  setSelectedAll(selected: boolean): void {
-    for (const p of this.deps.listProjects()) {
-      this.ensureRow(p.id).selected = selected;
-    }
-    this.persistSelection();
-    this.commit();
-  }
-
   private persistSelection(): void {
     writeBulkExportSelection(this.rows.filter(r => r.selected).map(r => r.id), this.storage);
   }
@@ -299,10 +291,12 @@ export class BulkExportRunner {
     this.queue.cancel(id);
   }
 
-  /** Cancel every queued row and abort the active one. */
-  stopAll(): void {
+  /** Cancel every queued row and abort the active one — or, with `ids`, just
+   *  those (a workspace's Active list). The one path behind "Cancel all". */
+  stopAll(ids?: readonly string[]): void {
     this.chimeArmed = false;
-    this.queue.cancelAll();
+    if (ids === undefined) { this.queue.cancelAll(); return; }
+    for (const id of ids) this.queue.cancel(id);
   }
 
   private toReady(row: BulkExportRow): void {

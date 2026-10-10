@@ -10,6 +10,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { BulkExportRunner, type BulkExportExecutorInput } from './bulkExportQueue';
 import type { Asset, Project, VideoSegment } from '../types';
+import { selectAll } from './bulkExportTestUtil';
 
 const mem = (): Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> => {
   const m = new Map<string, string>();
@@ -46,7 +47,7 @@ const phaseOf = (r: BulkExportRunner, id: string) => r.snapshot().find(x => x.id
 describe('Cancel / Stop all', () => {
   it('a queued row returns to Ready at once; the queue is unaffected', async () => {
     const h = harness(['a', 'b', 'c']);
-    h.runner.setSelectedAll(true);
+    selectAll(h.runner);
     await h.runner.startSelected();
     await vi.waitFor(() => expect(phaseOf(h.runner, 'a')).toBe('exporting'));
     h.runner.cancel('b');
@@ -61,7 +62,7 @@ describe('Cancel / Stop all', () => {
 
   it('the active row aborts and parks "Cancelled — Retry"; the next row runs; no chime', async () => {
     const h = harness(['a', 'b']);
-    h.runner.setSelectedAll(true);
+    selectAll(h.runner);
     await h.runner.startSelected();
     await vi.waitFor(() => expect(phaseOf(h.runner, 'a')).toBe('exporting'));
     h.runner.cancel('a');
@@ -88,7 +89,7 @@ describe('Cancel / Stop all', () => {
 
   it('Stop all cancels every queued row and aborts the active one', async () => {
     const h = harness(['a', 'b', 'c']);
-    h.runner.setSelectedAll(true);
+    selectAll(h.runner);
     await h.runner.startSelected();
     await vi.waitFor(() => expect(phaseOf(h.runner, 'a')).toBe('exporting'));
     expect(h.runner.isActive()).toBe(true);
@@ -99,6 +100,22 @@ describe('Cancel / Stop all', () => {
     expect(h.runs).toHaveLength(1);
     expect(h.runner.isActive()).toBe(false);
     expect(h.chimes()).toBe(0);
+  });
+});
+
+describe('stopAll(ids) — a scoped Cancel all', () => {
+  it('cancels only the listed rows; the rest of the queue carries on', async () => {
+    const h = harness(['a', 'b', 'c']);
+    selectAll(h.runner);
+    await h.runner.startSelected();
+    await vi.waitFor(() => expect(phaseOf(h.runner, 'a')).toBe('exporting'));
+    h.runner.stopAll(['b']);
+    expect(phaseOf(h.runner, 'b')).toBe('idle');
+    expect(phaseOf(h.runner, 'c')).toBe('queued');
+    expect(phaseOf(h.runner, 'a')).toBe('exporting');
+    expect(h.chimes()).toBe(0);
+    h.releases.get('a')!();
+    await vi.waitFor(() => expect(phaseOf(h.runner, 'c')).toBe('exporting'));
   });
 });
 
@@ -120,7 +137,7 @@ describe('Finished rows and spent selections', () => {
 describe('Reordering the queue', () => {
   it('the operator\'s order decides who exports next; the running export stays first', async () => {
     const h = harness(['a', 'b', 'c', 'd']);
-    h.runner.setSelectedAll(true);
+    selectAll(h.runner);
     await h.runner.startSelected();
     await vi.waitFor(() => expect(phaseOf(h.runner, 'a')).toBe('exporting'));
     h.runner.reorderQueue(['d', 'b', 'c']);

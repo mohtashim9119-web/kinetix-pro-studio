@@ -25,6 +25,7 @@ import { BulkBatchRunner } from './bulkBatch';
 import { SyncQueue, type QueueJob } from './syncQueue';
 import { cloudQueueEngine, createCloudProjectJob, type CloudQueueDeps } from './cloudQueueJob';
 import type { Asset, Project, VideoSegment } from '../types';
+import { selectAll } from './bulkExportTestUtil';
 
 const mem = (): Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> => {
   const m = new Map<string, string>();
@@ -89,7 +90,7 @@ describe('bulk export ↔ sync overlap', () => {
     const releaseSync = claimPipeline('a', 'sync')!;
     const started: string[] = [];
     const runner = exportRunner([project('a'), project('b')], async ({ project: p }) => { started.push(p.id); return { status: 'done' }; });
-    runner.setSelectedAll(true);
+    selectAll(runner);
     await runner.startSelected();
     await vi.waitFor(() => expect(runner.snapshot().find(r => r.id === 'b')?.phase).toBe('done'));
     expect(runner.snapshot().find(r => r.id === 'a')).toMatchObject({ phase: 'waiting', message: WAITING_FOR_SYNC });
@@ -110,7 +111,7 @@ describe('bulk export ↔ sync overlap', () => {
       if (p.id === 'x') releaseSync = claimPipeline('y', 'sync'); // y starts syncing while x exports
       return { status: 'done' };
     });
-    runner.setSelectedAll(true);
+    selectAll(runner);
     await runner.startSelected();
     await vi.waitFor(() => expect(runner.snapshot().find(r => r.id === 'y')?.phase).toBe('waiting'));
     expect(started).toEqual(['x']);
@@ -183,7 +184,7 @@ describe('bulk export ↔ sync overlap', () => {
       if (p.id === 'E1') await exportGate;
       return { status: 'done' };
     });
-    runner.setSelectedAll(true);
+    selectAll(runner);
     await runner.startSelected();
     await vi.waitFor(() => expect(exportStarted).toHaveBeenCalledWith('E1'));
 

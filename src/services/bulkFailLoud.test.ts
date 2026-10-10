@@ -21,6 +21,7 @@ import { BulkBatchRunner } from './bulkBatch';
 import { cloudQueueEngine, createCloudProjectJob, type CloudQueueDeps } from './cloudQueueJob';
 import { __resetPipelineGuardForTests, runGuarded, heldPipelines } from './pipelineGuard';
 import type { Asset, Project, VideoSegment } from '../types';
+import { selectAll } from './bulkExportTestUtil';
 
 const mem = (): Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> => {
   const m = new Map<string, string>();
@@ -45,7 +46,7 @@ describe('bulk export fails loud', () => {
       storage: mem(), playChime: () => {},
       execute: async () => ({ status: 'done' }),
     });
-    runner.setSelectedAll(true);
+    selectAll(runner);
     await runner.startSelected();
     await vi.waitFor(() => expect(runner.snapshot().find(r => r.id === 'ok')?.phase).toBe('done'));
     expect(runner.snapshot().find(r => r.id === 'bad')).toMatchObject({
@@ -129,7 +130,7 @@ describe('mid-parallel failures stay in their own queue', () => {
       }))),
     });
 
-    exportRunner.setSelectedAll(true);
+    selectAll(exportRunner);
     const started = exportRunner.startSelected();
     syncRunner.start([{ id: 'S1', name: 'S1' }, { id: 'S2', name: 'S2' }]);
     await started;
