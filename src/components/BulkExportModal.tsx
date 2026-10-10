@@ -378,7 +378,7 @@ function ActiveProgress({
         const dt = (at - last) / 1000; // read now: the updater below runs later
         // During the mux the engine reports a flat 93: the target eases along
         // the modelled tail so the bar moves instead of stalling.
-        const target = displayTargetPct(p.startedAt, at, { pct: p.pct, muxAt: p.muxAt });
+        const target = displayTargetPct(p.startedAt, at, { pct: p.pct, muxAt: p.muxAt, basePct: p.basePct });
         setShown(prev => stepSmoothPercent(prev, target, rate, dt));
       }
       last = at;
@@ -409,7 +409,7 @@ function ActiveProgress({
   const pctText = `${(Math.floor(value * 100) / 100).toFixed(2)}%`;
   const starting = progress.pct <= 0;
   const elapsed = (now - progress.startedAt) / 1000;
-  const eta = etaText(progress.startedAt, progress.reached5At, now, { pct: progress.pct, muxAt: progress.muxAt });
+  const eta = etaText(progress.startedAt, progress.reached5At, now, { pct: progress.pct, muxAt: progress.muxAt, basePct: progress.basePct });
   return (
     <div className="kxd-xrow-prog" data-testid={`bulk-export-progress-${id}`}>
       <div className="kx-bulk-bar" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={starting ? undefined : pct} aria-label="Export progress">
@@ -431,6 +431,11 @@ function ActiveProgress({
         <span className="flex-1" />
         <span className="kxd-xrow-pct" data-testid={`bulk-export-pct-${id}`}>{starting ? '—' : pctText}</span>
       </div>
+      {progress.note && (
+        <div className="kxd-xrow-prog-line is-meta" data-testid={`bulk-export-note-${id}`}>
+          <span className="kxd-xrow-prog-file">{progress.note}</span>
+        </div>
+      )}
       <div className="kxd-xrow-prog-line is-meta">
         <span className="kxd-xrow-prog-file">{progress.resolution} · {progress.fps} fps</span>
         {cancel}

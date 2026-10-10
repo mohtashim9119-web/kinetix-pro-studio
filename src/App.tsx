@@ -5777,14 +5777,20 @@ export default function App() {
   // or the recovery budget on this timeline is spent. Non-blocking: the
   // export already proceeded clean by the time this fires. Every ordinary
   // "nothing to resume" case (no match, identity mismatch, stale manifest)
-  // sets no notice at all and stays silent, as before.
+  // sets no notice at all and stays silent, as before. The exception is a
+  // survivor of THIS timeline that was interrupted before its first
+  // checkpoint: that restart is announced, never silent.
   useEffect(() => {
     const notice = exportState.resumeRefusalNotice;
     if (!notice) return;
     showToast(
       notice.kind === 'bitstream_touched'
         ? `A previous export session couldn't be resumed — its saved video was already partly cut (${notice.reason}). Starting fresh.`
-        : `A previous export session couldn't be resumed — recovery attempts on this project are used up. Starting fresh.`,
+        : notice.kind === 'no_checkpoint_yet'
+          ? 'No checkpoint yet — restarting from the beginning.'
+          : notice.kind === 'never_checkpointed' || notice.kind === 'live_claim_blocked'
+            ? `A previous export session couldn't be resumed (${notice.reason}). Starting fresh.`
+            : `A previous export session couldn't be resumed — recovery attempts on this project are used up. Starting fresh.`,
     );
   }, [exportState.resumeRefusalNotice, showToast]);
 

@@ -58,7 +58,7 @@ export interface ResumeOffer {
  */
 export interface ResumeRefusalNotice {
   sessionId: string;
-  kind: 'bitstream_touched' | 'budget_exhausted' | 'live_claim_blocked' | 'never_checkpointed';
+  kind: 'bitstream_touched' | 'budget_exhausted' | 'live_claim_blocked' | 'never_checkpointed' | 'no_checkpoint_yet';
   reason: string;
   bitstreamTouched?: ResumeRejection['bitstreamTouched'];
 }
@@ -85,6 +85,11 @@ function refusalNoticeFromRejections(rejected: readonly ResumeRejection[]): Resu
     // but never durably checkpointed. See ResumeRejection.neverCheckpointed.
     if (r.neverCheckpointed) {
       return { sessionId: r.sessionId, kind: 'never_checkpointed', reason: r.reason };
+    }
+    // The survivor is this timeline's, but it was interrupted before anything
+    // was recorded: the export restarts from the beginning, and says so.
+    if (r.noCheckpointYet) {
+      return { sessionId: r.sessionId, kind: 'no_checkpoint_yet', reason: r.reason };
     }
   }
   return null;

@@ -90,3 +90,22 @@ describe('the mux tail 93 → 100 moves instead of stalling', () => {
     expect(displayTargetPct(startedAt, 100 * S, { pct: 41 })).toBe(41);
   });
 });
+
+describe('a RESUMED run: the ETA counts only what is left, from where it started', () => {
+  it('resumed at 40%: after 5 new points in 30 s the rest (60 points) is ~6 min — not the fresh run\'s 10', () => {
+    // 5 points in 30 s -> 6 s per point -> 60 points left -> 360 s in all; 30 s gone.
+    expect(remainingMs(0, 30 * S, 30 * S, { pct: 45, basePct: 40 })).toBe(330 * S);
+    // The same readings without knowing it was a resume would badly overshoot.
+    expect(remainingMs(0, 30 * S, 30 * S)).toBe(570 * S);
+  });
+
+  it('the already-encoded portion is not counted as speed (rolling estimate)', () => {
+    // Resumed at 40: 10 new points in 60 s -> 6 s/pt; 45 points of encode left -> 270 s + a tail.
+    const left = remainingMs(0, 30 * S, 60 * S, { pct: 50, basePct: 40 })!;
+    expect(left).toBeGreaterThan(270 * S);
+    expect(left).toBeLessThan(270 * S + MUX_TAIL_MAX_MS + 1);
+    // Treating 0→50 as the run's speed would have promised far less.
+    const naive = remainingMs(0, 30 * S, 60 * S, { pct: 50 })!;
+    expect(left).toBeGreaterThan(naive);
+  });
+});

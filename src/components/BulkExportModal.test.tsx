@@ -390,6 +390,28 @@ describe('BulkExportModal — Dashboard revamp Stage 4 (Bulk Export tab)', () =>
     expect(runner.progressSnapshot().get('a')!.muxAt).toBe(first);   // set once
   });
 
+  it('a resumed export: the bar never reports below the resume point, and the row carries the note', async () => {
+    let report!: (p: { pct: number; stage: string; note?: string; resumedFromPct?: number }) => void;
+    const runner = new BulkExportRunner({
+      listProjects: () => [{ id: 'a', name: 'a', lastExportPath: '/out/a.mp4' }],
+      loadProject: async id => ({ ...project(id), segments: [], assets: [] }),
+      storage: mem(), playChime: () => {},
+      execute: input => new Promise(() => { report = input.setProgress; }),
+    });
+    await mount(runner);
+    act(() => { runner.setSelected('a', true); });
+    await act(async () => { await runner.startSelected(); });
+    await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="bulk-export-tab-active"]')!.click(); });
+    await vi.waitFor(() => expect(report).toBeTypeOf('function'));
+    await act(async () => { report({ pct: 40, stage: 'Resuming…', note: 'Resuming from checkpoint — 40% done', resumedFromPct: 40 }); });
+    // The engine's first readings (before it has re-encoded a frame) are 0: the bar must not fall back.
+    await act(async () => { report({ pct: 0, stage: 'Loading ffmpeg…', note: 'Resuming from checkpoint — 40% done', resumedFromPct: 40 }); });
+    const live = runner.progressSnapshot().get('a')!;
+    expect(live.pct).toBe(40);
+    expect(live.basePct).toBe(40);
+    expect(container.querySelector('[data-testid="bulk-export-note-a"]')!.textContent).toBe('Resuming from checkpoint — 40% done');
+  });
+
   it('clock and ETA read plainly', () => {
     expect(clock(134)).toBe('2:14');
     expect(clock(3725)).toBe('1:02:05');

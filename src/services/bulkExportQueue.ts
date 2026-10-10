@@ -44,6 +44,13 @@ export interface BulkExportProgress {
   /** Wall-clock ms when the engine first reported the mux stage (93%+): the
    *  modelled tail counts from here. */
   muxAt?: number;
+  /** Where this run started on the 0–100 scale: set only when it continues a
+   *  checkpoint (the bar starts there, and the ETA counts only the rest). */
+  basePct?: number;
+  /** A plain-language line about how this run started: "Resuming from
+   *  checkpoint — 7% done" or "No checkpoint yet — restarting from the
+   *  beginning". Never silent. */
+  note?: string;
   /** The first reading above 0% (when encoding actually began): the ETA's rate
    *  is measured from here, so setup time does not inflate it. */
   rateBase?: { pct: number; at: number };
@@ -62,7 +69,7 @@ export interface BulkExportExecutorInput {
   signal: AbortSignal;
   setPhase(text: string): void;
   /** Live progress for the row's progress bar, timer and ETA. */
-  setProgress(p: { pct: number; stage: string }): void;
+  setProgress(p: { pct: number; stage: string; note?: string; resumedFromPct?: number }): void;
 }
 
 export type BulkExportExecutor = (input: BulkExportExecutorInput) => Promise<QueueJobOutcome>;
@@ -387,11 +394,18 @@ export class BulkExportRunner {
           setProgress: p => {
             const cur = this.progress.get(project.id);
             if (!cur) return;
-            const pct = Math.max(0, Math.min(100, p.pct));
-            const rateBase = cur.rateBase ?? (pct > 0 ? { pct, at: Date.now() } : undefined);
-            const reached5At = cur.reached5At ?? (pct >= 5 ? Date.now() : undefined);
+            const basePct = cur.basePct ?? p.resumedFromPct;
+            // A resumed run never reports below where it resumed (the engine's first
+            // readings, before it has re-encoded a frame, are 0).
+            const pct = Math.max(basePct ?? 0, Math.min(100, p.pct));
+            const rateBase = cur.rateBase ?? (pct > (basePct ?? 0) ? { pct, at: Date.now() } : undefined);
+            const reached5At = cur.reached5At ?? (pct >= (basePct ?? 0) + 5 ? Date.now() : undefined);
             const muxAt = cur.muxAt ?? (pct >= MUX_PCT ? Date.now() : undefined);
-            this.progress.set(project.id, { ...cur, pct, stage: p.stage || cur.stage, rateBase, reached5At, muxAt });
+            this.progress.set(project.id, {
+              ...cur, pct, stage: p.stage || cur.stage, rateBase, reached5At, muxAt,
+              ...(basePct !== undefined ? { basePct } : {}),
+              ...((p.note ?? cur.note) !== undefined ? { note: p.note ?? cur.note } : {}),
+            });
             this.publishProgress();
           },
         });

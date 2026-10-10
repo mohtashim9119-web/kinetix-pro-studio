@@ -27,7 +27,7 @@ vi.mock('../services/spots/exportSpecs', () => ({ buildExportSpotPayload: () => 
 
 import { createRoot } from 'react-dom/client';
 import { act } from 'react';
-import { BulkExportHost } from './BulkExportHost';
+import { BulkExportHost, RESTART_NOTE } from './BulkExportHost';
 import { MediaLoadTimeoutError } from '../services/projectMediaPreparation';
 import { trackExportTeardown } from '../services/exportTeardownLatch';
 import { BulkExportRunner, type BulkExportExecutorInput } from '../services/bulkExportQueue';
@@ -231,3 +231,68 @@ function mountHost2(loadMedia: (p: Project) => Promise<{ project: Project; revok
     return p;
   };
 }
+
+describe('BulkExportHost: an honest start (resume vs restart)', () => {
+  function mountWithProgress(resume: boolean): { setProgress: ReturnType<typeof vi.fn>; start: () => void } {
+    const setProgress = vi.fn();
+    let executor!: (input: BulkExportExecutorInput) => Promise<QueueJobOutcome>;
+    const runner = { setExecutor: (fn: typeof executor) => { executor = fn; } } as unknown as BulkExportRunner;
+    const root = createRoot(document.createElement('div'));
+    act(() => root.render(<BulkExportHost runner={runner} loadMedia={async p => ({ project: p, revoke: () => {} })} />));
+    return {
+      setProgress,
+      start: () => act(() => {
+        void executor({
+          project: { id: 'P', name: 'P' } as Project, savedPath: '/o/P.mp4', resolution: '1080p', fps: 30,
+          resume, signal: new AbortController().signal, setPhase: () => {}, setProgress,
+        });
+      }),
+    };
+  }
+
+  it('a found checkpoint: the bar starts at the resumed position and the row says so', async () => {
+    hook.startExport.mockReset();
+    hook.state = { ...hook.state, isExporting: true, pendingResumeOffer: { picturesAlreadyRendered: 140, picturesTotal: 1800 } } as typeof hook.state;
+    const h = mountWithProgress(true);
+    h.start();
+    await settle();
+    expect(hook.resolveResumeChoice).toHaveBeenCalledWith('resume');
+    expect(h.setProgress).toHaveBeenCalledWith(expect.objectContaining({
+      pct: 7, note: 'Resuming from checkpoint — 7% done', resumedFromPct: 7,
+    }));
+  });
+
+  it('nothing recorded yet: "No checkpoint yet — restarting from the beginning", not a silent 0%', async () => {
+    hook.startExport.mockReset();
+    hook.state = { ...hook.state, isExporting: true, resumeRefusalNotice: { kind: 'no_checkpoint_yet', sessionId: 's', reason: 'r' } } as typeof hook.state;
+    const h = mountWithProgress(true);
+    h.start();
+    await settle();
+    expect(h.setProgress).toHaveBeenCalledWith(expect.objectContaining({ note: RESTART_NOTE }));
+    expect(RESTART_NOTE).toBe('No checkpoint yet — restarting from the beginning');
+  });
+
+  it('a Retry whose export begins encoding with no offer and no notice still says it restarted', async () => {
+    hook.startExport.mockReset();
+    hook.state = {
+      ...hook.state, isExporting: true, progress: 1, stageLabel: 'Encoding segment 1 / 20',
+      stage: { type: 'encoding_segment', index: 0, total: 20, frame: 1, totalFrames: 100, cumulative: true },
+    } as typeof hook.state;
+    const h = mountWithProgress(true);
+    h.start();
+    await settle();
+    expect(h.setProgress).toHaveBeenCalledWith(expect.objectContaining({ note: RESTART_NOTE }));
+  });
+
+  it('a fresh Start carries no resume/restart note at all', async () => {
+    hook.startExport.mockReset();
+    hook.state = {
+      ...hook.state, isExporting: true, progress: 1, stageLabel: 'Encoding segment 1 / 20',
+      stage: { type: 'encoding_segment', index: 0, total: 20, frame: 1, totalFrames: 100, cumulative: true },
+    } as typeof hook.state;
+    const h = mountWithProgress(false);
+    h.start();
+    await settle();
+    expect(h.setProgress).toHaveBeenCalledWith({ pct: 1, stage: 'Encoding segment 1 / 20' });
+  });
+});

@@ -9,10 +9,14 @@ import type { BulkExportExecutorInput, BulkExportRunner } from '../services/bulk
 import { buildExportSpotPayload } from '../services/spots/exportSpecs';
 import { DEFAULT_RESOLUTION_TIER } from '../services/resolutionConfig';
 import type { QueueJobOutcome } from '../services/syncQueue';
+import { ENCODE_END_PCT } from '../services/exportEta';
 import { awaitExportTeardown } from '../services/exportTeardownLatch';
 import { MediaLoadTimeoutError } from '../services/projectMediaPreparation';
 import { loadProjectMedia, type LoadedProjectMedia } from '../services/bulkExportMedia';
 import type { Project } from '../types';
+
+/** Shown on the row when a Retry has nothing to continue from. */
+export const RESTART_NOTE = 'No checkpoint yet — restarting from the beginning';
 
 const errorText = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
@@ -84,13 +88,37 @@ function BulkExportSlot({
   );
   const finished = useRef(false);
 
+  // How this run started — never silent. A found checkpoint: the bar starts at
+  // the resumed position with "Resuming from checkpoint — N% done". Nothing
+  // recorded yet (or nothing usable found): "restarting from the beginning".
+  const startInfo = useRef<{ note: string; resumedFromPct?: number } | null>(null);
+  const report = (pct: number, stage: string): void => {
+    input.setProgress({ pct, stage, ...(startInfo.current ?? {}) });
+  };
+
   // Live progress for the Active row: bar, stage text, timer / ETA.
   useEffect(() => {
     if (finished.current || typeof state.progress !== 'number') return;
     const stage = state.stageLabel || 'Starting…';
+    // Encoding began on a Retry that was never offered a checkpoint: say so.
+    if (!startInfo.current && input.resume && state.stage?.type === 'encoding_segment') {
+      startInfo.current = { note: RESTART_NOTE };
+    }
     input.setPhase(stage);
-    input.setProgress({ pct: state.progress, stage });
-  }, [state.progress, state.stageLabel, input]);
+    report(state.progress, stage);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.progress, state.stageLabel, state.stage, input]);
+
+  // Discovery's two honest outcomes, before the first frame is encoded.
+  useEffect(() => {
+    if (finished.current || startInfo.current) return;
+    const notice = state.resumeRefusalNotice;
+    if (notice?.kind === 'no_checkpoint_yet') {
+      startInfo.current = { note: RESTART_NOTE };
+      report(0, 'Starting…');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.resumeRefusalNotice]);
 
   useEffect(() => {
     // A kickoff that throws must still settle the job (a hang stalls the
@@ -113,7 +141,16 @@ function BulkExportSlot({
   // Bulk export shows no resume dialog, so an offer is always answered here:
   // resume on a Retry that found a checkpoint, otherwise a clean start.
   useEffect(() => {
-    if (state.pendingResumeOffer) resolveResumeChoice(input.resume ? 'resume' : 'clean');
+    const offer = state.pendingResumeOffer;
+    if (!offer) return;
+    if (input.resume) {
+      // The bar's own scale: encoding fills 0–90.
+      const pct = Math.round((offer.picturesAlreadyRendered / Math.max(1, offer.picturesTotal)) * ENCODE_END_PCT);
+      startInfo.current = { note: `Resuming from checkpoint — ${pct}% done`, resumedFromPct: pct };
+      report(pct, 'Resuming…');
+    }
+    resolveResumeChoice(input.resume ? 'resume' : 'clean');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.pendingResumeOffer, input.resume, resolveResumeChoice]);
 
   useEffect(() => {
