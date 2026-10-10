@@ -14,13 +14,10 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { loadProject } from '../services/projectStore';
-import { buildSyncGroups } from '../services/syncLogGroups';
+import { buildSyncGroups, SYNC_LOG_DISMISSED_KEY } from '../services/syncLogGroups';
 import { withStorageAvailability } from '../services/bulkExportMedia';
 import { BULK_EXPORT_OFFLINE, preflightBulkExport } from '../services/bulkExportPreflight';
 import type { Project } from '../types';
-
-/** The sync log panel's dismissals (the same store it reads and writes). */
-const SYNC_LOG_DISMISSED_KEY = 'kx-sync-log-dismissed';
 
 function readDismissed(): Set<string> {
   try {

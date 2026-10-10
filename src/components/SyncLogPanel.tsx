@@ -22,6 +22,7 @@ import {
   warningKey,
   RESOLVABLE_ACTIONS,
   SYNC_GROUPS_COPY,
+  SYNC_LOG_DISMISSED_KEY,
   type ActionGroup,
   type GroupItem,
   type LiveState,
@@ -65,12 +66,11 @@ function writeStoredOpenSections(sections: Set<string>): void {
  *  it again. localStorage (outlives a restart): a dismissal is a statement
  *  about this run, not a per-session view toggle. Hides the line only — the
  *  log entries themselves stay recorded and reachable under Details. */
-const DISMISSED_STORAGE_KEY = 'kx-sync-log-dismissed';
 const DISMISSED_CAP = 200;
 
 function readStoredDismissed(): Set<string> {
   try {
-    const raw = localStorage.getItem(DISMISSED_STORAGE_KEY);
+    const raw = localStorage.getItem(SYNC_LOG_DISMISSED_KEY);
     if (!raw) return new Set();
     const parsed: unknown = JSON.parse(raw);
     return Array.isArray(parsed) ? new Set(parsed.filter((v): v is string => typeof v === 'string')) : new Set();
@@ -81,7 +81,7 @@ function readStoredDismissed(): Set<string> {
 
 function writeStoredDismissed(keys: Set<string>): void {
   try {
-    localStorage.setItem(DISMISSED_STORAGE_KEY, JSON.stringify([...keys].slice(-DISMISSED_CAP)));
+    localStorage.setItem(SYNC_LOG_DISMISSED_KEY, JSON.stringify([...keys].slice(-DISMISSED_CAP)));
   } catch {
     // storage unavailable — the dismissal just doesn't outlive this mount
   }

@@ -8,6 +8,9 @@ import { describe, it, expect } from 'vitest';
 import { precheckProject } from './bulkExportPrecheck';
 import { withStorageAvailability } from '../services/bulkExportMedia';
 import { BULK_EXPORT_OFFLINE } from '../services/bulkExportPreflight';
+import { SYNC_LOG_DISMISSED_KEY } from '../services/syncLogGroups';
+import { readFileSync } from 'fs';
+import { resolve } from 'path';
 import type { Asset, Project, SyncLogEntry, VideoSegment } from '../types';
 
 const seg = (id: string, assetId: string): VideoSegment => ({ id, startTime: 0, duration: 1, assetId, text: '' } as VideoSegment);
@@ -49,5 +52,16 @@ describe('bulk export pre-check — offline media is judged from storage', () =>
   it('other newest-sync action kinds still block (sync stopped)', async () => {
     const p = project([stored('a1')], [entry('abort')]);
     expect(await check(p, true)).toMatch(/Blocked — 1 unresolved action in the sync log \(Sync stopped\)/);
+  });
+});
+
+describe('the dismissed-actions store is one shared key', () => {
+  it('the pre-check reads the key the sync log panel writes, and neither spells it out', () => {
+    expect(SYNC_LOG_DISMISSED_KEY).toBe('kx-sync-log-dismissed');
+    for (const file of ['bulkExportPrecheck.ts', 'SyncLogPanel.tsx']) {
+      const src = readFileSync(resolve(import.meta.dirname, file), 'utf-8');
+      expect(src, `${file} spells the dismissed key out again`).not.toContain("'kx-sync-log-dismissed'");
+      expect(src).toContain('SYNC_LOG_DISMISSED_KEY');
+    }
   });
 });

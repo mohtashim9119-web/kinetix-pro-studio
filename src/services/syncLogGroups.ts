@@ -14,6 +14,10 @@ import { CLOUD_USD_PER_WORKER_SEC, formatUsd } from './syncQueue';
 import { classifyScriptWpm } from './syncWpmGate';
 import { describeEntry, describeGroupedItem, LIVE_COPY, type Described } from './syncLogCopy';
 
+/** localStorage key of the attention lines a user dismissed. One store: the
+ *  sync log panel reads and writes it, Bulk Export's pre-check reads it. */
+export const SYNC_LOG_DISMISSED_KEY = 'kx-sync-log-dismissed';
+
 // ---------------------------------------------------------------------------
 // Ids and copy
 // ---------------------------------------------------------------------------
