@@ -11,6 +11,7 @@ import { loadAllMetas } from '../services/projectStore';
 import { ProjectCardThumb } from './ProjectCardThumb';
 import { formatDuration, useProjectDurations } from './projectDurations';
 import { useExportPrecheck } from './bulkExportPrecheck';
+import { stepSmoothPercent } from './smoothPercent';
 import { WorkspaceTabs } from './WorkspaceTabs';
 import { relinkPickFolder } from '../services/relinkNative';
 import {
@@ -215,9 +216,25 @@ function ActiveProgress({
   onCancel: () => void;
 }): React.ReactElement {
   const [now, setNow] = useState(() => Date.now());
+  // The engine reports in bursts; the shown percent glides (see smoothPercent.ts).
+  const [shown, setShown] = useState(() => progress?.pct ?? 0);
+  const latest = useRef(progress);
+  latest.current = progress;
   useEffect(() => {
     if (phase !== 'exporting') return;
-    const t = setInterval(() => setNow(Date.now()), 1000);
+    let last = Date.now();
+    const t = setInterval(() => {
+      const at = Date.now();
+      const p = latest.current;
+      if (p) {
+        const b = p.rateBase;
+        const rate = b && at - b.at > 3000 && p.pct > b.pct ? (p.pct - b.pct) / ((at - b.at) / 1000) : 0;
+        const dt = (at - last) / 1000; // read now: the updater below runs later
+        setShown(prev => stepSmoothPercent(prev, p.pct, rate, dt));
+      }
+      last = at;
+      setNow(at);
+    }, 250);
     return () => clearInterval(t);
   }, [phase]);
   const cancel = (
@@ -236,7 +253,8 @@ function ActiveProgress({
       </div>
     );
   }
-  const pct = Math.round(progress.pct);
+  const value = progress.pct >= 100 ? 100 : shown;
+  const pct = Math.floor(value);
   const elapsed = (now - progress.startedAt) / 1000;
   const eta = etaText(progress.pct, progress.rateBase, now);
   const starting = progress.pct <= 0;
@@ -247,7 +265,7 @@ function ActiveProgress({
           className="kx-bulk-bar-fill kxd-xrow-bar-fill"
           data-kind={starting ? 'indeterminate' : 'determinate'}
           data-glow="true"
-          style={{ width: `${starting ? 42 : pct}%` }}
+          style={{ width: `${starting ? 42 : value}%` }}
         >
           <span className="kx-bulk-bar-sheen" aria-hidden="true" />
         </div>

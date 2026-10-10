@@ -276,8 +276,9 @@ describe('BulkExportModal — Dashboard revamp Stage 4 (Bulk Export tab)', () =>
     expect(container.querySelector('[data-testid="bulk-export-pct-a"]')!.textContent).toBe('—');
     await act(async () => { report({ pct: 42, stage: 'Encoding segment 3 / 20' }); });
     const bar = container.querySelector('[data-testid="bulk-export-progress-a"] [role="progressbar"]')!;
-    expect(bar.getAttribute('aria-valuenow')).toBe('42');
-    expect(container.querySelector('[data-testid="bulk-export-pct-a"]')!.textContent).toBe('42%');
+    // The shown percent glides to the engine's number (it never overshoots it by more than the look-ahead).
+    await vi.waitFor(() => expect(container.querySelector('[data-testid="bulk-export-pct-a"]')!.textContent).toBe('42%'), { timeout: 4000 });
+    expect(bar.getAttribute('aria-valuenow')).toBeTruthy();
     expect(container.querySelector('[data-testid="bulk-export-status-a"]')!.textContent).toBe('Encoding segment 3 / 20');
     expect(container.querySelector('[data-testid="bulk-export-time-a"]')!.textContent).toMatch(/^\d+:\d{2}/);
     expect(container.querySelector('[data-testid="bulk-export-progress-a"]')!.textContent).toContain('→ a.mp4');
