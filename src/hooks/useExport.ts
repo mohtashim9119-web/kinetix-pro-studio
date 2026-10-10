@@ -296,7 +296,8 @@ export interface ExportStartRequest {
 export interface UseExportApi {
   state: UseExportState;
   startExport: (request?: ExportStartRequest) => void;
-  cancelExport: () => void;
+  /** `keepForResume`: bulk Cancel — a session with a resume manifest is kept for Retry. */
+  cancelExport: (opts?: { keepForResume?: boolean }) => void;
   retryExport: () => void;
   dismissSuccess: () => void;
   /** Answers a `state.pendingSealConsent` prompt. `false` (or a cancel that
@@ -1194,7 +1195,7 @@ export function useExport(
     })();
   }, [project, exportResolution, exportFps, runExport, onSavePath, runClaimed]);
 
-  const cancelExport = useCallback((): void => {
+  const cancelExport = useCallback((opts?: { keepForResume?: boolean }): void => {
     if (tauriBackendRef.current === null) {
       // WS3 Round 28 (STEP 2) — a cancel this early (before any session
       // exists — e.g. during the pick_save_path dialog or the orphan sweep,
@@ -1237,7 +1238,7 @@ export function useExport(
         // the exact `backend.ffmpeg` instance passed into
         // exportProjectWebCodecs above — same session, no separate handle to
         // thread through this hook).
-        await cancelExportWebCodecs();
+        await cancelExportWebCodecs({ keepForResume: opts?.keepForResume === true });
       } else {
         // WS3 Round 28 (STEP 2) — the other half of the early-cancel gap: a
         // session exists (tauriBackendRef.current !== null, so we're past

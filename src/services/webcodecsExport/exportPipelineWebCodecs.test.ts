@@ -378,3 +378,92 @@ describe('exportProjectWebCodecs — STEP 3b resume after a mux-stage failure', 
     await pending.catch(() => undefined);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Bulk Export — Cancel then Retry. The row parks "Cancelled — Retry" on the
+// promise that the engine kept a checkpoint. A manual cancel discards the
+// session (pinned above); a BULK cancel (`keepForResume`) must destroy
+// WITHOUT force, so the native guard keeps a session that carries a manifest.
+// The fake session below enforces the same rule as `ffmpeg_destroy_session`:
+// forced → removed; unforced + manifest present → refused (retained);
+// unforced + no manifest → removed.
+// ---------------------------------------------------------------------------
+describe('exportProjectWebCodecs — bulk cancel keeps the session for Retry', () => {
+  beforeEach(() => {
+    muxOnlyMock.mockClear();
+    vi.mocked(encodeStaticImageSegment).mockReset();
+  });
+
+  function makeSessionFfmpeg(files: Set<string>, onKill: () => void): WebCodecsFfmpeg {
+    const base = makeFakeFfmpeg() as unknown as Record<string, unknown>;
+    return {
+      ...base,
+      kill: vi.fn(async () => { onKill(); }),
+      destroy: vi.fn(async (opts?: { force?: boolean }) => {
+        if (!opts?.force && files.has('export_state.json')) return { disposition: 'refused_manifest' };
+        files.clear();
+        return { disposition: 'destroyed' };
+      }),
+    } as unknown as WebCodecsFfmpeg;
+  }
+
+  it('cancel mid-export → session + manifest retained → Retry resumes at the checkpoint without re-rendering finished pieces', async () => {
+    const project = makeProject();
+    const files = new Set<string>();
+    let rejectBlocked: (e: Error) => void = () => {};
+    let call = 0;
+    vi.mocked(encodeStaticImageSegment).mockImplementation(async () => {
+      const n = call++;
+      if (n === 0) {
+        // Piece 0 finishes: its file and the checkpoint manifest are on disk.
+        files.add('piece_0.h264');
+        files.add('export_state.json');
+        return new Uint8Array([1, 2, 3]);
+      }
+      // Piece 1 is mid-render when the operator cancels.
+      return new Promise<Uint8Array>((_, reject) => { rejectBlocked = reject; });
+    });
+    const ffmpeg = makeSessionFfmpeg(files, () => rejectBlocked(new Error('ffmpeg killed')));
+
+    const first = exportProjectWebCodecs(project, ffmpeg, { width: 1920, height: 1080, fps: FPS });
+    await vi.waitFor(() => expect(call).toBe(2));
+    await cancelExportWebCodecs({ keepForResume: true });
+    await first.catch(() => undefined);
+
+    expect(ffmpeg.destroy).toHaveBeenCalledWith({ force: false, failureKind: 'cancel' });
+    expect(files.has('export_state.json'), 'the cancel erased the resume manifest').toBe(true);
+    expect(files.has('piece_0.h264')).toBe(true);
+
+    // Retry: the checkpoint says piece 0 is done.
+    vi.mocked(encodeStaticImageSegment).mockReset();
+    vi.mocked(encodeStaticImageSegment).mockResolvedValue(new Uint8Array([1, 2, 3]));
+    const retryFfmpeg = makeFakeFfmpeg();
+    const result = await exportProjectWebCodecs(project, retryFfmpeg, {
+      width: 1920, height: 1080, fps: FPS,
+      resume: { pieceIndex: 1, encoderSessionIndex: 0, byteOffset: 0, cumulativePictures: 0 },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(encodeStaticImageSegment).toHaveBeenCalledTimes(2); // pieces 1 and 2 only
+    expect(retryFfmpeg.concatAnnexbPieces).toHaveBeenCalledWith(
+      ['piece_0.h264', 'piece_1.h264', 'piece_2.h264'],
+      'video_all.h264',
+    );
+    expect(muxOnlyMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('a bulk cancel with no manifest yet leaves nothing behind (nothing to resume)', async () => {
+    const project = makeProject();
+    const files = new Set<string>(['scratch.tmp']);
+    let rejectBlocked: (e: Error) => void = () => {};
+    vi.mocked(encodeStaticImageSegment).mockImplementation(
+      () => new Promise<Uint8Array>((_, reject) => { rejectBlocked = reject; }),
+    );
+    const ffmpeg = makeSessionFfmpeg(files, () => rejectBlocked(new Error('ffmpeg killed')));
+    const first = exportProjectWebCodecs(project, ffmpeg, { width: 1920, height: 1080, fps: FPS });
+    await vi.waitFor(() => expect(encodeStaticImageSegment).toHaveBeenCalledTimes(1));
+    await cancelExportWebCodecs({ keepForResume: true });
+    await first.catch(() => undefined);
+    expect(files.size).toBe(0);
+  });
+});

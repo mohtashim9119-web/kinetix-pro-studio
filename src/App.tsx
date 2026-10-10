@@ -7504,7 +7504,7 @@ export default function App() {
                 </div>
 
                 <button
-                  onClick={cancelExport}
+                  onClick={() => cancelExport()}
                   className="px-4 py-2 text-xs font-bold border border-gray-700 text-gray-300 rounded-xl hover:border-gray-500 transition-colors"
                 >
                   Cancel Export

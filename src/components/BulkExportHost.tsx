@@ -137,7 +137,7 @@ function BulkExportSlot({
     const onAbort = (): void => {
       if (finished.current) return;
       finished.current = true;
-      cancelExport();
+      cancelExport({ keepForResume: true });
       onDone({ status: 'failed', detail: 'cancelled' });
     };
     if (input.signal.aborted) { onAbort(); return; }

@@ -16,7 +16,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const hook = vi.hoisted(() => ({
   state: { pendingResumeOffer: null as unknown, pendingSealConsent: null as unknown, showExportSuccess: false, error: null as unknown, isExporting: false },
   startExport: vi.fn<(r?: unknown) => void>(),
-  cancelExport: vi.fn<() => void>(),
+  cancelExport: vi.fn<(opts?: { keepForResume?: boolean }) => void>(),
   resolveResumeChoice: vi.fn<(c: 'resume' | 'clean') => void>(),
   resolveSealConsent: vi.fn<(a: boolean) => void>(),
 }));
@@ -130,6 +130,8 @@ describe('BulkExportHost loads real media around each export', () => {
     await p;
     expect(revoke).toHaveBeenCalledTimes(1);
     expect(hook.cancelExport).toHaveBeenCalledTimes(1);
+    // Bulk cancel keeps a session that carries a resume manifest, so Retry can resume.
+    expect(hook.cancelExport).toHaveBeenCalledWith({ keepForResume: true });
   });
 
   it('a media load failure parks the row with the reason and never starts the export', async () => {

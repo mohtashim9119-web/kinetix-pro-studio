@@ -396,13 +396,24 @@ let activeFfmpeg: WebCodecsFfmpeg | null = null;
  * idempotent (`TauriFfmpeg`'s own doc comment), so a caller that also tears
  * down its own ffmpeg handle afterward is safe.
  */
-export function cancelExportWebCodecs(): Promise<void> {
-  const teardown = cancelExportWebCodecsInner();
+export interface CancelExportOptions {
+  /**
+   * Bulk Export's "Cancelled — Retry": destroy WITHOUT `force`, so the native
+   * guard keeps a session that carries a resume manifest (and its rendered
+   * pieces) for the Retry to resume from. A session with no manifest has
+   * nothing to resume and is removed as before. Default (unset) is the manual
+   * export's cancel: discard unconditionally.
+   */
+  keepForResume?: boolean;
+}
+
+export function cancelExportWebCodecs(opts: CancelExportOptions = {}): Promise<void> {
+  const teardown = cancelExportWebCodecsInner(opts);
   trackExportTeardown(teardown);
   return teardown;
 }
 
-async function cancelExportWebCodecsInner(): Promise<void> {
+async function cancelExportWebCodecsInner(opts: CancelExportOptions): Promise<void> {
   logExportEvent('cancelled', 'cancelExportWebCodecs invoked');
   const worker = activeWorker;
   const ffmpeg = activeFfmpeg;
@@ -433,8 +444,8 @@ async function cancelExportWebCodecsInner(): Promise<void> {
     // STEP 3b — a user cancel discards the session regardless of any
     // manifest: there is no "resume this cancelled export" offer, so leaving
     // the directory behind would just be a leak the operator never asked for.
-    logExportEvent('session-cleanup', `sessionId=${ffmpeg.sessionId ?? 'unknown'} reason=cancel`);
-    await ffmpeg.destroy({ force: true, failureKind: 'cancel' });
+    logExportEvent('session-cleanup', `sessionId=${ffmpeg.sessionId ?? 'unknown'} reason=cancel keepForResume=${opts.keepForResume === true}`);
+    await ffmpeg.destroy({ force: opts.keepForResume !== true, failureKind: 'cancel' });
   }
 }
 
