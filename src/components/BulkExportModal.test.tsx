@@ -373,6 +373,9 @@ describe('BulkExportModal — Dashboard revamp Stage 4 (Bulk Export tab)', () =>
     await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="bulk-export-sort"]')!.click(); });
     await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="bulk-export-sort-name-az"]')!.click(); });
     expect(rows()).toEqual(['c', 'b', 'a']);              // natural order: apple 2 before apple 10
+    // Search is a small icon until clicked; then it opens into the field.
+    expect(container.querySelector('[data-testid="bulk-export-search"]')).toBeNull();
+    await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="bulk-export-search-open"]')!.click(); });
     const search = container.querySelector<HTMLInputElement>('[data-testid="bulk-export-search"]')!;
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
     await act(async () => { setter.call(search, 'APPLE'); search.dispatchEvent(new Event('input', { bubbles: true })); });

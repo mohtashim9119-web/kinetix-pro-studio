@@ -6,7 +6,7 @@
 import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Z } from './overlayLayers';
 import type { BulkExportPhase, BulkExportProgress, BulkExportRunner } from '../services/bulkExportQueue';
-import { Check, ChevronDown, FolderOpen, Search, Clapperboard, ExternalLink, Play, RefreshCw, SlidersHorizontal, Trash2, X } from 'lucide-react';
+import { ArrowDownUp, Check, FolderOpen, Search, Clapperboard, ExternalLink, Play, RefreshCw, SlidersHorizontal, Trash2, X } from 'lucide-react';
 import { loadAllMetas } from '../services/projectStore';
 import { ProjectCardThumb } from './ProjectCardThumb';
 import { formatDuration, useProjectDurations } from './projectDurations';
@@ -204,6 +204,43 @@ function readReadySort(): ReadySort {
   return 'newest';
 }
 
+/** The Ready tab's search: a small icon that opens into a field; it folds back
+ *  to the icon when it loses focus empty. */
+function SearchBox({ value, onChange }: { value: string; onChange: (next: string) => void }): React.ReactElement {
+  const [open, setOpen] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const expanded = open || value !== '';
+  useEffect(() => { if (open) inputRef.current?.focus(); }, [open]);
+  if (!expanded) {
+    return (
+      <button type="button" className="kxd-xicon" data-testid="bulk-export-search-open" aria-label="Search ready projects" title="Search" onClick={() => setOpen(true)}>
+        <Search size={13} aria-hidden="true" />
+      </button>
+    );
+  }
+  return (
+    <label className="kxd-xsearch">
+      <Search size={12} aria-hidden="true" />
+      <input
+        ref={inputRef}
+        type="text"
+        data-testid="bulk-export-search"
+        aria-label="Search ready projects"
+        placeholder="Search"
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        onBlur={() => { if (value === '') setOpen(false); }}
+        onKeyDown={e => { if (e.key === 'Escape') { onChange(''); setOpen(false); } }}
+      />
+      {value && (
+        <button type="button" className="kxd-xsearch-clear" aria-label="Clear search" onMouseDown={e => e.preventDefault()} onClick={() => { onChange(''); inputRef.current?.focus(); }}>
+          <X size={11} aria-hidden="true" />
+        </button>
+      )}
+    </label>
+  );
+}
+
 /** The Ready tab's sort: a dashboard-styled menu (not the system select). */
 function SortMenu({ value, onChange }: { value: ReadySort; onChange: (next: ReadySort) => void }): React.ReactElement {
   const [open, setOpen] = useState(false);
@@ -226,10 +263,10 @@ function SortMenu({ value, onChange }: { value: ReadySort; onChange: (next: Read
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-label={`Sort ready projects: ${current.label}`}
+        title={`Sort: ${current.label}`}
         onClick={() => setOpen(o => !o)}
       >
-        <span>{current.label}</span>
-        <ChevronDown size={12} aria-hidden="true" />
+        <ArrowDownUp size={13} aria-hidden="true" />
       </button>
       {open && (
         <div className="kxd-xsort-menu" role="listbox" aria-label="Sort ready projects" data-testid="bulk-export-sort-menu">
@@ -597,22 +634,7 @@ export function BulkExportModal({
                 )}
                 <span className="flex-1" />
                 {checking && <span className="kxd-xctl-checking" data-testid="bulk-export-checking">Checking…</span>}
-                <label className="kxd-xsearch">
-                  <Search size={12} aria-hidden="true" />
-                  <input
-                    type="text"
-                    data-testid="bulk-export-search"
-                    aria-label="Search ready projects"
-                    placeholder="Search"
-                    value={query}
-                    onChange={e => setQuery(e.target.value)}
-                  />
-                  {query && (
-                    <button type="button" className="kxd-xsearch-clear" aria-label="Clear search" onClick={() => setQuery('')}>
-                      <X size={11} aria-hidden="true" />
-                    </button>
-                  )}
-                </label>
+                <SearchBox value={query} onChange={setQuery} />
                 <SortMenu value={sort} onChange={setSort} />
               </>
             )}
