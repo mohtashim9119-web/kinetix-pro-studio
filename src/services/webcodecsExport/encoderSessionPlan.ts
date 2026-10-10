@@ -68,6 +68,22 @@
 export const MAX_ENCODER_SESSION_FRAMES = 1800;
 
 /**
+ * How many frames the WORKER lets one encoder session span — the checkpoint
+ * cadence. Every session boundary is a durable resume point (the orchestrator
+ * checkpoints each rotation seam), so this is how much finished work a cancel
+ * or crash can lose: ≤ 300 frames (10 s at 30 fps, 5 s at 60 fps) plus the
+ * distance back to the previous keyframe, instead of up to 60 s.
+ *
+ * It stays output-neutral for the reason this module opens with: sessions are
+ * only cut where `isKeyFrame` is already true, so no keyframe is added and no
+ * frame moves. The cost is one encoder flush + rebuild per boundary (not
+ * measured here — tune from a real run's `phaseMs`). `MAX_ENCODER_SESSION_FRAMES`
+ * keeps its other jobs (the GL piece cap, the recovery-budget scale); only the
+ * worker's session plan uses this.
+ */
+export const CHECKPOINT_SESSION_FRAMES = 300;
+
+/**
  * Frame indices (run-local, 0-based) at which a new `VideoEncoder` session
  * begins. Always starts with `0`.
  *

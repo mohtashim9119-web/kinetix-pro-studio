@@ -64,7 +64,7 @@ import {
   type ExportFailureVia,
   type ExportWorkerDiagnosticsPayload,
 } from './exportWorkerDiagnostics';
-import { MAX_ENCODER_SESSION_FRAMES, planEncoderSessions } from './encoderSessionPlan';
+import { CHECKPOINT_SESSION_FRAMES, planEncoderSessions } from './encoderSessionPlan';
 import { EXPORT_CODEC_LADDER } from './hardwareCodecLadder';
 import { AppendBackpressureGate, APPEND_BACKPRESSURE_THRESHOLD_BYTES } from './appendBackpressureGate';
 
@@ -1907,7 +1907,7 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
   // `planEncoderSessions` only ever cuts at a frame for which THIS `isKeyFrame`
   // is already true, so a rotation adds no keyframe the unsplit run would not
   // have emitted — see that module's guarantee 2.
-  const sessionStarts = planEncoderSessions(totalFrames, isKeyFrame, MAX_ENCODER_SESSION_FRAMES);
+  const sessionStarts = planEncoderSessions(totalFrames, isKeyFrame, CHECKPOINT_SESSION_FRAMES);
 
   // WS3 Tier 1 item 3c (Rung 3) — a rewind's resume point MUST be one of
   // `sessionStarts`'s own values: those are exactly the frames the planner
@@ -2014,7 +2014,7 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
     type: 'session-plan',
     pieceIndex,
     sessions: sessionStarts.length,
-    capFrames: MAX_ENCODER_SESSION_FRAMES,
+    capFrames: CHECKPOINT_SESSION_FRAMES,
     totalFrames,
   });
 

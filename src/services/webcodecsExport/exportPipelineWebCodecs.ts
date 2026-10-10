@@ -683,7 +683,7 @@ interface PiecePlan {
  */
 export { MAX_ENCODER_SESSION_FRAMES } from './encoderSessionPlan';
 
-import { MAX_ENCODER_SESSION_FRAMES } from './encoderSessionPlan';
+import { MAX_ENCODER_SESSION_FRAMES, CHECKPOINT_SESSION_FRAMES } from './encoderSessionPlan';
 import { trackExportTeardown } from '../exportTeardownLatch';
 
 /** Absolute frame index of `sec` on the grid anchored at `originSec`. */
@@ -3357,7 +3357,7 @@ export async function exportProjectWebCodecs(
           ? {
               encoderSessions: pieceSessions,
               // 1800-frame sessions on this piece's own frame grid.
-              encoderSessionIndex: Math.min(pieceSessions - 1, Math.floor(frame / MAX_ENCODER_SESSION_FRAMES)),
+              encoderSessionIndex: Math.min(pieceSessions - 1, Math.floor(frame / CHECKPOINT_SESSION_FRAMES)),
             }
           : {}),
       });

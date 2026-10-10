@@ -18,7 +18,7 @@
 import { describe, it, expect } from 'vitest';
 import { AnimationType, TransitionType, type Asset, type Project, type VideoSegment } from '../../types';
 import { planWebCodecsExport } from './exportPipelineWebCodecs';
-import { MAX_ENCODER_SESSION_FRAMES, planEncoderSessions, encoderSessionLengths } from './encoderSessionPlan';
+import { MAX_ENCODER_SESSION_FRAMES, CHECKPOINT_SESSION_FRAMES, planEncoderSessions, encoderSessionLengths } from './encoderSessionPlan';
 
 const FPS = 30;
 /** The field run: 332 segments, 38061 frames, 1080p30, transition everywhere. */
@@ -237,5 +237,29 @@ describe('encoder-session plan — destructive probes and degenerate inputs', ()
     expect(planEncoderSessions(10_000, key, 0)).toEqual([0]);
     expect(planEncoderSessions(10_000, key, -1)).toEqual([0]);
     expect(planEncoderSessions(Number.NaN, key)).toEqual([0]);
+  });
+});
+
+describe('CHECKPOINT_SESSION_FRAMES — the worker\'s durable-resume cadence', () => {
+  const gop = 60;                      // 2 s at 30 fps, as production
+  const isKey = (i: number): boolean => i % gop === 0;
+
+  it('a long run gets a session boundary (= a durable checkpoint) at least every cap + one GOP, each on a keyframe', () => {
+    const starts = planEncoderSessions(18_000, isKey, CHECKPOINT_SESSION_FRAMES);   // a 10-minute 30 fps piece
+    for (let i = 0; i < starts.length; i++) {
+      expect(isKey(starts[i]!)).toBe(true);
+      if (i > 0) expect(starts[i]! - starts[i - 1]!).toBeLessThanOrEqual(CHECKPOINT_SESSION_FRAMES);
+    }
+    // 7% into that piece (frame 1260) several checkpoints already exist — with the old
+    // 1800-frame cap the first one would not have landed until frame 1740.
+    expect(starts.filter(s => s > 0 && s <= 1260).length).toBeGreaterThanOrEqual(4);
+    expect(planEncoderSessions(18_000, isKey, 1800).filter(s => s > 0 && s <= 1260)).toEqual([]);
+  });
+
+  it('adds no keyframe and drops no frame (every length sums to the total; cuts are existing keyframes)', () => {
+    const total = 5000;
+    const starts = planEncoderSessions(total, isKey, CHECKPOINT_SESSION_FRAMES);
+    expect(encoderSessionLengths(starts, total).reduce((a, b) => a + b, 0)).toBe(total);
+    expect(starts.every(isKey)).toBe(true);
   });
 });
