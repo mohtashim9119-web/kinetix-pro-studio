@@ -407,6 +407,11 @@ describe('exportProjectWebCodecs — bulk cancel keeps the session for Retry', (
     } as unknown as WebCodecsFfmpeg;
   }
 
+  // NOTE: the manifest in this test is written by the FAKE session below
+  // (`files.add('export_state.json')`), not by the real checkpoint writer — it
+  // proves only that a bulk cancel destroys without force and so keeps a
+  // session that has a manifest. Whether the real engine writes a usable
+  // checkpoint (and when) is `exportResumeRealWriter.test.ts`'s job.
   it('cancel mid-export → session + manifest retained → Retry resumes at the checkpoint without re-rendering finished pieces', async () => {
     const project = makeProject();
     const files = new Set<string>();
