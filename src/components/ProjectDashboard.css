@@ -1089,19 +1089,35 @@
 .kxd-xrow:hover .kxd-xrow-hovercancel, .kxd-xrow:focus-within .kxd-xrow-hovercancel { opacity: 1; }
 .kxd-xrow-prog-time { display: inline-flex; align-items: center; gap: 7px; }
 
-/* Ready toolbar: search + sort, right of Select all. */
+/* Ready toolbar: search + sort, right of Select all — the dashboard's own
+   field (surface, hairline, 8px) and menu; no system select, no orange. */
 .kxd-xsearch {
-  flex: 0 1 150px; min-width: 90px; height: 28px; display: inline-flex; align-items: center; gap: 6px;
-  padding: 0 8px; border-radius: 8px; background: var(--kxd-surface); border: 1px solid var(--kxd-line-strong);
-  color: var(--kxd-text-faint);
+  flex: 0 1 160px; min-width: 96px; height: 28px; display: inline-flex; align-items: center; gap: 7px;
+  padding: 0 10px; border-radius: 8px; background: var(--kxd-surface); border: 1px solid var(--kxd-line);
+  color: var(--kxd-text-faint); transition: border-color 0.15s ease, background 0.15s ease;
 }
-.kxd-xsearch:focus-within { border-color: var(--kxd-sel-border); }
+.kxd-xsearch:hover { border-color: var(--kxd-line-strong); }
+.kxd-xsearch:focus-within { border-color: var(--kxd-line-strong); background: var(--kxd-surface-hover); }
+.kxd-xsearch > svg { flex-shrink: 0; opacity: 0.6; }
 .kxd-xsearch input { flex: 1; min-width: 0; background: none; border: none; outline: none; color: var(--kxd-text); font-size: 11.5px; }
 .kxd-xsearch input::placeholder { color: var(--kxd-text-faint); }
 .kxd-xsearch-clear { display: inline-flex; background: none; border: none; color: var(--kxd-text-faint); padding: 0; }
 .kxd-xsearch-clear:hover { color: var(--kxd-text); }
+.kxd-xsort-wrap { position: relative; flex-shrink: 0; }
 .kxd-xsort {
-  flex-shrink: 0; height: 28px; padding: 0 8px; border-radius: 8px; background: var(--kxd-surface);
-  border: 1px solid var(--kxd-line-strong); color: var(--kxd-text); font-size: 11.5px; font-weight: 500;
+  height: 28px; padding: 0 9px 0 11px; display: inline-flex; align-items: center; gap: 7px;
+  border-radius: 8px; background: var(--kxd-surface); border: 1px solid var(--kxd-line);
+  color: var(--kxd-text-dim); font-size: 11.5px; font-weight: 500; white-space: nowrap;
+  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
 }
+.kxd-xsort > svg { opacity: 0.6; }
+.kxd-xsort:hover, .kxd-xsort[aria-expanded="true"] { border-color: var(--kxd-line-strong); background: var(--kxd-surface-hover); color: var(--kxd-text); }
 .kxd-xsort:focus-visible { outline: 2px solid var(--kxd-accent-hi); outline-offset: 1px; }
+.kxd-xsort-menu {
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: 30; min-width: 150px; padding: 6px;
+  display: flex; flex-direction: column; gap: 1px;
+  background: var(--kxd-surface); border: 1px solid var(--kxd-line-strong); border-radius: 10px;
+  box-shadow: var(--kxd-shadow-menu);
+}
+.kxd-xsort-menu .kxd-menu-item { font-size: 12px; padding: 7px 8px; }
+.kxd-xsort-menu .kxd-menu-item[aria-selected="true"] { color: var(--kxd-text); }

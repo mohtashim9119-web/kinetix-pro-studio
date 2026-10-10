@@ -370,8 +370,8 @@ describe('BulkExportModal — Dashboard revamp Stage 4 (Bulk Export tab)', () =>
     });
     await mount(runner);
     await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="bulk-export-tab-ready"]')!.click(); });
-    const sort = container.querySelector<HTMLSelectElement>('[data-testid="bulk-export-sort"]')!;
-    await act(async () => { sort.value = 'name-az'; sort.dispatchEvent(new Event('change', { bubbles: true })); });
+    await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="bulk-export-sort"]')!.click(); });
+    await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="bulk-export-sort-name-az"]')!.click(); });
     expect(rows()).toEqual(['c', 'b', 'a']);              // natural order: apple 2 before apple 10
     const search = container.querySelector<HTMLInputElement>('[data-testid="bulk-export-search"]')!;
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;

@@ -6,7 +6,7 @@
 import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Z } from './overlayLayers';
 import type { BulkExportPhase, BulkExportProgress, BulkExportRunner } from '../services/bulkExportQueue';
-import { Check, FolderOpen, Search, Clapperboard, ExternalLink, Play, RefreshCw, SlidersHorizontal, Trash2, X } from 'lucide-react';
+import { Check, ChevronDown, FolderOpen, Search, Clapperboard, ExternalLink, Play, RefreshCw, SlidersHorizontal, Trash2, X } from 'lucide-react';
 import { loadAllMetas } from '../services/projectStore';
 import { ProjectCardThumb } from './ProjectCardThumb';
 import { formatDuration, useProjectDurations } from './projectDurations';
@@ -202,6 +202,55 @@ function readReadySort(): ReadySort {
     if (READY_SORTS.some(o => o.id === raw)) return raw as ReadySort;
   } catch { /* storage unavailable */ }
   return 'newest';
+}
+
+/** The Ready tab's sort: a dashboard-styled menu (not the system select). */
+function SortMenu({ value, onChange }: { value: ReadySort; onChange: (next: ReadySort) => void }): React.ReactElement {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent): void => { if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false); };
+    const onKey = (e: KeyboardEvent): void => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    window.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('mousedown', onDown); window.removeEventListener('keydown', onKey); };
+  }, [open]);
+  const current = READY_SORTS.find(o => o.id === value) ?? READY_SORTS[0]!;
+  return (
+    <div className="kxd-xsort-wrap" ref={rootRef}>
+      <button
+        type="button"
+        className="kxd-xsort"
+        data-testid="bulk-export-sort"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-label={`Sort ready projects: ${current.label}`}
+        onClick={() => setOpen(o => !o)}
+      >
+        <span>{current.label}</span>
+        <ChevronDown size={12} aria-hidden="true" />
+      </button>
+      {open && (
+        <div className="kxd-xsort-menu" role="listbox" aria-label="Sort ready projects" data-testid="bulk-export-sort-menu">
+          {READY_SORTS.map(o => (
+            <button
+              key={o.id}
+              type="button"
+              role="option"
+              aria-selected={o.id === value}
+              data-testid={`bulk-export-sort-${o.id}`}
+              className="kxd-menu-item"
+              onClick={() => { onChange(o.id); setOpen(false); }}
+            >
+              <span className="flex-1">{o.label}</span>
+              {o.id === value && <Check size={12} aria-hidden="true" />}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 /** "2:14" — an elapsed clock. */
@@ -564,15 +613,7 @@ export function BulkExportModal({
                     </button>
                   )}
                 </label>
-                <select
-                  className="kxd-xsort"
-                  data-testid="bulk-export-sort"
-                  aria-label="Sort ready projects"
-                  value={sort}
-                  onChange={e => setSort(e.target.value as ReadySort)}
-                >
-                  {READY_SORTS.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
-                </select>
+                <SortMenu value={sort} onChange={setSort} />
               </>
             )}
             {tab === 'active' && (
