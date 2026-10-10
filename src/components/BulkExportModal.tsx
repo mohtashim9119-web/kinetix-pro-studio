@@ -565,13 +565,21 @@ export function BulkExportModal({
   // unreliable in the desktop webview). The running export is never movable.
   const rowEls = useRef(new Map<string, HTMLElement>());
   // `started` flips after a few pixels of movement, so a plain click never reorders.
-  const [drag, setDrag] = useState<{ id: string; before: string | null; y0: number; started: boolean } | null>(null);
+  type DragState = { id: string; before: string | null; y0: number; started: boolean };
+  const [drag, setDrag] = useState<DragState | null>(null);
+  // The drag also lives in a ref so the pointer handlers read the latest value
+  // synchronously (and a drop never runs the reorder inside a state updater).
+  const dragRef = useRef<DragState | null>(null);
+  const putDrag = (next: DragState | null): void => { dragRef.current = next; setDrag(next); };
   const queuedIdsRef = useRef<string[]>([]);
   useEffect(() => {
     if (!drag) return;
     const dragId = drag.id;
     const onMove = (e: PointerEvent): void => {
-      setDrag(d => (d && !d.started && Math.abs(e.clientY - d.y0) >= 5 ? { ...d, started: true } : d));
+      const cur = dragRef.current;
+      if (!cur) return;
+      let next = cur;
+      if (!next.started && Math.abs(e.clientY - next.y0) >= 5) next = { ...next, started: true };
       const rects = queuedIdsRef.current.flatMap(id => {
         const el = rowEls.current.get(id);
         if (!el) return [];
@@ -579,15 +587,15 @@ export function BulkExportModal({
         return [{ id, top: r.top, bottom: r.bottom }];
       });
       const before = dropTarget(e.clientY, rects, dragId);
-      setDrag(d => (d && d.before !== before ? { ...d, before } : d));
+      if (before !== next.before) next = { ...next, before };
+      if (next !== cur) putDrag(next);
     };
     const onUp = (): void => {
-      setDrag(d => {
-        if (d?.started) runner.reorderQueue(moveQueued(queuedIdsRef.current, d.id, d.before));
-        return null;
-      });
+      const d = dragRef.current;
+      putDrag(null);
+      if (d?.started) runner.reorderQueue(moveQueued(queuedIdsRef.current, d.id, d.before));
     };
-    const onKey = (e: KeyboardEvent): void => { if (e.key === 'Escape') setDrag(null); };
+    const onKey = (e: KeyboardEvent): void => { if (e.key === 'Escape') putDrag(null); };
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
     window.addEventListener('keydown', onKey);
@@ -856,7 +864,7 @@ export function BulkExportModal({
                 aria-label={reorderable ? `${p.name} — drag to reorder, or Alt+Arrow up / down` : undefined}
                 onPointerDown={reorderable ? e => {
                   if ((e.target as Element).closest('button')) return;
-                  setDrag({ id: p.id, before: null, y0: e.clientY, started: false });
+                  putDrag({ id: p.id, before: null, y0: e.clientY, started: false });
                 } : undefined}
                 onKeyDown={reorderable ? e => {
                   if (!e.altKey || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return;

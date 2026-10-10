@@ -74,6 +74,18 @@ const runnerOf = (projects: Project[]): BulkExportRunner => new BulkExportRunner
 const rows = (): string[] =>
   [...container.querySelectorAll('[data-testid^="bulk-export-row-"]')].map(el => el.getAttribute('data-testid')!.replace('bulk-export-row-', ''));
 
+/** Polls inside act so timer-driven updates (the Active row's clock) are flushed
+ *  and never land outside it. */
+const waitInAct = async (check: () => void, timeoutMs = 4000): Promise<void> => {
+  const end = Date.now() + timeoutMs;
+  for (;;) {
+    try { check(); return; } catch (err) {
+      if (Date.now() > end) throw err;
+    }
+    await act(async () => { await new Promise(r => setTimeout(r, 50)); });
+  }
+};
+
 const confirmDialog = async (): Promise<void> => {
   await act(async () => { document.querySelector<HTMLButtonElement>('[data-testid="confirm-dialog-confirm"]')!.click(); });
 };
@@ -206,7 +218,7 @@ describe('BulkExportModal — Dashboard revamp Stage 4 (Bulk Export tab)', () =>
       execute: input => new Promise(resolve => input.signal.addEventListener('abort', () => resolve({ status: 'failed', detail: 'cancelled' }))),
     });
     await mount(runner);
-    selectAll(runner);
+    act(() => { selectAll(runner); });
     await act(async () => { await runner.startSelected(); });
     await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="bulk-export-tab-active"]')!.click(); });
     expect(container.querySelector('[data-testid="bulk-export-select-all"]')).toBeNull();
@@ -235,7 +247,7 @@ describe('BulkExportModal — Dashboard revamp Stage 4 (Bulk Export tab)', () =>
     const stopAll = vi.spyOn(runner, 'stopAll');
     const cancel = vi.spyOn(runner, 'cancel');
     await mount(runner);
-    selectAll(runner);
+    act(() => { selectAll(runner); });
     await act(async () => { await runner.startSelected(); });
     await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="bulk-export-tab-active"]')!.click(); });
     await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="bulk-export-cancel-c"]')!.click(); });
@@ -253,7 +265,7 @@ describe('BulkExportModal — Dashboard revamp Stage 4 (Bulk Export tab)', () =>
     const noPath = { ...project('n'), lastExportPath: undefined } as unknown as Project;
     const runner = runnerOf([project('a'), noPath]);
     await mount(runner, undefined, false, () => {});
-    selectAll(runner);
+    act(() => { selectAll(runner); });
     await act(async () => { await runner.startSelected(); });
     await act(async () => { await new Promise(r => setTimeout(r, 10)); });
     await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="bulk-export-tab-blocked"]')!.click(); });
@@ -283,7 +295,7 @@ describe('BulkExportModal — Dashboard revamp Stage 4 (Bulk Export tab)', () =>
     expect(opened).toEqual(['a']);
     expect(runner.snapshot().find(r => r.id === 'a')?.selected ?? false).toBe(false);
     expect(container.querySelector('[data-testid="bulk-export-dot-a"]')!.getAttribute('data-tone')).toBe('idle');
-    runner.setSelected('n', true);
+    act(() => { runner.setSelected('n', true); });
     await act(async () => { await runner.startSelected(); });
     await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="bulk-export-tab-blocked"]')!.click(); });
     expect(container.querySelector('[data-testid="bulk-export-dot-n"]')!.getAttribute('data-tone')).toBe('bad');
@@ -306,7 +318,7 @@ describe('BulkExportModal — Dashboard revamp Stage 4 (Bulk Export tab)', () =>
       execute: async () => ({ status: 'failed', detail: 'disk full' }),
     });
     await mount(runner, undefined, false, () => {});
-    runner.setSelected('f', true);
+    act(() => { runner.setSelected('f', true); });
     await act(async () => { await runner.startSelected(); });
     await act(async () => { await new Promise(r => setTimeout(r, 10)); });
     expect(container.querySelector('[data-testid="bulk-export-tab-count-failed"]')!.textContent).toBe('1');
@@ -336,7 +348,7 @@ describe('BulkExportModal — Dashboard revamp Stage 4 (Bulk Export tab)', () =>
       }),
     });
     await mount(runner);
-    runner.setSelected('a', true);
+    act(() => { runner.setSelected('a', true); });
     await act(async () => { await runner.startSelected(); });
     await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="bulk-export-tab-active"]')!.click(); });
     expect(container.querySelector('[data-testid="bulk-export-pct-a"]')!.textContent).toBe('—');
@@ -344,7 +356,7 @@ describe('BulkExportModal — Dashboard revamp Stage 4 (Bulk Export tab)', () =>
     await act(async () => { report({ pct: 42, stage: 'Encoding segment 3 / 20' }); });
     const bar = container.querySelector('[data-testid="bulk-export-progress-a"] [role="progressbar"]')!;
     // The shown percent glides to the engine's number (it never overshoots it by more than the look-ahead).
-    await vi.waitFor(() => expect(container.querySelector('[data-testid="bulk-export-pct-a"]')!.textContent).toBe('42.00%'), { timeout: 4000 });
+    await waitInAct(() => expect(container.querySelector('[data-testid="bulk-export-pct-a"]')!.textContent).toBe('42.00%'));
     expect(bar.getAttribute('aria-valuenow')).toBeTruthy();
     // No "Encoding segment x / n", no output file name: resolution and fps only.
     const card = container.querySelector('[data-testid="bulk-export-progress-a"]')!;
@@ -366,7 +378,7 @@ describe('BulkExportModal — Dashboard revamp Stage 4 (Bulk Export tab)', () =>
       storage: mem(), playChime: () => {},
       execute: input => new Promise(() => { report = input.setProgress; }),
     });
-    runner.setSelected('a', true);
+    act(() => { runner.setSelected('a', true); });
     await runner.startSelected();
     await vi.waitFor(() => expect(report).toBeTypeOf('function'));
     report({ pct: 60, stage: 'Encoding' });
@@ -425,7 +437,7 @@ describe('BulkExportModal — Dashboard revamp Stage 4 (Bulk Export tab)', () =>
       execute: input => new Promise(resolve => input.signal.addEventListener('abort', () => resolve({ status: 'failed', detail: 'cancelled' }))),
     });
     await mount(runner);
-    runner.setSelected('c', true);
+    act(() => { runner.setSelected('c', true); });
     await act(async () => { await runner.startSelected(); });
     await act(async () => { runner.cancel('c'); await new Promise(r => setTimeout(r, 10)); });
     expect(container.querySelector('[data-testid="bulk-export-tab-count-failed"]')!.textContent).toBe('1');
@@ -479,13 +491,13 @@ describe('BulkExportModal — Dashboard revamp Stage 4 (Bulk Export tab)', () =>
     });
     await mount(runner);
     // d fails first; then a runs with b queued; retrying d must put it behind them.
-    runner.setSelected('d', true);
+    act(() => { runner.setSelected('d', true); });
     await act(async () => { await runner.startSelected(); });
     await vi.waitFor(() => expect(releases.has('d')).toBe(true));
     await act(async () => { releases.get('d')!(); await new Promise(r => setTimeout(r, 10)); });
     expect(runner.snapshot().find(r => r.id === 'd')?.phase).toBe('failed');
     releases.set('d-retry', () => {});
-    runner.setSelected('a', true); runner.setSelected('b', true);
+    act(() => { runner.setSelected('a', true); runner.setSelected('b', true); });
     await act(async () => { await runner.startSelected(); });
     await act(async () => { await runner.retry('d'); });
     await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="bulk-export-tab-active"]')!.click(); });
@@ -502,7 +514,7 @@ describe('BulkExportModal — Dashboard revamp Stage 4 (Bulk Export tab)', () =>
       execute: async () => ({ status: 'failed', detail: 'disk full' }),
     });
     await mount(runner);
-    selectAll(runner);
+    act(() => { selectAll(runner); });
     await act(async () => { await runner.startSelected(); });
     await act(async () => { await new Promise(r => setTimeout(r, 10)); });
     await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="bulk-export-tab-failed"]')!.click(); });
@@ -525,7 +537,7 @@ describe('BulkExportModal — Dashboard revamp Stage 4 (Bulk Export tab)', () =>
       execute: input => new Promise(resolve => input.signal.addEventListener('abort', () => resolve({ status: 'failed', detail: 'cancelled' }))),
     });
     await mount(runner);
-    selectAll(runner);
+    act(() => { selectAll(runner); });
     await act(async () => { await runner.startSelected(); });
     await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="bulk-export-tab-active"]')!.click(); });
     const order = (): string[] => [...container.querySelectorAll('[data-testid^="bulk-export-row-"]')].map(el => el.getAttribute('data-testid')!.replace('bulk-export-row-', ''));
@@ -565,7 +577,7 @@ describe('BulkExportModal — Dashboard revamp Stage 4 (Bulk Export tab)', () =>
       execute: input => new Promise(resolve => input.signal.addEventListener('abort', () => resolve({ status: 'failed', detail: 'cancelled' }))),
     });
     await mount(runner);
-    selectAll(runner);
+    act(() => { selectAll(runner); });
     await act(async () => { await runner.startSelected(); });
     await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="bulk-export-tab-active"]')!.click(); });
     const badge = container.querySelector('[data-testid="bulk-export-status-b"]')!;
@@ -582,7 +594,7 @@ describe('BulkExportModal — Dashboard revamp Stage 4 (Bulk Export tab)', () =>
       storage: mem(), playChime: () => {}, execute: async () => ({ status: 'done' }),
     });
     await mount(runner);
-    selectAll(runner);
+    act(() => { selectAll(runner); });
     await act(async () => { await runner.startSelected(); });
     await act(async () => { await new Promise(r => setTimeout(r, 20)); });
     await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="bulk-export-tab-blocked"]')!.click(); });
