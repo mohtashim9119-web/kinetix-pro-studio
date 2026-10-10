@@ -355,7 +355,7 @@ function ActiveProgress({
       }
       last = at;
       setNow(at);
-    }, 250);
+    }, 100);   // fast enough that the two decimals visibly tick
     return () => clearInterval(t);
   }, [phase]);
   const cancel = (
@@ -377,6 +377,8 @@ function ActiveProgress({
   }
   const value = progress.pct >= 100 ? 100 : shown;
   const pct = Math.floor(value);
+  // Two decimals that keep moving between the engine's reports: proof it is not stuck.
+  const pctText = `${(Math.floor(value * 100) / 100).toFixed(2)}%`;
   const starting = progress.pct <= 0;
   const elapsed = (now - progress.startedAt) / 1000;
   const eta = etaText(progress.startedAt, progress.reached5At, now);
@@ -399,7 +401,7 @@ function ActiveProgress({
           <span data-testid={`bulk-export-eta-${id}`}>{eta ?? 'Estimating…'}</span>
         </span>
         <span className="flex-1" />
-        <span className="kxd-xrow-pct" data-testid={`bulk-export-pct-${id}`}>{starting ? '—' : `${pct}%`}</span>
+        <span className="kxd-xrow-pct" data-testid={`bulk-export-pct-${id}`}>{starting ? '—' : pctText}</span>
       </div>
       <div className="kxd-xrow-prog-line is-meta">
         <span className="kxd-xrow-prog-file">{progress.resolution} · {progress.fps} fps</span>

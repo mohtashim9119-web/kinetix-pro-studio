@@ -288,7 +288,7 @@ describe('BulkExportModal — Dashboard revamp Stage 4 (Bulk Export tab)', () =>
     await act(async () => { report({ pct: 42, stage: 'Encoding segment 3 / 20' }); });
     const bar = container.querySelector('[data-testid="bulk-export-progress-a"] [role="progressbar"]')!;
     // The shown percent glides to the engine's number (it never overshoots it by more than the look-ahead).
-    await vi.waitFor(() => expect(container.querySelector('[data-testid="bulk-export-pct-a"]')!.textContent).toBe('42%'), { timeout: 4000 });
+    await vi.waitFor(() => expect(container.querySelector('[data-testid="bulk-export-pct-a"]')!.textContent).toBe('42.00%'), { timeout: 4000 });
     expect(bar.getAttribute('aria-valuenow')).toBeTruthy();
     // No "Encoding segment x / n", no output file name: resolution and fps only.
     const card = container.querySelector('[data-testid="bulk-export-progress-a"]')!;
