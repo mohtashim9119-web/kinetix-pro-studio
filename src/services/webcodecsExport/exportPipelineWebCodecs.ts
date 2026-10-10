@@ -3302,6 +3302,7 @@ export async function exportProjectWebCodecs(
         total: pieces.length,
         frame: framesCompletedBase,
         totalFrames: totalExpectedFramesOverall,
+        cumulative: true,
       });
       continue;
     }
@@ -3318,6 +3319,7 @@ export async function exportProjectWebCodecs(
         total: pieces.length,
         frame: frameOffsetForThisPiece + frame,
         totalFrames: totalExpectedFramesOverall,
+        cumulative: true,
         ...(pieceSessions !== null
           ? {
               encoderSessions: pieceSessions,

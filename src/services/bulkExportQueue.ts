@@ -32,8 +32,11 @@ export interface BulkExportProgress {
   pct: number;
   /** What the engine is doing now ("Encoding segment 3 / 20"). */
   stage: string;
-  /** Wall-clock ms when this export started (timer / ETA base). */
+  /** Wall-clock ms when this export started (the elapsed timer). */
   startedAt: number;
+  /** The first reading above 0% (when encoding actually began): the ETA's rate
+   *  is measured from here, so setup time does not inflate it. */
+  rateBase?: { pct: number; at: number };
   resolution: string;
   fps: number;
   /** Output file name (not the folder). */
@@ -347,7 +350,9 @@ export class BulkExportRunner {
           setProgress: p => {
             const cur = this.progress.get(project.id);
             if (!cur) return;
-            this.progress.set(project.id, { ...cur, pct: Math.max(0, Math.min(100, p.pct)), stage: p.stage || cur.stage });
+            const pct = Math.max(0, Math.min(100, p.pct));
+            const rateBase = cur.rateBase ?? (pct > 0 ? { pct, at: Date.now() } : undefined);
+            this.progress.set(project.id, { ...cur, pct, stage: p.stage || cur.stage, rateBase });
             this.publishProgress();
           },
         });

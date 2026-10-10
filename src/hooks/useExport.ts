@@ -402,9 +402,15 @@ export function stageLabelFor(stage: ExportStage): string {
   return '';
 }
 
-function progressFor(stage: ExportStage): number {
+export function progressFor(stage: ExportStage): number {
   if (stage.type === 'loading_ffmpeg') return 0;
   if (stage.type === 'encoding_segment') {
+    // WebCodecs reports frames over the whole export: one smooth 0–90 run, not
+    // a jump per piece. (Treating that count as per-piece progress made the bar
+    // leap 20–25% as each piece finished.)
+    if (stage.cumulative) {
+      return stage.totalFrames > 0 ? Math.min(90, Math.round((stage.frame / stage.totalFrames) * 90)) : 0;
+    }
     const segPct = stage.total > 0
       ? (stage.index + (stage.totalFrames > 0 ? stage.frame / stage.totalFrames : 0)) / stage.total
       : 0;

@@ -192,10 +192,14 @@ export function clock(sec: number): string {
   return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${r}` : `${m}:${r}`;
 }
 
-/** "~3m 20s left" from the share done so far; null until there is enough to go on. */
-export function etaText(pct: number, elapsedSec: number): string | null {
-  if (pct < 3 || pct >= 100 || elapsedSec < 3) return null;
-  const left = Math.round(elapsedSec * (100 - pct) / pct);
+/** "~3m 20s left" from the rate measured since encoding began; null until
+ *  there is enough to go on (2 points and 5 s of encoding). */
+export function etaText(pct: number, base: { pct: number; at: number } | undefined, now: number): string | null {
+  if (!base || pct >= 100) return null;
+  const sec = (now - base.at) / 1000;
+  const gained = pct - base.pct;
+  if (gained < 2 || sec < 5) return null;
+  const left = Math.round(((100 - pct) * sec) / gained);
   if (left < 60) return `~${Math.max(1, left)}s left`;
   if (left < 3600) return `~${Math.floor(left / 60)}m ${String(left % 60).padStart(2, '0')}s left`;
   return `~${Math.floor(left / 3600)}h ${String(Math.floor((left % 3600) / 60)).padStart(2, '0')}m left`;
@@ -234,7 +238,7 @@ function ActiveProgress({
   }
   const pct = Math.round(progress.pct);
   const elapsed = (now - progress.startedAt) / 1000;
-  const eta = etaText(progress.pct, elapsed);
+  const eta = etaText(progress.pct, progress.rateBase, now);
   const starting = progress.pct <= 0;
   return (
     <div className="kxd-xrow-prog" data-testid={`bulk-export-progress-${id}`}>

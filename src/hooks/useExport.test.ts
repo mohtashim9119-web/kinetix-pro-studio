@@ -277,3 +277,32 @@ describe('isWebCodecsExportGateOpen', () => {
     expect(isWebCodecsExportGateOpen()).toBe(false);
   });
 });
+
+import { progressFor } from './useExport';
+
+describe('progressFor — one smooth run across pieces', () => {
+  const piece = (index: number, frame: number) =>
+    ({ type: 'encoding_segment', index, total: 5, frame, totalFrames: 1000, cumulative: true }) as const;
+
+  it('WebCodecs (cumulative frames): no jump when a piece finishes and the next starts', () => {
+    // End of piece 1 (frame 200 of 1000) then the first frame of piece 2.
+    expect(progressFor(piece(0, 200))).toBe(18);
+    expect(progressFor(piece(1, 201))).toBe(18);
+    expect(progressFor(piece(1, 400))).toBe(36);
+    expect(progressFor(piece(4, 1000))).toBe(90);
+  });
+
+  it('increases monotonically frame by frame, never leaping more than a point', () => {
+    let last = 0;
+    for (let f = 0; f <= 1000; f += 5) {
+      const pct = progressFor(piece(Math.min(4, Math.floor(f / 200)), f));
+      expect(pct).toBeGreaterThanOrEqual(last);
+      expect(pct - last).toBeLessThanOrEqual(1);
+      last = pct;
+    }
+  });
+
+  it('legacy canvas path (per-piece frames) keeps its own maths', () => {
+    expect(progressFor({ type: 'encoding_segment', index: 1, total: 4, frame: 50, totalFrames: 100 })).toBe(Math.round(((1 + 0.5) / 4) * 90));
+  });
+});

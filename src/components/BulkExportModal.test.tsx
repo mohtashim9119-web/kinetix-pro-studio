@@ -289,8 +289,11 @@ describe('BulkExportModal — Dashboard revamp Stage 4 (Bulk Export tab)', () =>
   it('clock and ETA read plainly', () => {
     expect(clock(134)).toBe('2:14');
     expect(clock(3725)).toBe('1:02:05');
-    expect(etaText(2, 60)).toBeNull();
-    expect(etaText(50, 100)).toBe('~1m 40s left');
-    expect(etaText(90, 90)).toBe('~10s left');
+    const base = { pct: 10, at: 0 };
+    expect(etaText(11, base, 10_000)).toBeNull();        // too little gained
+    expect(etaText(50, base, 3_000)).toBeNull();         // too little time
+    expect(etaText(50, base, 80_000)).toBe('~1m 40s left'); // 40% in 80 s -> 50% left = 100 s
+    expect(etaText(90, base, 80_000)).toBe('~10s left');    // 80% in 80 s -> 10% left = 10 s
+    expect(etaText(50, undefined, 80_000)).toBeNull();
   });
 });

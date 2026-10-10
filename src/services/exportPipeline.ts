@@ -22,6 +22,9 @@ export type ExportStage =
       total: number;
       frame: number;
       totalFrames: number;
+      /** `frame` / `totalFrames` count the WHOLE export (WebCodecs path). Absent
+       *  (legacy canvas path): they count the current piece only. */
+      cumulative?: true;
       /** WS3 — encoder sessions planned for THIS piece, and the current one.
        *  Absent on the legacy canvas path and on non-GL pieces. */
       encoderSessions?: number;
