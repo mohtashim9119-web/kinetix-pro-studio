@@ -524,7 +524,7 @@ export function ProjectDashboard({
                     <span>{selectedCount}</span> selected
                   </span>
                   <div className="kxd-selection-divider" />
-                  <button className="kxd-selall" data-testid="dashboard-select-all" onClick={handleSelectAllToggle}>
+                  <button className="kxd-selall" data-active={allVisibleSelected} data-testid="dashboard-select-all" onClick={handleSelectAllToggle}>
                     {allVisibleSelected ? 'Deselect all' : 'Select all'}
                   </button>
                   {parseProjectData && isTauri() && engineHost === 'cloud' && (

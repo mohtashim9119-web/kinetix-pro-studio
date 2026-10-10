@@ -369,6 +369,7 @@ export function BulkExportModal({
                   type="button"
                   data-testid="bulk-export-select-all"
                   className="kxd-selall"
+                  data-active={allSelected}
                   onClick={() => selectAll(!allSelected)}
                 >
                   {allSelected ? 'Deselect all' : 'Select all'}

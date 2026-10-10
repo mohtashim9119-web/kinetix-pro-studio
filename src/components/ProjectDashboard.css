@@ -193,8 +193,8 @@
 .kxd-subtab[aria-selected="true"] .kxd-subtab-count { color: var(--kxd-accent-hi); }
 .kxd-subtab:focus-visible { outline: 2px solid var(--kxd-accent-hi); outline-offset: 2px; border-radius: 3px; }
 /* Bulk Export rows: a project card on the ladder — thumbnail, name, duration
-   and scenes; status under it in a semantic tone. Selection is the neutral
-   ring the grid uses (no orange edges on project cards). */
+   and scenes; status under it in a semantic tone. A selected row is orange
+   (hairline border + soft wash). */
 .kxd-xrow {
   list-style: none; padding: 8px; border-radius: 10px;
   background: var(--kxd-surface); border: 1px solid var(--kxd-line);
@@ -202,7 +202,10 @@
 }
 .kxd-xrow:hover { border-color: var(--kxd-line-strong); }
 .kxd-xrow.is-pickable { cursor: pointer; }
-.kxd-xrow.is-selected { box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.28); border-color: transparent; }
+.kxd-xrow.is-selected {
+  background: var(--kxd-accent-wash); border-color: var(--kx-accent-line);
+  box-shadow: 0 0 0 1px rgba(232, 132, 61, 0.16);
+}
 .kxd-xrow-top { display: flex; align-items: center; gap: 6px; }
 .kxd-xrow-main {
   position: relative; flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; min-width: 0;
@@ -1066,3 +1069,5 @@
 }
 .kxd-selall:hover { border-color: rgba(232, 132, 61, 0.7); background: rgba(232, 132, 61, 0.2); }
 .kxd-selall:focus-visible { outline: 2px solid var(--kxd-accent-hi); outline-offset: 2px; }
+/* Everything selected: the button itself turns solid-ish orange ("Deselect all"). */
+.kxd-selall[data-active="true"] { background: rgba(232, 132, 61, 0.28); border-color: var(--kxd-accent); color: #ffd9b8; }
