@@ -260,6 +260,14 @@ export class BulkExportRunner {
     if (jobs.length > 0) this.queue.enqueue(jobs);
   }
 
+  /** Where each row stands in the queue (0 = running / next), by the order work
+   *  was enqueued — a retried export goes to the back, not to its catalog place. */
+  queueOrder(): ReadonlyMap<string, number> {
+    const order = new Map<string, number>();
+    this.queue.snapshot().items.forEach((item, i) => order.set(item.id, i)); // a re-queued id keeps its LAST slot
+    return order;
+  }
+
   /** A batch is live while any row is queued or exporting (Stop all shows then). */
   isActive(): boolean {
     return this.rows.some(r => r.phase === 'queued' || r.phase === 'exporting');

@@ -549,7 +549,11 @@ export function BulkExportModal({
       default: return (metaById.get(b.id)?.savedAt ?? 0) - (metaById.get(a.id)?.savedAt ?? 0);
     }
   };
+  // Active lists the queue's own order (running first, a retried export last);
+  // the other tabs follow the catalog.
+  const queuePos = tab === 'active' ? runner.queueOrder() : null;
   const tabRows = inScope.filter(p => tabOf(p.id) === tab);
+  if (queuePos) tabRows.sort((x, y) => (queuePos.get(x.id) ?? Infinity) - (queuePos.get(y.id) ?? Infinity));
   const shown = tab === 'ready'
     ? tabRows.filter(p => !q || p.name.toLowerCase().includes(q)).sort(readyOrder)
     : tabRows;

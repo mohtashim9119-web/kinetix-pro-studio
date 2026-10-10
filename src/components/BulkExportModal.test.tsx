@@ -386,4 +386,32 @@ describe('BulkExportModal — Dashboard revamp Stage 4 (Bulk Export tab)', () =>
     expect(container.querySelector('[data-testid="bulk-export-empty"]')!.textContent).toContain('No projects match');
     expect(container.querySelector('[data-testid="bulk-export-search"]')).not.toBeNull();   // the box survives an empty result
   });
+
+  it('Active keeps the queue order: a retried export lands last, under the queued ones', async () => {
+    const ids = ['d', 'a', 'b'];   // d is FIRST in the catalog
+    const releases = new Map<string, () => void>();
+    const runner = new BulkExportRunner({
+      listProjects: () => ids.map(id => ({ id, name: id, lastExportPath: `/out/${id}.mp4` })),
+      loadProject: async id => ({ ...project(id), segments: [], assets: [] }),
+      storage: mem(),
+      playChime: () => {},
+      execute: input => new Promise(resolve => {
+        releases.set(input.project.id, () => resolve({ status: input.project.id === 'd' && !releases.has('d-retry') ? 'failed' : 'done', detail: 'x' }));
+      }),
+    });
+    await mount(runner);
+    // d fails first; then a runs with b queued; retrying d must put it behind them.
+    runner.setSelected('d', true);
+    await act(async () => { await runner.startSelected(); });
+    await vi.waitFor(() => expect(releases.has('d')).toBe(true));
+    await act(async () => { releases.get('d')!(); await new Promise(r => setTimeout(r, 10)); });
+    expect(runner.snapshot().find(r => r.id === 'd')?.phase).toBe('failed');
+    releases.set('d-retry', () => {});
+    runner.setSelected('a', true); runner.setSelected('b', true);
+    await act(async () => { await runner.startSelected(); });
+    await act(async () => { await runner.retry('d'); });
+    await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="bulk-export-tab-active"]')!.click(); });
+    const order = [...container.querySelectorAll('[data-testid^="bulk-export-row-"]')].map(el => el.getAttribute('data-testid')!.replace('bulk-export-row-', ''));
+    expect(order).toEqual(['a', 'b', 'd']);
+  });
 });
