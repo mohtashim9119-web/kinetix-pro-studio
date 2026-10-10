@@ -10,6 +10,7 @@ import { BULK_EXPORT_BATCH_KEY, readBulkExportSelection, writeBulkExportSelectio
 import type { Project } from '../types';
 import { playExportCompleteChime } from './notificationSound';
 import { fileExists } from './nativeFileExists';
+import { MUX_PCT } from './exportEta';
 import { PIPELINE_BUSY_REASON, pipelineConflict, runGuarded, waitingMessageFor } from './pipelineGuard';
 
 /** `waiting`: the project was syncing when this row would have run — parked,
@@ -40,6 +41,9 @@ export interface BulkExportProgress {
   /** Wall-clock ms when the export first reached 5% — the ETA is measured
    *  from how long that took. */
   reached5At?: number;
+  /** Wall-clock ms when the engine first reported the mux stage (93%+): the
+   *  modelled tail counts from here. */
+  muxAt?: number;
   /** The first reading above 0% (when encoding actually began): the ETA's rate
    *  is measured from here, so setup time does not inflate it. */
   rateBase?: { pct: number; at: number };
@@ -392,7 +396,8 @@ export class BulkExportRunner {
             const pct = Math.max(0, Math.min(100, p.pct));
             const rateBase = cur.rateBase ?? (pct > 0 ? { pct, at: Date.now() } : undefined);
             const reached5At = cur.reached5At ?? (pct >= 5 ? Date.now() : undefined);
-            this.progress.set(project.id, { ...cur, pct, stage: p.stage || cur.stage, rateBase, reached5At });
+            const muxAt = cur.muxAt ?? (pct >= MUX_PCT ? Date.now() : undefined);
+            this.progress.set(project.id, { ...cur, pct, stage: p.stage || cur.stage, rateBase, reached5At, muxAt });
             this.publishProgress();
           },
         });

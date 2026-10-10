@@ -326,11 +326,31 @@ describe('BulkExportModal — Dashboard revamp Stage 4 (Bulk Export tab)', () =>
     expect(card.textContent).not.toMatch(/Encoding segment/);
     expect(card.textContent).not.toContain('a.mp4');
     expect(card.textContent).toMatch(/1080p · 30 fps|720p · 30 fps/);
-    expect(container.querySelector('[data-testid="bulk-export-time-a"]')!.textContent).toMatch(/^\d+:\d{2}\|(Estimating…|finishing…|[\dhms ]+ left)$/);
+    expect(container.querySelector('[data-testid="bulk-export-time-a"]')!.textContent).toMatch(/^\d+:\d{2}\|(Estimating…|finishing…|~[\w ]+ left)$/);
     await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="bulk-export-cancel-a"]')!.click(); });
     await confirmDialog();
     await act(async () => { await new Promise(r => setTimeout(r, 0)); });
     expect(runner.progressSnapshot().has('a')).toBe(false);
+  });
+
+  it('the runner stamps when the mux stage began, so its tail can be modelled', async () => {
+    let report!: (p: { pct: number; stage: string }) => void;
+    const runner = new BulkExportRunner({
+      listProjects: () => [{ id: 'a', name: 'a', lastExportPath: '/out/a.mp4' }],
+      loadProject: async id => ({ ...project(id), segments: [], assets: [] }),
+      storage: mem(), playChime: () => {},
+      execute: input => new Promise(() => { report = input.setProgress; }),
+    });
+    runner.setSelected('a', true);
+    await runner.startSelected();
+    await vi.waitFor(() => expect(report).toBeTypeOf('function'));
+    report({ pct: 60, stage: 'Encoding' });
+    expect(runner.progressSnapshot().get('a')!.muxAt).toBeUndefined();
+    report({ pct: 93, stage: 'Muxing & packaging…' });
+    const first = runner.progressSnapshot().get('a')!.muxAt;
+    expect(first).toBeTypeOf('number');
+    report({ pct: 93, stage: 'Muxing & packaging…' });
+    expect(runner.progressSnapshot().get('a')!.muxAt).toBe(first);   // set once
   });
 
   it('clock and ETA read plainly', () => {

@@ -12,6 +12,7 @@ import { ProjectCardThumb } from './ProjectCardThumb';
 import { formatDuration, useProjectDurations } from './projectDurations';
 import { useExportPrecheck } from './bulkExportPrecheck';
 import { stepSmoothPercent } from './smoothPercent';
+import { displayTargetPct, remainingMs, type EtaLive } from '../services/exportEta';
 import { dropTarget, moveQueued } from './queueReorder';
 import { ConfirmDialog } from './ConfirmDialog';
 import { WorkspaceTabs } from './WorkspaceTabs';
@@ -331,15 +332,16 @@ export function tookText(sec: number): string {
   return `${Math.floor(s / 3600)}h ${String(Math.floor((s % 3600) / 60)).padStart(2, '0')}m`;
 }
 
-/** Remaining time once the export has reached 5%: how long it took to get
- *  there, times twenty, is the whole run; what is left of it counts down, in
- *  whole minutes ("~4 minutes left"). Before 5% there is nothing honest to say
- *  (setup and warm-up skew early speed), so this returns null and the UI says
- *  "Estimating…". */
-export function etaText(startedAt: number, reached5At: number | undefined, now: number): string | null {
-  if (reached5At === undefined) return null;
-  const total = (reached5At - startedAt) * 20;
-  const leftSec = (startedAt + total - now) / 1000;
+/** Remaining time once the export has reached 5%, in whole minutes ("~4
+ *  minutes left"). Before 5% there is nothing honest to say (setup and warm-up
+ *  skew early speed), so this returns null and the UI says "Estimating…".
+ *  Without `live` it is the original frozen estimate (twenty times how long 5%
+ *  took); with it the estimate is recomputed from the measured speed and the
+ *  mux tail is modelled (see exportEta.ts), so it neither freezes nor stalls. */
+export function etaText(startedAt: number, reached5At: number | undefined, now: number, live?: EtaLive): string | null {
+  const leftMs = remainingMs(startedAt, reached5At, now, live);
+  if (leftMs === null) return null;
+  const leftSec = leftMs / 1000;
   if (leftSec <= 0) return 'finishing…';
   const minutes = Math.ceil(leftSec / 60);
   if (minutes < 2) return '~1 minute left';
@@ -374,7 +376,10 @@ function ActiveProgress({
         const b = p.rateBase;
         const rate = b && at - b.at > 3000 && p.pct > b.pct ? (p.pct - b.pct) / ((at - b.at) / 1000) : 0;
         const dt = (at - last) / 1000; // read now: the updater below runs later
-        setShown(prev => stepSmoothPercent(prev, p.pct, rate, dt));
+        // During the mux the engine reports a flat 93: the target eases along
+        // the modelled tail so the bar moves instead of stalling.
+        const target = displayTargetPct(p.startedAt, at, { pct: p.pct, muxAt: p.muxAt });
+        setShown(prev => stepSmoothPercent(prev, target, rate, dt));
       }
       last = at;
       setNow(at);
@@ -404,7 +409,7 @@ function ActiveProgress({
   const pctText = `${(Math.floor(value * 100) / 100).toFixed(2)}%`;
   const starting = progress.pct <= 0;
   const elapsed = (now - progress.startedAt) / 1000;
-  const eta = etaText(progress.startedAt, progress.reached5At, now);
+  const eta = etaText(progress.startedAt, progress.reached5At, now, { pct: progress.pct, muxAt: progress.muxAt });
   return (
     <div className="kxd-xrow-prog" data-testid={`bulk-export-progress-${id}`}>
       <div className="kx-bulk-bar" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={starting ? undefined : pct} aria-label="Export progress">
