@@ -302,7 +302,7 @@ describe('progressFor — one smooth run across pieces', () => {
     }
   });
 
-  it('legacy canvas path (per-piece frames) keeps its own maths', () => {
+  it('a stage without `cumulative` (per-piece frames) keeps the equal-slice maths', () => {
     expect(progressFor({ type: 'encoding_segment', index: 1, total: 4, frame: 50, totalFrames: 100 })).toBe(Math.round(((1 + 0.5) / 4) * 90));
   });
 });

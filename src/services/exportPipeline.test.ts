@@ -19,7 +19,7 @@ vi.mock('./segmentEncoder', () => ({
   encodeStaticImageSegment: vi.fn(async () => new Uint8Array([1, 2, 3])),
 }));
 
-import { exportProject } from './exportPipeline';
+import { exportProject, type ExportStage } from './exportPipeline';
 import type { FfmpegLike } from './segmentEncoder';
 
 function makeFakeFfmpeg(): FfmpegLike {
@@ -90,5 +90,31 @@ describe('exportProject — voiceover mux fetch-avoidance (WS2 Step 11)', () => 
 
     expect(result.ok).toBe(true);
     expect(fetchSpy).toHaveBeenCalledWith('blob:vo1');
+  });
+});
+
+describe('exportProject — progress follows the same cumulative formula as WebCodecs (G7)', () => {
+  it('legacy canvas stages are cumulative and frame-weighted: one monotone 0→90 run, no per-segment leaps', async () => {
+    const { progressFor } = await import('../hooks/useExport');
+    const asset = (id: string): Asset => ({ id, name: `${id}.png`, url: `blob:${id}`, type: 'image' });
+    const seg = (id: string, assetId: string, startTime: number, duration: number, order: number): VideoSegment =>
+      ({ ...makeSegment(), id, assetId, startTime, duration, order });
+    const project: Project = {
+      ...makeProject({ id: 'vo', name: 'vo.mp3', url: 'blob:vo', type: 'audio' }),
+      voiceoverId: undefined,
+      assets: [asset('a'), asset('b'), asset('c')],
+      // 1s, 4s, 1s: a long middle segment must carry 4/6 of the bar, not 1/3.
+      segments: [seg('s0', 'a', 0, 1, 0), seg('s1', 'b', 1, 4, 1), seg('s2', 'c', 5, 1, 2)],
+    };
+    const stages: ExportStage[] = [];
+    const result = await exportProject(project, makeFakeFfmpeg(), { fps: 30 }, st => { stages.push(st); });
+    expect(result.ok).toBe(true);
+    const enc = stages.filter((st): st is Extract<ExportStage, { type: 'encoding_segment' }> => st.type === 'encoding_segment');
+    expect(enc.length).toBe(3);
+    expect(enc.every(st => st.cumulative === true && st.totalFrames === 180)).toBe(true);
+    expect(enc.map(st => st.frame)).toEqual([0, 30, 150]);
+    const pcts = enc.map(progressFor);
+    expect(pcts).toEqual([0, 15, 75]);   // equal slices would have been 0, 30, 60
+    for (let k = 1; k < pcts.length; k++) expect(pcts[k]).toBeGreaterThanOrEqual(pcts[k - 1]!);
   });
 });

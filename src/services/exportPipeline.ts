@@ -22,8 +22,8 @@ export type ExportStage =
       total: number;
       frame: number;
       totalFrames: number;
-      /** `frame` / `totalFrames` count the WHOLE export (WebCodecs path). Absent
-       *  (legacy canvas path): they count the current piece only. */
+      /** `frame` / `totalFrames` count the WHOLE export (both the WebCodecs and
+       *  the legacy canvas path). Absent: they count the current piece only. */
       cumulative?: true;
       /** WS3 — encoder sessions planned for THIS piece, and the current one.
        *  Absent on the legacy canvas path and on non-GL pieces. */
@@ -431,6 +431,24 @@ export async function exportProject(
     return { ok: false, error: { kind: 'timeline_gap', message: gapReason } };
   }
 
+  // Progress counts frames over the WHOLE export (the same `cumulative` stage
+  // the WebCodecs path reports), so `progressFor` draws one smooth 0–90 run
+  // weighted by frames, not an equal slice per segment.
+  const encodeFrameCount = (idx: number): number => {
+    const seg = segments[idx];
+    if (!seg) return 0;
+    const prev = segments[idx - 1];
+    const next = segments[idx + 1];
+    const startOffset = prev
+      ? effectiveTransitionOut(prev, seg, project.globalTransition, project.globalTransitionDuration) / 2
+      : 0;
+    const trailing = effectiveTransitionOut(seg, next, project.globalTransition, project.globalTransitionDuration) / 2;
+    return Math.max(1, Math.round((seg.duration - startOffset + trailing) * fps));
+  };
+  const frameCounts = segments.map((_, idx) => encodeFrameCount(idx));
+  const totalEncodeFrames = frameCounts.reduce((sum, n) => sum + n, 0);
+  let framesBeforeSegment = 0;
+
   // ── 1. Encode each segment ──────────────────────────────────────────────────
   for (let i = 0; i < segments.length; i++) {
     const segment = segments[i];
@@ -473,16 +491,16 @@ export async function exportProject(
     segmentFiles.push(segFile);
     allTempFiles.push(segFile);
 
-    const segmentFrameCount = Math.max(
-      1,
-      Math.round((segment.duration - startTimeOffset + trailingExtension) * fps),
-    );
+    const segmentFrameCount = frameCounts[i]!;
+    const base = framesBeforeSegment;
+    framesBeforeSegment += segmentFrameCount;
     onProgress({
       type: 'encoding_segment',
       index: i,
       total: segments.length,
-      frame: 0,
-      totalFrames: segmentFrameCount,
+      frame: base,
+      totalFrames: totalEncodeFrames,
+      cumulative: true,
     });
 
     // Tier 1: a plain full-frame video segment (no caption/overlay/animation/
@@ -525,13 +543,14 @@ export async function exportProject(
               globalTransition: project.globalTransition,
               startTimeOffset,
               trailingExtension,
-              onProgress: (frame, totalFrames) => {
+              onProgress: (frame) => {
                 onProgress({
                   type: 'encoding_segment',
                   index: i,
                   total: segments.length,
-                  frame,
-                  totalFrames,
+                  frame: base + Math.min(frame, segmentFrameCount),
+                  totalFrames: totalEncodeFrames,
+                  cumulative: true,
                 });
               },
             },
