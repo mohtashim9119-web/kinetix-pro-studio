@@ -61,6 +61,10 @@ const runnerOf = (projects: Project[]): BulkExportRunner => new BulkExportRunner
 const rows = (): string[] =>
   [...container.querySelectorAll('[data-testid^="bulk-export-row-"]')].map(el => el.getAttribute('data-testid')!.replace('bulk-export-row-', ''));
 
+const confirmDialog = async (): Promise<void> => {
+  await act(async () => { document.querySelector<HTMLButtonElement>('[data-testid="confirm-dialog-confirm"]')!.click(); });
+};
+
 describe('BulkExportModal', () => {
   it('lists projects with select-all, count, and Start', async () => {
     const projects = [project('a'), project('b')];
@@ -181,8 +185,14 @@ describe('BulkExportModal — Dashboard revamp Stage 4 (Bulk Export tab)', () =>
     expect(container.querySelector('[data-testid="bulk-export-select-all"]')).toBeNull();
     expect(container.querySelector('[data-testid="bulk-export-check-a"]')).toBeNull();
     await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="bulk-export-cancel-b"]')!.click(); });
+    // Asked first: nothing is cancelled until the warning is confirmed.
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+    expect(runner.snapshot().find(r => r.id === 'b')?.phase).toBe('queued');
+    await confirmDialog();
     expect(runner.snapshot().find(r => r.id === 'b')?.phase).toBe('idle');
     await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="bulk-export-cancel-all"]')!.click(); });
+    expect(runner.snapshot().find(r => r.id === 'a')?.phase).toBe('exporting');
+    await confirmDialog();
     await act(async () => { await new Promise(r => setTimeout(r, 0)); });
     expect(runner.snapshot().find(r => r.id === 'a')?.phase).toBe('cancelled');
     expect(container.querySelector('[data-testid="bulk-export-cancel-all"]')).toBeNull();
@@ -274,15 +284,20 @@ describe('BulkExportModal — Dashboard revamp Stage 4 (Bulk Export tab)', () =>
     await act(async () => { await runner.startSelected(); });
     await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="bulk-export-tab-active"]')!.click(); });
     expect(container.querySelector('[data-testid="bulk-export-pct-a"]')!.textContent).toBe('—');
+    await act(async () => { report({ pct: 10, stage: 'Encoding segment 1 / 20' }); });
     await act(async () => { report({ pct: 42, stage: 'Encoding segment 3 / 20' }); });
     const bar = container.querySelector('[data-testid="bulk-export-progress-a"] [role="progressbar"]')!;
     // The shown percent glides to the engine's number (it never overshoots it by more than the look-ahead).
     await vi.waitFor(() => expect(container.querySelector('[data-testid="bulk-export-pct-a"]')!.textContent).toBe('42%'), { timeout: 4000 });
     expect(bar.getAttribute('aria-valuenow')).toBeTruthy();
-    expect(container.querySelector('[data-testid="bulk-export-status-a"]')!.textContent).toBe('Encoding segment 3 / 20');
-    expect(container.querySelector('[data-testid="bulk-export-time-a"]')!.textContent).toMatch(/^\d+:\d{2}/);
-    expect(container.querySelector('[data-testid="bulk-export-progress-a"]')!.textContent).toContain('→ a.mp4');
+    // No "Encoding segment x / n", no output file name: resolution and fps only.
+    const card = container.querySelector('[data-testid="bulk-export-progress-a"]')!;
+    expect(card.textContent).not.toMatch(/Encoding segment/);
+    expect(card.textContent).not.toContain('a.mp4');
+    expect(card.textContent).toMatch(/1080p · 30 fps|720p · 30 fps/);
+    expect(container.querySelector('[data-testid="bulk-export-time-a"]')!.textContent).toMatch(/^\d+:\d{2}\|(Estimating…|finishing…|[\dhms ]+ left)$/);
     await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="bulk-export-cancel-a"]')!.click(); });
+    await confirmDialog();
     await act(async () => { await new Promise(r => setTimeout(r, 0)); });
     expect(runner.progressSnapshot().has('a')).toBe(false);
   });
@@ -290,12 +305,11 @@ describe('BulkExportModal — Dashboard revamp Stage 4 (Bulk Export tab)', () =>
   it('clock and ETA read plainly', () => {
     expect(clock(134)).toBe('2:14');
     expect(clock(3725)).toBe('1:02:05');
-    const base = { pct: 10, at: 0 };
-    expect(etaText(11, base, 10_000)).toBeNull();        // too little gained
-    expect(etaText(50, base, 3_000)).toBeNull();         // too little time
-    expect(etaText(50, base, 80_000)).toBe('~1m 40s left'); // 40% in 80 s -> 50% left = 100 s
-    expect(etaText(90, base, 80_000)).toBe('~10s left');    // 80% in 80 s -> 10% left = 10 s
-    expect(etaText(50, undefined, 80_000)).toBeNull();
+    // It took 2 minutes to reach 20% -> 10 minutes in all -> 8 minutes left at that moment.
+    expect(etaText(0, 120_000, 120_000)).toBe('8m 00s left');
+    expect(etaText(0, 120_000, 300_000)).toBe('5m 00s left');   // counts down
+    expect(etaText(0, 120_000, 600_000)).toBe('finishing…');
+    expect(etaText(0, undefined, 60_000)).toBeNull();            // before 20%: no number
   });
 
   it('Export switches to Active; a cancelled export lands in Failed; a finished one shows how long it took', async () => {
@@ -317,6 +331,7 @@ describe('BulkExportModal — Dashboard revamp Stage 4 (Bulk Export tab)', () =>
     await act(async () => { await new Promise(r => setTimeout(r, 10)); });
     expect(container.querySelector('[data-testid="bulk-export-tab-active"]')!.getAttribute('aria-selected')).toBe('true');
     await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="bulk-export-cancel-b"]')!.click(); });
+    await confirmDialog();
     await act(async () => { release(); await new Promise(r => setTimeout(r, 10)); });
     expect(runner.snapshot().find(r => r.id === 'a')?.exportMs).toBeGreaterThanOrEqual(0);
     await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="bulk-export-tab-finished"]')!.click(); });

@@ -12,6 +12,7 @@ import { ProjectCardThumb } from './ProjectCardThumb';
 import { formatDuration, useProjectDurations } from './projectDurations';
 import { useExportPrecheck } from './bulkExportPrecheck';
 import { stepSmoothPercent } from './smoothPercent';
+import { ConfirmDialog } from './ConfirmDialog';
 import { WorkspaceTabs } from './WorkspaceTabs';
 import { relinkPickFolder } from '../services/relinkNative';
 import {
@@ -201,20 +202,22 @@ export function tookText(sec: number): string {
   return `${Math.floor(s / 3600)}h ${String(Math.floor((s % 3600) / 60)).padStart(2, '0')}m`;
 }
 
-/** "~3m 20s left" from the rate measured since encoding began; null until
- *  there is enough to go on (2 points and 5 s of encoding). */
-export function etaText(pct: number, base: { pct: number; at: number } | undefined, now: number): string | null {
-  if (!base || pct >= 100) return null;
-  const sec = (now - base.at) / 1000;
-  const gained = pct - base.pct;
-  if (gained < 2 || sec < 5) return null;
-  const left = Math.round(((100 - pct) * sec) / gained);
-  if (left < 60) return `~${Math.max(1, left)}s left`;
-  if (left < 3600) return `~${Math.floor(left / 60)}m ${String(left % 60).padStart(2, '0')}s left`;
-  return `~${Math.floor(left / 3600)}h ${String(Math.floor((left % 3600) / 60)).padStart(2, '0')}m left`;
+/** Remaining time once the export has reached 20%: how long it took to get
+ *  there, times five, is the whole run; what is left of it counts down. Before
+ *  20% there is nothing trustworthy to say (setup and warm-up skew early
+ *  speed), so this returns null and the UI says "Estimating…". */
+export function etaText(startedAt: number, reached20At: number | undefined, now: number): string | null {
+  if (reached20At === undefined) return null;
+  const total = (reached20At - startedAt) * 5;
+  const left = Math.max(0, Math.round((startedAt + total - now) / 1000));
+  if (left < 1) return 'finishing…';
+  if (left < 60) return `${left}s left`;
+  if (left < 3600) return `${Math.floor(left / 60)}m ${String(left % 60).padStart(2, '0')}s left`;
+  return `${Math.floor(left / 3600)}h ${String(Math.floor((left % 3600) / 60)).padStart(2, '0')}m left`;
 }
 
-/** An Active row: live bar, stage, timer + ETA, what is being written, Cancel. */
+/** An Active row: live bar; elapsed | time left and the percent; resolution,
+ *  fps and a hover-only Cancel (which asks first). */
 function ActiveProgress({
   id, phase, progress, onCancel,
 }: {
@@ -246,7 +249,7 @@ function ActiveProgress({
     return () => clearInterval(t);
   }, [phase]);
   const cancel = (
-    <button type="button" className="kxd-xrow-retry" data-testid={`bulk-export-cancel-${id}`} onClick={onCancel}>
+    <button type="button" className="kxd-xrow-retry kxd-xrow-hovercancel" data-testid={`bulk-export-cancel-${id}`} onClick={onCancel}>
       <X size={11} aria-hidden="true" />
       Cancel
     </button>
@@ -263,9 +266,9 @@ function ActiveProgress({
   }
   const value = progress.pct >= 100 ? 100 : shown;
   const pct = Math.floor(value);
-  const elapsed = (now - progress.startedAt) / 1000;
-  const eta = etaText(progress.pct, progress.rateBase, now);
   const starting = progress.pct <= 0;
+  const elapsed = (now - progress.startedAt) / 1000;
+  const eta = etaText(progress.startedAt, progress.reached20At, now);
   return (
     <div className="kxd-xrow-prog" data-testid={`bulk-export-progress-${id}`}>
       <div className="kx-bulk-bar" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={starting ? undefined : pct} aria-label="Export progress">
@@ -279,14 +282,16 @@ function ActiveProgress({
         </div>
       </div>
       <div className="kxd-xrow-prog-line">
-        <span className="kxd-xrow-pct" data-testid={`bulk-export-pct-${id}`}>{starting ? '—' : `${pct}%`}</span>
-        <span className="kxd-xrow-prog-stage" data-testid={`bulk-export-status-${id}`} title={progress.stage}>{progress.stage}</span>
         <span className="kxd-xrow-prog-time" data-testid={`bulk-export-time-${id}`}>
-          {clock(elapsed)}{eta ? ` · ${eta}` : ''}
+          <span>{clock(elapsed)}</span>
+          <span className="kxd-xrow-sep" aria-hidden="true">|</span>
+          <span data-testid={`bulk-export-eta-${id}`}>{eta ?? 'Estimating…'}</span>
         </span>
+        <span className="flex-1" />
+        <span className="kxd-xrow-pct" data-testid={`bulk-export-pct-${id}`}>{starting ? '—' : `${pct}%`}</span>
       </div>
       <div className="kxd-xrow-prog-line is-meta">
-        <span className="kxd-xrow-prog-file" title={progress.fileName}>{progress.resolution} · {progress.fps} fps → {progress.fileName}</span>
+        <span className="kxd-xrow-prog-file">{progress.resolution} · {progress.fps} fps</span>
         {cancel}
       </div>
     </div>
@@ -332,11 +337,12 @@ function readExportTab(): ExportTab {
 }
 
 /** Status colour from the ladder's semantic set. */
-function toneOf(phase: BulkExportPhase | undefined): 'bad' | 'warn' | 'live' | 'good' | 'idle' {
+function toneOf(phase: BulkExportPhase | undefined): 'bad' | 'warn' | 'live' | 'run' | 'good' | 'idle' {
   switch (phase) {
     case 'blocked': case 'failed': return 'bad';
     case 'paused': case 'waiting': case 'cancelled': return 'warn';
-    case 'queued': case 'exporting': return 'live';
+    case 'queued': return 'live';
+    case 'exporting': return 'run';
     case 'done': return 'good';
     default: return 'idle';
   }
@@ -409,6 +415,8 @@ export function BulkExportModal({
   const settingsStore = exportSettings ?? workspaceExportSettings();
   const settingsVersion = useSyncExternalStore(l => settingsStore.subscribe(l), () => settingsStore.getVersion());
   useEffect(() => { if (settingsVersion > 0) void runner.refresh(); }, [settingsVersion, runner]);
+  // Cancelling an export is destructive: always asked first (one row or all).
+  const [confirmCancel, setConfirmCancel] = useState<{ ids: string[]; name?: string; running: boolean } | null>(null);
   const [tab, setTabRaw] = useState<ExportTab>(readExportTab);
   const setTab = (next: ExportTab): void => {
     try { localStorage.setItem(EXPORT_TAB_KEY, next); } catch { /* this session only */ }
@@ -510,7 +518,7 @@ export function BulkExportModal({
                   data-testid="bulk-export-cancel-all"
                   className="kxd-xctl-btn"
                   title="Cancel every queued export shown here and stop the one running"
-                  onClick={() => { for (const p of shown) runner.cancel(p.id); }}
+                  onClick={() => setConfirmCancel({ ids: shown.map(p => p.id), running: shown.some(p => byId.get(p.id)?.phase === 'exporting') })}
                 >
                   Cancel all
                 </button>
@@ -632,7 +640,7 @@ export function BulkExportModal({
                   </div>
                 </div>
                 {tab === 'active' && (
-                  <ActiveProgress id={p.id} phase={row?.phase} progress={liveProgress.get(p.id)} onCancel={() => runner.cancel(p.id)} />
+                  <ActiveProgress id={p.id} phase={row?.phase} progress={liveProgress.get(p.id)} onCancel={() => setConfirmCancel({ ids: [p.id], name: p.name, running: row?.phase === 'exporting' })} />
                 )}
                 {tab !== 'ready' && tab !== 'finished' && tab !== 'active' && (message || canRetry) && (
                   <div className="kxd-xrow-status" data-tone={statusTone}>
@@ -660,6 +668,22 @@ export function BulkExportModal({
           })}
         </ul>
       </div>
+      {confirmCancel && (
+        <ConfirmDialog
+          title={confirmCancel.ids.length === 1 ? 'Cancel this export?' : `Cancel ${confirmCancel.ids.length} exports?`}
+          body={
+            confirmCancel.ids.length === 1
+              ? (confirmCancel.running
+                ? `The export of “${confirmCancel.name}” stops right now and no video file is finished. It goes to Failed; Retry starts it again (it resumes from a saved checkpoint where there is one, otherwise from the start).`
+                : `“${confirmCancel.name}” is taken out of the queue and goes back to Ready.`)
+              : `Every export in this list is cancelled. Queued ones go back to Ready${confirmCancel.running ? '; the running one stops immediately, no video file is finished, and it goes to Failed (Retry resumes from a saved checkpoint where there is one, otherwise from the start)' : ''}.`
+          }
+          confirmLabel={confirmCancel.ids.length === 1 ? 'Cancel export' : 'Cancel all exports'}
+          cancelLabel="Keep exporting"
+          onCancel={() => setConfirmCancel(null)}
+          onConfirm={() => { const ids = confirmCancel.ids; setConfirmCancel(null); for (const id of ids) runner.cancel(id); }}
+        />
+      )}
     </div>
   );
 }

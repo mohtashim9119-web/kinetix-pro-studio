@@ -36,6 +36,9 @@ export interface BulkExportProgress {
   stage: string;
   /** Wall-clock ms when this export started (the elapsed timer). */
   startedAt: number;
+  /** Wall-clock ms when the export first reached 20% — the ETA is measured
+   *  from how long that took. */
+  reached20At?: number;
   /** The first reading above 0% (when encoding actually began): the ETA's rate
    *  is measured from here, so setup time does not inflate it. */
   rateBase?: { pct: number; at: number };
@@ -355,7 +358,8 @@ export class BulkExportRunner {
             if (!cur) return;
             const pct = Math.max(0, Math.min(100, p.pct));
             const rateBase = cur.rateBase ?? (pct > 0 ? { pct, at: Date.now() } : undefined);
-            this.progress.set(project.id, { ...cur, pct, stage: p.stage || cur.stage, rateBase });
+            const reached20At = cur.reached20At ?? (pct >= 20 ? Date.now() : undefined);
+            this.progress.set(project.id, { ...cur, pct, stage: p.stage || cur.stage, rateBase, reached20At });
             this.publishProgress();
           },
         });

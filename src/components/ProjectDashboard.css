@@ -303,6 +303,10 @@
 .kxd-xrow-dot[data-tone="warn"] { background: var(--kxd-accent-hi); }
 .kxd-xrow-dot[data-tone="live"] { background: var(--kxd-accent); box-shadow: 0 0 6px rgba(232, 132, 61, 0.6); }
 .kxd-xrow-dot[data-tone="good"] { background: var(--kx-ready); }
+/* Running: a green pulse. Queued stays orange (tone "live"). */
+.kxd-xrow-dot[data-tone="run"] { background: var(--kx-ready); box-shadow: 0 0 0 0 rgba(84, 209, 154, 0.55); animation: kxd-run-pulse 1.8s ease-out infinite; }
+@keyframes kxd-run-pulse { 0% { box-shadow: 0 0 0 0 rgba(84, 209, 154, 0.55); } 70%, 100% { box-shadow: 0 0 0 6px rgba(84, 209, 154, 0); } }
+@media (prefers-reduced-motion: reduce) { .kxd-xrow-dot[data-tone="run"] { animation: none; } }
 .kxd-xrow-msg { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .kxd-xrow-status[data-tone="bad"] .kxd-xrow-msg { color: #f0a09d; }
 .kxd-xrow-status[data-tone="live"] .kxd-xrow-msg { color: var(--kxd-text); }
@@ -1079,3 +1083,8 @@
 .kxd-xrow-prog-time { flex-shrink: 0; font-family: 'JetBrains Mono', monospace; font-size: 10.5px; color: var(--kxd-text-faint); font-variant-numeric: tabular-nums; }
 .kxd-xrow-prog-line.is-meta { font-size: 10.5px; color: var(--kxd-text-faint); }
 .kxd-xrow-prog-file { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: 'JetBrains Mono', monospace; }
+
+/* Cancel on an Active row shows on hover / keyboard focus only (space is kept). */
+.kxd-xrow-hovercancel { opacity: 0; transition: opacity 0.12s ease; }
+.kxd-xrow:hover .kxd-xrow-hovercancel, .kxd-xrow:focus-within .kxd-xrow-hovercancel { opacity: 1; }
+.kxd-xrow-prog-time { display: inline-flex; align-items: center; gap: 7px; }
