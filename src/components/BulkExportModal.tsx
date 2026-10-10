@@ -528,10 +528,13 @@ export function BulkExportModal({
   const wsFilter = resolveWorkspaceFilter(workspaceList, wsFilterRaw);
   // Pre-check every not-started project (Start's own checks + unresolved
   // sync-log actions) as soon as the pane shows; blocked ones go to Blocked.
+  // Only the selected workspace tab's projects: the pre-check loads whole
+  // stored records, so it never reaches into tabs nobody is looking at.
   const notStarted = useMemo(() => catalog
+    .filter(p => inWorkspace(workspaceList, wsFilter, p.id))
     .filter(p => { const ph = byId.get(p.id)?.phase; return ph === undefined || ph === 'idle'; })
     .map(p => ({ id: p.id, savedAt: metaById.get(p.id)?.savedAt, lastExportPath: metaById.get(p.id)?.lastExportPath })),
-  [catalog, byId, metaById]);
+  [catalog, byId, metaById, workspaceList, wsFilter]);
   const { verdicts, checking, recheck } = useExportPrecheck(notStarted, opened);
   /** Retry = re-check first; only a project that is now clear goes back to the queue. */
   const retryChecked = (ids: readonly string[]): void => {

@@ -80,11 +80,44 @@ export async function precheckProject(
 export interface PrecheckTarget { id: string; savedAt?: number; lastExportPath?: string }
 
 /**
+ * Verdicts remembered per project + record save time: loading a stored record
+ * is the expensive part (large projects), and a record that was not saved again
+ * cannot have a different verdict. A save moves `savedAt`, which is the key.
+ * `force` (Retry / Start) always re-reads. A record with no save time is never
+ * cached (nothing says when it changed).
+ */
+export class PrecheckCache {
+  private entries = new Map<string, { savedAt: number; verdict: Promise<string | null> }>();
+
+  check(
+    id: string,
+    savedAt: number | undefined,
+    compute: () => Promise<string | null>,
+    force = false,
+  ): Promise<string | null> {
+    if (savedAt === undefined) return compute();
+    const hit = this.entries.get(id);
+    if (!force && hit && hit.savedAt === savedAt) return hit.verdict;
+    const verdict = compute();
+    this.entries.set(id, { savedAt, verdict });
+    // A check that throws must not poison the cache.
+    verdict.catch(() => { if (this.entries.get(id)?.verdict === verdict) this.entries.delete(id); });
+    return verdict;
+  }
+}
+
+const sharedCache = new PrecheckCache();
+
+/**
  * Verdicts for these projects, re-checked whenever one is saved again (or
  * `nonce` changes — the pane coming on screen). `recheck` runs the check now
  * for some ids and returns their fresh verdicts.
  */
-export function useExportPrecheck(targets: readonly PrecheckTarget[], nonce: number): {
+export function useExportPrecheck(
+  targets: readonly PrecheckTarget[],
+  nonce: number,
+  deps: { check?: (id: string) => Promise<string | null>; cache?: PrecheckCache } = {},
+): {
   verdicts: ReadonlyMap<string, string>;
   checking: boolean;
   recheck: (ids: readonly string[]) => Promise<ReadonlyMap<string, string | null>>;
@@ -107,11 +140,15 @@ export function useExportPrecheck(targets: readonly PrecheckTarget[], nonce: num
     });
   }, []);
 
-  const run = useCallback(async (ids: readonly string[]): Promise<ReadonlyMap<string, string | null>> => {
+  const depsRef = useRef(deps);
+  depsRef.current = deps;
+  const run = useCallback(async (ids: readonly string[], force = false): Promise<ReadonlyMap<string, string | null>> => {
     const out = new Map<string, string | null>();
+    const cache = depsRef.current.cache ?? sharedCache;
+    const check = depsRef.current.check ?? precheckProject;
     for (const id of ids) {
       const t = byId.current.get(id);
-      out.set(id, await precheckProject(id));
+      out.set(id, await cache.check(id, t?.savedAt, () => check(id), force));
       checkedAt.current.set(id, `${t?.savedAt ?? 0}|${t?.lastExportPath ?? ''}`);
     }
     apply(out);
@@ -124,9 +161,9 @@ export function useExportPrecheck(targets: readonly PrecheckTarget[], nonce: num
     const stale = targets
       .filter(t => checkedAt.current.get(t.id) !== `${t.savedAt ?? 0}|${t.lastExportPath ?? ''}`)
       .map(t => t.id);
-    // The pane came on screen (nonce moved): check every target again — sync
-    // logs and media can change without a save the dashboard sees. Otherwise
-    // only the ones saved (or re-pathed) since their last check.
+    // The pane came on screen (nonce moved): every target is looked at again,
+    // but a project not saved since its last check answers from the cache
+    // (no record load). Otherwise only the ones saved (or re-pathed) since.
     const fresh = nonce !== lastNonce.current;
     lastNonce.current = nonce;
     const ids = fresh ? targets.map(t => t.id) : stale;
@@ -137,5 +174,7 @@ export function useExportPrecheck(targets: readonly PrecheckTarget[], nonce: num
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, nonce]);
 
-  return { verdicts, checking, recheck: run };
+  // Retry's re-check is always fresh: it reads the record again.
+  const recheck = useCallback((ids: readonly string[]) => run(ids, true), [run]);
+  return { verdicts, checking, recheck };
 }

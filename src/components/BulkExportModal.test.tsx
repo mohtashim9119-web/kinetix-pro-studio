@@ -5,7 +5,19 @@ import { createRoot, type Root } from 'react-dom/client';
 import { describe, it, expect, afterEach, vi } from 'vitest';
 
 const pick = vi.hoisted(() => vi.fn());
+const precheckTargets = vi.hoisted(() => ({ last: [] as { id: string }[] }));
 vi.mock('../services/relinkNative', () => ({ relinkPickFolder: pick }));
+vi.mock('./bulkExportPrecheck', async (importOriginal) => {
+  const real = await importOriginal<typeof import('./bulkExportPrecheck')>();
+  return {
+    ...real,
+    // Records what the pane asks the pre-check to look at; the real hook runs.
+    useExportPrecheck: (...args: Parameters<typeof real.useExportPrecheck>) => {
+      precheckTargets.last = [...args[0]];
+      return real.useExportPrecheck(...args);
+    },
+  };
+});
 import { BulkExportModal, EXPORT_FOLDER_PICK_TITLE, clock, etaText, tookText } from './BulkExportModal';
 import { BulkExportRunner } from '../services/bulkExportQueue';
 import { BULK_EXPORT_NO_PATH } from '../services/bulkExportSettings';
@@ -136,6 +148,20 @@ describe('BulkExportModal — Dashboard revamp Stage 4 (Bulk Export tab)', () =>
     expect(rows()).toEqual(['a']);
     await act(async () => { container.querySelector<HTMLButtonElement>(`[data-testid="bulk-export-ws-${w2.id}"]`)!.click(); });
     expect(rows()).toEqual(['b']);
+  });
+
+  it('the pre-check only looks at the selected workspace tab\'s projects', async () => {
+    const reg = new WorkspaceRegistry(wsMem());
+    const w1 = reg.create('Cooking');
+    const w2 = reg.create('Travel');
+    reg.assign(['a'], w1.id);
+    reg.assign(['b'], w2.id);
+    await mount(runnerOf([project('a'), project('b'), project('c')]), reg);
+    expect(precheckTargets.last.map(t => t.id)).toEqual(['a', 'b', 'c']);
+    await act(async () => { container.querySelector<HTMLButtonElement>(`[data-testid="bulk-export-ws-${w1.id}"]`)!.click(); });
+    expect(precheckTargets.last.map(t => t.id)).toEqual(['a']);
+    await act(async () => { container.querySelector<HTMLButtonElement>(`[data-testid="bulk-export-ws-${w2.id}"]`)!.click(); });
+    expect(precheckTargets.last.map(t => t.id)).toEqual(['b']);
   });
 
   it('under a workspace, Select all selects only its rows; the count stays the whole selection', async () => {
