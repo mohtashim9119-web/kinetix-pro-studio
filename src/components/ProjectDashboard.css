@@ -25,10 +25,10 @@
   --kxd-accent-hi: #f5a35f;
   --kxd-accent-low: #8a4c22;
   --kxd-accent-wash: rgba(232, 132, 61, 0.12);
-  /* One orange for "selected / select-all": every surface uses these three. */
-  --kxd-sel-bg: var(--kxd-accent-wash);
-  --kxd-sel-border: rgba(232, 132, 61, 0.45);
-  --kxd-sel-text: var(--kxd-accent-hi);
+  /* One neutral for "selected / select-all / bulk actions": every surface uses these three. */
+  --kxd-sel-bg: rgba(255, 255, 255, 0.07);
+  --kxd-sel-border: rgba(255, 255, 255, 0.24);
+  --kxd-sel-text: var(--kxd-text);
   --kxd-danger-wash: rgba(193, 68, 63, 0.14);
   --kxd-radius-lg: 16px;
   --kxd-radius-md: 10px;
@@ -197,8 +197,8 @@
 .kxd-subtab[aria-selected="true"] .kxd-subtab-count { color: var(--kxd-accent-hi); }
 .kxd-subtab:focus-visible { outline: 2px solid var(--kxd-accent-hi); outline-offset: 2px; border-radius: 3px; }
 /* Bulk Export rows: a project card on the ladder — thumbnail, name, duration
-   and scenes; status under it in a semantic tone. A selected row is orange
-   (hairline border + soft wash). */
+   and scenes; status under it in a semantic tone. A selected row is a neutral
+   lift (hairline border + soft wash). */
 .kxd-xrow {
   list-style: none; padding: 8px; border-radius: 10px;
   background: var(--kxd-surface); border: 1px solid var(--kxd-line);
@@ -215,6 +215,7 @@
 .kxd-xrow-main:focus-visible { outline: 2px solid var(--kxd-accent-hi); outline-offset: 3px; border-radius: 6px; }
 /* The selection mark exists only on a selected Ready row: pinned over the
    thumbnail's corner so nothing shifts when it appears. */
+.kxd-xrow-pick[data-state="on"] { background: #f2f2f2; border-color: #f2f2f2; color: #111; }
 .kxd-xrow-pick { position: absolute; left: 8px; top: 4px; z-index: 1; box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.45); }
 .kxd-xrow-when { font-size: 10.5px; color: var(--kxd-text-faint); }
 .kxd-xrow-open.is-always { opacity: 1; width: 24px; border-width: 1px; }
@@ -1062,8 +1063,8 @@
   .kxd-section-head { flex-wrap: wrap; gap: 10px; }
 }
 
-/* Select all / Deselect all — a small rounded button (not a pill, so it never
-   reads as a workspace tab) in the SAME selected orange as a selected row
+/* Select all / Deselect all (and Retry / Cancel / Clear all) — a small rounded button (not a pill, so it never
+   reads as a workspace tab) in the SAME selected neutral as a selected row
    (--kxd-sel-*), in both states. */
 .kxd-selall {
   flex-shrink: 0; display: inline-flex; align-items: center; height: 28px; padding: 0 12px;
