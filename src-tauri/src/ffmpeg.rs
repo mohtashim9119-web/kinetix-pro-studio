@@ -16,7 +16,8 @@ use crate::disk_space::{
 };
 use crate::safe_delete::delete_app_staging_dir;
 use crate::session_claim::{
-    acquire_session_claim, destroy_session_dir, read_session_claim_view, reclaim_sessions,
+    acquire_session_claim, destroy_session_dir, is_session_claimed_by_this_process,
+    read_session_claim_view, reclaim_sessions,
     report_reclaimable_sessions, retain_session_for_resume, sweep_manifestless_orphans,
     DestroySessionOutcome, OrphanSweepReport, ReclaimReport, ReclaimableSessionsReport,
     RetainForResumeReport, SessionClaimView,
@@ -32,6 +33,10 @@ pub struct FfmpegSessionState {
     /// Surviving sessions re-entered after a process restart. Native append,
     /// count, and concat stay closed until checkpoint repair succeeds.
     resume_pending: Mutex<HashSet<String>>,
+    /// Sessions this process re-entered and armed, not since retained or
+    /// destroyed. With our own claim still on disk, this process holds the
+    /// fence: a repeat reenter must not re-arm one prepare/clear already lifted.
+    reentered: Mutex<HashSet<String>>,
     /// One mutex per session, held across mutating bitstream I/O (append,
     /// truncate, checkpoint repair, concat). Stops an in-flight append from
     /// racing `set_len` on the same file — the rewind path used to truncate
@@ -337,7 +342,10 @@ pub fn ffmpeg_list_resumable_sessions(app: tauri::AppHandle) -> Result<Vec<Strin
 /// Re-enters an existing crash-surviving session directory without minting a
 /// fresh UUID. This only opens the session for read/size/truncate operations:
 /// append/count/concat remain blocked until `ffmpeg_prepare_checkpoint_resume`
-/// succeeds.
+/// succeeds. Idempotent for the process that already holds the fence (it
+/// re-entered this session and its claim is still on disk): a repeat call
+/// does not re-arm `resume_pending`. A stale foreign claim is taken over and
+/// armed as before.
 #[tauri::command]
 pub fn ffmpeg_reenter_session(
     app: tauri::AppHandle,
@@ -345,19 +353,28 @@ pub fn ffmpeg_reenter_session(
     state: tauri::State<'_, FfmpegSessionState>,
 ) -> Result<(), String> {
     let dir = session_dir(&app, &session_id)?;
+    reenter_session_inner(&dir, &session_id, &state)
+}
+
+fn reenter_session_inner(dir: &Path, session_id: &str, state: &FfmpegSessionState) -> Result<(), String> {
     if !dir.is_dir() {
         return Err(format!(
             "reenter_session: session directory does not exist: {}",
             dir.display()
         ));
     }
-    recover_export_state_replace(&dir)?;
+    recover_export_state_replace(dir)?;
     if !dir.join("export_state.json").is_file() {
         return Err("reenter_session: export_state.json is missing".to_string());
     }
-    acquire_session_claim(&dir, &session_id).map_err(|e| format!("reenter_session: {e}"))?;
-    register_session_cancel_flag(&state, &session_id);
-    state.resume_pending.lock().unwrap().insert(session_id);
+    let holds_fence = state.reentered.lock().unwrap().contains(session_id)
+        && is_session_claimed_by_this_process(dir)?;
+    acquire_session_claim(dir, session_id).map_err(|e| format!("reenter_session: {e}"))?;
+    register_session_cancel_flag(state, session_id);
+    if !holds_fence {
+        state.resume_pending.lock().unwrap().insert(session_id.to_string());
+        state.reentered.lock().unwrap().insert(session_id.to_string());
+    }
     Ok(())
 }
 
@@ -557,6 +574,7 @@ pub fn ffmpeg_retain_session_for_resume(
 ) -> Result<RetainForResumeReport, String> {
     state.cancel_flags.lock().unwrap().remove(&session_id);
     state.resume_pending.lock().unwrap().remove(&session_id);
+    state.reentered.lock().unwrap().remove(&session_id);
     state.io_gates.lock().unwrap().remove(&session_id);
     crate::ffmpeg_sidecar_gate::end_export_session();
     let dir = session_dir(&app, &session_id)?;
@@ -1980,6 +1998,7 @@ pub fn ffmpeg_destroy_session(
 ) -> Result<DestroySessionOutcome, String> {
     state.cancel_flags.lock().unwrap().remove(&session_id);
     state.resume_pending.lock().unwrap().remove(&session_id);
+    state.reentered.lock().unwrap().remove(&session_id);
     state.io_gates.lock().unwrap().remove(&session_id);
     crate::ffmpeg_sidecar_gate::end_export_session();
     let dir = session_dir(&app, &session_id)?;
@@ -4080,6 +4099,69 @@ mod tests {
 
         state.resume_pending.lock().unwrap().remove(&id);
         assert!(ensure_resume_prepared(&state, &id, "append_file_raw").is_ok());
+    }
+
+    fn make_resumable_session() -> (String, PathBuf) {
+        let (id, dir) = make_session();
+        fs::write(dir.join("export_state.json"), br#"{"schema":1}"#).unwrap();
+        (id, dir)
+    }
+
+    /// The 5fd2984 field shape at the native seam: discovery re-enters and its
+    /// fence is lifted (prepare/clear), then a second reenter from the same
+    /// process re-armed `resume_pending` and every append was refused.
+    #[test]
+    fn a_second_reenter_from_the_fence_holding_process_does_not_re_arm() {
+        let state = FfmpegSessionState::default();
+        let (id, dir) = make_resumable_session();
+
+        reenter_session_inner(&dir, &id, &state).unwrap();
+        assert!(state.resume_pending.lock().unwrap().contains(&id), "first reenter arms");
+        state.resume_pending.lock().unwrap().remove(&id); // prepare/clear lifted the fence
+
+        reenter_session_inner(&dir, &id, &state).unwrap();
+        assert!(
+            !state.resume_pending.lock().unwrap().contains(&id),
+            "a second reenter by the process already holding the fence must not re-arm"
+        );
+        assert!(ensure_resume_prepared(&state, &id, "append_file_raw").is_ok());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_stale_foreign_claimant_is_taken_over_and_re_armed() {
+        use crate::session_claim::{
+            read_session_claim_record, SessionClaimRecord, SESSION_CLAIM_FILENAME,
+            SESSION_CLAIM_SCHEMA_VERSION,
+        };
+        let state = FfmpegSessionState::default();
+        let (id, dir) = make_resumable_session();
+
+        reenter_session_inner(&dir, &id, &state).unwrap();
+        state.resume_pending.lock().unwrap().remove(&id);
+        let ours = read_session_claim_record(&dir).unwrap().unwrap();
+
+        // Another (dead) process claimed the directory since — the fence we
+        // held is no longer ours, so reenter must take over and arm as today.
+        let stale = SessionClaimRecord {
+            schema_version: SESSION_CLAIM_SCHEMA_VERSION,
+            session_id: id.clone(),
+            holder_pid: 4_000_000,
+            holder_start_time_ms: 1,
+            holder_instance_id: Uuid::new_v4().to_string(),
+            claimed_at_ms: 1,
+        };
+        fs::write(dir.join(SESSION_CLAIM_FILENAME), serde_json::to_string_pretty(&stale).unwrap())
+            .unwrap();
+
+        reenter_session_inner(&dir, &id, &state).unwrap();
+        assert!(
+            state.resume_pending.lock().unwrap().contains(&id),
+            "a stale foreign claimant must still be taken over and re-armed"
+        );
+        let now = read_session_claim_record(&dir).unwrap().unwrap();
+        assert_eq!(now.holder_instance_id, ours.holder_instance_id, "the claim is ours again");
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

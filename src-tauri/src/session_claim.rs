@@ -347,6 +347,14 @@ pub fn acquire_session_claim(dir: &Path, session_id: &str) -> Result<(), String>
     write_claim_record(dir, session_id)
 }
 
+/// True when the claim on disk is this process's own (same pid and instance).
+pub fn is_session_claimed_by_this_process(dir: &Path) -> Result<bool, String> {
+    Ok(read_session_claim_record(dir)?.is_some_and(|existing| {
+        let identity = current_process_identity();
+        existing.holder_pid == identity.pid && existing.holder_instance_id == identity.instance_id
+    }))
+}
+
 pub fn release_session_claim(dir: &Path) -> Result<(), String> {
     let path = claim_path(dir);
     if path.is_file() {
