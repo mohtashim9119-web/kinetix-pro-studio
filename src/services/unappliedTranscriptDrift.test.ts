@@ -34,6 +34,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
 import { dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
+import { applySyncBody as sharedApplySyncBody } from './applySyncSourceScan';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const APP_TSX = resolve(HERE, '..', 'App.tsx');
@@ -122,16 +123,8 @@ describe('WS2 T4.7 — the recovery path must never auto-apply', () => {
 describe('WS2 T4.7 — App.tsx apply-ordering wiring (probe-driven source guards)', () => {
   const APP_SRC = readFileSync(APP_TSX, 'utf-8');
 
-  /** `handleApplySyncFromFiles`'s body, signature to its closing `  };`. */
-  function applySyncBody(): string {
-    const marker = 'const handleApplySyncFromFiles = async (): Promise<ApplySyncResult> => {';
-    const start = APP_SRC.indexOf(marker);
-    expect(start, `'${marker}' not found — this guard has lost its target`).toBeGreaterThan(-1);
-    const rest = APP_SRC.slice(start + marker.length);
-    const end = rest.indexOf('\n  };');
-    expect(end).toBeGreaterThan(-1);
-    return rest.slice(0, end);
-  }
+  /** Entry point + the claimed work it guards. */
+  const applySyncBody = (): string => sharedApplySyncBody();
 
   it('P10 — the atomic commit clears the record inside itself, not in a follow-up update', () => {
     const pipe = readFileSync(resolve(HERE, './finishPipeline.ts'), 'utf-8');
@@ -144,6 +137,7 @@ describe('WS2 T4.7 — App.tsx apply-ordering wiring (probe-driven source guards
 
   it('P11 — every abort path reports failure, so no aborted sync can clear the record', () => {
     const body = applySyncBody();
+    expect(body).toContain('return { ok: false, message: SYNC_BLOCKED_BY_EXPORT, holdStaged: true }');
     expect(body).toContain('return { ok: false, message: STAGED_FOR_ANOTHER_PROJECT_MESSAGE }');
     expect(body).toContain('return { ok: false, message: BUILD_TIMELINE_COPY.stagingPausedMessage, holdStaged: true }');
     expect(body).toContain('return asApplySyncResult(result);');

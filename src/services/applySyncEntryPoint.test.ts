@@ -40,6 +40,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
 import { dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
+import { claimedBody, entryBody, firstAwait, statements } from './applySyncSourceScan';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const APP_TSX = resolve(HERE, '..', 'App.tsx');
@@ -81,18 +82,34 @@ describe('WS2-50 — a single Apply Sync entry point', () => {
     ).not.toContain('handleApplySyncFromFiles = async (staged');
   });
 
-  it('the entry point reads the shared live ref as its first statement', () => {
-    const body = memberBody(APP_SRC, APPLY_MARKER);
-    const firstStatement = body
-      .split('\n')
-      .map(l => l.trim())
-      .filter(l => l !== '' && !l.startsWith('//'))[0];
+  it('the pipeline claim is the entry point’s first act, before any await or work', () => {
+    const body = entryBody();
+    const stmts = statements(body);
     expect(
-      firstStatement,
-      'the first executable statement of Apply Sync is no longer the staged-files read. It ' +
-        'must be: the panel clears its slots the moment it hands control here, so any read ' +
-        'that happens after an await observes the cleared value, not the user’s files.',
-    ).toBe('const staged: StagedFiles = stagedFilesRef.current;');
+      stmts[0],
+      'the first executable statement of Apply Sync is no longer the one-pipeline-per-project ' +
+        'claim. Nothing — no read, no await, no file or pipeline work — may run before it.',
+    ).toMatch(/^const releaseSync = claimPipeline\(liveProjectRef\.current\.id, 'sync'\);$/);
+    const code = stripComments(body);
+    expect(code.indexOf('claimPipeline(')).toBeGreaterThan(-1);
+    expect(code.indexOf('claimPipeline(')).toBeLessThan(firstAwait(body));
+    // The guarded work is only reachable after the claim, and the claim is
+    // released in a finally.
+    expect(code.indexOf('claimPipeline(')).toBeLessThan(code.indexOf('applySyncFromFilesClaimed()'));
+    expect(code).toMatch(/finally\s*\{\s*releaseSync\(\);/);
+  });
+
+  it('the staged-files ref is read synchronously, before the work’s first await', () => {
+    const body = claimedBody();
+    const code = stripComments(body);
+    const read = code.indexOf('stagedFilesRef.current');
+    expect(
+      read,
+      'the guarded work no longer reads the shared staged-files ref. The panel clears its ' +
+        'slots the moment it hands control here, so a read after an await sees the cleared value.',
+    ).toBeGreaterThan(-1);
+    expect(read).toBeLessThan(firstAwait(body));
+    expect(statements(body)[0]).toBe('const staged: StagedFiles = stagedFilesRef.current;');
   });
 
   it('the shared ref is read only from Apply Sync and pause-retry hydrate', () => {

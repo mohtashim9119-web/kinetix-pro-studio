@@ -44,6 +44,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
+import { applySyncBody } from './applySyncSourceScan';
 
 const PIPE_TSX = resolve(import.meta.dirname, './finishPipeline.ts');
 const PIPE = readFileSync(PIPE_TSX, 'utf-8');
@@ -71,10 +72,7 @@ describe('Group B closeout — runBuildTimeline cancel-boundary structure', () =
   });
 
   it('the editor adapter commits the pipeline project in one setProject', () => {
-    const app = readFileSync(resolve(import.meta.dirname, '..', 'App.tsx'), 'utf-8');
-    const marker = 'const handleApplySyncFromFiles = async (): Promise<ApplySyncResult> => {';
-    const start = app.indexOf(marker);
-    const body = app.slice(start, app.indexOf('\n  };', start));
+    const body = applySyncBody();
     const commits = body.split('setProject(() => result.project)').length - 1;
     expect(commits).toBe(1);
   });

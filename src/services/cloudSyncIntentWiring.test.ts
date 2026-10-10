@@ -11,6 +11,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
 import { dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
+import { applySyncBody } from './applySyncSourceScan';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const APP = readFileSync(resolve(HERE, '../App.tsx'), 'utf8');
@@ -23,10 +24,7 @@ function effectBody(): string {
 }
 
 function applyBody(): string {
-  const marker = 'const handleApplySyncFromFiles = async (): Promise<ApplySyncResult> => {';
-  const start = APP.indexOf(marker);
-  expect(start).toBeGreaterThan(-1);
-  return APP.slice(start, APP.indexOf('\n  };', start));
+  return applySyncBody();
 }
 
 describe('Wave 3 U4.5 — App wiring', () => {
