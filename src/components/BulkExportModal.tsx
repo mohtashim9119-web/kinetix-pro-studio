@@ -617,8 +617,8 @@ export function BulkExportModal({
           </div>
         </div>
         {/* One action per tab, no status clutter (the tabs carry the counts):
-            Ready selects, Active cancels, Finished clears; Blocked and Failed have none. */}
-        {tab !== 'blocked' && tab !== 'failed' && (tab === 'ready' ? tabRows.length > 0 : shown.length > 0) && (
+            Ready selects, Failed retries, Active cancels, Finished clears; Blocked has none. */}
+        {tab !== 'blocked' && (tab === 'ready' ? tabRows.length > 0 : shown.length > 0) && (
           <div className="kxd-xctl">
             {tab === 'ready' && (
               <>
@@ -642,32 +642,43 @@ export function BulkExportModal({
                 <SortMenu value={sort} onChange={setSort} />
               </>
             )}
+            {tab === 'failed' && (
+              <button
+                type="button"
+                data-testid="bulk-export-retry-all"
+                className="kxd-selall"
+                title="Re-check and retry every failed export shown here"
+                onClick={() => retryChecked(shown.map(p => p.id))}
+              >
+                Retry all
+              </button>
+            )}
             {tab === 'active' && (
               <>
-                <span className="flex-1" />
                 <button
                   type="button"
                   data-testid="bulk-export-cancel-all"
-                  className="kxd-xctl-btn"
+                  className="kxd-selall"
                   title="Cancel every queued export shown here and stop the one running"
                   onClick={() => setConfirmCancel({ ids: shown.map(p => p.id), running: shown.some(p => byId.get(p.id)?.phase === 'exporting') })}
                 >
                   Cancel all
                 </button>
+                <span className="flex-1" />
               </>
             )}
             {tab === 'finished' && (
               <>
-                <span className="flex-1" />
                 <button
                   type="button"
                   data-testid="bulk-export-clear-all"
-                  className="kxd-xctl-btn"
+                  className="kxd-selall"
                   title="Clear the finished exports shown here — the files stay on disk"
                   onClick={() => runner.clearFinished(shown.map(p => p.id))}
                 >
                   Clear all
                 </button>
+                <span className="flex-1" />
               </>
             )}
           </div>

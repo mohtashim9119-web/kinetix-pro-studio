@@ -414,4 +414,24 @@ describe('BulkExportModal — Dashboard revamp Stage 4 (Bulk Export tab)', () =>
     const order = [...container.querySelectorAll('[data-testid^="bulk-export-row-"]')].map(el => el.getAttribute('data-testid')!.replace('bulk-export-row-', ''));
     expect(order).toEqual(['a', 'b', 'd']);
   });
+
+  it('Retry all (Failed), Cancel all (Active) and Clear all (Finished) share the Select all style', async () => {
+    const runner = new BulkExportRunner({
+      listProjects: () => ['f1', 'f2'].map(id => ({ id, name: id, lastExportPath: `/out/${id}.mp4` })),
+      loadProject: async id => ({ ...project(id), segments: [], assets: [] }),
+      storage: mem(),
+      playChime: () => {},
+      execute: async () => ({ status: 'failed', detail: 'disk full' }),
+    });
+    await mount(runner);
+    runner.setSelectedAll(true);
+    await act(async () => { await runner.startSelected(); });
+    await act(async () => { await new Promise(r => setTimeout(r, 10)); });
+    await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="bulk-export-tab-failed"]')!.click(); });
+    const retryAll = container.querySelector<HTMLButtonElement>('[data-testid="bulk-export-retry-all"]')!;
+    expect(retryAll.className).toContain('kxd-selall');
+    expect(retryAll.textContent).toBe('Retry all');
+    await act(async () => { retryAll.click(); await new Promise(r => setTimeout(r, 30)); });
+    expect(runner.snapshot().every(r => r.phase !== 'idle')).toBe(true);
+  });
 });
