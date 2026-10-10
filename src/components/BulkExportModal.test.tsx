@@ -496,4 +496,30 @@ describe('BulkExportModal — Dashboard revamp Stage 4 (Bulk Export tab)', () =>
     expect(badge.textContent).toBe('Queued');
     expect(badge.className).toContain('kxd-xrow-qbadge');
   });
+
+  it('Blocked has Re-check all (and a hint); Finished has the same search + sort', async () => {
+    const noPath = { ...project('n'), lastExportPath: undefined } as unknown as Project;
+    const names: Record<string, string> = { a: 'Banana', b: 'Apple' };
+    const runner = new BulkExportRunner({
+      listProjects: () => [{ id: 'a', name: 'Banana', lastExportPath: '/out/a.mp4' }, { id: 'b', name: 'Apple', lastExportPath: '/out/b.mp4' }, { id: 'n', name: 'n' }],
+      loadProject: async id => (id === 'n' ? { ...noPath, segments: [], assets: [] } : { ...project(id), name: names[id]!, segments: [], assets: [] }),
+      storage: mem(), playChime: () => {}, execute: async () => ({ status: 'done' }),
+    });
+    await mount(runner);
+    runner.setSelectedAll(true);
+    await act(async () => { await runner.startSelected(); });
+    await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+    await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="bulk-export-tab-blocked"]')!.click(); });
+    const recheck = container.querySelector<HTMLButtonElement>('[data-testid="bulk-export-recheck-all"]')!;
+    expect(recheck.className).toContain('kxd-selall');
+    expect(container.querySelector('[data-testid="bulk-export-blocked-hint"]')).not.toBeNull();
+    await act(async () => { recheck.click(); await new Promise(r => setTimeout(r, 10)); });   // still no path: stays blocked
+    expect(runner.snapshot().find(r => r.id === 'n')?.phase).toBe('blocked');
+    await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="bulk-export-tab-finished"]')!.click(); });
+    expect(container.querySelector('[data-testid="bulk-export-search-open"]')).not.toBeNull();
+    await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="bulk-export-sort"]')!.click(); });
+    await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="bulk-export-sort-name-az"]')!.click(); });
+    const order = [...container.querySelectorAll('[data-testid^="bulk-export-row-"]')].map(el => el.getAttribute('data-testid')!.replace('bulk-export-row-', ''));
+    expect(order).toEqual(['b', 'a']);   // Apple, Banana
+  });
 });

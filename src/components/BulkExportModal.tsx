@@ -205,6 +205,24 @@ function readReadySort(): ReadySort {
   return 'newest';
 }
 
+/** Finished-tab sorting. */
+type FinishedSort = 'recent' | 'oldest' | 'name-az' | 'name-za' | 'took';
+const FINISHED_SORTS: readonly { id: FinishedSort; label: string }[] = [
+  { id: 'recent', label: 'Recent' },
+  { id: 'oldest', label: 'Oldest' },
+  { id: 'name-az', label: 'Name A–Z' },
+  { id: 'name-za', label: 'Name Z–A' },
+  { id: 'took', label: 'Longest export' },
+];
+const FINISHED_SORT_KEY = 'kinetix:bulk-export-finished-sort:v1';
+function readFinishedSort(): FinishedSort {
+  try {
+    const raw = localStorage.getItem(FINISHED_SORT_KEY);
+    if (FINISHED_SORTS.some(o => o.id === raw)) return raw as FinishedSort;
+  } catch { /* storage unavailable */ }
+  return 'recent';
+}
+
 /** The Ready tab's search: a small icon that opens into a field; it folds back
  *  to the icon when it loses focus empty. */
 function SearchBox({ value, onChange }: { value: string; onChange: (next: string) => void }): React.ReactElement {
@@ -214,7 +232,7 @@ function SearchBox({ value, onChange }: { value: string; onChange: (next: string
   useEffect(() => { if (open) inputRef.current?.focus(); }, [open]);
   if (!expanded) {
     return (
-      <button type="button" className="kxd-xicon" data-testid="bulk-export-search-open" aria-label="Search ready projects" title="Search" onClick={() => setOpen(true)}>
+      <button type="button" className="kxd-xicon" data-testid="bulk-export-search-open" aria-label="Search projects" title="Search" onClick={() => setOpen(true)}>
         <Search size={13} aria-hidden="true" />
       </button>
     );
@@ -226,7 +244,7 @@ function SearchBox({ value, onChange }: { value: string; onChange: (next: string
         ref={inputRef}
         type="text"
         data-testid="bulk-export-search"
-        aria-label="Search ready projects"
+        aria-label="Search projects"
         placeholder="Search"
         value={value}
         onChange={e => onChange(e.target.value)}
@@ -243,7 +261,12 @@ function SearchBox({ value, onChange }: { value: string; onChange: (next: string
 }
 
 /** The Ready tab's sort: a dashboard-styled menu (not the system select). */
-function SortMenu({ value, onChange }: { value: ReadySort; onChange: (next: ReadySort) => void }): React.ReactElement {
+function SortMenu<T extends string>({ value, options, onChange, label = 'Sort projects' }: {
+  value: T;
+  options: readonly { id: T; label: string }[];
+  onChange: (next: T) => void;
+  label?: string;
+}): React.ReactElement {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -254,7 +277,7 @@ function SortMenu({ value, onChange }: { value: ReadySort; onChange: (next: Read
     window.addEventListener('keydown', onKey);
     return () => { document.removeEventListener('mousedown', onDown); window.removeEventListener('keydown', onKey); };
   }, [open]);
-  const current = READY_SORTS.find(o => o.id === value) ?? READY_SORTS[0]!;
+  const current = options.find(o => o.id === value) ?? options[0]!;
   return (
     <div className="kxd-xsort-wrap" ref={rootRef}>
       <button
@@ -263,15 +286,15 @@ function SortMenu({ value, onChange }: { value: ReadySort; onChange: (next: Read
         data-testid="bulk-export-sort"
         aria-haspopup="listbox"
         aria-expanded={open}
-        aria-label={`Sort ready projects: ${current.label}`}
+        aria-label={`${label}: ${current.label}`}
         title={`Sort: ${current.label}`}
         onClick={() => setOpen(o => !o)}
       >
         <ArrowDownUp size={13} aria-hidden="true" />
       </button>
       {open && (
-        <div className="kxd-xsort-menu" role="listbox" aria-label="Sort ready projects" data-testid="bulk-export-sort-menu">
-          {READY_SORTS.map(o => (
+        <div className="kxd-xsort-menu" role="listbox" aria-label={label} data-testid="bulk-export-sort-menu">
+          {options.map(o => (
             <button
               key={o.id}
               type="button"
@@ -585,7 +608,24 @@ export function BulkExportModal({
     try { localStorage.setItem(READY_SORT_KEY, next); } catch { /* this session only */ }
     setSortRaw(next);
   };
-  const q = query.trim().toLowerCase();
+  // Finished: the same search + sort.
+  const [fQuery, setFQuery] = useState('');
+  const [fSort, setFSortRaw] = useState<FinishedSort>(readFinishedSort);
+  const setFSort = (next: FinishedSort): void => {
+    try { localStorage.setItem(FINISHED_SORT_KEY, next); } catch { /* this session only */ }
+    setFSortRaw(next);
+  };
+  const q = (tab === 'finished' ? fQuery : query).trim().toLowerCase();
+  const finishedOrder = (a: { id: string; name: string }, b: { id: string; name: string }): number => {
+    const ra = byId.get(a.id); const rb = byId.get(b.id);
+    switch (fSort) {
+      case 'oldest': return (ra?.finishedAt ?? 0) - (rb?.finishedAt ?? 0);
+      case 'name-az': return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
+      case 'name-za': return b.name.localeCompare(a.name, undefined, { numeric: true, sensitivity: 'base' });
+      case 'took': return (rb?.exportMs ?? 0) - (ra?.exportMs ?? 0);
+      default: return (rb?.finishedAt ?? 0) - (ra?.finishedAt ?? 0);
+    }
+  };
   const readyOrder = (a: { id: string; name: string }, b: { id: string; name: string }): number => {
     switch (sort) {
       case 'oldest': return (metaById.get(a.id)?.savedAt ?? 0) - (metaById.get(b.id)?.savedAt ?? 0);
@@ -603,7 +643,9 @@ export function BulkExportModal({
   if (queuePos) tabRows.sort((x, y) => (queuePos.get(x.id) ?? Infinity) - (queuePos.get(y.id) ?? Infinity));
   const shown = tab === 'ready'
     ? tabRows.filter(p => !q || p.name.toLowerCase().includes(q)).sort(readyOrder)
-    : tabRows;
+    : tab === 'finished'
+      ? tabRows.filter(p => !q || p.name.toLowerCase().includes(q)).sort(finishedOrder)
+      : tabRows;
   queuedIdsRef.current = tab === 'active' ? shown.filter(p => byId.get(p.id)?.phase === 'queued').map(p => p.id) : [];
   const allSelected = shown.length > 0 && shown.every(p => byId.get(p.id)?.selected);
   // Select all selects exactly the rows this workspace + tab shows.
@@ -665,8 +707,8 @@ export function BulkExportModal({
           </div>
         </div>
         {/* One action per tab, no status clutter (the tabs carry the counts):
-            Ready selects, Failed retries, Active cancels, Finished clears; Blocked has none. */}
-        {tab !== 'blocked' && (tab === 'ready' ? tabRows.length > 0 : shown.length > 0) && (
+            Ready selects, Blocked re-checks, Failed retries, Active cancels, Finished clears. */}
+        {tabRows.length > 0 && (
           <div className="kxd-xctl">
             {tab === 'ready' && (
               <>
@@ -687,7 +729,7 @@ export function BulkExportModal({
                 <span className="flex-1" />
                 {checking && <span className="kxd-xctl-checking" data-testid="bulk-export-checking">Checking…</span>}
                 <SearchBox value={query} onChange={setQuery} />
-                <SortMenu value={sort} onChange={setSort} />
+                <SortMenu value={sort} options={READY_SORTS} onChange={setSort} label="Sort ready projects" />
               </>
             )}
             {tab === 'failed' && (
@@ -727,6 +769,26 @@ export function BulkExportModal({
                   Clear all
                 </button>
                 <span className="flex-1" />
+                <SearchBox value={fQuery} onChange={setFQuery} />
+                <SortMenu value={fSort} options={FINISHED_SORTS} onChange={setFSort} label="Sort finished exports" />
+              </>
+            )}
+            {tab === 'blocked' && (
+              <>
+                <button
+                  type="button"
+                  data-testid="bulk-export-recheck-all"
+                  className="kxd-selall"
+                  title="Check every blocked project again — the ones that are fixed move to Ready"
+                  onClick={() => {
+                    void runner.refresh();
+                    void recheck(shown.filter(p => verdicts.has(p.id)).map(p => p.id));
+                  }}
+                >
+                  Re-check all
+                </button>
+                <span className="flex-1" />
+                <span className="kxd-xctl-checking" data-testid="bulk-export-blocked-hint">Open a project to fix it, then re-check</span>
               </>
             )}
           </div>
