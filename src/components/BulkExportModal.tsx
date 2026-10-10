@@ -368,7 +368,8 @@ function ActiveProgress({
     return (
       <div className="kxd-xrow-prog" data-testid={`bulk-export-progress-${id}`}>
         <div className="kxd-xrow-prog-line">
-          <span className="kxd-xrow-prog-stage" data-testid={`bulk-export-status-${id}`}>Waiting in the queue</span>
+          <span className="kxd-xrow-qbadge" data-testid={`bulk-export-status-${id}`}>Queued</span>
+          <span className="flex-1" />
           {cancel}
         </div>
       </div>
@@ -509,8 +510,10 @@ export function BulkExportModal({
   const { verdicts, checking, recheck } = useExportPrecheck(notStarted, opened);
   /** Retry = re-check first; only a project that is now clear goes back to the queue. */
   const retryChecked = (ids: readonly string[]): void => {
-    void recheck(ids).then(fresh => {
-      for (const id of ids) if (!fresh.get(id)) void runner.retry(id);
+    void recheck(ids).then(async fresh => {
+      await Promise.all(ids.filter(id => !fresh.get(id)).map(id => runner.retry(id)));
+      // Follow the work, as Export does: whatever was retried is now on Active.
+      if (runner.isActive()) setTab('active');
     });
   };
   /** Export skips anything the pre-check holds in Blocked. */

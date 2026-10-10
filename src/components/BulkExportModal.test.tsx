@@ -435,6 +435,8 @@ describe('BulkExportModal — Dashboard revamp Stage 4 (Bulk Export tab)', () =>
     expect(retryAll.textContent).toBe('Retry all');
     await act(async () => { retryAll.click(); await new Promise(r => setTimeout(r, 30)); });
     expect(runner.snapshot().every(r => r.phase !== 'idle')).toBe(true);
+    // Retry all follows the work to Active, as Export does.
+    expect(container.querySelector('[data-testid="bulk-export-tab-active"]')!.getAttribute('aria-selected')).toBe('true');
   });
 
   it('Active: drag a queued export by its grip to reorder; the running one cannot be dragged', async () => {
@@ -472,5 +474,21 @@ describe('BulkExportModal — Dashboard revamp Stage 4 (Bulk Export tab)', () =>
       container.querySelector('[data-testid="bulk-export-grip-b"]')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', altKey: true, bubbles: true }));
     });
     expect(order()).toEqual(['a', 'b', 'd', 'c']);
+  });
+
+  it('a queued export reads as a small "Queued" badge', async () => {
+    const runner = new BulkExportRunner({
+      listProjects: () => ['a', 'b'].map(id => ({ id, name: id, lastExportPath: `/out/${id}.mp4` })),
+      loadProject: async id => ({ ...project(id), segments: [], assets: [] }),
+      storage: mem(), playChime: () => {},
+      execute: input => new Promise(resolve => input.signal.addEventListener('abort', () => resolve({ status: 'failed', detail: 'cancelled' }))),
+    });
+    await mount(runner);
+    runner.setSelectedAll(true);
+    await act(async () => { await runner.startSelected(); });
+    await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="bulk-export-tab-active"]')!.click(); });
+    const badge = container.querySelector('[data-testid="bulk-export-status-b"]')!;
+    expect(badge.textContent).toBe('Queued');
+    expect(badge.className).toContain('kxd-xrow-qbadge');
   });
 });
