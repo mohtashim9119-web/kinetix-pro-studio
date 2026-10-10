@@ -919,6 +919,18 @@ export function BulkExportModal({
                     <span data-testid={`bulk-export-status-${p.id}`} className="kxd-xrow-msg" title={message ?? ''}>
                       {message ?? ''}
                     </span>
+                    {tab === 'failed' && (
+                      <button
+                        type="button"
+                        data-testid={`bulk-export-dismiss-${p.id}`}
+                        className="kxd-xrow-retry"
+                        title="Give up on this export — it goes back to Ready"
+                        onClick={() => runner.returnToReady(p.id)}
+                      >
+                        <X size={11} aria-hidden="true" />
+                        Cancel
+                      </button>
+                    )}
                     {canRetry && (
                       <button
                         type="button"

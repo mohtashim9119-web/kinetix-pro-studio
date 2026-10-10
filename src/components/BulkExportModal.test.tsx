@@ -265,6 +265,11 @@ describe('BulkExportModal — Dashboard revamp Stage 4 (Bulk Export tab)', () =>
     expect(container.querySelector('[data-testid="bulk-export-retry-f"]')).not.toBeNull();
     expect(container.querySelector('[data-testid="bulk-export-open-f"]')).not.toBeNull();
     expect(container.querySelector('[data-testid="bulk-export-select-all"]')).toBeNull();
+    // Cancel gives up on it: back to Ready.
+    await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="bulk-export-dismiss-f"]')!.click(); });
+    expect(runner.snapshot().find(r => r.id === 'f')?.phase).toBe('idle');
+    expect(container.querySelector('[data-testid="bulk-export-tab-count-ready"]')!.textContent).toBe('1');
+    expect(container.querySelector('[data-testid="bulk-export-tab-count-failed"]')!.textContent).toBe('0');
   });
 
   it('Active shows a live bar, percent, stage, timer + ETA, the output file and Cancel', async () => {

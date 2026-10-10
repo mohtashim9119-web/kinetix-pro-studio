@@ -298,6 +298,17 @@ export class BulkExportRunner {
     row.flags = undefined;
   }
 
+  /** Give up on a failed / cancelled / interrupted export: the row goes back to
+   *  Ready (not started), deselected. Nothing is deleted. */
+  returnToReady(id: string): void {
+    const row = this.rows.find(r => r.id === id);
+    if (!row || (row.phase !== 'failed' && row.phase !== 'cancelled' && row.phase !== 'paused')) return;
+    this.toReady(row);
+    row.selected = false;
+    this.persistSelection();
+    this.commit();
+  }
+
   /** Clear finished rows: each returns to Ready (not started), deselected. The
    *  export files on disk are untouched. */
   clearFinished(ids: readonly string[]): void {
