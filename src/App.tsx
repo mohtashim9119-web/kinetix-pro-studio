@@ -462,7 +462,7 @@ import { summarizeProjectForBulk } from './services/syncLogSummary';
 import { projectCostLedger } from './services/projectCostLedgerShared';
 import { StorageRootRelocationView } from './components/recovery/StorageRootRelocationView';
 import { useStorageRootRelocation } from './hooks/useStorageRootRelocation';
-import { checkExistingCheckpoint, type ReexportCheckOutcome } from './services/webcodecsExport/exportReexportCheck';
+import { checkExistingCheckpoint, findUsableCheckpoint, type ReexportCheckOutcome } from './services/webcodecsExport/exportReexportCheck';
 import { useWhisper } from './hooks/useWhisper';
 import { usePlayback } from './hooks/usePlayback';
 import { TranscriptionBar } from './components/TranscriptionBar';
@@ -2205,11 +2205,15 @@ export default function App() {
     hasCheckpoint: async (p) => {
       if (!isTauri()) return false;
       try {
-        const outcome = await checkExistingCheckpoint(p, {
+        // Any surviving session with a usable resume point for THIS timeline
+        // (spots included, as the export hashes them) — not just the newest
+        // session of any project, and not an empty manifest.
+        const specs = buildExportSpotPayload(p, { projectDefault: p.spotDefaultGeometry }).request?.spotRenderSpecs;
+        const found = await findUsableCheckpoint(p, {
           listResumableSessionIds: () => TauriFfmpeg.listResumableSessionIds(),
           peekExportState: (sessionId) => TauriFfmpeg.peekExportState(sessionId),
-        });
-        return outcome.kind === 'unedited';
+        }, { spotRenderSpecs: specs });
+        return found !== null;
       } catch {
         return false;
       }

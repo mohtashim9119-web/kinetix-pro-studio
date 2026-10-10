@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { TransitionType, AnimationType, type Project } from '../../types';
 import { buildSourceTimelineHash, timelineIdentityFromProject } from './exportCheckpoint';
-import { checkExistingCheckpoint, type ReexportCheckIo } from './exportReexportCheck';
+import { checkExistingCheckpoint, findUsableCheckpoint, type ReexportCheckIo } from './exportReexportCheck';
+import { recordPieceCompleted, createExportStateManifest, serializeExportState } from './exportCheckpoint';
 
 function stubProject(overrides: Partial<Project> = {}): Project {
   return {
@@ -148,5 +149,48 @@ describe('checkExistingCheckpoint', () => {
     });
     await checkExistingCheckpoint(project, io);
     expect(peekCount).toBe(1);
+  });
+});
+
+describe('findUsableCheckpoint — the bulk Retry question', () => {
+  const SID = (n: number): string => `3f2504e0-4f89-41d3-9a0c-0305e82c33${String(n).padStart(2, '0')}`;
+  async function realManifest(project: Project, sessionId: string, finishedPieces: number): Promise<string> {
+    const hash = await buildSourceTimelineHash(timelineIdentityFromProject(project, DIMS));
+    let m = createExportStateManifest({ sessionId, projectId: project.id, sourceTimelineHash: hash, ...DIMS });
+    if (finishedPieces > 0) m = recordPieceCompleted(m, finishedPieces - 1);
+    return serializeExportState(m);
+  }
+  const ioOf = (sessions: Record<string, string>): ReexportCheckIo => fakeIo({
+    listResumableSessionIds: async () => Object.keys(sessions),
+    peekExportState: async (id) => ({ kind: 'found', bytes: bytesOf(sessions[id]!) }),
+  });
+
+  it('an empty manifest (nothing recorded yet) is NOT a checkpoint', async () => {
+    const p = stubProject();
+    expect(await findUsableCheckpoint(p, ioOf({ [SID(1)]: await realManifest(p, SID(1), 0) }))).toBeNull();
+  });
+
+  it('a manifest with a finished piece is usable', async () => {
+    const p = stubProject();
+    const found = await findUsableCheckpoint(p, ioOf({ [SID(1)]: await realManifest(p, SID(1), 1) }));
+    expect(found?.sessionId).toBe(SID(1));
+  });
+
+  it('another project\'s session never hides this project\'s own (or counts as it)', async () => {
+    const mine = stubProject();
+    const other = stubProject({ id: 'proj-other' });
+    const found = await findUsableCheckpoint(mine, ioOf({
+      [SID(1)]: await realManifest(mine, SID(1), 1),
+      [SID(2)]: await realManifest(other, SID(2), 3),
+    }));
+    expect(found?.sessionId).toBe(SID(1));
+    expect(await findUsableCheckpoint(stubProject({ id: 'proj-third' }), ioOf({ [SID(2)]: await realManifest(other, SID(2), 3) }))).toBeNull();
+  });
+
+  it('an edited timeline has nothing to resume', async () => {
+    const p = stubProject();
+    const m = await realManifest(p, SID(1), 1);
+    const edited = stubProject({ script: 'changed', segments: [{ ...p.segments[0]!, duration: 5 }] });
+    expect(await findUsableCheckpoint(edited, ioOf({ [SID(1)]: m }))).toBeNull();
   });
 });

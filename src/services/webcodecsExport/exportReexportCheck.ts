@@ -115,3 +115,53 @@ export async function checkExistingCheckpoint(
     ? { kind: 'unedited', sessionId, manifest }
     : { kind: 'edited', sessionId, manifest };
 }
+
+/** A manifest that actually records something to resume from. */
+export function hasUsableResumePoint(manifest: ExportStateManifest): boolean {
+  return (Array.isArray(manifest.checkpoints) && manifest.checkpoints.length > 0) || (manifest.completedPieces ?? 0) > 0;
+}
+
+/**
+ * Bulk Retry's question: does ANY surviving session hold a usable resume point
+ * for exactly this timeline? Unlike `checkExistingCheckpoint` (the single
+ * export's two-option modal, which only ever considers the newest session),
+ * this scans newest-first, so another project's newer cancelled session cannot
+ * hide this project's own — and an empty manifest (nothing recorded yet) is
+ * not a checkpoint.
+ */
+export async function findUsableCheckpoint(
+  project: Project,
+  io: ReexportCheckIo,
+  extras?: { spotRenderSpecs?: import('./spotRenderSpec').SpotRenderSpec[] | null },
+): Promise<{ sessionId: string; manifest: ExportStateManifest } | null> {
+  let ids: string[] = [];
+  try {
+    ids = await io.listResumableSessionIds();
+  } catch {
+    return null;
+  }
+  const ordered = [...ids].sort((a, b) => {
+    const at = exportSessionCreatedAt(a);
+    const bt = exportSessionCreatedAt(b);
+    if (at === bt) return a < b ? -1 : 1;
+    if (at === null) return 1;
+    if (bt === null) return -1;
+    return bt - at;
+  });
+  for (const sessionId of ordered) {
+    let peek: { kind: 'found'; bytes: number[] } | { kind: 'notFound' };
+    try {
+      peek = await io.peekExportState(sessionId);
+    } catch {
+      continue;
+    }
+    if (peek.kind === 'notFound') continue;
+    const manifest = decodeManifest(peek.bytes);
+    if (manifest === null || manifest.projectId !== project.id || !hasUsableResumePoint(manifest)) continue;
+    const currentHash = await buildSourceTimelineHash(
+      timelineIdentityFromProject(project, { fps: manifest.fps, width: manifest.width, height: manifest.height }, extras),
+    );
+    if (currentHash === manifest.sourceTimelineHash) return { sessionId, manifest };
+  }
+  return null;
+}
