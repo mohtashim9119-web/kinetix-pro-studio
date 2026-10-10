@@ -6,7 +6,7 @@
 import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Z } from './overlayLayers';
 import type { BulkExportPhase, BulkExportProgress, BulkExportRunner } from '../services/bulkExportQueue';
-import { ArrowDownUp, Check, FolderOpen, GripVertical, Search, Clapperboard, ExternalLink, Play, RefreshCw, SlidersHorizontal, Trash2, X } from 'lucide-react';
+import { ArrowDownUp, Check, FolderOpen, Search, Clapperboard, ExternalLink, Play, RefreshCw, SlidersHorizontal, Trash2, X } from 'lucide-react';
 import { loadAllMetas } from '../services/projectStore';
 import { ProjectCardThumb } from './ProjectCardThumb';
 import { formatDuration, useProjectDurations } from './projectDurations';
@@ -533,12 +533,14 @@ export function BulkExportModal({
   // Drag to reorder the queued exports (pointer events — no native DnD, which is
   // unreliable in the desktop webview). The running export is never movable.
   const rowEls = useRef(new Map<string, HTMLElement>());
-  const [drag, setDrag] = useState<{ id: string; before: string | null } | null>(null);
+  // `started` flips after a few pixels of movement, so a plain click never reorders.
+  const [drag, setDrag] = useState<{ id: string; before: string | null; y0: number; started: boolean } | null>(null);
   const queuedIdsRef = useRef<string[]>([]);
   useEffect(() => {
     if (!drag) return;
     const dragId = drag.id;
     const onMove = (e: PointerEvent): void => {
+      setDrag(d => (d && !d.started && Math.abs(e.clientY - d.y0) >= 5 ? { ...d, started: true } : d));
       const rects = queuedIdsRef.current.flatMap(id => {
         const el = rowEls.current.get(id);
         if (!el) return [];
@@ -550,7 +552,7 @@ export function BulkExportModal({
     };
     const onUp = (): void => {
       setDrag(d => {
-        if (d) runner.reorderQueue(moveQueued(queuedIdsRef.current, d.id, d.before));
+        if (d?.started) runner.reorderQueue(moveQueued(queuedIdsRef.current, d.id, d.before));
         return null;
       });
     };
@@ -752,6 +754,8 @@ export function BulkExportModal({
             // export); a Blocked row clears itself once the cause is fixed.
             const canRetry = row?.phase === 'failed' || row?.phase === 'paused' || row?.phase === 'waiting' || row?.phase === 'cancelled';
             const pickable = tab === 'ready';
+            // Active, queued: the whole card is the drag handle (the running one is fixed).
+            const reorderable = tab === 'active' && row?.phase === 'queued';
             const statusTone = preReason ? 'bad' : toneOf(row?.phase);
             const body = (
               <>
@@ -778,7 +782,22 @@ export function BulkExportModal({
                 ref={el => { if (el) rowEls.current.set(p.id, el); else rowEls.current.delete(p.id); }}
                 data-testid={`bulk-export-row-${p.id}`}
                 data-phase={row?.phase ?? 'idle'}
-                className={`kx-bulk-row kxd-xrow${pickable ? ' is-pickable' : ''}${pickable && selectedRow ? ' is-selected' : ''}${drag?.id === p.id ? ' is-dragging' : ''}${drag && drag.before === p.id ? ' drop-before' : ''}${drag && drag.before === null && p.id === queuedIdsRef.current[queuedIdsRef.current.length - 1] && drag.id !== p.id ? ' drop-end' : ''}`}
+                className={`kx-bulk-row kxd-xrow${pickable ? ' is-pickable' : ''}${pickable && selectedRow ? ' is-selected' : ''}${reorderable ? ' is-reorderable' : ''}${drag?.started && drag.id === p.id ? ' is-dragging' : ''}${drag?.started && drag.before === p.id ? ' drop-before' : ''}${drag?.started && drag.before === null && p.id === queuedIdsRef.current[queuedIdsRef.current.length - 1] && drag.id !== p.id ? ' drop-end' : ''}`}
+                tabIndex={reorderable ? 0 : undefined}
+                aria-label={reorderable ? `${p.name} — drag to reorder, or Alt+Arrow up / down` : undefined}
+                onPointerDown={reorderable ? e => {
+                  if ((e.target as Element).closest('button')) return;
+                  setDrag({ id: p.id, before: null, y0: e.clientY, started: false });
+                } : undefined}
+                onKeyDown={reorderable ? e => {
+                  if (!e.altKey || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return;
+                  e.preventDefault();
+                  const ids = queuedIdsRef.current;
+                  const at = ids.indexOf(p.id);
+                  if (at < 0) return;
+                  if (e.key === 'ArrowUp' && at > 0) runner.reorderQueue(moveQueued(ids, p.id, ids[at - 1]!));
+                  if (e.key === 'ArrowDown' && at < ids.length - 1) runner.reorderQueue(moveQueued(ids, p.id, ids[at + 2] ?? null));
+                } : undefined}
                 onClick={pickable ? () => runner.setSelected(p.id, !selectedRow) : undefined}
               >
                 <div className="kxd-xrow-top">
@@ -808,27 +827,6 @@ export function BulkExportModal({
                         onClick={e => { e.stopPropagation(); onOpenProject(p.id); }}
                       >
                         <ExternalLink size={13} aria-hidden="true" />
-                      </button>
-                    )}
-                    {tab === 'active' && row?.phase === 'queued' && (
-                      <button
-                        type="button"
-                        className="kxd-xrow-open kxd-xrow-grip"
-                        data-testid={`bulk-export-grip-${p.id}`}
-                        aria-label={`Reorder ${p.name} (drag, or Alt+Arrow up / down)`}
-                        title="Drag to reorder"
-                        onPointerDown={e => { e.preventDefault(); setDrag({ id: p.id, before: null }); }}
-                        onKeyDown={e => {
-                          if (!e.altKey || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return;
-                          e.preventDefault();
-                          const ids = queuedIdsRef.current;
-                          const at = ids.indexOf(p.id);
-                          if (at < 0) return;
-                          if (e.key === 'ArrowUp' && at > 0) runner.reorderQueue(moveQueued(ids, p.id, ids[at - 1]!));
-                          if (e.key === 'ArrowDown' && at < ids.length - 1) runner.reorderQueue(moveQueued(ids, p.id, ids[at + 2] ?? null));
-                        }}
-                      >
-                        <GripVertical size={13} aria-hidden="true" />
                       </button>
                     )}
                     {tab === 'finished' && (

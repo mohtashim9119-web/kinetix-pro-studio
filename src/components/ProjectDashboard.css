@@ -1125,8 +1125,9 @@
 
 /* Reordering the queued exports. */
 .kxd-xrow { position: relative; }
-.kxd-xrow-grip { cursor: grab; touch-action: none; }
-.kxd-xrow-grip:active { cursor: grabbing; }
+.kxd-xrow.is-reorderable { cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none; }
+.kxd-xrow.is-reorderable:active { cursor: grabbing; }
+.kxd-xrow.is-reorderable:focus-visible { outline: 2px solid var(--kxd-accent-hi); outline-offset: 2px; }
 .kxd-xrow.is-dragging { opacity: 0.45; }
 .kxd-xrow.drop-before::before, .kxd-xrow.drop-end::after {
   content: ''; position: absolute; left: 0; right: 0; height: 2px; border-radius: 2px; background: #f2f2f2; pointer-events: none;

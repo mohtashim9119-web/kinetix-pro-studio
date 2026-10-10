@@ -439,7 +439,7 @@ describe('BulkExportModal — Dashboard revamp Stage 4 (Bulk Export tab)', () =>
     expect(container.querySelector('[data-testid="bulk-export-tab-active"]')!.getAttribute('aria-selected')).toBe('true');
   });
 
-  it('Active: drag a queued export by its grip to reorder; the running one cannot be dragged', async () => {
+  it('Active: drag a queued card anywhere to reorder; the running one cannot be dragged; a plain click does not reorder', async () => {
     const ids = ['a', 'b', 'c', 'd'];
     const runner = new BulkExportRunner({
       listProjects: () => ids.map(id => ({ id, name: id, lastExportPath: `/out/${id}.mp4` })),
@@ -454,24 +454,29 @@ describe('BulkExportModal — Dashboard revamp Stage 4 (Bulk Export tab)', () =>
     await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="bulk-export-tab-active"]')!.click(); });
     const order = (): string[] => [...container.querySelectorAll('[data-testid^="bulk-export-row-"]')].map(el => el.getAttribute('data-testid')!.replace('bulk-export-row-', ''));
     expect(order()).toEqual(['a', 'b', 'c', 'd']);
-    expect(container.querySelector('[data-testid="bulk-export-grip-a"]')).toBeNull();   // running
+    expect(container.querySelector('[data-testid="bulk-export-row-a"]')!.classList.contains('is-reorderable')).toBe(false);   // running
+    expect(container.querySelector('[data-testid^="bulk-export-grip"]')).toBeNull();                                           // no handle: the card itself drags
     // jsdom has no layout: stub each row's box (100px tall, stacked).
     ids.forEach((id, i) => {
       container.querySelector<HTMLElement>(`[data-testid="bulk-export-row-${id}"]`)!.getBoundingClientRect =
         () => ({ top: i * 100, bottom: i * 100 + 90, left: 0, right: 300, width: 300, height: 90, x: 0, y: i * 100, toJSON: () => ({}) });
     });
     const pointer = (type: string, y: number): Event => Object.assign(new MouseEvent(type, { bubbles: true, clientY: y }), {});
-    await act(async () => { container.querySelector('[data-testid="bulk-export-grip-d"]')!.dispatchEvent(pointer('pointerdown', 330)); });
+    // A click without movement changes nothing.
+    await act(async () => { container.querySelector('[data-testid="bulk-export-row-d"]')!.dispatchEvent(pointer('pointerdown', 330)); });
+    await act(async () => { window.dispatchEvent(pointer('pointerup', 331)); });
+    expect(order()).toEqual(['a', 'b', 'c', 'd']);
+    await act(async () => { container.querySelector('[data-testid="bulk-export-row-d"]')!.dispatchEvent(pointer('pointerdown', 330)); });
     await act(async () => { window.dispatchEvent(pointer('pointermove', 120)); });       // above b's middle (145)
     await act(async () => { window.dispatchEvent(pointer('pointerup', 120)); });
     expect(order()).toEqual(['a', 'd', 'b', 'c']);
     // Keyboard: Alt+ArrowDown moves one step; Alt+ArrowUp cannot pass the running export.
     await act(async () => {
-      container.querySelector('[data-testid="bulk-export-grip-d"]')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', altKey: true, bubbles: true }));
+      container.querySelector('[data-testid="bulk-export-row-d"]')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', altKey: true, bubbles: true }));
     });
     expect(order()).toEqual(['a', 'b', 'd', 'c']);
     await act(async () => {
-      container.querySelector('[data-testid="bulk-export-grip-b"]')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', altKey: true, bubbles: true }));
+      container.querySelector('[data-testid="bulk-export-row-b"]')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', altKey: true, bubbles: true }));
     });
     expect(order()).toEqual(['a', 'b', 'd', 'c']);
   });
