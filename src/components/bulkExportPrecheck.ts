@@ -37,8 +37,9 @@ function readDismissed(): Set<string> {
  *  1. a segment's media is really offline (storage holds no bytes for it) —
  *     the same availability seam and media check Start uses;
  *  2. any unresolved action in its newest sync (the sync log panel's own
- *     action groups, minus items the operator marked resolved). Log-recorded
- *     offline entries are skipped: they are snapshots, storage is the truth.
+ *     action groups, minus items the operator marked resolved). Media and
+ *     Layer 2 actions come from the project's current state, not the log's
+ *     snapshots; offline is storage's call (1).
  */
 export async function precheckProject(
   id: string,
@@ -59,10 +60,15 @@ export async function precheckProject(
   const checked = await (deps.withAvailability ?? withStorageAvailability)(project);
   if (preflightBulkExport(checked.segments, checked.assets).kind === 'block') return BULK_EXPORT_OFFLINE;
 
+  // The newest sync's media / Layer 2 actions are LIVE state, never the log's
+  // frozen records (the sync log panel does the same: it replaces the log's
+  // "missing media" lines with the project as it is now). Without this a
+  // media gap fixed after the sync stayed blocked forever. Assets carry the
+  // storage-availability stamp, so a stored record's empty URLs read right.
   const view = buildSyncGroups({
     log: project.syncLog ?? [],
     summaries: project.syncRunSummaries ?? [],
-    // No live view: the log's own records decide the rest (media is above).
+    live: { segments: checked.segments, assets: checked.assets, spots: checked.spots ?? [] },
     dismissed: readDismissed(),
   });
   const open = (view.syncs[0]?.actions ?? []).filter(g => g.id !== 'offline-media');

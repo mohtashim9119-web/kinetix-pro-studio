@@ -24,6 +24,18 @@ const status = (resolved: boolean) => async () => ({
 const check = (p: Project, onDisk: boolean) =>
   precheckProject('P', { load: async () => ({ project: p }), withAvailability: q => withStorageAvailability(q, status(onDisk)) });
 
+describe('bulk export pre-check — media actions are live, not the log', () => {
+  it('a sync-time "missing media" record is stale once the scene has media (permanent fix)', async () => {
+    const p = project([stored('a1')], [entry('no-asset', { segmentIndex: 0 })]);
+    expect(await check(p, true)).toBeNull();
+  });
+
+  it('a scene with no media assigned right now still blocks', async () => {
+    const p = { ...project([stored('a1')], [entry('info', { message: 'Sync completed' })]), segments: [{ id: 's1', startTime: 0, duration: 1, text: '' } as VideoSegment] } as Project;
+    expect(await check(p, true)).toMatch(/Missing media/);
+  });
+});
+
 describe('bulk export pre-check — offline media is judged from storage', () => {
   it('real-offline (storage has no bytes) blocks', async () => {
     expect(await check(project([stored('a1')]), false)).toBe(BULK_EXPORT_OFFLINE);
