@@ -6,7 +6,7 @@
 import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Z } from './overlayLayers';
 import type { BulkExportPhase, BulkExportProgress, BulkExportRunner } from '../services/bulkExportQueue';
-import { Check, FolderOpen, Clapperboard, ExternalLink, Play, RefreshCw, SlidersHorizontal, Trash2, X } from 'lucide-react';
+import { Check, FolderOpen, Search, Clapperboard, ExternalLink, Play, RefreshCw, SlidersHorizontal, Trash2, X } from 'lucide-react';
 import { loadAllMetas } from '../services/projectStore';
 import { ProjectCardThumb } from './ProjectCardThumb';
 import { formatDuration, useProjectDurations } from './projectDurations';
@@ -183,6 +183,25 @@ function KxCheck(): React.ReactElement {
       <Check size={10} strokeWidth={3.5} />
     </span>
   );
+}
+
+/** Ready-tab sorting. */
+type ReadySort = 'newest' | 'oldest' | 'name-az' | 'name-za' | 'longest' | 'scenes';
+const READY_SORTS: readonly { id: ReadySort; label: string }[] = [
+  { id: 'newest', label: 'Newest' },
+  { id: 'oldest', label: 'Oldest' },
+  { id: 'name-az', label: 'Name A–Z' },
+  { id: 'name-za', label: 'Name Z–A' },
+  { id: 'longest', label: 'Longest' },
+  { id: 'scenes', label: 'Most scenes' },
+];
+const READY_SORT_KEY = 'kinetix:bulk-export-sort:v1';
+function readReadySort(): ReadySort {
+  try {
+    const raw = localStorage.getItem(READY_SORT_KEY);
+    if (READY_SORTS.some(o => o.id === raw)) return raw as ReadySort;
+  } catch { /* storage unavailable */ }
+  return 'newest';
 }
 
 /** "2:14" — an elapsed clock. */
@@ -426,7 +445,28 @@ export function BulkExportModal({
   const tabCounts: Record<ExportTab, number> = { ready: 0, blocked: 0, failed: 0, active: 0, finished: 0 };
   const tabOf = (id: string): ExportTab => exportTabOf(byId.get(id)?.phase, verdicts.has(id));
   for (const p of inScope) tabCounts[tabOf(p.id)] += 1;
-  const shown = inScope.filter(p => tabOf(p.id) === tab);
+  // Ready only: search by name, and sort.
+  const [query, setQuery] = useState('');
+  const [sort, setSortRaw] = useState<ReadySort>(readReadySort);
+  const setSort = (next: ReadySort): void => {
+    try { localStorage.setItem(READY_SORT_KEY, next); } catch { /* this session only */ }
+    setSortRaw(next);
+  };
+  const q = query.trim().toLowerCase();
+  const readyOrder = (a: { id: string; name: string }, b: { id: string; name: string }): number => {
+    switch (sort) {
+      case 'oldest': return (metaById.get(a.id)?.savedAt ?? 0) - (metaById.get(b.id)?.savedAt ?? 0);
+      case 'name-az': return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
+      case 'name-za': return b.name.localeCompare(a.name, undefined, { numeric: true, sensitivity: 'base' });
+      case 'longest': return (durations.get(b.id) ?? 0) - (durations.get(a.id) ?? 0);
+      case 'scenes': return (metaById.get(b.id)?.segmentCount ?? 0) - (metaById.get(a.id)?.segmentCount ?? 0);
+      default: return (metaById.get(b.id)?.savedAt ?? 0) - (metaById.get(a.id)?.savedAt ?? 0);
+    }
+  };
+  const tabRows = inScope.filter(p => tabOf(p.id) === tab);
+  const shown = tab === 'ready'
+    ? tabRows.filter(p => !q || p.name.toLowerCase().includes(q)).sort(readyOrder)
+    : tabRows;
   const allSelected = shown.length > 0 && shown.every(p => byId.get(p.id)?.selected);
   // Select all selects exactly the rows this workspace + tab shows.
   const selectAll = (on: boolean): void => {
@@ -488,7 +528,7 @@ export function BulkExportModal({
         </div>
         {/* One action per tab, no status clutter (the tabs carry the counts):
             Ready selects, Active cancels, Finished clears; Blocked and Failed have none. */}
-        {tab !== 'blocked' && tab !== 'failed' && shown.length > 0 && (
+        {tab !== 'blocked' && tab !== 'failed' && (tab === 'ready' ? tabRows.length > 0 : shown.length > 0) && (
           <div className="kxd-xctl">
             {tab === 'ready' && (
               <>
@@ -507,7 +547,32 @@ export function BulkExportModal({
                   </span>
                 )}
                 <span className="flex-1" />
-                {checking && <span className="kxd-xctl-checking" data-testid="bulk-export-checking">Checking projects…</span>}
+                {checking && <span className="kxd-xctl-checking" data-testid="bulk-export-checking">Checking…</span>}
+                <label className="kxd-xsearch">
+                  <Search size={12} aria-hidden="true" />
+                  <input
+                    type="text"
+                    data-testid="bulk-export-search"
+                    aria-label="Search ready projects"
+                    placeholder="Search"
+                    value={query}
+                    onChange={e => setQuery(e.target.value)}
+                  />
+                  {query && (
+                    <button type="button" className="kxd-xsearch-clear" aria-label="Clear search" onClick={() => setQuery('')}>
+                      <X size={11} aria-hidden="true" />
+                    </button>
+                  )}
+                </label>
+                <select
+                  className="kxd-xsort"
+                  data-testid="bulk-export-sort"
+                  aria-label="Sort ready projects"
+                  value={sort}
+                  onChange={e => setSort(e.target.value as ReadySort)}
+                >
+                  {READY_SORTS.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
+                </select>
               </>
             )}
             {tab === 'active' && (
@@ -547,6 +612,7 @@ export function BulkExportModal({
                 : tab === 'failed' ? 'No failed exports.'
                 : tab === 'finished' ? 'Nothing exported yet.'
                 : tab === 'active' ? 'Nothing exporting right now.'
+                : q ? `No projects match “${query.trim()}”.`
                 : wsFilter === 'all' ? 'No projects yet.' : 'No projects in this workspace yet.'}
             </li>
           )}

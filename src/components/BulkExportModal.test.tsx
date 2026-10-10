@@ -359,4 +359,28 @@ describe('BulkExportModal — Dashboard revamp Stage 4 (Bulk Export tab)', () =>
     expect(tookText(252)).toBe('4m 12s');
     expect(tookText(3900)).toBe('1h 05m');
   });
+
+  it('Ready: search filters by name, sort reorders, Select all acts on what is shown', async () => {
+    const mk = (id: string, name: string): Project => ({ ...project(id), name } as Project);
+    const projects = [mk('a', 'Banana'), mk('b', 'apple 10'), mk('c', 'apple 2')];
+    const runner = new BulkExportRunner({
+      listProjects: () => projects.map(p => ({ id: p.id, name: p.name, lastExportPath: `/out/${p.id}.mp4` })),
+      loadProject: async id => projects.find(p => p.id === id) ?? null,
+      storage: mem(), playChime: () => {}, execute: async () => ({ status: 'done' }),
+    });
+    await mount(runner);
+    await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="bulk-export-tab-ready"]')!.click(); });
+    const sort = container.querySelector<HTMLSelectElement>('[data-testid="bulk-export-sort"]')!;
+    await act(async () => { sort.value = 'name-az'; sort.dispatchEvent(new Event('change', { bubbles: true })); });
+    expect(rows()).toEqual(['c', 'b', 'a']);              // natural order: apple 2 before apple 10
+    const search = container.querySelector<HTMLInputElement>('[data-testid="bulk-export-search"]')!;
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+    await act(async () => { setter.call(search, 'APPLE'); search.dispatchEvent(new Event('input', { bubbles: true })); });
+    expect(rows()).toEqual(['c', 'b']);
+    await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="bulk-export-select-all"]')!.click(); });
+    expect(runner.snapshot().filter(r => r.selected).map(r => r.id).sort()).toEqual(['b', 'c']);
+    await act(async () => { setter.call(search, 'zzz'); search.dispatchEvent(new Event('input', { bubbles: true })); });
+    expect(container.querySelector('[data-testid="bulk-export-empty"]')!.textContent).toContain('No projects match');
+    expect(container.querySelector('[data-testid="bulk-export-search"]')).not.toBeNull();   // the box survives an empty result
+  });
 });

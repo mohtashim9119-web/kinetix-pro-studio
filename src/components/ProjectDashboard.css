@@ -1088,3 +1088,20 @@
 .kxd-xrow-hovercancel { opacity: 0; transition: opacity 0.12s ease; }
 .kxd-xrow:hover .kxd-xrow-hovercancel, .kxd-xrow:focus-within .kxd-xrow-hovercancel { opacity: 1; }
 .kxd-xrow-prog-time { display: inline-flex; align-items: center; gap: 7px; }
+
+/* Ready toolbar: search + sort, right of Select all. */
+.kxd-xsearch {
+  flex: 0 1 150px; min-width: 90px; height: 28px; display: inline-flex; align-items: center; gap: 6px;
+  padding: 0 8px; border-radius: 8px; background: var(--kxd-surface); border: 1px solid var(--kxd-line-strong);
+  color: var(--kxd-text-faint);
+}
+.kxd-xsearch:focus-within { border-color: var(--kxd-sel-border); }
+.kxd-xsearch input { flex: 1; min-width: 0; background: none; border: none; outline: none; color: var(--kxd-text); font-size: 11.5px; }
+.kxd-xsearch input::placeholder { color: var(--kxd-text-faint); }
+.kxd-xsearch-clear { display: inline-flex; background: none; border: none; color: var(--kxd-text-faint); padding: 0; }
+.kxd-xsearch-clear:hover { color: var(--kxd-text); }
+.kxd-xsort {
+  flex-shrink: 0; height: 28px; padding: 0 8px; border-radius: 8px; background: var(--kxd-surface);
+  border: 1px solid var(--kxd-line-strong); color: var(--kxd-text); font-size: 11.5px; font-weight: 500;
+}
+.kxd-xsort:focus-visible { outline: 2px solid var(--kxd-accent-hi); outline-offset: 1px; }
