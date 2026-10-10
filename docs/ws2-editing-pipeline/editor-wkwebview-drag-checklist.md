@@ -35,6 +35,9 @@ slice only a real run can confirm.
 - **After any change to** `src/services/dragSession.ts`, `src/services/dragCascade.ts`,
   `src/services/dragGeometry.ts`, or any CSS/layout affecting the timeline (`Timeline.tsx`'s
   lane classes, `index.css`, or a Tailwind config change touching timeline spacing).
+- **After any change to** the Bulk Export queue's drag-to-reorder (`BulkExportModal.tsx`'s
+  row pointer handlers, `queueReorder.ts`, or the `.is-reorderable` / `.is-dragging` /
+  `.drop-before` / `.drop-end` styles) — step 14.
 
 If none of those changed, this checklist is not required for the change — don't run it as a
 reflex on every PR.
@@ -78,6 +81,7 @@ automated suite already covers so you're not re-checking it by eye.
 | 11 | Grab a **locked** segment's own edge (not a neighbour's — the segment itself) and try to drag it. | The segment does not move by even a pixel, in the live preview or after release. No console error. | Numbers only. `dragCascade.test.ts`/`dragSessionHarness.test.ts` assert the array and live preview never move; only the eye confirms the stop doesn't look broken. |
 | 12 | Drag a boundary between two **video** segments (either edge), then let playback cross into both the segment you shrank and the one you grew, without navigating away from the preview. | Both segments play normally — no frozen/stuck frame on either side of the moved boundary. | Partial. `videoDecoderPool.test.ts`'s sliding-window regression tests cover the confirmed root cause (single-keyframe clips, deep targets past the old buffer cap) at the unit level; this step is the real-decoder-timing confirmation only `jsdom`'s mocked `VideoDecoder` output can't give. Re-run after ANY change to the preview decode path. |
 | 13 | Open the segment editor **drawer** on a video segment whose asset duration hasn't been probed yet, and whose duration is **longer than 60 seconds**. (Make one if the project has none: drag an image segment out past 60s, or set the duration numerically in the drawer.) Look at the orange **slip-trim bar** in the drawer's Asset column. | The bar stays **inside its container** — or is hidden entirely when the source duration is unknown, per `hasKnownSourceDuration`. It never extends past the container's right edge, overflows the drawer, or pushes the drawer wider than the viewport. | Yes — `slipBarGeometry.test.ts` unit-tests `computeSlipBarGeometry`'s `[0,100]` clamp and its hide-rather-than-guess behavior directly. This step is the real-DOM/CSS layout confirmation only `jsdom`'s layout-less environment can't give. |
+| 14 | **Bulk Export queue reorder.** Start an export of 4+ projects so the **Active** tab shows one running row and several queued ones. **Press anywhere on a queued card** (not on its Cancel button) and drag it up and down over the other queued cards. Then: (a) release between two queued cards; (b) drag, then press **Esc** before releasing; (c) press and release with **no movement** (or under ~5 px); (d) press on the **running** card and on a queued card's **Cancel** button; (e) focus a queued card and press **Alt+↑ / Alt+↓**. | (a) The card lands where the drop indicator line showed and the queue order updates at once; the **running row never moves**, and the queue still runs in the new order. (b) Esc cancels — the order is unchanged, no stuck "dragging" look. (c) A plain click/press never reorders. (d) The running card is not draggable; pressing a queued card's Cancel button cancels (after its confirm) instead of starting a drag. (e) Alt+arrow moves the focused card one place. In every case: no native text/image ghost drag, no stuck `is-dragging` style or indicator after release (including releasing **outside the window**), and no console error. | Logic only. `queueReorder.ts`'s `dropTarget` / `moveQueued` and the runner's `reorderQueue` are unit-tested, and `BulkExportModal.test.tsx` covers the keyboard path and the "running row never moves" rule. **Pointer events in a real WKWebView, the drop indicator's position, and release-outside-window cleanup** are invisible to `jsdom` — this is why the reorder uses pointer events, not native DnD (unreliable in the desktop webview). |
 
 **Note on the video path:** steps 12 and 13 are regression checks, not open-investigation
 scoring — the WS3 video-segment investigation (preview stall, slip-bar overflow, and the
@@ -126,6 +130,7 @@ Step 10 (interrupted drag / Cmd+Tab):        PASS / FAIL   Notes: __________
 Step 11 (locked segment, own edge):          PASS / FAIL   Notes: __________
 Step 12 (video boundary, both sides play):   PASS / FAIL   Notes: __________
 Step 13 (drawer slip bar, unknown asset duration): PASS / FAIL   Notes: __________
+Step 14 (Bulk Export queue reorder):         PASS / FAIL   Notes: __________
 
 Overall: PASS / FAIL
 Follow-up filed (if any): __________
