@@ -116,3 +116,17 @@ describe('Finished rows and spent selections', () => {
     expect(h.runner.snapshot()[0]).toMatchObject({ phase: 'idle', selected: false, finishedAt: undefined });
   });
 });
+
+describe('Reordering the queue', () => {
+  it('the operator\'s order decides who exports next; the running export stays first', async () => {
+    const h = harness(['a', 'b', 'c', 'd']);
+    h.runner.setSelectedAll(true);
+    await h.runner.startSelected();
+    await vi.waitFor(() => expect(phaseOf(h.runner, 'a')).toBe('exporting'));
+    h.runner.reorderQueue(['d', 'b', 'c']);
+    expect([...h.runner.queueOrder().entries()].sort((x, y) => x[1] - y[1]).map(e => e[0])).toEqual(['a', 'd', 'b', 'c']);
+    h.releases.get('a')!();
+    await vi.waitFor(() => expect(phaseOf(h.runner, 'd')).toBe('exporting'));
+    expect(h.runs.map(r => r.project.id)).toEqual(['a', 'd']);
+  });
+});

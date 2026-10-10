@@ -187,6 +187,21 @@ export class SyncQueue {
     this.emit();
   }
 
+  /** Puts the QUEUED items in this order (ids not listed keep their relative
+   *  order after the listed ones). Running and finished items stay put; the
+   *  next job to start is the first queued one, so this decides who runs next. */
+  reorderQueued(orderedIds: readonly string[]): void {
+    const queued = this.items.filter(i => i.status === 'queued');
+    const byId = new Map(queued.map(i => [i.id, i]));
+    const listed = orderedIds.map(id => byId.get(id)).filter((i): i is QueueItem => i !== undefined);
+    const unlisted = queued.filter(i => !orderedIds.includes(i.id));
+    const next = [...listed, ...unlisted];
+    let k = 0;
+    this.items = this.items.map(i => (i.status === 'queued' ? next[k++]! : i));
+    this.items.forEach((it, i) => { it.position = i + 1; });
+    this.emit();
+  }
+
   cancelAll(): void {
     for (const item of [...this.items]) this.cancel(item.id);
   }
