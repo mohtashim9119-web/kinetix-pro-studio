@@ -10,6 +10,8 @@
  * process boundary (ffmpeg IPC, the worker thread) and the encoders are fake.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { readFileSync } from 'fs';
+import { resolve } from 'path';
 import { TransitionType, AnimationType } from '../../types';
 import type { Asset, Project, VideoSegment } from '../../types';
 
@@ -136,6 +138,10 @@ describe('GL tier — cancel mid-first-piece', () => {
     if (!found.ok) return;
     expect(found.value.checkpoint.cumulativePictures).toBe(10);
     expect(found.value.picturesAlreadyRendered).toBe(10);
+    // Discovery fenced the session: the native gate is open for appends.
+    expect(f.fencePending()).toBe(false);
+    // …and the offer carries THE handle that was fenced, for the export to run on.
+    expect(found.value.session.sessionId).toBe('3f2504e0-4f89-41d3-9a0c-0305e82c3301');
 
     // Retry: a second run continues from frame 10, not frame 0.
     const { stages, onProgress } = stagesOf();
@@ -156,6 +162,33 @@ describe('GL tier — cancel mid-first-piece', () => {
     // The bar STARTS at the resumed position (10 of 30 frames → 30%), not 0%.
     expect(firstEncodeFrame(stages)).toBe(10);
     expect(progressFor(firstEncodeStage(stages)!)).toBe(30);
+  });
+
+  it('LIVE INCIDENT: re-entering the session AGAIN after the fence (what useExport used to do) re-arms the native fence — the resume must fail FAST with the real cause, not stall 45 s', async () => {
+    const { f, p } = await cancelledAt(15);
+    const found = await discover(f, p, 1);
+    expect(found.ok).toBe(true);
+    if (!found.ok) return;
+    await discoveryIoFor(f).reenter('3f2504e0-4f89-41d3-9a0c-0305e82c3301');   // the second reenter
+    expect(f.fencePending()).toBe(true);
+
+    const w2 = new FakeWorker();
+    const run2 = exportProjectWebCodecs(p, f.ffmpeg, { ...DIMS, resume: resumePlanOf(found) }, () => undefined, { createWorker: () => w2 });
+    await flush();
+    await feedFrames(w2, au, 10, 25, [], FRAMES, 3);
+    await new Promise((resolve) => setTimeout(resolve, 1100));        // the append batch flushes (and is refused)
+    const r = await run2;                                              // settles by itself — no 45 s stall bound
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.error.message).toContain('has not passed checkpoint pre-append validation');
+      expect(r.error.message).not.toMatch(/no forward progress/);
+    }
+  });
+
+  it('useExport runs the resume on the handle discovery fenced — it never re-enters the session a second time', () => {
+    const src = readFileSync(resolve(import.meta.dirname, '..', '..', 'hooks', 'useExport.ts'), 'utf-8');
+    expect(src).toContain('resumeFfmpeg = offer.resumable.session as unknown as WebCodecsFfmpeg;');
+    expect(src).not.toMatch(/resumeFfmpeg = \(await TauriFfmpeg\.reenter/);
   });
 
   it('cancel before the first checkpoint → discovery says so (typed), never a silent restart', async () => {

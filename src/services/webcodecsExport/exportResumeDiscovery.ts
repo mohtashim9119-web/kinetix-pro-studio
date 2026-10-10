@@ -104,6 +104,14 @@ export interface ResumeDiscoveryIo {
 /** A validated, fenced, ready-to-continue export. */
 export interface ResumableExport {
   sessionId: string;
+  /**
+   * The session handle discovery re-entered AND fenced. The export must run on
+   * THIS handle: native `reenter` re-arms the resume fence (`resume_pending`)
+   * every time it is called, so a second `reenter` after the fence cleared
+   * makes every append fail with "has not passed checkpoint pre-append
+   * validation".
+   */
+  session: ResumeSessionHandle;
   manifest: ExportStateManifest;
   checkpoint: ExportCheckpointRecord;
   repair: AnnexbCheckpointRepairResult;
@@ -394,6 +402,7 @@ export async function evaluateResumeCandidate(
       ok: true,
       value: {
         sessionId,
+        session,
         manifest: m,
         checkpoint: {
           pieceIndex: n, encoderSessionIndex: 0, byteOffset: 0, seamByteOffset: 0, cumulativePictures: 0,
@@ -537,6 +546,7 @@ export async function evaluateResumeCandidate(
     ok: true,
     value: {
       sessionId,
+      session,
       manifest,
       checkpoint,
       repair,

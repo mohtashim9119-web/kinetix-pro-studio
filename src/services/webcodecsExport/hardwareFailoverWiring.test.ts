@@ -263,7 +263,7 @@ describe('Rung 5a (hardware->software failover) — wired at exportProjectWebCod
    * fresh rewind first.
    */
   it('a resumed run seeds its in-process rewind budget from resume.manifest — no fresh MAX_BOUNDARY_REWINDS_PER_EXPORT on top of what the crashed process already spent', async () => {
-    const { ffmpeg, truncateAnnexbToOffset } = ffmpegHarness({
+    const { ffmpeg, truncateAnnexbToOffset, landed } = ffmpegHarness({
       truncateOffsetResult: { pictures: 5, vclNals: 5, bytesRemoved: 0, keptBytes: 30 },
     });
     const resumeManifest = {
@@ -281,6 +281,9 @@ describe('Rung 5a (hardware->software failover) — wired at exportProjectWebCod
       totalRecoveryAttempts: MAX_BOUNDARY_REWINDS_PER_EXPORT + 1,
     };
 
+    // The resumed file already holds the 30 bytes up to the checkpoint — the
+    // per-append verify compares against that, as the native file would.
+    landed.set('piece_0.h264', 30);
     const fake = new FakeWorker();
     const resultPromise = exportProjectWebCodecs(
       project(),

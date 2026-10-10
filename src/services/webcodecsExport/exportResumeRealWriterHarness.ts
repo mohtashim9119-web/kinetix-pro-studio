@@ -49,6 +49,10 @@ export interface ByteFfmpeg {
   manifests: string[];
   /** The newest manifest as it would be on disk (what a re-entered session reads). */
   manifestOnDisk(): string | null;
+  /** Native `resume_pending` model: `ffmpeg_reenter_session` arms it, the fence (or
+   *  `ffmpeg_clear_resume_fence`) clears it, and append/count refuse while armed. */
+  fencePending(): boolean;
+  setFencePending(on: boolean): void;
   /** The last `concatAnnexbPieces` call: which parts, and how many pictures it produced. */
   lastConcat(): { parts: string[]; pictures: number } | null;
   /** Native `ffmpeg_destroy_session` rule: forced → gone; unforced + manifest → retained. */
@@ -63,6 +67,10 @@ export function byteFfmpeg(opts: { seed?: Record<string, Uint8Array>; framesPerP
   const files = new Map<string, Uint8Array>(Object.entries(opts.seed ?? {}));
   const manifests: string[] = [];
   let wasDestroyed = false;
+  let pending = false;
+  const refuseIfPending = (op: string): void => {
+    if (pending) throw new Error(`${op}: resumed session ${SESSION_ID} has not passed checkpoint pre-append validation`);
+  };
   let lastConcat: { parts: string[]; pictures: number } | null = null;
   const read = (p: string): Uint8Array => files.get(p) ?? new Uint8Array();
   const piece = opts.framesPerPiece !== undefined ? makeStream(opts.framesPerPiece).stream : null;
@@ -79,6 +87,7 @@ export function byteFfmpeg(opts: { seed?: Record<string, Uint8Array>; framesPerP
     readFile: vi.fn(async (p: string) => read(p)),
     deleteFile: vi.fn(async (p: string) => { files.delete(p); }),
     appendFileRaw: vi.fn(async (p: string, d: Uint8Array) => {
+      refuseIfPending('append_file_raw');
       const prev = read(p);
       const next = new Uint8Array(prev.length + d.length);
       next.set(prev, 0);
@@ -94,7 +103,7 @@ export function byteFfmpeg(opts: { seed?: Record<string, Uint8Array>; framesPerP
       return { disposition: 'destroyed' };
     }),
     sessionFileSize: vi.fn(async (p: string) => read(p).length),
-    countAnnexbFrames: vi.fn(async (p: string) => countAnnexbAccessUnits(read(p))),
+    countAnnexbFrames: vi.fn(async (p: string) => { refuseIfPending('count_annexb_frames'); return countAnnexbAccessUnits(read(p)); }),
     concatAnnexbPieces: vi.fn(async (parts: string[], out: string) => {
       const total = parts.reduce((n, p) => n + read(p).length, 0);
       const buf = new Uint8Array(total);
@@ -114,6 +123,8 @@ export function byteFfmpeg(opts: { seed?: Record<string, Uint8Array>; framesPerP
     ffmpeg, files, manifests,
     manifestOnDisk: () => manifests[manifests.length - 1] ?? null,
     lastConcat: () => lastConcat,
+    fencePending: () => pending,
+    setFencePending: (on) => { pending = on; },
     destroyed: () => wasDestroyed,
   };
 }
@@ -139,6 +150,7 @@ export function discoveryIoFor(fake: ByteFfmpeg): ResumeDiscoveryIo {
       }
       const kept = bytes.slice(0, cp.byteOffset);
       fake.files.set(p, kept);
+      fake.setFencePending(false);
       const counted = countAnnexbAccessUnits(kept);
       return { pictures: counted.pictures, vclNals: counted.vclNals, bytesRemoved: bytes.length - kept.length, keptBytes: kept.length };
     },
@@ -147,12 +159,12 @@ export function discoveryIoFor(fake: ByteFfmpeg): ResumeDiscoveryIo {
       fake.files.set(p, prev.slice(0, off));
       return { ...countAnnexbAccessUnits(prev.slice(0, off)), bytesRemoved: prev.length - off, keptBytes: off };
     },
-    clearResumeFence: async () => undefined,
+    clearResumeFence: async () => { fake.setFencePending(false); },
     destroy: async () => undefined,
   };
   return {
     listResumableSessionIds: async () => (fake.manifestOnDisk() ? [SESSION_ID] : []),
-    reenter: async () => handle,
+    reenter: async () => { fake.setFencePending(true); return handle; },
   };
 }
 

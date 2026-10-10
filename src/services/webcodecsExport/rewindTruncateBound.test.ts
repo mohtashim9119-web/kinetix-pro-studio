@@ -122,6 +122,9 @@ describe('Rung 3 rewind truncate — bounded by TRUNCATE_BOUND_MS', () => {
 
   it('a truncateAnnexbToOffset that never settles expires the bound, kills ffmpeg, and returns typed diagnostics', async () => {
     const kill = vi.fn(async () => undefined);
+    // Landed sizes tracked by path, as in the sibling test: an append whose
+    // verify disagrees is a real failure (it settles the run), not background noise.
+    const landed = new Map<string, number>();
     // Never settles — the exact shape of a wedged native streaming truncate.
     const truncateAnnexbToOffset = vi.fn(() => new Promise<never>(() => undefined));
     const ffmpeg = {
@@ -130,11 +133,11 @@ describe('Rung 3 rewind truncate — bounded by TRUNCATE_BOUND_MS', () => {
       exec: vi.fn(async () => 0),
       readFile: vi.fn(async () => new Uint8Array()),
       deleteFile: vi.fn(async () => undefined),
-      appendFileRaw: vi.fn(async () => undefined),
+      appendFileRaw: vi.fn(async (p: string, data: Uint8Array) => { landed.set(p, (landed.get(p) ?? 0) + data.byteLength); }),
       saveSessionFile: vi.fn(async () => undefined),
       kill,
       destroy: vi.fn(async () => undefined),
-      sessionFileSize: vi.fn(async () => 1_700_000_000),
+      sessionFileSize: vi.fn(async (p: string) => landed.get(p) ?? 1_700_000_000),
       countAnnexbFrames: vi.fn(async () => ({ pictures: EXPECTED_FRAMES, vclNals: EXPECTED_FRAMES })),
       concatAnnexbPieces: vi.fn(async () => undefined),
       truncateAnnexb: vi.fn(async () => ({ pictures: EXPECTED_FRAMES, vclNals: EXPECTED_FRAMES, bytesRemoved: 0, keptBytes: 100 })),

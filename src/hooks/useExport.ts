@@ -791,8 +791,10 @@ export function useExport(
           let reenterError: string | null = null;
           try {
             // The fenced, re-entered session — NOT the fresh one. Its bytes are
-            // the whole point; a fresh session has none of them.
-            resumeFfmpeg = (await TauriFfmpeg.reenter(offer.sessionId)) as unknown as WebCodecsFfmpeg;
+            // the whole point; a fresh session has none of them. It is the
+            // handle DISCOVERY already re-entered and fenced: re-entering again
+            // would re-arm the native resume fence and refuse every append.
+            resumeFfmpeg = offer.resumable.session as unknown as WebCodecsFfmpeg;
             resumePlanSessionId = offer.sessionId;
             resumePlan = {
               pieceIndex: offer.resumable.checkpoint.pieceIndex,

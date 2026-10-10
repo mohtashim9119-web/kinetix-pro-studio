@@ -1930,6 +1930,35 @@ export function driveGlRun(
     };
 
     /**
+     * ANY append failure settles the run NOW, with its own cause. Before this
+     * only ENOSPC did: every other failure (a short write, a refused append, a
+     * native error) just set `appendError`, the later batches were dropped on
+     * the floor, no ack went back, and 45 s later the stall guard fired as a
+     * generic "no forward progress" with the real cause nowhere in the message
+     * (the live resume incident: every append refused, reported as a stall).
+     */
+    const finishAppendFailed = (err: Error): void => {
+      if (settled) return;
+      const diagnostics = reconstructDiagnostics();
+      diagnostics.failure = {
+        name: err.name || null,
+        message: err.message,
+        via: appendFailureVia(err),
+        frameIndex: diagnostics.framesEncoded > 0 ? diagnostics.framesEncoded - 1 : null,
+        timelineSec: null,
+      };
+      lastWorkerDiagnostics = diagnostics;
+      finish({
+        ok: false,
+        error: errorFromDiagnostics('encode', diagnostics, `${appendErrorSummary(err)} (${err.message})`),
+        diagnostics,
+        silentIntervals: silentIntervals(),
+        appendCallCount,
+        appendBytes,
+      });
+    };
+
+    /**
      * WS3 append-batching round — the watchdog now DISCRIMINATES.
      *
      * Before this round the 30s message-based watchdog fired blind during the
@@ -2161,6 +2190,7 @@ export function driveGlRun(
         } catch (err) {
           appendError = err instanceof Error ? err : new Error(causeString(err));
           if (isDiskFullError(appendError)) finishDiskFull(appendError);
+          else finishAppendFailed(appendError);
         } finally {
           appendsInFlight--;
           queueDepthChunks -= batchChunks;
