@@ -191,6 +191,45 @@ describe('GL tier — cancel mid-first-piece', () => {
     expect(countAnnexbAccessUnits(kept).pictures).toBe(10);
   });
 
+  it('D7.1d — the seam step-back runs once, just before the first append, from the checkpoint end down to the seam; a mismatched seam fails the run and the next discovery still offers a resume', async () => {
+    const { f, p } = await cancelledAt(15);
+    const cp = manifestOf(f).checkpoints[0]!;
+    expect(cp.seamByteOffset).toBeLessThan(cp.byteOffset);
+    const found = await discover(f, p, 1);
+    if (!found.ok) throw new Error('expected an offer');
+    expect(f.files.get('piece_0.h264')!.length, '(2) after adoption: at the checkpoint end, not cut').toBe(cp.byteOffset);
+
+    // (3) make the seam's kept picture count disagree at the step back.
+    const realTruncate = f.ffmpeg.truncateAnnexbToOffset as unknown as (path: string, off: number) => Promise<unknown>;
+    let stepBacks = 0;
+    (f.ffmpeg as unknown as { truncateAnnexbToOffset: (path: string, off: number) => Promise<unknown> }).truncateAnnexbToOffset = async (path, off) => {
+      if (off === cp.seamByteOffset) {
+        stepBacks++;
+        const r = (await realTruncate(path, off)) as { pictures: number; keptBytes: number };
+        return { ...r, pictures: r.pictures + 1 };
+      }
+      return realTruncate(path, off);
+    };
+    const w2 = new FakeWorker();
+    const run2 = exportProjectWebCodecs(p, f.ffmpeg, { ...DIMS, control: createExportRunControl(), resume: resumePlanOf(found) }, () => undefined, { createWorker: () => w2 });
+    void run2.catch(() => undefined);
+    await flush();
+    // (1) not before the first append: nothing has been cut yet.
+    expect(stepBacks).toBe(0);
+    expect(f.files.get('piece_0.h264')!.length).toBe(cp.byteOffset);
+    await feedFrames(w2, au, 10, 12, [], FRAMES, 3);
+    await new Promise((r) => setTimeout(r, 1100)); // the batch flushes after ~1 s
+    const r2 = await run2;
+    expect(stepBacks, '(1) the step back runs exactly once').toBe(1);
+    expect(r2.ok, '(3) a seam whose picture count disagrees fails the run').toBe(false);
+    if (!r2.ok) expect(r2.error.message).toContain('changed the picture count');
+    // (4) nothing was appended past the checkpoint; the next discovery still offers it.
+    expect(f.files.get('piece_0.h264')!.length).toBeLessThanOrEqual(cp.byteOffset);
+    const next = await discover(f, p, 1);
+    expect(next.ok, '(4) the next discovery still offers a resume').toBe(true);
+    if (next.ok) expect(next.value.checkpoint.cumulativePictures).toBe(10);
+  }, 30_000);
+
   it('D7.1a — an operator cancel of a resumed run charges nothing: no marker, no attempt on disk', async () => {
     const { f, p } = await cancelledAt(15);
     const found = await discover(f, p, 1);

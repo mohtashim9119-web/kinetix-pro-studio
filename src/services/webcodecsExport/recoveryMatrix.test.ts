@@ -345,6 +345,12 @@ describe('END-TO-END recovery matrix', () => {
     // just before its first append — and nothing counted, because the
     // checkpoint is in piece 0 so there is no earlier piece to verify.
     expect(order).toEqual(['fence']);
+    // After adoption the file is still at the checkpoint's end and no cut
+    // occurred: the run appends from the seam, so the step back is observed
+    // only in the first-append path (see the real-writer D7.1d test).
+    expect(outcome.value.fencedByteOffset).toBe(4_000);
+    expect(outcome.value.appendFromByteOffset).toBe(3_960);
+    expect(order).not.toContain('seamCut');
     expect(outcome.value.appendFromByteOffset).toBe(3_960);
     expect(outcome.value.picturesAlreadyRendered).toBe(10);
 
