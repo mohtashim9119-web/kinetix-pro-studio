@@ -35,7 +35,7 @@ vi.mock('./muxOnly', async (importOriginal) => ({
 }));
 
 // eslint-disable-next-line import/first
-import { exportProjectWebCodecs, cancelExportWebCodecs, type WebCodecsFfmpeg } from './exportPipelineWebCodecs';
+import { exportProjectWebCodecs, cancelExportWebCodecs, createExportRunControl, type WebCodecsFfmpeg } from './exportPipelineWebCodecs';
 import { encodeSegment } from '../segmentEncoder';
 import { muxOnly } from './muxOnly';
 import { adoptRankedResume, rankResumeCandidates, type ResumeCandidateOutcome } from './exportResumeDiscovery';
@@ -126,7 +126,8 @@ describe('GL tier — cancel mid-first-piece', () => {
     const p = project(['g0']);
     const f = byteFfmpeg();
     const w = new FakeWorker();
-    const run = exportProjectWebCodecs(p, f.ffmpeg, DIMS, () => undefined, { createWorker: () => w });
+    const control = createExportRunControl();
+    const run = exportProjectWebCodecs(p, f.ffmpeg, { ...DIMS, control }, () => undefined, { createWorker: () => w });
     void run.catch(() => undefined);
     await flush();
     await feedFrames(w, au, 0, frames, ROTATIONS, FRAMES, 3);
@@ -134,7 +135,7 @@ describe('GL tier — cancel mid-first-piece', () => {
     // and places a rotation's checkpoint with the first append after the seam, so a
     // checkpoint is durable ~1 s after its rotation. A human's cancel click lands later.
     await new Promise((resolve) => setTimeout(resolve, 1100));
-    await cancelExportWebCodecs({ keepForResume: true });
+    await cancelExportWebCodecs(control, { keepForResume: true });
     return { f, p };
   }
 
@@ -223,11 +224,12 @@ describe('canvas tier — piece-boundary resume (no rotation checkpoints exist t
       return new Promise<Uint8Array>((_, reject) => { rejectBlocked = reject; });
     });
     (f.ffmpeg.kill as ReturnType<typeof vi.fn>).mockImplementation(async () => { rejectBlocked(new Error('ffmpeg killed')); });
-    const run = exportProjectWebCodecs(p, f.ffmpeg, DIMS, () => undefined);
+    const control = createExportRunControl();
+    const run = exportProjectWebCodecs(p, f.ffmpeg, { ...DIMS, control }, () => undefined);
     void run.catch(() => undefined);
     await vi.waitFor(() => expect(call).toBe(2));
     await flush();
-    await cancelExportWebCodecs({ keepForResume: true });
+    await cancelExportWebCodecs(control, { keepForResume: true });
     await run.catch(() => undefined);
 
     expect(f.destroyed()).toBe(false);
@@ -259,12 +261,13 @@ describe('canvas tier — piece-boundary resume (no rotation checkpoints exist t
     let rejectBlocked: (e: Error) => void = () => {};
     vi.mocked(encodeSegment).mockImplementation(() => new Promise<Uint8Array>((_, reject) => { rejectBlocked = reject; }));
     (f.ffmpeg.kill as ReturnType<typeof vi.fn>).mockImplementation(async () => { rejectBlocked(new Error('ffmpeg killed')); });
-    const run = exportProjectWebCodecs(p, f.ffmpeg, DIMS, () => undefined);
+    const control = createExportRunControl();
+    const run = exportProjectWebCodecs(p, f.ffmpeg, { ...DIMS, control }, () => undefined);
     void run.catch(() => undefined);
     await vi.waitFor(() => expect(encodeSegment).toHaveBeenCalledTimes(1));
     await new Promise((resolve) => setTimeout(resolve, 50));   // the timeline hash settles on a macrotask
     await flush();
-    await cancelExportWebCodecs({ keepForResume: true });
+    await cancelExportWebCodecs(control, { keepForResume: true });
     await run.catch(() => undefined);
 
     expect(manifestOf(f).completedPieces).toBe(0);
@@ -279,13 +282,14 @@ describe('mixed canvas + GL — a fresh GL piece does not forget the finished ca
     const p = project(['c0', 'g1']);
     const f = byteFfmpeg({ framesPerPiece: FRAMES });
     const w = new FakeWorker();
-    const run = exportProjectWebCodecs(p, f.ffmpeg, DIMS, () => undefined, { createWorker: () => w });
+    const control = createExportRunControl();
+    const run = exportProjectWebCodecs(p, f.ffmpeg, { ...DIMS, control }, () => undefined, { createWorker: () => w });
     void run.catch(() => undefined);
     await vi.waitFor(() => expect(w.initMessages.length).toBe(1));
     await flush();
     await feedFrames(w, au, 0, 6, [], FRAMES, 1, 1);
     await new Promise((resolve) => setTimeout(resolve, 1100));   // let the append batch reach disk
-    await cancelExportWebCodecs({ keepForResume: true });
+    await cancelExportWebCodecs(control, { keepForResume: true });
 
     const m = manifestOf(f);
     expect(m.checkpoints).toEqual([]);

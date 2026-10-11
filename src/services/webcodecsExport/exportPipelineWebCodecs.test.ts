@@ -50,7 +50,7 @@ vi.mock('./muxOnly', async (importOriginal) => ({
   muxOnly: (...args: unknown[]) => muxOnlyMock(...args),
 }));
 
-import { exportProjectWebCodecs, cancelExportWebCodecs, type WebCodecsFfmpeg } from './exportPipelineWebCodecs';
+import { exportProjectWebCodecs, cancelExportWebCodecs, createExportRunControl, type WebCodecsFfmpeg } from './exportPipelineWebCodecs';
 import { encodeStaticImageSegment } from '../segmentEncoder';
 import {
   decideSessionRetentionOnFailure,
@@ -361,12 +361,13 @@ describe('exportProjectWebCodecs — STEP 3b resume after a mux-stage failure', 
     const project = makeProject();
     const ffmpeg = makeFakeFfmpeg();
 
-    const pending = exportProjectWebCodecs(project, ffmpeg, { width: 1920, height: 1080, fps: FPS });
+    const control = createExportRunControl();
+    const pending = exportProjectWebCodecs(project, ffmpeg, { width: 1920, height: 1080, fps: FPS, control });
 
     // `activeFfmpeg` is set synchronously before the first await inside
     // `exportProjectWebCodecs` — this call observes it deterministically,
     // not via a timing race.
-    await cancelExportWebCodecs();
+    await cancelExportWebCodecs(control);
 
     expect(ffmpeg.kill).toHaveBeenCalledTimes(1);
     // THE NEGATIVE CASE: cancel forces past the manifest guard — it does
@@ -430,9 +431,10 @@ describe('exportProjectWebCodecs — bulk cancel keeps the session for Retry', (
     });
     const ffmpeg = makeSessionFfmpeg(files, () => rejectBlocked(new Error('ffmpeg killed')));
 
-    const first = exportProjectWebCodecs(project, ffmpeg, { width: 1920, height: 1080, fps: FPS });
+    const control = createExportRunControl();
+    const first = exportProjectWebCodecs(project, ffmpeg, { width: 1920, height: 1080, fps: FPS, control });
     await vi.waitFor(() => expect(call).toBe(2));
-    await cancelExportWebCodecs({ keepForResume: true });
+    await cancelExportWebCodecs(control, { keepForResume: true });
     await first.catch(() => undefined);
 
     expect(ffmpeg.destroy).toHaveBeenCalledWith({ force: false, failureKind: 'cancel' });
@@ -465,10 +467,73 @@ describe('exportProjectWebCodecs — bulk cancel keeps the session for Retry', (
       () => new Promise<Uint8Array>((_, reject) => { rejectBlocked = reject; }),
     );
     const ffmpeg = makeSessionFfmpeg(files, () => rejectBlocked(new Error('ffmpeg killed')));
-    const first = exportProjectWebCodecs(project, ffmpeg, { width: 1920, height: 1080, fps: FPS });
+    const control = createExportRunControl();
+    const first = exportProjectWebCodecs(project, ffmpeg, { width: 1920, height: 1080, fps: FPS, control });
     await vi.waitFor(() => expect(encodeStaticImageSegment).toHaveBeenCalledTimes(1));
-    await cancelExportWebCodecs({ keepForResume: true });
+    await cancelExportWebCodecs(control, { keepForResume: true });
     await first.catch(() => undefined);
     expect(files.size).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P1 — no module-level run ownership. A cancelled run keeps unwinding after
+// its cancel returns (its encode rejects later); while it unwinds, the NEXT
+// run has already started. The old module-level `activeFfmpeg` was set by the
+// newer run and then nulled by the older run's exit, so cancelling the newer
+// run found nothing to kill. Each run now owns its own control.
+// ---------------------------------------------------------------------------
+describe('exportProjectWebCodecs — each run owns its cancel handle', () => {
+  beforeEach(() => {
+    vi.mocked(encodeStaticImageSegment).mockReset();
+  });
+
+  it('a cancelled run still unwinding never clears the next run\'s handle', async () => {
+    const project = makeProject();
+    const rejects: ((e: Error) => void)[] = [];
+    vi.mocked(encodeStaticImageSegment).mockImplementation(
+      () => new Promise<Uint8Array>((_, reject) => { rejects.push(reject); }),
+    );
+    const first = makeFakeFfmpeg();
+    const second = makeFakeFfmpeg();
+    const c1 = createExportRunControl();
+    const c2 = createExportRunControl();
+
+    const run1 = exportProjectWebCodecs(project, first, { width: 1920, height: 1080, fps: FPS, control: c1 });
+    await vi.waitFor(() => expect(rejects).toHaveLength(1));
+    await cancelExportWebCodecs(c1, { keepForResume: true });
+    expect(first.kill).toHaveBeenCalledTimes(1);
+
+    // The next run starts while the cancelled one has not unwound yet…
+    const run2 = exportProjectWebCodecs(project, second, { width: 1920, height: 1080, fps: FPS, control: c2 });
+    await vi.waitFor(() => expect(rejects).toHaveLength(2));
+    // …and now the cancelled run unwinds through its own exit paths.
+    rejects[0]!(new Error('ffmpeg killed'));
+    await run1.catch(() => undefined);
+
+    await cancelExportWebCodecs(c2, { keepForResume: true });
+    expect(second.kill, 'the newer run could not be cancelled').toHaveBeenCalledTimes(1);
+    expect(first.kill).toHaveBeenCalledTimes(1);
+    rejects[1]!(new Error('ffmpeg killed'));
+    await run2.catch(() => undefined);
+  });
+
+  it('a cancel with this run\'s control never reaches another run', async () => {
+    const project = makeProject();
+    const rejects: ((e: Error) => void)[] = [];
+    vi.mocked(encodeStaticImageSegment).mockImplementation(
+      () => new Promise<Uint8Array>((_, reject) => { rejects.push(reject); }),
+    );
+    const mine = makeFakeFfmpeg();
+    const other = makeFakeFfmpeg();
+    const cMine = createExportRunControl();
+    const run = exportProjectWebCodecs(project, mine, { width: 1920, height: 1080, fps: FPS, control: cMine });
+    const otherRun = exportProjectWebCodecs(project, other, { width: 1920, height: 1080, fps: FPS, control: createExportRunControl() });
+    await vi.waitFor(() => expect(rejects).toHaveLength(2));
+    await cancelExportWebCodecs(cMine);
+    expect(mine.kill).toHaveBeenCalledTimes(1);
+    expect(other.kill).not.toHaveBeenCalled();
+    for (const r of rejects) r(new Error('stop'));
+    await Promise.all([run.catch(() => undefined), otherRun.catch(() => undefined)]);
   });
 });

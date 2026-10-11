@@ -131,6 +131,11 @@ import {
 } from './annexbFrameCount';
 
 export interface ExportOptionsWebCodecs {
+  /** This run's cancel handle (`createExportRunControl`). The run registers
+   *  its worker and ffmpeg session here, and `cancelExportWebCodecs(control)`
+   *  reaches exactly this run's. Omitted: the run is not cancellable from
+   *  outside. */
+  control?: ExportRunControl;
   width?: number;
   height?: number;
   fps?: number;
@@ -370,20 +375,14 @@ function formatSalvageTruncateMismatch(params: {
 }
 
 // ---------------------------------------------------------------------------
-// Single-active-export state (plan §9.3: one export at a time, same as the
-// legacy path — the export UI already prevents re-entry). Mirrors
-// exportWorker.ts's own module-level `running`/`cancelRequested` singleton
-// pattern. Lets `cancelExportWebCodecs` reach the in-flight worker/ffmpeg
-// without threading a handle back out of `exportProjectWebCodecs`'s plain
-// `Promise<ExportResult>` return type (the plan's own public API shape,
-// §4.4 — no wrapper object). `activeFfmpeg` now stays set for the ENTIRE
-// multi-piece export (not just one run), so a cancel that lands while a
-// Tier 1/C `ffmpeg.exec` is in flight (no worker active at that moment)
-// still has something to kill — see this file's header, cancel sequence.
+// Per-run cancel state. Each run's worker and ffmpeg session live on the
+// `ExportRunControl` its caller created (`ExportOptionsWebCodecs.control`),
+// never in module state: a run still unwinding after its cancel can then never
+// clear, or be reached through, the handle of the run that started after it.
+// The ffmpeg handle stays registered for the ENTIRE multi-piece export (not
+// just one GL run), so a cancel that lands while a Tier 1/C `ffmpeg.exec` is
+// in flight (no worker active at that moment) still has something to kill.
 // ---------------------------------------------------------------------------
-
-let activeWorker: Worker | null = null;
-let activeFfmpeg: WebCodecsFfmpeg | null = null;
 
 /**
  * Cancel sequence (plan §9.1, adapted for this step — Step 7 wires the
@@ -407,18 +406,34 @@ export interface CancelExportOptions {
   keepForResume?: boolean;
 }
 
-export function cancelExportWebCodecs(opts: CancelExportOptions = {}): Promise<void> {
-  const teardown = cancelExportWebCodecsInner(opts);
+/** One run's live worker and ffmpeg session, for its cancel to reach. */
+export interface ExportRunControl {
+  worker: ExportWorkerHandle | null;
+  ffmpeg: WebCodecsFfmpeg | null;
+}
+
+export function createExportRunControl(): ExportRunControl {
+  return { worker: null, ffmpeg: null };
+}
+
+/** Clears `control.ffmpeg` only if it is still `ffmpeg` (the ownership check). */
+function releaseRunFfmpeg(control: ExportRunControl, ffmpeg: WebCodecsFfmpeg): void {
+  if (control.ffmpeg === ffmpeg) control.ffmpeg = null;
+}
+
+export function cancelExportWebCodecs(control: ExportRunControl, opts: CancelExportOptions = {}): Promise<void> {
+  const teardown = cancelExportWebCodecsInner(control, opts);
   trackExportTeardown(teardown);
   return teardown;
 }
 
-async function cancelExportWebCodecsInner(opts: CancelExportOptions): Promise<void> {
+async function cancelExportWebCodecsInner(control: ExportRunControl, opts: CancelExportOptions): Promise<void> {
   logExportEvent('cancelled', 'cancelExportWebCodecs invoked');
-  const worker = activeWorker;
-  const ffmpeg = activeFfmpeg;
-  activeWorker = null;
-  activeFfmpeg = null;
+  // Only THIS run's handles — never whatever another run left registered.
+  const worker = control.worker;
+  const ffmpeg = control.ffmpeg;
+  control.worker = null;
+  control.ffmpeg = null;
   if (worker) {
     const cancelMsg: ExportWorkerInboundMessage = { type: 'cancel' };
     worker.postMessage(cancelMsg);
@@ -1281,6 +1296,9 @@ export interface DriveGlRunDeps {
   now?: () => number;
   /** WS3 — called once per GL piece with its encoder-session plan. Observational. */
   onSessionPlan?: (pieceIndex: number, sessions: number) => void;
+  /** The owning run's cancel handle: the worker is registered here while it
+   *  drives, and cleared only if it is still this one. */
+  control?: ExportRunControl;
   /** Test-only override for APPEND_QUEUE_CEILING_BYTES. Production never passes
    *  it. Exists because the real ceiling is 256 MB and a test that actually
    *  allocated a quarter-gigabyte of chunk buffers to cross it would be
@@ -1410,7 +1428,7 @@ export function driveGlRun(
     const worker = deps.createWorker
       ? deps.createWorker()
       : new Worker(new URL('./exportWorker.ts', import.meta.url), { type: 'module' });
-    activeWorker = worker as Worker;
+    if (deps.control) deps.control.worker = worker;
     const now = deps.now ?? (() => performance.now());
     const appendQueueCeiling = deps.appendQueueCeilingBytes ?? APPEND_QUEUE_CEILING_BYTES;
     const runStartedAt = now();
@@ -1822,7 +1840,7 @@ export function driveGlRun(
         pendingBatchTimer = null;
       }
       pendingBatch = [];
-      if (activeWorker === worker) activeWorker = null;
+      if (deps.control?.worker === worker) deps.control.worker = null;
       worker.terminate();
       const appendLedger = buildAppendLedger(true);
       const msSinceLastPhaseChange = now() - lastPhaseAt;
@@ -2982,6 +3000,9 @@ export async function exportProjectWebCodecs(
   deps: { createWorker?: () => ExportWorkerHandle } = {},
 ): Promise<ExportResult> {
   const fps = options.fps ?? 30;
+  // This run's own cancel handle. Cleared only while it still holds THIS run's
+  // session (`releaseRunFfmpeg`), so nothing this run does can reach another's.
+  const control = options.control ?? createExportRunControl();
   // Width/height must both be even for yuv420p. segmentEncoder.ts's own
   // encoders each independently even their OWN width/height internally
   // (encodeSegment/encodePlainVideoSegment/encodeStaticImageSegment), so
@@ -3099,7 +3120,7 @@ export async function exportProjectWebCodecs(
   };
 
   onProgress({ type: 'loading_ffmpeg' });
-  activeFfmpeg = ffmpeg;
+  control.ffmpeg = ffmpeg;
 
   // ── WS3 Round 21 (D1) — DISK PREFLIGHT, before the first encoder session ──
   //
@@ -3158,7 +3179,7 @@ export async function exportProjectWebCodecs(
           `shortfall=${preflight.shortfall ? JSON.stringify(preflight.shortfall) : 'none'}`,
       );
       if (!preflight.ok && preflight.shortfall) {
-        activeFfmpeg = null;
+        releaseRunFfmpeg(control, ffmpeg);
         const sf = preflight.shortfall;
         logExportEvent(
           'disk-full',
@@ -3490,6 +3511,7 @@ export async function exportProjectWebCodecs(
               pieceSessions = sessions;
             },
             createWorker: deps.createWorker,
+            control,
             resumeFromFrameIndex,
             resumeSessionIndex,
             forceSoftwareEncoder: forceSoftware,
@@ -3727,7 +3749,7 @@ export async function exportProjectWebCodecs(
           liveness: driveResult.error.liveness,
           diagnostics: d,
         }));
-        activeFfmpeg = null;
+        releaseRunFfmpeg(control, ffmpeg);
         return { ok: false, error: driveResult.error };
       }
       const d = driveResult.diagnostics;
@@ -3778,7 +3800,7 @@ export async function exportProjectWebCodecs(
             async () => await ffmpeg.truncateAnnexb(runFile),
           );
         } catch (err) {
-          activeFfmpeg = null;
+          releaseRunFfmpeg(control, ffmpeg);
           return {
             ok: false,
             error: boundedStepError('concat', `Failed to truncate salvaged piece ${pieceIndex} to its last complete access unit.`, err),
@@ -3793,7 +3815,7 @@ export async function exportProjectWebCodecs(
         // one (a truncation that kept a stray complete-looking picture the
         // encoder never actually finished emitting for this run), aborts.
         if (truncateResult.pictures !== plan.expectedFrames) {
-          activeFfmpeg = null;
+          releaseRunFfmpeg(control, ffmpeg);
           return {
             ok: false,
             error: {
@@ -3928,7 +3950,7 @@ export async function exportProjectWebCodecs(
       const result = await encodeTier1Piece(ffmpeg, segment, asset, globalConfig, fps, width, height, pieceIndex, pieces.length);
       onFrameProgress(plan.expectedFrames);
       if (!result.ok) {
-        activeFfmpeg = null;
+        releaseRunFfmpeg(control, ffmpeg);
         return { ok: false, error: result.error };
       }
       checkpointWriter.notePieceCompleted(pieceIndex);
@@ -3937,7 +3959,7 @@ export async function exportProjectWebCodecs(
       checkpointWriter.ensureManifest(pieceIndex);
       const result = await encodeCanvasPiece(ffmpeg, plan, project, assetMap, globalConfig, fps, width, height, pieceIndex, pieces.length, onFrameProgress);
       if (!result.ok) {
-        activeFfmpeg = null;
+        releaseRunFfmpeg(control, ffmpeg);
         return { ok: false, error: result.error };
       }
       checkpointWriter.notePieceCompleted(pieceIndex);
@@ -3969,7 +3991,7 @@ export async function exportProjectWebCodecs(
       diag.concatMs = performance.now() - concatStarted;
     }
   } catch (err) {
-    activeFfmpeg = null;
+    releaseRunFfmpeg(control, ffmpeg);
     return { ok: false, error: postEncodeError('concat', 'Failed to concatenate the encoded pieces.', err, 'concat') };
   }
   const finalVideoFile = pieceFiles.length === 1 ? pieceFiles[0]! : videoAllFile;
@@ -4058,7 +4080,7 @@ export async function exportProjectWebCodecs(
         // therefore never told more was kept than actually was.
         forcedSeal = { offer, measured };
       } else {
-        activeFfmpeg = null;
+        releaseRunFfmpeg(control, ffmpeg);
         return {
           ok: false,
           error: {
@@ -4075,7 +4097,7 @@ export async function exportProjectWebCodecs(
       }
     }
   } catch (err) {
-    activeFfmpeg = null;
+    releaseRunFfmpeg(control, ffmpeg);
     return { ok: false, error: postEncodeError('concat', 'Failed to verify the concatenated output frame count.', err, 'concat:verify') };
   }
 
@@ -4094,7 +4116,7 @@ export async function exportProjectWebCodecs(
       await ffmpeg.writeFile(audioFile, audioBytes);
     }
   } catch (err) {
-    activeFfmpeg = null;
+    releaseRunFfmpeg(control, ffmpeg);
     // The native cause already carries the OS error code and the full path
     // (`durable_fs::describe`, or the `[path=…]` suffix on the write).
     return {
@@ -4153,7 +4175,7 @@ export async function exportProjectWebCodecs(
     );
     diag.muxMs = performance.now() - muxStarted;
   } catch (err) {
-    activeFfmpeg = null;
+    releaseRunFfmpeg(control, ffmpeg);
     return { ok: false, error: postEncodeError('mux', 'Failed to mux the encoded output with audio.', err, forcedSeal === null ? 'mux' : 'mux:seal') };
   }
 
@@ -4171,12 +4193,12 @@ export async function exportProjectWebCodecs(
         console.warn('[ws3-durability] delivered, durability not confirmed:', saved.durabilityWarning);
       }
     } catch (err) {
-      activeFfmpeg = null;
+      releaseRunFfmpeg(control, ffmpeg);
       return { ok: false, error: postEncodeError('unknown', 'Failed to save the exported file to disk.', err, 'deliver') };
     }
   }
 
-  activeFfmpeg = null;
+  releaseRunFfmpeg(control, ffmpeg);
   onProgress({ type: 'done' });
   return { ok: true, outputFile, liveness: postEncodeLiveness('done') };
 }

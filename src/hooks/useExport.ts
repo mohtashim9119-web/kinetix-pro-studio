@@ -8,6 +8,8 @@ import {
 import {
   exportProjectWebCodecs,
   cancelExportWebCodecs,
+  createExportRunControl,
+  type ExportRunControl,
   planWebCodecsExport,
   type WebCodecsFfmpeg,
 } from '../services/webcodecsExport/exportPipelineWebCodecs';
@@ -507,6 +509,10 @@ export function useExport(
   // Tauri native backend ref — lazy: created on first startExport.
   const tauriBackendRef = useRef<TauriBackend | null>(null);
 
+  /** The CURRENT run's cancel handle (a new one per runExport). The pipeline
+   *  registers its worker and ffmpeg session on it; cancel reaches only it. */
+  const runControlRef = useRef<ExportRunControl>(createExportRunControl());
+
   /** The session the current run RESUMED into, from adoption until the run
    *  releases or retains it. `teardown` knows only the fresh session, so
    *  unmount releases this one separately. */
@@ -589,6 +595,8 @@ export function useExport(
     // A previous run's resumed session was settled by its own path (or its
     // cancel); only this run's adoption may set the ref again.
     resumedSessionRef.current = null;
+    const runControl = createExportRunControl();
+    runControlRef.current = runControl;
 
     setState({
       isExporting: true,
@@ -963,7 +971,7 @@ export function useExport(
           // WebCodecsFfmpeg even though TauriBackend's own field type doesn't
           // declare those extra members.
           resumeFfmpeg ?? (tauriBackendRef.current.ffmpeg as WebCodecsFfmpeg),
-          { fps, width: resWidth, height: resHeight, requestForcedSealConsent, ...(resumePlan ? { resume: resumePlan } : {}), ...(hasSpotRenderWork(specs) ? { spotRenderSpecs: specs } : {}) },
+          { control: runControl, fps, width: resWidth, height: resHeight, requestForcedSealConsent, ...(resumePlan ? { resume: resumePlan } : {}), ...(hasSpotRenderWork(specs) ? { spotRenderSpecs: specs } : {}) },
           onProgress,
         )
       : await exportProject(
@@ -1340,17 +1348,16 @@ export function useExport(
     // an already-deleted temp dir.
     const backend = tauriBackendRef.current;
     const wasWebCodecsPath = activePathRef.current === 'webcodecs';
+    // Taken NOW, synchronously: the run being cancelled, never a later one.
+    const runControl = runControlRef.current;
     // Registered on the teardown latch: a bulk queue's NEXT start awaits it,
     // so the old session's kill/destroy never overlaps the next export.
     trackExportTeardown((async () => {
       if (wasWebCodecsPath) {
         // Plan §9.1 cancel sequence: post 'cancel' to the worker + terminate
         // it FIRST, then kill+destroy the same ffmpeg session the pipeline
-        // was using (cancelExportWebCodecs's own module-level activeFfmpeg is
-        // the exact `backend.ffmpeg` instance passed into
-        // exportProjectWebCodecs above — same session, no separate handle to
-        // thread through this hook).
-        await cancelExportWebCodecs({ keepForResume: opts?.keepForResume === true });
+        // was using — the ones THIS run registered on its own control.
+        await cancelExportWebCodecs(runControl, { keepForResume: opts?.keepForResume === true });
       } else {
         // WS3 Round 28 (STEP 2) — the other half of the early-cancel gap: a
         // session exists (tauriBackendRef.current !== null, so we're past
