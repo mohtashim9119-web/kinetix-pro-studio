@@ -24,6 +24,8 @@ vi.mock('./muxOnly', async (importOriginal) => ({
 
 // eslint-disable-next-line import/first
 import { exportProjectWebCodecs, type ExportWorkerHandle, type WebCodecsFfmpeg } from './exportPipelineWebCodecs';
+import { discoverResumableExport, type ResumeDiscoveryIo, type ResumeSessionHandle } from './exportResumeDiscovery';
+import { buildSourceTimelineHash, timelineIdentityFromProject } from './exportCheckpoint';
 
 const FPS = 30;
 const SESSION = '11111111-2222-4333-8444-555555555555';
@@ -71,6 +73,8 @@ interface Run {
   offers: ForcedMp4SealOffer[];
   counts: string[];
   manifests: Record<string, unknown>[];
+  /** The exact bytes of the newest manifest write - what is on disk after a restart. */
+  persisted: () => string;
   warnings: string[];
 }
 
@@ -83,12 +87,13 @@ async function run(
   const offers: ForcedMp4SealOffer[] = [];
   const counts: string[] = [];
   const manifests: Record<string, unknown>[] = [];
+  const rawManifests: string[] = [];
   const warnings: string[] = [];
   const warn = vi.spyOn(console, 'warn').mockImplementation((...a: unknown[]) => { warnings.push(a.map(String).join(' ')); });
   const landed = new Map<string, number>();
   const ffmpeg = {
     sessionId: SESSION,
-    writeExportState: vi.fn(async (s: string) => { manifests.push(JSON.parse(s) as Record<string, unknown>); }),
+    writeExportState: vi.fn(async (s: string) => { rawManifests.push(s); manifests.push(JSON.parse(s) as Record<string, unknown>); }),
     writeFile: vi.fn(async () => undefined), writeFileRaw: vi.fn(async () => undefined), exec: vi.fn(async () => 0),
     readFile: vi.fn(async () => new Uint8Array()), deleteFile: vi.fn(async (p: string) => { landed.delete(p); }),
     appendFileRaw: vi.fn(async (p: string, d: Uint8Array) => { landed.set(p, (landed.get(p) ?? 0) + d.byteLength); }),
@@ -125,7 +130,7 @@ async function run(
     { createWorker },
   );
   warn.mockRestore();
-  return { result, offers, counts, manifests, warnings };
+  return { result, offers, counts, manifests, persisted: () => rawManifests[rawManifests.length - 1]!, warnings };
 }
 
 const lastManifest = (r: Run): Record<string, unknown> => r.manifests[r.manifests.length - 1]!;
@@ -235,5 +240,54 @@ describe('the seal decision is offered for ANY recorded deviation, not only a sh
     expect(r.offers[0]!.picturesLost).toBe(1);
     if (r.result.ok) throw new Error('unreachable');
     expect(r.result.error.message).toContain('measuredPictures=3659');
+  });
+});
+
+describe('recorded deviations survive an app restart', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  /** A fresh discovery over the bytes a run left on disk - no memory shared with the run. */
+  async function afterRestart(persisted: string, onDisk: Record<string, number>) {
+    const bytes = new TextEncoder().encode(persisted);
+    const hash = await buildSourceTimelineHash(timelineIdentityFromProject(project(TWO_PIECES), { fps: FPS, width: 1920, height: 1080 }, { spotRenderSpecs: [] }));
+    const handle = (id: string): ResumeSessionHandle => ({
+      sessionId: id,
+      readExportState: async () => bytes,
+      sessionFileSize: async () => 5_000,
+      prepareCheckpointResume: async () => { throw new Error('a piece-boundary resume never fences'); },
+      clearResumeFence: async () => undefined,
+      truncateAnnexbToOffset: async () => { throw new Error('must not cut'); },
+      destroy: async () => undefined,
+    });
+    const io: ResumeDiscoveryIo = {
+      listResumableSessionIds: async () => [SESSION],
+      peekExportState: async () => ({ kind: 'found', bytes: Array.from(bytes) }),
+      peekSessionFileSize: async () => 5_000,
+      reenter: async (id: string) => handle(id),
+    };
+    return discoverResumableExport(
+      io,
+      { expected: { projectId: 'proj-guard', sourceTimelineHash: hash!, fps: FPS, width: 1920, height: 1080 }, pieceExpectedFrames: TWO_PIECES.expected },
+      async (_s, p) => onDisk[p]!,
+      [SESSION],
+    );
+  }
+
+  it('the deviation is in the bytes on disk; a fresh load ACCEPTS exactly that count', async () => {
+    const r = await run(TWO_PIECES, { 'piece_0.h264': 1829, 'piece_1.h264': 1830 });
+    expect(r.persisted()).toContain('pieceDeviations');
+    const found = await afterRestart(r.persisted(), { 'piece_0.h264': 1829, 'piece_1.h264': 1830 });
+    expect(found.resumable).not.toBeNull();
+  });
+
+  it('a fresh load still REFUSES a count the manifest never recorded (and a different count than recorded)', async () => {
+    const r = await run(TWO_PIECES, { 'piece_0.h264': 1829, 'piece_1.h264': 1830 });
+    const different = await afterRestart(r.persisted(), { 'piece_0.h264': 1828, 'piece_1.h264': 1830 });
+    expect(different.resumable).toBeNull();
+    const clean = await run(TWO_PIECES, { 'piece_0.h264': 1830, 'piece_1.h264': 1830 });
+    expect(clean.persisted()).not.toContain('pieceDeviations');
+    const unrecorded = await afterRestart(clean.persisted(), { 'piece_0.h264': 1829, 'piece_1.h264': 1830 });
+    expect(unrecorded.resumable).toBeNull();
+    expect(unrecorded.rejected[0]!.unrecoverable).toBe(true);
   });
 });
