@@ -364,12 +364,16 @@ export async function evaluateResumeCandidate(
   // destroy releases the claim and keeps every file (the native manifest
   // guard). The winner keeps its claim — the export runs on it.
   //
-  // Not after a cut that failed part-way (`bitstreamTouched`): the piece is
-  // left at a length its checkpoint does not name, and a later fence re-runs
-  // the whole-AU repair on it, which drops another picture
-  // (`prepare_checkpoint_resume_inner`). Held, this app run cannot re-fence it.
-  const outcome = await evaluateReenteredCandidate(session, sessionId, target, countPictures, staleClaimRecovered);
-  if (!outcome.ok && !outcome.bitstreamTouched) await releaseRejectedCandidate(session);
+  // Only where no native byte write can have run. Once the fence has been
+  // invoked the piece may already be cut — its repair and exact cut run before
+  // the checks that can fail, a liveness-bound expiry can land a cut after the
+  // length was re-read, and the seam step cuts again — and a later fence on a
+  // shortened file re-runs the whole-AU repair, which drops another picture
+  // (`prepare_checkpoint_resume_inner`). From that point every rejection keeps
+  // the claim held, so this app run cannot re-fence it.
+  const fence = { invoked: false };
+  const outcome = await evaluateReenteredCandidate(session, sessionId, target, countPictures, staleClaimRecovered, fence);
+  if (!outcome.ok && !fence.invoked) await releaseRejectedCandidate(session);
   return outcome;
 }
 
@@ -388,6 +392,7 @@ async function evaluateReenteredCandidate(
   target: ResumeTargetPlan,
   countPictures: (session: ResumeSessionHandle, path: string) => Promise<number>,
   staleClaimRecovered: boolean,
+  fence: { invoked: boolean },
 ): Promise<ResumeCandidateOutcome> {
   let serialized: Uint8Array;
   try {
@@ -464,6 +469,7 @@ async function evaluateReenteredCandidate(
   // not mean the file is untouched. `fileLengthBefore`/`fileLengthAfter`
   // bracket the call so a real mutation is reported as `bitstreamTouched`
   // rather than folded into "nothing to resume."
+  fence.invoked = true;
   const fileLengthBeforeFence = await session.sessionFileSize(pieceFile).catch(() => null);
   let repair: AnnexbCheckpointRepairResult;
   try {
@@ -598,8 +604,8 @@ async function evaluateReenteredCandidate(
  * Candidates are inspected NEWEST FIRST (`listResumableSessionIds` returns them
  * sorted by UUID, which carries no time, so the caller supplies the order it
  * knows — see `orderedSessionIds`). The first success wins; every candidate
- * turned down keeps its files (its claim released — see
- * `evaluateResumeCandidate`) and is reported, so the cleanup policy — not this
+ * turned down keeps its files (its claim released where no byte can have
+ * changed — see `evaluateResumeCandidate`) and is reported, so the cleanup policy — not this
  * function — decides their fate.
  */
 export async function discoverResumableExport(

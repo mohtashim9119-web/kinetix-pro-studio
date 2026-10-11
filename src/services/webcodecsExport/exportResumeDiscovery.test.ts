@@ -465,19 +465,21 @@ describe('claim-aware reentry (H5) — a live foreign holder blocks, a stale one
 });
 
 /**
- * A rejected candidate must end the attempt claimable by the NEXT pass. The
- * fake models the native claim the way the real pair behaves: `reenter` takes
- * this process's claim, which `ffmpeg_read_session_claim` reports `live` while
- * the app runs; an unforced destroy of a manifest'd session releases the claim
- * and keeps every file (`destroy_session_dir`'s `refused_manifest` branch).
+ * A rejected candidate is released only where no native byte write can have
+ * run, so the next pass can take it; anywhere a write can have run, the claim
+ * stays held (C1b). The fake models the native claim the way the real pair
+ * behaves: `reenter` takes this process's claim, which
+ * `ffmpeg_read_session_claim` reports `live` while the app runs; an unforced
+ * destroy of a manifest'd session releases the claim and keeps every file
+ * (`destroy_session_dir`'s `refused_manifest` branch).
  */
-describe('a rejected candidate releases its claim (the next pass can take it)', () => {
+describe('a rejected candidate releases its claim only where no byte can have changed', () => {
   type DestroyOpts = { force?: boolean; failureKind?: string } | undefined;
 
   function claimedIo(sessions: Record<string, {
     json: string;
-    fence?: 'refuse' | 'mutate-then-fail';
-    seam?: 'mutate-then-fail';
+    fence?: 'refuse' | 'mutate-then-fail' | 'hang' | 'disagree';
+    seam?: 'mutate-then-fail' | 'mismatch';
   }>) {
     const claims = new Set<string>();
     const sizes = new Map<string, number>();
@@ -494,24 +496,26 @@ describe('a rejected candidate releases its claim (the next pass can take it)', 
           sessionFileSize: async () => sizes.get(sessionId) ?? 5_000,
           prepareCheckpointResume: async (_p, cp) => {
             if (spec.fence === 'refuse') throw new Error('checkpoint offset is not a canonical whole-AU boundary');
+            if (spec.fence === 'hang') return new Promise(() => undefined);
             if (spec.fence === 'mutate-then-fail') {
               sizes.set(sessionId, 4_500);
               throw new Error('canonical AU repair kept fewer bytes than checkpoint offset');
             }
             sizes.set(sessionId, cp.byteOffset);
-            return { pictures: cp.cumulativePictures, vclNals: cp.cumulativePictures, bytesRemoved: 0, keptBytes: cp.byteOffset };
+            const pictures = spec.fence === 'disagree' ? cp.cumulativePictures - 1 : cp.cumulativePictures;
+            return { pictures, vclNals: pictures, bytesRemoved: 1_000, keptBytes: cp.byteOffset };
           },
+          clearResumeFence: async () => undefined,
           truncateAnnexbToOffset: async (_p, off) => {
-            if (spec.seam === 'mutate-then-fail') {
-              sizes.set(sessionId, off);
-              throw new Error('cancelled');
-            }
-            return { pictures: 1_200, vclNals: 0, bytesRemoved: 0, keptBytes: off };
+            sizes.set(sessionId, off);
+            if (spec.seam === 'mutate-then-fail') throw new Error('cancelled');
+            return { pictures: spec.seam === 'mismatch' ? 1_199 : 1_200, vclNals: 0, bytesRemoved: 1_000, keptBytes: off };
           },
           destroy: async (opts) => {
             destroys.push({ sessionId, opts });
             claims.delete(sessionId);
           },
+          kill: async () => undefined,
         };
       },
     };
@@ -519,45 +523,85 @@ describe('a rejected candidate releases its claim (the next pass can take it)', 
   }
 
   const rows = [{ pieceIndex: 1, encoderSessionIndex: 1, byteOffset: 4_000, cumulativePictures: 1_200 }];
+  const seamRows = [{ ...rows[0]!, seamByteOffset: 3_000 }];
 
-  it('hash mismatch and a fence refusal BEFORE any mutation: both released, unforced; a second pass is not live-blocked', async () => {
-    const c = claimedIo({
-      [SESSION_2]: { json: manifestJson({ sessionId: SESSION_2, hash: HASH_B, rows }) },
-      [SESSION]: { json: manifestJson({ rows }), fence: 'refuse' },
-    });
-    const first = await discoverResumableExport(c.io, target, async () => 1800, [SESSION_2, SESSION]);
-    expect(first.resumable).toBeNull();
-    expect(first.rejected.map((r) => r.reason)).toEqual([
-      'checkpoint sourceTimelineHash mismatch',
-      'pre-append fence refused the resume: checkpoint offset is not a canonical whole-AU boundary',
-    ]);
-    expect(first.rejected.every((r) => r.bitstreamTouched === undefined)).toBe(true);
-    expect(c.destroys.map((d) => d.sessionId)).toEqual([SESSION_2, SESSION]);
-    expect(c.destroys.every((d) => d.opts?.force === false)).toBe(true);
+  afterEach(() => {
+    vi.useRealTimers();
+  });
 
-    const second = await discoverResumableExport(c.io, target, async () => 1800, [SESSION_2, SESSION]);
+  it('(1) a hash mismatch releases, unforced, and the next pass is not live-blocked', async () => {
+    const c = claimedIo({ [SESSION_2]: { json: manifestJson({ sessionId: SESSION_2, hash: HASH_B, rows }) } });
+    const first = await discoverResumableExport(c.io, target, async () => 1800, [SESSION_2]);
+    expect(first.rejected.map((r) => r.reason)).toEqual(['checkpoint sourceTimelineHash mismatch']);
+    expect(c.destroys).toEqual([{ sessionId: SESSION_2, opts: expect.objectContaining({ force: false }) }]);
+    const second = await discoverResumableExport(c.io, target, async () => 1800, [SESSION_2]);
     expect(second.rejected.some((r) => r.liveClaimBlocked)).toBe(false);
     expect(second.rejected.map((r) => r.reason)).toEqual(first.rejected.map((r) => r.reason));
   });
 
-  it('a bitstreamTouched rejection (fence or seam cut, then failed) is NOT released — the 1.7.1 exception, pinned', async () => {
+  it('(2) a fence failure with NO observed length change is held — the repair can cut before it fails', async () => {
+    const c = claimedIo({ [SESSION]: { json: manifestJson({ rows }), fence: 'refuse' } });
+    const r = await discoverResumableExport(c.io, target, async () => 1800, [SESSION]);
+    expect(r.rejected[0]!.reason).toBe('pre-append fence refused the resume: checkpoint offset is not a canonical whole-AU boundary');
+    expect(r.rejected[0]!.bitstreamTouched).toBeUndefined();
+    expect(c.destroys).toEqual([]);
+  });
+
+  it('(3) a fence that expires its liveness bound is held, whatever length was re-read', async () => {
+    vi.useFakeTimers();
+    const c = claimedIo({ [SESSION]: { json: manifestJson({ rows }), fence: 'hang' } });
+    const p = discoverResumableExport(c.io, target, async () => 1800, [SESSION]);
+    await vi.advanceTimersByTimeAsync(TRUNCATE_BOUND_MS + 1_000);
+    const r = await p;
+    expect(r.rejected[0]!.reason).toContain('TRUNCATE_BOUND_MS');
+    expect(r.rejected[0]!.bitstreamTouched).toBeUndefined();
+    expect(c.destroys).toEqual([]);
+  });
+
+  it('(4) a seam cut whose picture count disagrees is held — the file is already shortened', async () => {
+    const c = claimedIo({ [SESSION]: { json: manifestJson({ rows: seamRows }), seam: 'mismatch' } });
+    const r = await discoverResumableExport(c.io, target, async () => 1800, [SESSION]);
+    expect(r.rejected[0]!.reason).toContain('stepping back to the rotation seam changed the picture count');
+    expect(c.destroys).toEqual([]);
+  });
+
+  it('(5) "fence result disagrees" is held — the fence ran, the file was cut', async () => {
+    const c = claimedIo({ [SESSION]: { json: manifestJson({ rows }), fence: 'disagree' } });
+    const r = await discoverResumableExport(c.io, target, async () => 1800, [SESSION]);
+    expect(r.rejected[0]!.reason).toContain('fence result disagrees with the checkpoint');
+    expect(c.destroys).toEqual([]);
+  });
+
+  it('(6) a piece-boundary earlier-piece count mismatch releases — nothing was cut', async () => {
+    const pieceJson = serializeExportState(createExportStateManifest({
+      sessionId: SESSION, projectId: 'proj', sourceTimelineHash: HASH_A, fps: 30, width: 1920, height: 1080, completedPieces: 1,
+    }));
+    const c = claimedIo({ [SESSION]: { json: pieceJson } });
+    const r = await discoverResumableExport(c.io, target, async () => 1799, [SESSION]);
+    expect(r.rejected[0]!.reason).toBe('earlier piece 0 holds 1799 pictures, plan expects 1800');
+    expect(c.destroys).toEqual([{ sessionId: SESSION, opts: expect.objectContaining({ force: false }) }]);
+  });
+
+  it('a checkpoint-path earlier-piece count mismatch is held — the fence already cut the file', async () => {
+    const c = claimedIo({ [SESSION]: { json: manifestJson({ rows }) } });
+    const r = await discoverResumableExport(c.io, target, async () => 1799, [SESSION]);
+    expect(r.rejected[0]!.reason).toBe('earlier piece 0 holds 1799 pictures, plan expects 1800');
+    expect(c.destroys).toEqual([]);
+  });
+
+  it('a bitstreamTouched rejection (fence or seam cut, then failed) is held', async () => {
     const c = claimedIo({
       [SESSION_2]: { json: manifestJson({ sessionId: SESSION_2, rows }), fence: 'mutate-then-fail' },
-      [SESSION]: {
-        json: manifestJson({ rows: [{ ...rows[0]!, seamByteOffset: 3_000 }] }),
-        seam: 'mutate-then-fail',
-      },
+      [SESSION]: { json: manifestJson({ rows: seamRows }), seam: 'mutate-then-fail' },
     });
     const first = await discoverResumableExport(c.io, target, async () => 1800, [SESSION_2, SESSION]);
     expect(first.rejected.map((r) => r.bitstreamTouched?.path)).toEqual(['piece_1.h264', 'piece_1.h264']);
     expect(c.destroys).toEqual([]);
-    // Today's behaviour, kept on purpose: still held, so the next pass in this
-    // app run cannot re-fence the cut file.
     const second = await discoverResumableExport(c.io, target, async () => 1800, [SESSION_2, SESSION]);
     expect(second.rejected.every((r) => r.liveClaimBlocked)).toBe(true);
   });
 
-  it('the winner is never released — only the rejected candidate before it', async () => {
+  it('(7) the winner is never released — only the rejected candidate before it', async () => {
     const c = claimedIo({
       [SESSION_2]: { json: manifestJson({ sessionId: SESSION_2, hash: HASH_B, rows }) },
       [SESSION]: { json: manifestJson({ rows }) },
