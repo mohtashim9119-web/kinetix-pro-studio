@@ -300,16 +300,7 @@ function boundedTruncate<T>(session: ResumeSessionHandle, files: string[], fn: (
   );
 }
 
-/**
- * Inspect one surviving session. Never mutates Annex-B bytes unless the
- * identity check has already passed — that is the whole point of the ordering.
- */
-export async function evaluateResumeCandidate(
-  io: ResumeDiscoveryIo,
-  sessionId: string,
-  target: ResumeTargetPlan,
-  countPictures: (session: ResumeSessionHandle, path: string) => Promise<number>,
-): Promise<
+export type ResumeCandidateOutcome =
   | { ok: true; value: ResumableExport }
   | {
       ok: false;
@@ -319,8 +310,18 @@ export async function evaluateResumeCandidate(
       liveClaimBlocked?: boolean;
       neverCheckpointed?: boolean;
       noCheckpointYet?: boolean;
-    }
-> {
+    };
+
+/**
+ * Inspect one surviving session. Never mutates Annex-B bytes unless the
+ * identity check has already passed — that is the whole point of the ordering.
+ */
+export async function evaluateResumeCandidate(
+  io: ResumeDiscoveryIo,
+  sessionId: string,
+  target: ResumeTargetPlan,
+  countPictures: (session: ResumeSessionHandle, path: string) => Promise<number>,
+): Promise<ResumeCandidateOutcome> {
   // WS3 STEP 8 (H5) — claim-aware reentry. Read-only inspection FIRST, before
   // `reenter` is even attempted: a `live` claim held by a different process
   // means "another window is using this session" — an operator-facing
@@ -357,6 +358,37 @@ export async function evaluateResumeCandidate(
     return { ok: false, reason: `cannot re-enter session: ${message(err)}` };
   }
 
+  // `reenter` took this process's claim, and a running app's own claim reads
+  // `live`: kept by a rejected candidate, the next pass in this app run refuses
+  // the session as "another window is using it" though nothing is. An unforced
+  // destroy releases the claim and keeps every file (the native manifest
+  // guard). The winner keeps its claim — the export runs on it.
+  //
+  // Not after a cut that failed part-way (`bitstreamTouched`): the piece is
+  // left at a length its checkpoint does not name, and a later fence re-runs
+  // the whole-AU repair on it, which drops another picture
+  // (`prepare_checkpoint_resume_inner`). Held, this app run cannot re-fence it.
+  const outcome = await evaluateReenteredCandidate(session, sessionId, target, countPictures, staleClaimRecovered);
+  if (!outcome.ok && !outcome.bitstreamTouched) await releaseRejectedCandidate(session);
+  return outcome;
+}
+
+async function releaseRejectedCandidate(session: ResumeSessionHandle): Promise<void> {
+  try {
+    await session.destroy({ force: false, failureKind: 'resume-rejected' });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn('[ws3-resume] could not release a rejected resume candidate', session.sessionId, message(err));
+  }
+}
+
+async function evaluateReenteredCandidate(
+  session: ResumeSessionHandle,
+  sessionId: string,
+  target: ResumeTargetPlan,
+  countPictures: (session: ResumeSessionHandle, path: string) => Promise<number>,
+  staleClaimRecovered: boolean,
+): Promise<ResumeCandidateOutcome> {
   let serialized: Uint8Array;
   try {
     serialized = await session.readExportState();
@@ -565,9 +597,10 @@ export async function evaluateResumeCandidate(
  *
  * Candidates are inspected NEWEST FIRST (`listResumableSessionIds` returns them
  * sorted by UUID, which carries no time, so the caller supplies the order it
- * knows — see `orderedSessionIds`). The first success wins; the rest are left
- * untouched and reported, so the cleanup policy — not this function — decides
- * their fate.
+ * knows — see `orderedSessionIds`). The first success wins; every candidate
+ * turned down keeps its files (its claim released — see
+ * `evaluateResumeCandidate`) and is reported, so the cleanup policy — not this
+ * function — decides their fate.
  */
 export async function discoverResumableExport(
   io: ResumeDiscoveryIo,

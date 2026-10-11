@@ -464,6 +464,121 @@ describe('claim-aware reentry (H5) — a live foreign holder blocks, a stale one
   });
 });
 
+/**
+ * A rejected candidate must end the attempt claimable by the NEXT pass. The
+ * fake models the native claim the way the real pair behaves: `reenter` takes
+ * this process's claim, which `ffmpeg_read_session_claim` reports `live` while
+ * the app runs; an unforced destroy of a manifest'd session releases the claim
+ * and keeps every file (`destroy_session_dir`'s `refused_manifest` branch).
+ */
+describe('a rejected candidate releases its claim (the next pass can take it)', () => {
+  type DestroyOpts = { force?: boolean; failureKind?: string } | undefined;
+
+  function claimedIo(sessions: Record<string, {
+    json: string;
+    fence?: 'refuse' | 'mutate-then-fail';
+    seam?: 'mutate-then-fail';
+  }>) {
+    const claims = new Set<string>();
+    const sizes = new Map<string, number>();
+    const destroys: { sessionId: string; opts: DestroyOpts }[] = [];
+    const io: ResumeDiscoveryIo = {
+      listResumableSessionIds: async () => Object.keys(sessions),
+      readSessionClaim: async (id) => ({ holderLiveness: claims.has(id) ? 'live' : 'unclaimed' }),
+      reenter: async (sessionId) => {
+        claims.add(sessionId);
+        const spec = sessions[sessionId]!;
+        return {
+          sessionId,
+          readExportState: async () => new TextEncoder().encode(spec.json),
+          sessionFileSize: async () => sizes.get(sessionId) ?? 5_000,
+          prepareCheckpointResume: async (_p, cp) => {
+            if (spec.fence === 'refuse') throw new Error('checkpoint offset is not a canonical whole-AU boundary');
+            if (spec.fence === 'mutate-then-fail') {
+              sizes.set(sessionId, 4_500);
+              throw new Error('canonical AU repair kept fewer bytes than checkpoint offset');
+            }
+            sizes.set(sessionId, cp.byteOffset);
+            return { pictures: cp.cumulativePictures, vclNals: cp.cumulativePictures, bytesRemoved: 0, keptBytes: cp.byteOffset };
+          },
+          truncateAnnexbToOffset: async (_p, off) => {
+            if (spec.seam === 'mutate-then-fail') {
+              sizes.set(sessionId, off);
+              throw new Error('cancelled');
+            }
+            return { pictures: 1_200, vclNals: 0, bytesRemoved: 0, keptBytes: off };
+          },
+          destroy: async (opts) => {
+            destroys.push({ sessionId, opts });
+            claims.delete(sessionId);
+          },
+        };
+      },
+    };
+    return { io, claims, destroys };
+  }
+
+  const rows = [{ pieceIndex: 1, encoderSessionIndex: 1, byteOffset: 4_000, cumulativePictures: 1_200 }];
+
+  it('hash mismatch and a fence refusal BEFORE any mutation: both released, unforced; a second pass is not live-blocked', async () => {
+    const c = claimedIo({
+      [SESSION_2]: { json: manifestJson({ sessionId: SESSION_2, hash: HASH_B, rows }) },
+      [SESSION]: { json: manifestJson({ rows }), fence: 'refuse' },
+    });
+    const first = await discoverResumableExport(c.io, target, async () => 1800, [SESSION_2, SESSION]);
+    expect(first.resumable).toBeNull();
+    expect(first.rejected.map((r) => r.reason)).toEqual([
+      'checkpoint sourceTimelineHash mismatch',
+      'pre-append fence refused the resume: checkpoint offset is not a canonical whole-AU boundary',
+    ]);
+    expect(first.rejected.every((r) => r.bitstreamTouched === undefined)).toBe(true);
+    expect(c.destroys.map((d) => d.sessionId)).toEqual([SESSION_2, SESSION]);
+    expect(c.destroys.every((d) => d.opts?.force === false)).toBe(true);
+
+    const second = await discoverResumableExport(c.io, target, async () => 1800, [SESSION_2, SESSION]);
+    expect(second.rejected.some((r) => r.liveClaimBlocked)).toBe(false);
+    expect(second.rejected.map((r) => r.reason)).toEqual(first.rejected.map((r) => r.reason));
+  });
+
+  it('a bitstreamTouched rejection (fence or seam cut, then failed) is NOT released — the 1.7.1 exception, pinned', async () => {
+    const c = claimedIo({
+      [SESSION_2]: { json: manifestJson({ sessionId: SESSION_2, rows }), fence: 'mutate-then-fail' },
+      [SESSION]: {
+        json: manifestJson({ rows: [{ ...rows[0]!, seamByteOffset: 3_000 }] }),
+        seam: 'mutate-then-fail',
+      },
+    });
+    const first = await discoverResumableExport(c.io, target, async () => 1800, [SESSION_2, SESSION]);
+    expect(first.rejected.map((r) => r.bitstreamTouched?.path)).toEqual(['piece_1.h264', 'piece_1.h264']);
+    expect(c.destroys).toEqual([]);
+    // Today's behaviour, kept on purpose: still held, so the next pass in this
+    // app run cannot re-fence the cut file.
+    const second = await discoverResumableExport(c.io, target, async () => 1800, [SESSION_2, SESSION]);
+    expect(second.rejected.every((r) => r.liveClaimBlocked)).toBe(true);
+  });
+
+  it('the winner is never released — only the rejected candidate before it', async () => {
+    const c = claimedIo({
+      [SESSION_2]: { json: manifestJson({ sessionId: SESSION_2, hash: HASH_B, rows }) },
+      [SESSION]: { json: manifestJson({ rows }) },
+    });
+    const found = await discoverResumableExport(c.io, target, async () => 1800, [SESSION_2, SESSION]);
+    expect(found.resumable?.sessionId).toBe(SESSION);
+    expect(c.destroys.map((d) => d.sessionId)).toEqual([SESSION_2]);
+    expect(c.claims.has(SESSION)).toBe(true);
+  });
+
+  it('a release that fails changes neither the rejection nor its reason', async () => {
+    const c = claimedIo({ [SESSION]: { json: manifestJson({ hash: HASH_B, rows }) } });
+    const failingIo: ResumeDiscoveryIo = {
+      ...c.io,
+      reenter: async (id) => ({ ...(await c.io.reenter(id)), destroy: async () => { throw new Error('EBUSY'); } }),
+    };
+    const r = await evaluateResumeCandidate(failingIo, SESSION, target, async () => 1800);
+    expect(r).toEqual({ ok: false, reason: 'checkpoint sourceTimelineHash mismatch', budgetExhausted: false, neverCheckpointed: false, noCheckpointYet: false });
+  });
+});
+
 describe('abandoned-session cleanup policy', () => {
   const now = 1_800_000_000_000;
   const fresh = (id: string, ageMs: number) => ({ sessionId: id, createdAtMs: now - ageMs });
