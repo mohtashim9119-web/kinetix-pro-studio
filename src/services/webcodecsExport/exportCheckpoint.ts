@@ -28,7 +28,9 @@ export const EXPORT_STATE_FILENAME = 'export_state.json';
  *  in-flight v3 checkpoint is acceptable (hash never matches v4). */
 export const EXPORT_TIMELINE_IDENTITY_VERSION = 4;
 
-/** In-process recovery bounds from `exportPipelineWebCodecs.ts` (dedc3bf). */
+/** In-process recovery bounds from `exportPipelineWebCodecs.ts` (dedc3bf).
+ *  The ONE definition of the rewind bound: the pipeline's in-process gate and
+ *  the persisted resume gate (`isRecoveryBudgetExhausted`) both read it. */
 export const MAX_BOUNDARY_REWINDS_PER_EXPORT = 2;
 export const MAX_HARDWARE_FAILOVER_PER_EXPORT = 1;
 /** 1 initial + 2 rewinds + 1 software failover `driveGlRun` attempts. */
@@ -646,13 +648,20 @@ export function recordResumeAttempt(manifest: ExportStateManifest): ExportStateM
 /**
  * The export moved forward: a checkpoint beyond every one already recorded
  * was appended, or a piece finished. Recovery events before it were not a
- * loop, so the loop guard starts over. `boundaryRewindsUsed` and
- * `hardwareFailoverUsed` are NOT reset: they are the in-process rewind and
- * failover gates' own per-export counters, not this guard.
+ * loop, so both persisted loop guards start over: the recovery count and the
+ * boundary-rewind count. The rewind count records HANGS (one per rewind),
+ * never resumes; once the export has got past them, they say nothing about
+ * whether a resume will loop. Not reset: `hardwareFailoverUsed` (a one-shot
+ * per export), and the running process's own in-memory rewind gate, which
+ * keeps bounding rewinds within that one run.
  */
 export function recordForwardProgress(manifest: ExportStateManifest): ExportStateManifest {
-  if ((manifest.totalRecoveryAttempts ?? 0) === 0 && (manifest.checkpointResumeAttempts ?? 0) === 0) return manifest;
-  return { ...manifest, totalRecoveryAttempts: 0, checkpointResumeAttempts: 0 };
+  if (
+    (manifest.totalRecoveryAttempts ?? 0) === 0 &&
+    (manifest.checkpointResumeAttempts ?? 0) === 0 &&
+    (manifest.boundaryRewindsUsed ?? 0) === 0
+  ) return manifest;
+  return { ...manifest, totalRecoveryAttempts: 0, checkpointResumeAttempts: 0, boundaryRewindsUsed: 0 };
 }
 
 export function isRecoveryBudgetExhausted(manifest: ExportRecoveryBudget): boolean {

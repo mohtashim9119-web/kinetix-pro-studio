@@ -94,7 +94,7 @@ import { resolveFontBytes } from './fontResolver';
 import { fenceSafeCheckpointOffset } from './exportCheckpointPlacement';
 import { recordCleanupFailure } from './exportCleanupNotices';
 import { createExportCheckpointWriter } from './exportCheckpointWriter';
-import { buildSourceTimelineHash, timelineIdentityFromProject, type ExportStateManifest } from './exportCheckpoint';
+import { buildSourceTimelineHash, timelineIdentityFromProject, MAX_BOUNDARY_REWINDS_PER_EXPORT, type ExportStateManifest } from './exportCheckpoint';
 import {
   muxOnly,
   forcedMp4SealOffer,
@@ -2913,7 +2913,7 @@ function collectUsedFontFamilies(project: Project): Set<string> {
  *  the same export is exactly the "salvage becomes routine" failure mode
  *  `decideFlushTimeoutDisposition`'s own doc comment warns against, so the
  *  ceiling stops there rather than growing with piece count. */
-export const MAX_BOUNDARY_REWINDS_PER_EXPORT = 2;
+export { MAX_BOUNDARY_REWINDS_PER_EXPORT };
 
 export type BoundedRerenderDisposition =
   | { action: 'rewind' }

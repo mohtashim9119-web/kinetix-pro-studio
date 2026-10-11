@@ -106,3 +106,41 @@ describe('recovery budget — a loop guard, never a penalty for progress', () =>
     expect(v.reason).toBe('Resume unavailable — 4 of 4 recovery attempts used without progress. Starting fresh.');
   });
 });
+
+describe('the rewind budget counts hangs, and progress resets it too', () => {
+  it('an export that had two encoder hangs and then progressed still resumes', async () => {
+    const ffmpeg = fakeFfmpeg();
+    const writer = createExportCheckpointWriter(ffmpeg, identity);
+    writer.adoptManifest(firstRunManifest(), 0);
+    writer.noteBoundaryRewind();
+    writer.noteBoundaryRewind();
+    // The run got past the hangs and wrote a checkpoint beyond the last one.
+    writer.record({ encoderSessionIndex: 2, byteOffset: 2_000, seamByteOffset: 2_000, cumulativePictures: 600 });
+    await flush();
+    const onDisk = JSON.parse(ffmpeg.writes[ffmpeg.writes.length - 1]!) as ExportStateManifest;
+    expect(onDisk.boundaryRewindsUsed).toBe(0);
+    expect(validateExportState(serializeExportState(onDisk), expected, FILE).kind).toBe('resume');
+  });
+
+  it('two hangs with no progress after them still refuse resume, with the truthful reason', async () => {
+    const ffmpeg = fakeFfmpeg();
+    const writer = createExportCheckpointWriter(ffmpeg, identity);
+    writer.adoptManifest(firstRunManifest(), 0);
+    writer.noteBoundaryRewind();
+    writer.noteBoundaryRewind();
+    await flush();
+    const onDisk = JSON.parse(ffmpeg.writes[ffmpeg.writes.length - 1]!) as ExportStateManifest;
+    const v = validateExportState(serializeExportState(onDisk), expected, FILE);
+    expect(v.kind).toBe('recovery_budget_exhausted');
+    if (v.kind === 'recovery_budget_exhausted') expect(v.reason).toBe('Resume unavailable — 2 of 2 boundary rewinds used. Starting fresh.');
+  });
+
+  it('a resume attempt is not a hang: it never touches the rewind count', async () => {
+    const ffmpeg = fakeFfmpeg();
+    const writer = createExportCheckpointWriter(ffmpeg, identity);
+    writer.adoptManifest(firstRunManifest(), 0);
+    writer.noteResumeAttempt();
+    await flush();
+    expect(writer.snapshot()?.boundaryRewindsUsed ?? 0).toBe(0);
+  });
+});
