@@ -13,7 +13,7 @@ import { TransitionType, AnimationType } from '../../types';
 import type { Asset, Project, VideoSegment } from '../../types';
 import type { ExportWorkerInboundMessage, ExportWorkerOutboundMessage } from './exportWorker';
 import { NO_FLUSH_OBSERVATION, type ExportWorkerDiagnosticsPayload } from './exportWorkerDiagnostics';
-import type { ForcedMp4SealOffer } from './muxOnly';
+import { muxOnly, type ForcedMp4SealOffer } from './muxOnly';
 
 vi.mock('../plainSegment', () => ({ isPlainVideoSegment: () => false, isPlainImageSegment: () => false }));
 vi.mock('./glCompositable', () => ({ isGlCompositableSegment: () => true, GL_TRANSITION_SLUGS: new Set<string>() }));
@@ -78,7 +78,7 @@ interface Run {
 async function run(
   shape: { segments: VideoSegment[]; expected: number[] },
   counted: Record<string, number>,
-  opts: { consent?: boolean } = {},
+  opts: { consent?: boolean; noHook?: boolean } = {},
 ): Promise<Run> {
   const offers: ForcedMp4SealOffer[] = [];
   const counts: string[] = [];
@@ -119,7 +119,7 @@ async function run(
     project(shape), ffmpeg,
     {
       width: 1920, height: 1080, fps: FPS,
-      requestForcedSealConsent: async (o) => { offers.push(o); return opts.consent ?? false; },
+      ...(opts.noHook ? {} : { requestForcedSealConsent: async (o: ForcedMp4SealOffer) => { offers.push(o); return opts.consent ?? false; } }),
     },
     () => undefined,
     { createWorker },
@@ -184,5 +184,56 @@ describe('per-piece completion guard', () => {
   it('the guard counts each piece once, at completion, then the concat guard counts the whole', async () => {
     const r = await run(TWO_PIECES, { 'piece_0.h264': 1830, 'piece_1.h264': 1830 });
     expect(r.counts).toEqual(['piece_0.h264', 'piece_1.h264', 'video_all.h264']);
+  });
+});
+
+describe('the seal decision is offered for ANY recorded deviation, not only a short total', () => {
+  beforeEach(() => vi.clearAllMocks());
+  // One piece short, another over plan: the whole film is the planned length.
+  const CANCELLING = { 'piece_0.h264': 1829, 'piece_1.h264': 1831 };
+
+  it('two deviations that cancel still produce the decision, naming BOTH pieces', async () => {
+    const r = await run(TWO_PIECES, CANCELLING);
+    expect(r.offers).toHaveLength(1);
+    expect(r.offers[0]!.picturesLost).toBe(0);
+    expect(r.offers[0]!.deviatingPieces).toEqual([
+      { pieceIndex: 0, counted: 1829, expected: 1830 },
+      { pieceIndex: 1, counted: 1831, expected: 1830 },
+    ]);
+  });
+
+  it('declining stops the export with a typed concat failure that names the pieces (nothing is muxed)', async () => {
+    const r = await run(TWO_PIECES, CANCELLING, { consent: false });
+    expect(r.result.ok).toBe(false);
+    if (r.result.ok) throw new Error('unreachable');
+    expect(r.result.error.kind).toBe('concat');
+    expect(r.result.error.message).toContain('Piece 1');
+    expect(r.result.error.message).toContain('Piece 2');
+    expect(vi.mocked(muxOnly)).not.toHaveBeenCalled();
+  });
+
+  it('accepting keeps the full-length film through the ordinary mux (no seal)', async () => {
+    const r = await run(TWO_PIECES, CANCELLING, { consent: true });
+    expect(r.result.ok).toBe(true);
+    expect(vi.mocked(muxOnly)).toHaveBeenCalledTimes(1);
+  });
+
+  it('with nobody to ask, a full-length film is delivered and the deviation stays in the diagnostics', async () => {
+    const r = await run(TWO_PIECES, CANCELLING, { noHook: true });
+    expect(r.result.ok).toBe(true);
+    expect(r.warnings.filter((w) => w.includes('[ws3-piece-count]')).length).toBeGreaterThan(0);
+  });
+
+  it('no deviation -> no decision (pin)', async () => {
+    const r = await run(TWO_PIECES, { 'piece_0.h264': 1830, 'piece_1.h264': 1830 });
+    expect(r.offers).toHaveLength(0);
+  });
+
+  it('a short total keeps its own decision and message (pin)', async () => {
+    const r = await run(TWO_PIECES, { 'piece_0.h264': 1829, 'piece_1.h264': 1830 });
+    expect(r.offers).toHaveLength(1);
+    expect(r.offers[0]!.picturesLost).toBe(1);
+    if (r.result.ok) throw new Error('unreachable');
+    expect(r.result.error.message).toContain('measuredPictures=3659');
   });
 });

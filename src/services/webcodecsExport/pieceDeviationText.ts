@@ -26,8 +26,13 @@ export function frameShiftMs(fps: number): number {
 export function bulkDeviationNote(offer: { deviatingPieces?: readonly PieceDeviation[]; fps: number }): string | null {
   const devs = offer.deviatingPieces;
   if (!devs || devs.length === 0) return null;
+  return `${describePieceDeviations(devs)}. ${frameShiftSentence(offer.fps)}`;
+}
+
+/** What a deviation does to the sound: everything after the piece moves by its frame difference. */
+export function frameShiftSentence(fps: number): string {
   return (
-    `${describePieceDeviations(devs)}. Everything after each of these plays 1 frame ` +
-    `(about ${frameShiftMs(offer.fps)} ms at ${offer.fps} fps) early against the voiceover.`
+    `Everything after each of these is shifted against the voiceover by that frame difference ` +
+    `(1 frame is about ${frameShiftMs(fps)} ms at ${fps} fps): earlier where frames were lost, later where frames were added.`
   );
 }

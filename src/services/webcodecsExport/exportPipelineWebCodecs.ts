@@ -94,6 +94,7 @@ import { resolveFontBytes } from './fontResolver';
 import { fenceSafeCheckpointOffset } from './exportCheckpointPlacement';
 import { recordCleanupFailure } from './exportCleanupNotices';
 import { createExportCheckpointWriter, type ExportCheckpointWriter } from './exportCheckpointWriter';
+import { describePieceDeviations } from './pieceDeviationText';
 import { buildSourceTimelineHash, timelineIdentityFromProject, MAX_BOUNDARY_REWINDS_PER_EXPORT, type ExportStateManifest, type PieceDeviation } from './exportCheckpoint';
 import {
   muxOnly,
@@ -4339,6 +4340,52 @@ async function exportProjectWebCodecsRun(
               pieceCount: pieces.length,
               perPiece,
             }),
+            liveness: postEncodeLiveness('concat:verify'),
+          },
+        };
+      }
+    } else if (pieceDeviations.length > 0) {
+      // The total is exactly the planned length, but at least one piece was not:
+      // deviations that cancel (one short, one over) leave a mid-film A/V shift
+      // that a total-only gate would never mention. Same decision, same
+      // disclosure; a "yes" is the ordinary mux (there is nothing to seal).
+      const disclosure: ForcedMp4SealOffer = {
+        picturesKept: measured.pictures,
+        picturesExpected: totalExpectedFramesOverall,
+        picturesLost: 0,
+        keptWallDurationSeconds: measured.pictures / fps,
+        lostWallDurationSeconds: 0,
+        fps,
+        deviatingPieces: pieceDeviations.map((d) => ({ ...d })),
+        ...((ffmpeg as unknown as { sessionId?: string }).sessionId
+          ? { sessionId: (ffmpeg as unknown as { sessionId: string }).sessionId }
+          : {}),
+      };
+      let accepted = true;
+      if (options.requestForcedSealConsent) {
+        try {
+          accepted = await options.requestForcedSealConsent(disclosure);
+        } catch (consentErr) {
+          // A consent surface that throws is not a yes.
+          // eslint-disable-next-line no-console
+          console.warn('[ws3-seal] consent surface threw — treating as declined', causeString(consentErr));
+          accepted = false;
+        }
+      } else {
+        // Nobody to ask: the film is the planned length, so it is delivered;
+        // the deviations stay in the manifest and the diagnostics.
+        // eslint-disable-next-line no-console
+        console.warn('[ws3-piece-count] full-length film delivered with recorded piece deviations', JSON.stringify(disclosure.deviatingPieces));
+      }
+      if (!accepted) {
+        releaseRunFfmpeg(control, ffmpeg);
+        return {
+          ok: false,
+          error: {
+            kind: 'concat',
+            message:
+              `The export was stopped before saving: ${describePieceDeviations(pieceDeviations)}. ` +
+              'The film is the planned length overall, but everything after each of these pieces is shifted against the voiceover.',
             liveness: postEncodeLiveness('concat:verify'),
           },
         };

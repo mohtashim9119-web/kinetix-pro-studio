@@ -454,6 +454,7 @@ import {
 import { ExportSettingsModal } from './components/ExportSettingsModal';
 import { ManageModelsModal } from './components/ManageModelsModal';
 import { ErrorBoundary, PanelFallback } from './components/ErrorBoundary';
+import { frameShiftSentence } from './services/webcodecsExport/pieceDeviationText';
 import { useExport, formatElapsed, formatElapsedLong, formatFrameSpanDuration, type ExportResolution, type ExportFps, type ExportError } from './hooks/useExport';
 import { buildExportDiagnosticsBlob } from './services/exportDiagnosticsBlob';
 import { ExportFailureMessage } from './components/recovery/ExportFailureMessage';
@@ -7851,10 +7852,12 @@ export default function App() {
           <div className="bg-zinc-900 border border-amber-600/60 rounded-xl p-6 max-w-lg w-full shadow-2xl flex flex-col gap-4">
             <div className="flex items-center gap-2 text-amber-400 font-semibold">
               <AlertTriangle size={18} />
-              This export is shorter than your timeline
+              {exportState.pendingSealConsent.picturesLost > 0 ? 'This export is shorter than your timeline' : 'Some pieces were rendered off-plan'}
             </div>
             <p className="text-sm text-zinc-300 leading-relaxed">
-              {exportState.pendingSealConsent.deviatingPieces && exportState.pendingSealConsent.deviatingPieces.length > 0
+              {exportState.pendingSealConsent.picturesLost === 0
+                ? 'The film is the length you asked for overall, but individual pieces gained or lost frames while rendering. It can be saved as a playable MP4 as it is.'
+                : exportState.pendingSealConsent.deviatingPieces && exportState.pendingSealConsent.deviatingPieces.length > 0
                 ? 'The encoder dropped frames while rendering. Everything rendered is valid video and can be saved as a playable MP4 — but it will be a shorter film than the one you asked for.'
                 : 'The encoder stopped early. Everything rendered so far is valid video and can be saved as a playable MP4 — but it will be a shorter film than the one you asked for.'}
             </p>
@@ -7869,9 +7872,7 @@ export default function App() {
                   ))}
                 </ul>
                 <div className="mt-1 text-zinc-400">
-                  Everything after each of these moves one frame earlier against the voiceover
-                  (about {Math.round(1000 / exportState.pendingSealConsent.fps)} ms per frame at{' '}
-                  {exportState.pendingSealConsent.fps} fps).
+                  {frameShiftSentence(exportState.pendingSealConsent.fps)}
                 </div>
               </div>
             )}
@@ -7915,7 +7916,9 @@ export default function App() {
                 onClick={() => resolveSealConsent(true)}
                 className="text-sm bg-amber-600 hover:bg-amber-500 text-white font-semibold rounded-lg px-4 py-2 transition-colors"
               >
-                Save the shorter {formatFrameSpanDuration(exportState.pendingSealConsent.keptWallDurationSeconds)} video
+                {exportState.pendingSealConsent.picturesLost > 0
+                  ? <>Save the shorter {formatFrameSpanDuration(exportState.pendingSealConsent.keptWallDurationSeconds)} video</>
+                  : 'Save the film'}
               </button>
             </div>
           </div>
@@ -7941,7 +7944,13 @@ export default function App() {
             </p>
             {/* WS3 Round 10 — a consented SHORT deliverable never leaves
                 without saying so on the same surface that reports success. */}
-            {exportState.lastExportSealedOffer && (
+            {exportState.lastExportSealedOffer && exportState.lastExportSealedOffer.picturesLost === 0
+              && exportState.lastExportSealedOffer.deviatingPieces && exportState.lastExportSealedOffer.deviatingPieces.length > 0 && (
+              <p className="text-amber-400 text-xs">
+                Saved with off-plan pieces ({exportState.lastExportSealedOffer.deviatingPieces.map(d => d.pieceIndex + 1).join(', ')}) — you approved this.
+              </p>
+            )}
+            {exportState.lastExportSealedOffer && exportState.lastExportSealedOffer.picturesLost > 0 && (
               <p className="text-amber-400 text-xs">
                 Shortened by {formatFrameSpanDuration(exportState.lastExportSealedOffer.lostWallDurationSeconds)}
                 {' '}({exportState.lastExportSealedOffer.picturesLost.toLocaleString()} frames) — you approved this.
