@@ -93,8 +93,43 @@ fn current_process_identity() -> ProcessIdentity {
     }
 }
 
+/// macOS start time of `pid`, in ms since the Unix epoch, from libproc's
+/// `proc_pidinfo(PROC_PIDTBSDINFO)` — the call `ps` uses. Chosen over
+/// `sysctl(KERN_PROC_PID)` because `libc` (already a dependency) exposes
+/// `proc_bsdinfo` with its start-time fields for Apple targets but no
+/// `kinfo_proc`: one fixed-size struct, no hand-declared kernel layout.
+/// `None` when the call fails (no such process, or one we may not inspect) —
+/// callers keep their own "unreadable" handling.
+#[cfg(target_os = "macos")]
+fn macos_pid_start_time_ms(pid: u32) -> Option<u64> {
+    let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
+    let size = std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int;
+    let written = unsafe {
+        libc::proc_pidinfo(
+            pid as libc::c_int,
+            libc::PROC_PIDTBSDINFO,
+            0,
+            &mut info as *mut libc::proc_bsdinfo as *mut libc::c_void,
+            size,
+        )
+    };
+    if written != size {
+        return None;
+    }
+    Some(
+        info.pbi_start_tvsec
+            .saturating_mul(1000)
+            .saturating_add(info.pbi_start_tvusec / 1000),
+    )
+}
+
 fn process_start_time_ms() -> u64 {
-    #[cfg(unix)]
+    #[cfg(target_os = "macos")]
+    {
+        // Own start time unreadable — "now" is still unique within the session.
+        macos_pid_start_time_ms(std::process::id()).unwrap_or_else(now_ms)
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
     {
         use std::time::Duration;
         let pid = std::process::id();
@@ -179,7 +214,7 @@ fn windows_process_times(
     })
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, not(target_os = "macos")))]
 fn boot_time_epoch_ms() -> Option<u64> {
     let text = fs::read_to_string("/proc/stat").ok()?;
     for line in text.lines() {
@@ -196,7 +231,25 @@ pub fn is_holder_process_live(pid: u32, start_time_ms: u64) -> bool {
     if pid == 0 {
         return false;
     }
-    #[cfg(unix)]
+    #[cfg(target_os = "macos")]
+    {
+        // Signal 0 — existence probe only.
+        let alive = unsafe { libc::kill(pid as i32, 0) == 0 };
+        if !alive {
+            return false;
+        }
+        let Some(observed) = macos_pid_start_time_ms(pid) else {
+            // PID exists but start time unreadable — treat as live to avoid stealing.
+            return true;
+        };
+        if start_time_ms == 0 {
+            // Legacy / unverifiable claim: no usable start time recorded.
+            return true;
+        }
+        // Allow 2 s slack for clock rounding — not a heartbeat timeout.
+        observed.abs_diff(start_time_ms) <= 2_000
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
     {
         use std::time::Duration;
         // Signal 0 — existence probe only.
@@ -1438,6 +1491,62 @@ mod tests {
             .collect();
         assert_eq!(reclaimable.len(), 1);
         assert_ne!(*reclaimable[0], RemoveOutcome::PendingDelete);
+    }
+
+    /// macOS: no `/proc`, so the start time comes from libproc. Before it did,
+    /// `is_holder_process_live` read any existing PID as live and the claim
+    /// recorded the claim-write time, so a reused PID kept a session "live"
+    /// for as long as the unrelated process ran — across app restarts too.
+    #[cfg(target_os = "macos")]
+    mod macos_start_time {
+        use super::super::*;
+
+        #[test]
+        fn own_process_start_time_is_plausible_and_stable() {
+            let a = process_start_time_ms();
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            let b = process_start_time_ms();
+            assert_eq!(a, b, "start time must not drift between reads");
+            let now = now_ms();
+            assert!(a <= now, "start {a} after now {now}");
+            assert!(now - a < 3_600_000, "start {a} implausibly far from now {now}");
+        }
+
+        #[test]
+        fn liveness_uses_start_time_to_detect_pid_reuse() {
+            let pid = std::process::id();
+            let start = process_start_time_ms();
+            assert!(is_holder_process_live(pid, start));
+            assert!(is_holder_process_live(pid, start + 1_500), "inside the 2 s slack");
+            // Same PID, start time an hour off ⇒ a different process reused the PID.
+            assert!(!is_holder_process_live(pid, start + 3_600_000));
+            assert!(!is_holder_process_live(pid, start.saturating_sub(3_600_000)));
+            // Legacy/unverifiable record (no start time) with an existing PID ⇒ live.
+            assert!(is_holder_process_live(pid, 0));
+            // Nonexistent PID ⇒ stale regardless of start time.
+            assert!(!is_holder_process_live(4_000_000, start));
+        }
+
+        #[test]
+        fn a_claim_whose_start_time_does_not_match_the_live_pid_reads_stale() {
+            let dir = std::env::temp_dir().join(format!("kinetix-export-{}", Uuid::new_v4()));
+            fs::create_dir_all(&dir).unwrap();
+            let id = Uuid::new_v4().to_string();
+            let record = SessionClaimRecord {
+                schema_version: SESSION_CLAIM_SCHEMA_VERSION,
+                session_id: id.clone(),
+                holder_pid: std::process::id(),
+                holder_start_time_ms: process_start_time_ms() + 3_600_000,
+                holder_instance_id: "a-previous-process".to_string(),
+                claimed_at_ms: now_ms(),
+            };
+            fs::write(dir.join(SESSION_CLAIM_FILENAME), serde_json::to_string(&record).unwrap()).unwrap();
+            assert_eq!(read_session_claim_view(&dir, &id).unwrap().holder_liveness, "stale");
+            // ...and this process may take it over.
+            acquire_session_claim(&dir, &id).unwrap();
+            assert_eq!(read_session_claim_view(&dir, &id).unwrap().holder_liveness, "live");
+            let _ = fs::remove_dir_all(&dir);
+        }
     }
 
     /// Windows-only: compiled by the windows-check CI job (`--all-targets`),
