@@ -11,6 +11,8 @@ import {
   formatFrameSpanDuration,
 } from './useExport';
 import { normalizeSaveSessionFileResult } from '../services/tauriFfmpeg';
+import { readFileSync } from 'fs';
+import { resolve } from 'path';
 
 /**
  * formatElapsed / formatElapsedLong — the live-timer and completion-toast
@@ -307,7 +309,7 @@ describe('progressFor — one smooth run across pieces', () => {
   });
 });
 
-import { retainFailedRunSession } from './useExport';
+import { releaseAbandonedResumedSession, retainFailedRunSession } from './useExport';
 import type { RetainForResumeReport } from '../services/tauriFfmpeg';
 
 /**
@@ -359,5 +361,49 @@ describe('retainFailedRunSession — a failed resumed run leaks no fresh session
     expect(report?.sessionId).toBe('fresh');
     expect(d.destroyed).toEqual([]);
     expect(d.dirs.has('fresh')).toBe(true);
+  });
+});
+
+/**
+ * The paths that only ever reached the FRESH session: a delivery failure on a
+ * resumed run, and unmount/reload. The resumed session they abandoned kept
+ * this process's claim, which reads `live` for the rest of the app run — so
+ * the next Retry was refused as "another window is using this session". The
+ * release is the same unforced destroy C4 uses for the unused fresh session:
+ * the native manifest guard keeps every file and drops the claim.
+ */
+describe('releaseAbandonedResumedSession', () => {
+  it('releases the resumed session unforced, so its files stay and its claim goes', async () => {
+    const calls: unknown[] = [];
+    await releaseAbandonedResumedSession(
+      { destroy: async (opts?: { force?: boolean; failureKind?: string }) => { calls.push(opts); return null; } },
+      'delivery-failed',
+    );
+    expect(calls).toEqual([{ force: false, failureKind: 'delivery-failed' }]);
+  });
+
+  it('is a no-op for a run that was not resumed', async () => {
+    await expect(releaseAbandonedResumedSession(null, 'unmount')).resolves.toBeUndefined();
+  });
+
+  it('is best-effort: a failing release never throws', async () => {
+    await expect(releaseAbandonedResumedSession(
+      { destroy: async () => { throw new Error('EBUSY'); } },
+      'unmount',
+    )).resolves.toBeUndefined();
+  });
+
+  it('is wired into the delivery-failure path (before the fresh teardown) and the unmount cleanup', () => {
+    const src = readFileSync(resolve(import.meta.dirname, 'useExport.ts'), 'utf-8');
+    const delivery = src.indexOf("await teardown(false, 'delivery-failed');");
+    expect(delivery).toBeGreaterThan(-1);
+    const release = src.lastIndexOf("await releaseAbandonedResumedSession(resumeFfmpeg as never, 'delivery-failed');", delivery);
+    expect(release).toBeGreaterThan(-1);
+    expect(delivery - release).toBeLessThan(200);
+    const unmount = src.indexOf("void teardown(false, 'unmount');");
+    const unmountRelease = src.indexOf("void releaseAbandonedResumedSession(resumedSessionRef.current, 'unmount');");
+    expect(unmountRelease).toBeGreaterThan(-1);
+    expect(Math.abs(unmount - unmountRelease)).toBeLessThan(200);
+    expect(src).toContain('resumedSessionRef.current = adopted.resumable.session');
   });
 });

@@ -459,6 +459,28 @@ export async function retainFailedRunSession(
   return report;
 }
 
+/**
+ * Releases a resumed session a path walked away from without retaining or
+ * destroying it: a delivery failure, unmount/reload. Those reach only the
+ * fresh session, so the resumed one kept this process's claim, which reads
+ * `live` for the rest of the app run. The same unforced destroy as
+ * `retainFailedRunSession`'s fresh-session release (C4): the native manifest
+ * guard keeps every file and drops the claim. The ledger row is kept, so the
+ * collector still dates the session correctly. Best-effort.
+ */
+export async function releaseAbandonedResumedSession(
+  resumed: { destroy(opts?: { force?: boolean; failureKind?: string }): Promise<unknown> } | null,
+  failureKind: string,
+): Promise<void> {
+  if (!resumed) return;
+  try {
+    await resumed.destroy({ force: false, failureKind });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn('[ws3-resume] could not release the abandoned resumed session', err instanceof Error ? err.message : String(err));
+  }
+}
+
 export function useExport(
   project: Project,
   exportResolution: ExportResolution,
@@ -469,6 +491,11 @@ export function useExport(
 
   // Tauri native backend ref — lazy: created on first startExport.
   const tauriBackendRef = useRef<TauriBackend | null>(null);
+
+  /** The session the current run RESUMED into, from adoption until the run
+   *  releases or retains it. `teardown` knows only the fresh session, so
+   *  unmount releases this one separately. */
+  const resumedSessionRef = useRef<{ destroy(opts?: { force?: boolean; failureKind?: string }): Promise<unknown> } | null>(null);
 
   // Generation counter — incremented on every cancel so in-flight onProgress
   // callbacks from the dying export silently no-op and never overwrite new state.
@@ -537,11 +564,15 @@ export function useExport(
     return () => {
       stopElapsedTimer();
       void teardown(false, 'unmount');
+      void releaseAbandonedResumedSession(resumedSessionRef.current, 'unmount');
     };
   }, [teardown, stopElapsedTimer]);
 
   const runExport = useCallback(async (snapshot: ExportSnapshot): Promise<void> => {
     const gen = ++generationRef.current;
+    // A previous run's resumed session was settled by its own path (or its
+    // cancel); only this run's adoption may set the ref again.
+    resumedSessionRef.current = null;
 
     setState({
       isExporting: true,
@@ -833,6 +864,7 @@ export function useExport(
               throw new Error(adopted.rejected[0]?.reason ?? 'no offered session could be adopted');
             }
             resumeFfmpeg = adopted.resumable.session as unknown as WebCodecsFfmpeg;
+            resumedSessionRef.current = adopted.resumable.session;
             resumePlanSessionId = adopted.resumable.sessionId;
             resumePlan = {
               pieceIndex: adopted.resumable.checkpoint.pieceIndex,
@@ -1001,6 +1033,8 @@ export function useExport(
 
     if (!result.ok) {
       stopElapsedTimer();
+      // Retained or released below — either way no longer abandoned.
+      resumedSessionRef.current = null;
       const durabilityWarnings = await drainDurabilityWarnings();
       // WS3 item F — see `buildNativeFailureKind`'s own doc comment.
       const failureKind: string = buildNativeFailureKind(result.error);
@@ -1106,6 +1140,8 @@ export function useExport(
     } catch (err) {
       stopElapsedTimer();
       const drained = await drainDurabilityWarnings();
+      resumedSessionRef.current = null;
+      await releaseAbandonedResumedSession(resumeFfmpeg as never, 'delivery-failed');
       await teardown(false, 'delivery-failed');
       if (generationRef.current !== gen) return;
       setState(prev => ({
@@ -1137,6 +1173,7 @@ export function useExport(
     // manifest is still on disk at this point (nothing clears it on
     // success), but there is nothing left to resume, so this is a forced
     // destroy regardless of it.
+    resumedSessionRef.current = null;
     await releaseResumedSession(true, 'success');
     await teardown(true, 'success');
     if (generationRef.current !== gen) return;

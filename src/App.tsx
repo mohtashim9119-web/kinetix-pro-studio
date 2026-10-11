@@ -462,7 +462,7 @@ import { summarizeProjectForBulk } from './services/syncLogSummary';
 import { projectCostLedger } from './services/projectCostLedgerShared';
 import { StorageRootRelocationView } from './components/recovery/StorageRootRelocationView';
 import { useStorageRootRelocation } from './hooks/useStorageRootRelocation';
-import { findUsableCheckpoint, resolveReexportCheckpoint, type ReexportCheckOutcome } from './services/webcodecsExport/exportReexportCheck';
+import { findUsableCheckpoint, purgeCheckpointSession, resolveReexportCheckpoint, type ReexportCheckOutcome } from './services/webcodecsExport/exportReexportCheck';
 import { useWhisper } from './hooks/useWhisper';
 import { usePlayback } from './hooks/usePlayback';
 import { TranscriptionBar } from './components/TranscriptionBar';
@@ -3566,22 +3566,6 @@ export default function App() {
     }
   }, [exportState.pendingResumeOffer, resolveResumeChoice]);
 
-  // Purges a checkpoint session's chunks + manifest. Routes through the
-  // SAME audited-delete-backed call `useExport.ts`'s own "start clean"
-  // discard already uses (reenter -> destroy({force:true})) — see
-  // session_claim.rs's destroy_session_dir, the one function in the Rust
-  // crate permitted to call remove_dir_all, always via
-  // safe_delete::delete_app_staging_dir. No new native surface.
-  const purgeCheckpointSession = useCallback(async (sessionId: string, failureKind: string): Promise<void> => {
-    try {
-      const handle = await TauriFfmpeg.reenter(sessionId);
-      await handle.destroy({ force: true, failureKind });
-    } catch (err) {
-      // eslint-disable-next-line no-console
-      console.warn('[ws3-reexport] checkpoint purge failed (non-fatal — TTL sweep will catch it later)', err instanceof Error ? err.message : String(err));
-    }
-  }, []);
-
   // Segments with no media export as black frames on the slower canvas path;
   // the user is asked once per Export click, and re-checked on the next click.
   const proceedToExportSettings = useCallback(async (): Promise<void> => {
@@ -3617,7 +3601,8 @@ export default function App() {
     }
     // 'edited' — no modal. The checkpoint was auto-purged: surface the
     // verbatim inline notice, open a fresh export config. A live claim skips
-    // the purge (conservatively — see `purgeCheckpointSession`), and then
+    // the purge (conservatively — see `purgeCheckpointSession` in
+    // exportReexportCheck.ts), and then
     // nothing was cleared, so the notice would be false.
     if (purge?.kind === 'skipped-live-claim') {
       // eslint-disable-next-line no-console
@@ -3636,9 +3621,22 @@ export default function App() {
     if (!reexportOffer) return;
     const { sessionId } = reexportOffer;
     setReexportOffer(null);
-    await purgeCheckpointSession(sessionId, 'reexport-start-fresh');
+    // The same live-claim-guarded purge the Export-click auto-purge uses
+    // (C2). A live claim may be a run using this session right now, so it is
+    // skipped. CONSERVATIVE: this process can also hold claims no run is
+    // using (C1b's post-fence holds); those are kept until a restart makes the
+    // claim stale, and the TTL collector removes them then. Keeping a session
+    // the operator discarded is the safe failure direction.
+    const purge = await purgeCheckpointSession(sessionId, 'reexport-start-fresh', {
+      readSessionClaim: (id) => TauriFfmpeg.readSessionClaim(id),
+      reenter: (id) => TauriFfmpeg.reenter(id),
+    });
+    if (purge.kind !== 'purged') {
+      // eslint-disable-next-line no-console
+      console.warn('[ws3-reexport] start-fresh kept the checkpoint session', purge.kind, purge.sessionId);
+    }
     setShowExportSettingsModal(true);
-  }, [reexportOffer, purgeCheckpointSession]);
+  }, [reexportOffer]);
 
   const performReexportResume = useCallback((offer: NonNullable<typeof reexportOffer>): void => {
     const { sessionId, manifest } = offer;
