@@ -400,8 +400,10 @@ describe('releaseAbandonedResumedSession', () => {
     const release = src.lastIndexOf("await releaseAbandonedResumedSession(resumeFfmpeg as never, 'delivery-failed');", delivery);
     expect(release).toBeGreaterThan(-1);
     expect(delivery - release).toBeLessThan(200);
-    const unmount = src.indexOf("void teardown(false, 'unmount');");
-    const unmountRelease = src.indexOf("void releaseAbandonedResumedSession(resumedSessionRef.current, 'unmount');");
+    // The unmount releases with the truthful label: `cancel` after a cancel, else `unmount`.
+    const unmount = src.indexOf("void teardown(false, label);");
+    const unmountRelease = src.indexOf("void releaseAbandonedResumedSession(resumedSessionRef.current, label);");
+    expect(src).toContain("const label = teardownLabelRef.current ?? 'unmount';");
     expect(unmountRelease).toBeGreaterThan(-1);
     expect(Math.abs(unmount - unmountRelease)).toBeLessThan(200);
     expect(src).toContain('resumedSessionRef.current = adopted.resumable.session');

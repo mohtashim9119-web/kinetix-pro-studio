@@ -509,6 +509,12 @@ export function useExport(
   // Tauri native backend ref — lazy: created on first startExport.
   const tauriBackendRef = useRef<TauriBackend | null>(null);
 
+  /** Set by cancelExport: why this hook's sessions are going away. The unmount
+   *  that follows a bulk cancel reaches native destroy BEFORE the cancel's own
+   *  async teardown does, and the first destroy is the one native logs — so
+   *  the unmount uses this label when it is set, and a cancel reads `cancel`. */
+  const teardownLabelRef = useRef<string | null>(null);
+
   /** The CURRENT run's cancel handle (a new one per runExport). The pipeline
    *  registers its worker and ffmpeg session on it; cancel reaches only it. */
   const runControlRef = useRef<ExportRunControl>(createExportRunControl());
@@ -584,8 +590,9 @@ export function useExport(
   useEffect(() => {
     return () => {
       stopElapsedTimer();
-      void teardown(false, 'unmount');
-      void releaseAbandonedResumedSession(resumedSessionRef.current, 'unmount');
+      const label = teardownLabelRef.current ?? 'unmount';
+      void teardown(false, label);
+      void releaseAbandonedResumedSession(resumedSessionRef.current, label);
       interests?.clear(sessionInterestOwner);
     };
   }, [teardown, stopElapsedTimer, interests, sessionInterestOwner]);
@@ -595,6 +602,7 @@ export function useExport(
     // A previous run's resumed session was settled by its own path (or its
     // cancel); only this run's adoption may set the ref again.
     resumedSessionRef.current = null;
+    teardownLabelRef.current = null;
     const runControl = createExportRunControl();
     runControlRef.current = runControl;
 
@@ -616,8 +624,9 @@ export function useExport(
     // -------------------------------------------------------------------------
     // Backend acquisition — Tauri native path only (wasm removed in Phase 6.4).
     // -------------------------------------------------------------------------
+    let runBackend: TauriBackend;
     try {
-      tauriBackendRef.current = await createTauriBackend();
+      runBackend = await createTauriBackend();
     } catch (err) {
       if (generationRef.current !== gen) return;
       stopElapsedTimer();
@@ -644,7 +653,20 @@ export function useExport(
       return;
     }
 
-    if (generationRef.current !== gen) return;
+    // A run that created a session and then lost its generation before the
+    // pipeline took the session over — superseded by a newer start (StrictMode
+    // mounts a kickoff effect twice in dev), or cancelled while the session
+    // was still being created, so the cancel could not see it — releases the
+    // session it created. Guarded destroy, the same disposition the unused
+    // fresh session of a resumed run gets (C4): no manifest yet, so the folder
+    // and this process's claim go. When the ref still holds it, a cancel's
+    // own teardown releases it instead.
+    const abandonStart = async (): Promise<void> => {
+      if (tauriBackendRef.current === runBackend) return;
+      await runBackend.dispose({ force: false, failureKind: 'abandoned-start' });
+    };
+    if (generationRef.current !== gen) { await abandonStart(); return; }
+    tauriBackendRef.current = runBackend;
 
     // ── WS3 STEP 8 (H10 + C6) — ORPHAN SWEEP + CLEANUP NOTICES ─────────────
     //
@@ -868,7 +890,7 @@ export function useExport(
             interests,
             interestOwner,
           });
-      if (generationRef.current !== gen) return;
+      if (generationRef.current !== gen) { await abandonStart(); return; }
       if (notice) setState(prev => ({ ...prev, resumeRefusalNotice: notice }));
       if (offer) {
         const choice = await new Promise<'resume' | 'clean'>((resolve) => {
@@ -879,7 +901,7 @@ export function useExport(
           };
           setState(prev => ({ ...prev, pendingResumeOffer: offer }));
         });
-        if (generationRef.current !== gen) return;
+        if (generationRef.current !== gen) { await abandonStart(); return; }
         if (choice === 'resume') {
           let reenterError: string | null = null;
           try {
@@ -1350,6 +1372,7 @@ export function useExport(
     const wasWebCodecsPath = activePathRef.current === 'webcodecs';
     // Taken NOW, synchronously: the run being cancelled, never a later one.
     const runControl = runControlRef.current;
+    teardownLabelRef.current = 'cancel';
     // Registered on the teardown latch: a bulk queue's NEXT start awaits it,
     // so the old session's kill/destroy never overlaps the next export.
     trackExportTeardown((async () => {

@@ -7,6 +7,7 @@ import {
   type ExportCheckpointRecord,
 } from './webcodecsExport/exportCheckpoint';
 import { recordCleanupFailure } from './webcodecsExport/exportCleanupNotices';
+import { forgetExportSession } from './webcodecsExport/exportSessionLedger';
 
 export type { AnnexbFrameCount };
 
@@ -750,6 +751,11 @@ export class TauriFfmpeg implements FfmpegLike {
         force: opts?.force ?? false,
         failureKind: opts?.failureKind ?? null,
       });
+      // The folder is gone: so is its ledger row, or dead rows would push
+      // live checkpoints out of the ledger's cap. A refused destroy keeps both.
+      if (outcome.disposition === 'destroyed' || outcome.disposition === 'not_found') {
+        forgetExportSession(this.#sessionId);
+      }
       if (outcome.disposition === 'refused_manifest') {
         // Not a failure — the native guard did its job. Logged (not routed
         // through recordCleanupFailure, which is reserved for genuine

@@ -275,7 +275,7 @@ describe('findResumeOffer — the offer mutates nothing; adoption runs only afte
 
     const src = readFileSync(resolve(import.meta.dirname, '..', '..', 'hooks', 'useExport.ts'), 'utf-8');
     const discoveryAt = src.indexOf('await findResumeOffer(');
-    const genCheckAt = src.indexOf('if (generationRef.current !== gen) return;', discoveryAt);
+    const genCheckAt = src.indexOf('if (generationRef.current !== gen) {', discoveryAt);
     const resumeAnswerAt = src.indexOf("if (choice === 'resume')", genCheckAt);
     const adoptAt = src.indexOf('await adoptResumeOffer(');
     expect(discoveryAt).toBeGreaterThan(-1);
