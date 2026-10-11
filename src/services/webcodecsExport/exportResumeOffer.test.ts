@@ -312,6 +312,21 @@ describe('Phase B — adoptRankedResume (mutating, after consent)', () => {
     expect(h.calls).toContain(`destroy(${OLD},unforced)`);
   });
 
+  it('Round 24: adopting a fully rendered session fences nothing, re-renders nothing, and resumes past the last piece', async () => {
+    const h = multiSessionIo({ [OLD]: { json: manifest({ sessionId: OLD, completedPieces: 3 }), files: {} } });
+    const { ranked } = await rankResumeCandidates(h.io, target, [OLD], () => 1);
+    const adopted = await adoptRankedResume(h.io, ranked, target, h.countPictures);
+    const r = adopted.resumable!;
+    expect(r.checkpoint.pieceIndex).toBe(3);
+    expect(r.picturesAlreadyRendered).toBe(3_000);
+    expect(r.picturesTotal).toBe(3_000);
+    expect(h.calls.some((c) => c.startsWith('prepareCheckpointResume('))).toBe(false);
+    expect(h.calls.some((c) => c.startsWith('truncateAnnexbToOffset('))).toBe(false);
+    expect(h.calls.filter((c) => c.startsWith('count('))).toEqual([
+      `count(${OLD},piece_0.h264)`, `count(${OLD},piece_1.h264)`, `count(${OLD},piece_2.h264)`,
+    ]);
+  });
+
   it('(3) the winner\'s bytes are untouched until adopt is called', async () => {
     const h = multiSessionIo({ [OLD]: { ...sixtyPercent(OLD), json: manifest({ sessionId: OLD, rows: [{ pieceIndex: 1, encoderSessionIndex: 2, byteOffset: 8_000, seamByteOffset: 7_900, cumulativePictures: 800 }] }) } });
     const { ranked } = await rankResumeCandidates(h.io, target, [OLD], () => 1);

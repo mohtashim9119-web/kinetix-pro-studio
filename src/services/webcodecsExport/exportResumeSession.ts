@@ -16,17 +16,25 @@ import {
   type ExportCheckpointExpectedIdentity,
 } from './exportCheckpoint';
 import {
+  adoptRankedResume,
   collectAbandonedSessions,
-  discoverResumableExport,
+  rankResumeCandidates,
   type ResumableExport,
+  type ResumeAdoptIo,
+  type ResumeCandidate,
   type ResumeDiscoveryIo,
   type ResumeRejection,
   type ResumeSessionHandle,
+  type ResumeTargetPlan,
 } from './exportResumeDiscovery';
 import { exportSessionCreatedAt, forgetExportSession } from './exportSessionLedger';
 import { FRAME_COUNT_BOUND_MS, withFfmpegLivenessBound } from './ffmpegLivenessBound';
 
-/** What the operator is shown, and what the pipeline needs to continue. */
+/**
+ * What the operator is shown. Built read-only (Phase A): nothing about the
+ * session has been claimed, fenced or cut. `adoptResumeOffer` does that, and
+ * only once the operator has answered Resume.
+ */
 export interface ResumeOffer {
   sessionId: string;
   picturesAlreadyRendered: number;
@@ -35,9 +43,14 @@ export interface ResumeOffer {
   /** Wall-clock seconds already rendered — what the offer actually says. */
   secondsAlreadyRendered: number;
   secondsTotal: number;
-  resumable: ResumableExport;
+  /** Phase A's pick: the furthest-progress valid candidate. */
+  candidate: ResumeCandidate;
+  /** Phase A's whole ranking, the pick first — what adoption falls through. */
+  ranked: readonly ResumeCandidate[];
+  /** The plan the ranking was made against; adoption re-validates against it. */
+  target: ResumeTargetPlan;
   /**
-   * WS3 STEP 8 (H5) — mirrors `resumable.staleClaimRecovered`. True means
+   * WS3 STEP 8 (H5) — mirrors `candidate.staleClaim`. True means
    * this session's own prior holder process crashed (its claim read
    * `stale`) rather than exited cleanly, so the offer UI must show a
    * "recovering an abandoned session" notice — DIFFERENT wording from the
@@ -64,8 +77,8 @@ export interface ResumeRefusalNotice {
 }
 
 function refusalNoticeFromRejections(rejected: readonly ResumeRejection[]): ResumeRefusalNotice | null {
-  // Newest first (the caller passes `ordered`), so the first match is the
-  // candidate THIS export would actually have tried.
+  // In the order the candidates were inspected: the first match is the one
+  // the operator is told about.
   for (const r of rejected) {
     // WS3 STEP 8 (H5) — checked first: a live-claim block is decided before
     // `reenter` is even attempted, so it is the most specific signal
@@ -138,13 +151,16 @@ export async function buildExpectedIdentity(
  * Looks for a resumable export for this exact timeline, then collects whatever
  * abandoned sessions the policy says should go.
  *
+ * READ-ONLY with respect to every candidate (Phase A, `rankResumeCandidates`):
+ * no claim is taken, no fence is armed, no byte is cut. Cancelling at the
+ * prompt therefore leaves every session exactly as it was, and the next pass
+ * in the same app run makes the same offer. The collector is the one part
+ * that destroys anything, and only sessions the policy selects — never the
+ * offer, never `inUseSessionId`, never one a live claim holds (C3).
+ *
  * Everything here is best-effort: a failure returns "no offer" and the export
  * starts clean, which is always a correct outcome. `notice` is a SEPARATE,
- * non-blocking signal: unlike `offer`, it is never something the operator
- * answers — the export proceeds either way — but a `bitstream_touched` or
- * `budget_exhausted` refusal must still reach them (WS3 Round 12, STEP 1),
- * because both are silently indistinguishable from "nothing to resume"
- * otherwise.
+ * non-blocking signal the operator never answers.
  */
 export async function findResumeOffer(params: {
   project: Project;
@@ -156,11 +172,9 @@ export async function findResumeOffer(params: {
   inUseSessionId?: string;
   nowMs?: number;
   io?: ResumeDiscoveryIo;
-  countPicturesImpl?: (session: ResumeSessionHandle, path: string) => Promise<number>;
   spotRenderSpecs?: import('./spotRenderSpec').SpotRenderSpec[] | null;
 }): Promise<{ offer: ResumeOffer | null; notice: ResumeRefusalNotice | null }> {
   const io = params.io ?? tauriIo;
-  const count = params.countPicturesImpl ?? countPictures;
   const nowMs = params.nowMs ?? Date.now();
 
   let sessionIds: string[] = [];
@@ -171,42 +185,35 @@ export async function findResumeOffer(params: {
   }
   if (sessionIds.length === 0) return { offer: null, notice: null };
 
-  // Newest first — the ledger's job. An id the ledger does not know sorts last,
-  // matching the cleanup policy's own "unknown means oldest" treatment.
-  const ordered = [...sessionIds].sort((a, b) => {
-    const at = exportSessionCreatedAt(a);
-    const bt = exportSessionCreatedAt(b);
-    if (at === bt) return a < b ? -1 : 1;
-    if (at === null) return 1;
-    if (bt === null) return -1;
-    return bt - at;
-  });
-
   let offer: ResumeOffer | null = null;
   let notice: ResumeRefusalNotice | null = null;
   try {
     const expected = await buildExpectedIdentity(params.project, {
       fps: params.fps, width: params.width, height: params.height,
     }, { spotRenderSpecs: params.spotRenderSpecs });
-    const found = await discoverResumableExport(
+    const target: ResumeTargetPlan = { expected, pieceExpectedFrames: params.pieceExpectedFrames };
+    const { ranked, rejected } = await rankResumeCandidates(
       io,
-      { expected, pieceExpectedFrames: params.pieceExpectedFrames },
-      count,
-      ordered.filter((id) => id !== params.inUseSessionId),
+      target,
+      sessionIds.filter((id) => id !== params.inUseSessionId),
+      exportSessionCreatedAt,
     );
-    if (found.resumable) {
+    const best = ranked[0];
+    if (best) {
       offer = {
-        sessionId: found.resumable.sessionId,
-        picturesAlreadyRendered: found.resumable.picturesAlreadyRendered,
-        picturesTotal: found.resumable.picturesTotal,
+        sessionId: best.sessionId,
+        picturesAlreadyRendered: best.projectedPicturesRendered,
+        picturesTotal: best.picturesTotal,
         fps: params.fps,
-        secondsAlreadyRendered: found.resumable.picturesAlreadyRendered / params.fps,
-        secondsTotal: found.resumable.picturesTotal / params.fps,
-        resumable: found.resumable,
-        claimRecoveryNotice: found.resumable.staleClaimRecovered,
+        secondsAlreadyRendered: best.projectedPicturesRendered / params.fps,
+        secondsTotal: best.picturesTotal / params.fps,
+        candidate: best,
+        ranked,
+        target,
+        claimRecoveryNotice: best.staleClaim,
       };
     } else {
-      notice = refusalNoticeFromRejections(found.rejected);
+      notice = refusalNoticeFromRejections(rejected);
     }
   } catch (err) {
     // eslint-disable-next-line no-console
@@ -229,9 +236,39 @@ export async function findResumeOffer(params: {
       nowMs,
     });
     for (const id of collected) forgetExportSession(id);
+    // A collected session is gone: adoption must not fall through to it.
+    if (offer && collected.length > 0) {
+      offer = { ...offer, ranked: offer.ranked.filter((c) => !collected.includes(c.sessionId)) };
+    }
   } catch {
     // Cleanup is housekeeping; it never blocks or fails an export.
   }
 
   return { offer, notice };
+}
+
+/**
+ * Phase B — call ONLY after the operator answered Resume. Re-enters, arms,
+ * fences (or clears) and steps back to the seam on the offered session; if
+ * that fails, on the next candidate of the offer's ranking, and so on
+ * (`adoptRankedResume`). `resumable` is null when none survived; `notice`
+ * then carries the reason the operator must hear (a bitstream cut before a
+ * refusal, an exhausted budget), exactly as discovery reported it before the
+ * two phases were split.
+ */
+export async function adoptResumeOffer(
+  offer: ResumeOffer,
+  params: {
+    io?: ResumeAdoptIo;
+    countPicturesImpl?: (session: ResumeSessionHandle, path: string) => Promise<number>;
+  } = {},
+): Promise<{ resumable: ResumableExport | null; rejected: ResumeRejection[]; notice: ResumeRefusalNotice | null }> {
+  const io = params.io ?? tauriIo;
+  const count = params.countPicturesImpl ?? countPictures;
+  const adopted = await adoptRankedResume(io, offer.ranked, offer.target, count);
+  return {
+    resumable: adopted.resumable,
+    rejected: adopted.rejected,
+    notice: adopted.resumable ? null : refusalNoticeFromRejections(adopted.rejected),
+  };
 }

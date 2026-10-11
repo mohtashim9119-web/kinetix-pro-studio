@@ -12,7 +12,9 @@
 import { describe, it, expect } from 'vitest';
 import type { Project } from '../../types';
 import { AnimationType, TransitionType } from '../../types';
-import { findResumeOffer } from './exportResumeSession';
+import { readFileSync } from 'fs';
+import { resolve } from 'path';
+import { adoptResumeOffer, findResumeOffer } from './exportResumeSession';
 import {
   appendExportCheckpoint,
   createExportStateManifest,
@@ -55,7 +57,7 @@ function ioFor(handle: Partial<ResumeSessionHandle> & { readExportState: ResumeS
 }
 
 describe('findResumeOffer — resume refusal notice', () => {
-  it('bitstream_touched reaches the caller as a notice, with no offer', async () => {
+  it('bitstream_touched reaches the caller as adoption\'s notice — the offer itself cut nothing', async () => {
     let currentSize = 5_000;
     const io = ioFor({
       readExportState: async () => new TextEncoder().encode(
@@ -71,9 +73,12 @@ describe('findResumeOffer — resume refusal notice', () => {
       project: project(), fps: 30, width: 1920, height: 1080,
       pieceExpectedFrames: [60], io, nowMs: 0,
     });
-    expect(offer).toBeNull();
-    expect(notice?.kind).toBe('bitstream_touched');
-    expect(notice?.bitstreamTouched).toEqual({ path: 'piece_0.h264', fileLengthBefore: 5_000, fileLengthAfter: 4_000 });
+    expect(notice).toBeNull();
+    expect(currentSize).toBe(5_000);
+    const adopted = await adoptResumeOffer(offer!, { io, countPicturesImpl: async () => 60 });
+    expect(adopted.resumable).toBeNull();
+    expect(adopted.notice?.kind).toBe('bitstream_touched');
+    expect(adopted.notice?.bitstreamTouched).toEqual({ path: 'piece_0.h264', fileLengthBefore: 5_000, fileLengthAfter: 4_000 });
   });
 
   it('budget_exhausted reaches the caller as a notice, with no offer', async () => {
@@ -178,3 +183,126 @@ function manifestJsonFor(params: { byteOffset: number; cumulativePictures: numbe
   manifest = appendExportCheckpoint(manifest, { ...record, sourceTimelineHash: finalHash, fps: 30, width: 1920, height: 1080 });
   return serializeExportState(manifest);
 }
+
+/**
+ * The bug this round opened for: discovery used to claim, fence and seam-cut
+ * before the operator answered, so a cancel at the prompt left the file cut
+ * and the session claimed by this process — and the next pass in the same app
+ * run refused it as "another window is using this session". This fake models
+ * the native pair: `reenter` takes this process's claim (read back `live`
+ * while the app runs), the fence and seam cut shorten the file, and an
+ * unforced destroy only drops the claim.
+ */
+describe('findResumeOffer — the offer mutates nothing; adoption runs only after Resume', () => {
+  function appRun(json: string, pieceBytes: number) {
+    const files: Record<string, number> = { 'piece_0.h264': pieceBytes };
+    const claims = new Set<string>();
+    const mutations: string[] = [];
+    let prepared = 0;
+    const io: ResumeDiscoveryIo = {
+      listResumableSessionIds: async () => [SESSION],
+      readSessionClaim: async (id) => ({ holderLiveness: claims.has(id) ? 'live' : 'unclaimed' }),
+      peekExportState: async () => ({ kind: 'found', bytes: Array.from(new TextEncoder().encode(json)) }),
+      peekSessionFileSize: async (_id, path) => files[path]!,
+      reenter: async (sessionId) => {
+        mutations.push('reenter');
+        claims.add(sessionId);
+        return {
+          sessionId,
+          readExportState: async () => new TextEncoder().encode(json),
+          sessionFileSize: async (path) => files[path]!,
+          prepareCheckpointResume: async (path, cp) => {
+            mutations.push('prepareCheckpointResume');
+            files[path] = cp.byteOffset;
+            prepared = cp.cumulativePictures;
+            return { pictures: cp.cumulativePictures, vclNals: 0, bytesRemoved: 0, keptBytes: cp.byteOffset };
+          },
+          truncateAnnexbToOffset: async (path, off) => {
+            mutations.push('truncateAnnexbToOffset');
+            files[path] = off;
+            return { pictures: prepared, vclNals: 0, bytesRemoved: 0, keptBytes: off };
+          },
+          clearResumeFence: async () => { mutations.push('clearResumeFence'); },
+          destroy: async () => { mutations.push('destroy'); claims.delete(sessionId); },
+        };
+      },
+    };
+    return { io, files, claims, mutations };
+  }
+
+  async function checkpointJson(): Promise<string> {
+    let manifest = createExportStateManifest({
+      sessionId: SESSION, projectId: 'proj-1', sourceTimelineHash: await expectedHash(), fps: 30, width: 1920, height: 1080,
+    });
+    manifest = appendExportCheckpoint(manifest, {
+      pieceIndex: 0, encoderSessionIndex: 1, byteOffset: 4_000, seamByteOffset: 3_900, cumulativePictures: 30,
+      fps: 30, width: 1920, height: 1080, sourceTimelineHash: await expectedHash(),
+    });
+    return serializeExportState(manifest);
+  }
+
+  const offerParams = (io: ResumeDiscoveryIo) => ({
+    project: project(), fps: 30, width: 1920, height: 1080, pieceExpectedFrames: [60], io, nowMs: 0,
+  });
+
+  it('(1) THE ABANDON CASE: cancel at the prompt leaves the file byte-identical and unclaimed, and the next pass makes the SAME offer', async () => {
+    const run = appRun(await checkpointJson(), 4_500);
+    const first = await findResumeOffer(offerParams(run.io));
+    expect(first.offer?.sessionId).toBe(SESSION);
+    // The operator cancels here: nothing adopts.
+    expect(run.files).toEqual({ 'piece_0.h264': 4_500 });
+    expect(run.mutations).toEqual([]);
+    expect(run.claims.size).toBe(0);
+
+    const second = await findResumeOffer(offerParams(run.io));
+    expect(second.notice).toBeNull();
+    expect(second.offer?.sessionId).toBe(SESSION);
+    expect(second.offer?.picturesAlreadyRendered).toBe(first.offer!.picturesAlreadyRendered);
+    expect(second.offer?.picturesTotal).toBe(first.offer!.picturesTotal);
+    expect(run.files).toEqual({ 'piece_0.h264': 4_500 });
+  });
+
+  it('(2) cancelled while discovery is still running: the file is untouched, and useExport adopts only after the generation check and a Resume answer', async () => {
+    const run = appRun(await checkpointJson(), 4_500);
+    const pending = findResumeOffer(offerParams(run.io));
+    // useExport.ts: `if (generationRef.current !== gen) return;` straight after
+    // discovery — the result is dropped, nothing else runs.
+    await pending;
+    expect(run.mutations).toEqual([]);
+    expect(run.files).toEqual({ 'piece_0.h264': 4_500 });
+
+    const src = readFileSync(resolve(import.meta.dirname, '..', '..', 'hooks', 'useExport.ts'), 'utf-8');
+    const discoveryAt = src.indexOf('await findResumeOffer(');
+    const genCheckAt = src.indexOf('if (generationRef.current !== gen) return;', discoveryAt);
+    const resumeAnswerAt = src.indexOf("if (choice === 'resume')", genCheckAt);
+    const adoptAt = src.indexOf('await adoptResumeOffer(');
+    expect(discoveryAt).toBeGreaterThan(-1);
+    expect(genCheckAt).toBeGreaterThan(discoveryAt);
+    expect(resumeAnswerAt).toBeGreaterThan(genCheckAt);
+    expect(adoptAt).toBeGreaterThan(resumeAnswerAt);
+    expect(src.indexOf('adoptResumeOffer(', adoptAt + 'await adoptResumeOffer('.length)).toBe(-1);
+  });
+
+  it('(3) choosing Resume still resumes — and the file is cut only then', async () => {
+    const run = appRun(await checkpointJson(), 4_500);
+    const { offer } = await findResumeOffer(offerParams(run.io));
+    expect(run.files['piece_0.h264']).toBe(4_500);
+    const adopted = await adoptResumeOffer(offer!, { io: run.io, countPicturesImpl: async () => 60 });
+    expect(adopted.resumable?.sessionId).toBe(SESSION);
+    expect(adopted.resumable?.appendFromByteOffset).toBe(3_900);
+    expect(adopted.resumable?.picturesAlreadyRendered).toBe(30);
+    expect(run.mutations).toEqual(['reenter', 'prepareCheckpointResume', 'truncateAnnexbToOffset']);
+    expect(run.files['piece_0.h264']).toBe(3_900);
+  });
+
+  it('(4) no app restart is needed to get the offer back: abandon twice, then Resume adopts in the same run', async () => {
+    const run = appRun(await checkpointJson(), 4_500);
+    await findResumeOffer(offerParams(run.io));
+    await findResumeOffer(offerParams(run.io));
+    const { offer, notice } = await findResumeOffer(offerParams(run.io));
+    expect(notice).toBeNull();
+    const adopted = await adoptResumeOffer(offer!, { io: run.io, countPicturesImpl: async () => 60 });
+    expect(adopted.resumable?.sessionId).toBe(SESSION);
+    expect(adopted.notice).toBeNull();
+  });
+});

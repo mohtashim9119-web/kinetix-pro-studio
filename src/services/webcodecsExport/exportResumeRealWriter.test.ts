@@ -38,7 +38,7 @@ vi.mock('./muxOnly', async (importOriginal) => ({
 import { exportProjectWebCodecs, cancelExportWebCodecs, type WebCodecsFfmpeg } from './exportPipelineWebCodecs';
 import { encodeSegment } from '../segmentEncoder';
 import { muxOnly } from './muxOnly';
-import { evaluateResumeCandidate } from './exportResumeDiscovery';
+import { adoptRankedResume, rankResumeCandidates, type ResumeCandidateOutcome } from './exportResumeDiscovery';
 import { buildExpectedIdentity } from './exportResumeSession';
 import { countAnnexbAccessUnits } from './annexbFrameCount';
 import type { ExportStateManifest } from './exportCheckpoint';
@@ -70,16 +70,27 @@ function project(ids: string[]): Project {
 
 const manifestOf = (f: ByteFfmpeg): ExportStateManifest => JSON.parse(f.manifestOnDisk()!) as ExportStateManifest;
 
-/** What `findResumeOffer` does for the NEXT export, against the surviving session. */
-async function discover(f: ByteFfmpeg, p: Project, pieceCount: number) {
+/**
+ * What the NEXT export does against the surviving session: the read-only
+ * offer (`findResumeOffer`'s Phase A), then — the operator answered Resume —
+ * adoption (`adoptResumeOffer`'s Phase B). The offer must not touch a byte.
+ */
+async function discover(f: ByteFfmpeg, p: Project, pieceCount: number): Promise<ResumeCandidateOutcome> {
   const expected = await buildExpectedIdentity(p, DIMS);
+  const target = { expected, pieceExpectedFrames: Array.from({ length: pieceCount }, () => FRAMES) };
   const count = async (session: { countAnnexbFrames?: unknown }, path: string): Promise<number> =>
     countAnnexbAccessUnits(f.files.get(path) ?? new Uint8Array()).pictures + 0 * Number(!!session);
-  return evaluateResumeCandidate(
-    discoveryIoFor(f), f.manifestOnDisk() ? JSON.parse(f.manifestOnDisk()!).sessionId : 'x',
-    { expected, pieceExpectedFrames: Array.from({ length: pieceCount }, () => FRAMES) },
-    count as never,
-  );
+  const io = discoveryIoFor(f);
+  const before = new Map([...f.files].map(([k, v]) => [k, v.slice()]));
+  const { ranked, rejected } = await rankResumeCandidates(io, target, await io.listResumableSessionIds(), () => null);
+  expect(f.files).toEqual(before);
+  expect(f.fencePending()).toBe(false);
+  if (ranked.length === 0) {
+    const first = rejected[0];
+    return first ? { ok: false, ...first } : { ok: false, reason: 'no surviving session' };
+  }
+  const adopted = await adoptRankedResume(io, ranked, target, count as never);
+  return adopted.resumable ? { ok: true, value: adopted.resumable } : { ok: false, ...adopted.rejected[0]! };
 }
 
 /** The resume plan `useExport` builds from an offer. */
@@ -187,7 +198,7 @@ describe('GL tier — cancel mid-first-piece', () => {
 
   it('useExport runs the resume on the handle discovery fenced — it never re-enters the session a second time', () => {
     const src = readFileSync(resolve(import.meta.dirname, '..', '..', 'hooks', 'useExport.ts'), 'utf-8');
-    expect(src).toContain('resumeFfmpeg = offer.resumable.session as unknown as WebCodecsFfmpeg;');
+    expect(src).toContain('resumeFfmpeg = adopted.resumable.session as unknown as WebCodecsFfmpeg;');
     expect(src).not.toMatch(/resumeFfmpeg = \(await TauriFfmpeg\.reenter/);
   });
 

@@ -12,7 +12,7 @@ import {
   type WebCodecsFfmpeg,
 } from '../services/webcodecsExport/exportPipelineWebCodecs';
 import type { ForcedMp4SealOffer } from '../services/webcodecsExport/muxOnly';
-import { findResumeOffer, type ResumeOffer, type ResumeRefusalNotice } from '../services/webcodecsExport/exportResumeSession';
+import { adoptResumeOffer, findResumeOffer, type ResumeOffer, type ResumeRefusalNotice } from '../services/webcodecsExport/exportResumeSession';
 import { recordExportSessionCreated, forgetExportSession } from '../services/webcodecsExport/exportSessionLedger';
 import { readCleanupNotices, clearCleanupNotices, recordCleanupFailure, type CleanupNotice } from '../services/webcodecsExport/exportCleanupNotices';
 import { logExportEvent } from '../services/exportDiagnosticLog';
@@ -781,12 +781,15 @@ export function useExport(
     //
     // Runs only on the WebCodecs path (the legacy path has no checkpoints),
     // only once the operator has committed to an export, and only after the
-    // fresh session exists so it is protected from collection. Discovery does
-    // the whole handshake for real — validate the manifest against THIS
-    // timeline's hash, run the native fence, step back to the rotation seam,
-    // and verify every earlier piece by picture count — before anything is
-    // offered. A failure anywhere returns no offer and the export starts
-    // clean, which is always a correct outcome.
+    // fresh session exists so it is protected from collection. Two phases,
+    // with the operator between them. The OFFER is read-only: every candidate
+    // is validated against THIS timeline's hash and the real file length,
+    // ranked by progress, and nothing is claimed, fenced or cut — so a cancel
+    // at the prompt leaves every session exactly as it was. ADOPTION runs
+    // only on a Resume answer: re-enter, fence, step back to the rotation
+    // seam, verify every earlier piece by picture count. A failure in the
+    // offer returns no offer and the export starts clean, which is always a
+    // correct outcome.
     let resumePlan: NonNullable<Parameters<typeof exportProjectWebCodecs>[2]>['resume'];
     let resumeFfmpeg: WebCodecsFfmpeg | null = null;
     let resumePlanSessionId: string | null = null;
@@ -821,18 +824,22 @@ export function useExport(
         if (choice === 'resume') {
           let reenterError: string | null = null;
           try {
-            // The fenced, re-entered session — NOT the fresh one. Its bytes are
-            // the whole point; a fresh session has none of them. It is the
-            // handle DISCOVERY already re-entered and fenced: re-entering again
-            // would re-arm the native resume fence and refuse every append.
-            resumeFfmpeg = offer.resumable.session as unknown as WebCodecsFfmpeg;
-            resumePlanSessionId = offer.sessionId;
+            // Phase B, only now. The export runs on the handle adoption
+            // re-entered and fenced — re-entering again would re-arm the
+            // native resume fence and refuse every append.
+            const adopted = await adoptResumeOffer(offer);
+            if (adopted.notice) setState(prev => ({ ...prev, resumeRefusalNotice: adopted.notice }));
+            if (!adopted.resumable) {
+              throw new Error(adopted.rejected[0]?.reason ?? 'no offered session could be adopted');
+            }
+            resumeFfmpeg = adopted.resumable.session as unknown as WebCodecsFfmpeg;
+            resumePlanSessionId = adopted.resumable.sessionId;
             resumePlan = {
-              pieceIndex: offer.resumable.checkpoint.pieceIndex,
-              encoderSessionIndex: offer.resumable.checkpoint.encoderSessionIndex,
-              byteOffset: offer.resumable.appendFromByteOffset,
-              cumulativePictures: offer.resumable.checkpoint.cumulativePictures,
-              manifest: offer.resumable.manifest,
+              pieceIndex: adopted.resumable.checkpoint.pieceIndex,
+              encoderSessionIndex: adopted.resumable.checkpoint.encoderSessionIndex,
+              byteOffset: adopted.resumable.appendFromByteOffset,
+              cumulativePictures: adopted.resumable.checkpoint.cumulativePictures,
+              manifest: adopted.resumable.manifest,
             };
           } catch (err) {
             reenterError = err instanceof Error ? err.message : String(err);
@@ -840,6 +847,11 @@ export function useExport(
             resumePlan = undefined;
             resumePlanSessionId = null;
           }
+          // Cancelled while adopting. The adopted session's file is already
+          // stepped back to the seam, so its claim stays held, like any C1b
+          // post-fence hold: released, the next pass would select an older
+          // checkpoint and fence the shortened file again.
+          if (generationRef.current !== gen) return;
           // WS3 Round 28 (D1) — Machine 1 field incident: a discovered,
           // offered session that the operator explicitly chose to resume
           // must never be silently swapped for the already-created fresh
@@ -865,7 +877,8 @@ export function useExport(
               stageLabel: '',
               pendingSealConsent: null,
               pendingResumeOffer: null,
-              resumeRefusalNotice: null,
+              // Adoption's own notice (a cut before a refusal) still reaches the operator.
+              resumeRefusalNotice: prev.resumeRefusalNotice,
               orphanSweepNotice: null,
               cleanupNotices: [],
               error: { kind: adoptionFailure.kind, message: adoptionFailure.message },
