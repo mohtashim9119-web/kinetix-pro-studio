@@ -717,6 +717,14 @@ export function selectSessionsToCollect(params: {
 /**
  * Runs the policy. Every destroy is independent and best-effort: a directory
  * that refuses to go is logged and skipped, never allowed to abort an export.
+ *
+ * Never a session a `live` claim holds: the policy picks by age alone, and
+ * `reenter` succeeds on this process's own claim, so a run using the session
+ * would have its appends fenced and its files deleted. CONSERVATIVE — this
+ * process also holds claims no run is using (an export cancelled while its
+ * resume offer was open, among others); those stay until a restart makes the
+ * claim stale, and are collected then. A claim that cannot be read is skipped
+ * the same way. Without `io.readSessionClaim` the collector behaves as before.
  */
 export async function collectAbandonedSessions(
   io: ResumeDiscoveryIo,
@@ -732,6 +740,7 @@ export async function collectAbandonedSessions(
   const collected: string[] = [];
   for (const sessionId of doomed) {
     try {
+      if (io.readSessionClaim && (await io.readSessionClaim(sessionId)).holderLiveness === 'live') continue;
       const session = await io.reenter(sessionId);
       // STEP 3b — this policy exists specifically to discard sessions past
       // the retention cap/TTL; a manifest is expected (that's why they were

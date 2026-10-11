@@ -689,4 +689,45 @@ describe('abandoned-session cleanup policy', () => {
     expect(destroyed).toEqual(['b']);
     expect(collected).toEqual(['b']);
   });
+
+  /** C3 — the policy picks by age only; the collector must still never
+   *  destroy a session a live claim holds. */
+  function claimAwareIo(claims: Record<string, 'live' | 'stale' | 'unclaimed'>) {
+    const destroyed: string[] = [];
+    const io: ResumeDiscoveryIo = {
+      listResumableSessionIds: async () => [],
+      readSessionClaim: async (id) => ({ holderLiveness: claims[id] ?? 'unclaimed' }),
+      reenter: async (id) => ({
+        sessionId: id,
+        readExportState: async () => new Uint8Array(),
+        sessionFileSize: async () => 0,
+        prepareCheckpointResume: async () => ({ pictures: 0, vclNals: 0, bytesRemoved: 0, keptBytes: 0 }),
+        truncateAnnexbToOffset: async () => ({ pictures: 0, vclNals: 0, bytesRemoved: 0, keptBytes: 0 }),
+        destroy: async () => { destroyed.push(id); },
+      }),
+    };
+    return { io, destroyed };
+  }
+
+  it('(C3-1) a live-claimed session is never collected, even when the policy selects it — the intended over-skip', async () => {
+    const { io, destroyed } = claimAwareIo({ old: 'live' });
+    const collected = await collectAbandonedSessions(io, {
+      candidates: [fresh('keep', 1_000), fresh('old', ABANDONED_SESSION_TTL_MS + 1)],
+      protectedSessionIds: [],
+      nowMs: now,
+    });
+    expect(destroyed).toEqual([]);
+    expect(collected).toEqual([]);
+  });
+
+  it('(C3-2) unclaimed and stale-claimed sessions are still collected, and their ids returned', async () => {
+    const { io, destroyed } = claimAwareIo({ a: 'unclaimed', b: 'stale' });
+    const collected = await collectAbandonedSessions(io, {
+      candidates: [fresh('keep', 1_000), fresh('a', 2_000), fresh('b', 3_000)],
+      protectedSessionIds: [],
+      nowMs: now,
+    });
+    expect(destroyed.sort()).toEqual(['a', 'b']);
+    expect(collected.sort()).toEqual(['a', 'b']);
+  });
 });
