@@ -306,3 +306,58 @@ describe('progressFor — one smooth run across pieces', () => {
     expect(progressFor({ type: 'encoding_segment', index: 1, total: 4, frame: 50, totalFrames: 100 })).toBe(Math.round(((1 + 0.5) / 4) * 90));
   });
 });
+
+import { retainFailedRunSession } from './useExport';
+import type { RetainForResumeReport } from '../services/tauriFfmpeg';
+
+/**
+ * A resumed run renders into the re-entered session; the fresh session made
+ * for it never holds a byte. When the run fails and the resumed session is
+ * retained, the fresh one must be released too. The fake models the native
+ * pair: each session holds this process's claim while the run is live, and an
+ * unforced destroy releases the claim and deletes a folder with no manifest
+ * (`destroy_session_dir`).
+ */
+describe('retainFailedRunSession — a failed resumed run leaks no fresh session', () => {
+  function disk() {
+    const dirs = new Set(['fresh', 'resumed']);
+    const claims = new Set(['fresh', 'resumed']);
+    const manifests = new Set(['resumed']);
+    const destroyed: { sessionId: string; opts?: { force?: boolean; failureKind?: string } }[] = [];
+    const retained = (sessionId: string): RetainForResumeReport => {
+      claims.delete(sessionId);
+      return { sessionId, path: `/x/kinetix-export-${sessionId}`, disposition: 'retained', retainedBytes: 4_000, reclaimedBytes: 0, removed: [] };
+    };
+    const fresh = {
+      ffmpeg: { retainForResume: async () => retained('fresh') },
+      dispose: async (opts?: { force?: boolean; failureKind?: string }) => {
+        destroyed.push({ sessionId: 'fresh', opts });
+        claims.delete('fresh');
+        if (opts?.force || !manifests.has('fresh')) dirs.delete('fresh');
+        return { disposition: 'destroyed' as const };
+      },
+    } as unknown as Parameters<typeof retainFailedRunSession>[1];
+    const resumed = { retainForResume: async () => retained('resumed') };
+    return { dirs, claims, destroyed, fresh, resumed };
+  }
+
+  it('the resumed session is retained, and the fresh one is destroyed (guarded): no folder, no claim of ours', async () => {
+    const d = disk();
+    const report = await retainFailedRunSession(d.resumed, d.fresh, 'encode:watchdog');
+    expect(report?.sessionId).toBe('resumed');
+    expect(d.destroyed).toEqual([{ sessionId: 'fresh', opts: { force: false, failureKind: 'encode:watchdog' } }]);
+    expect(d.dirs.has('fresh')).toBe(false);
+    expect(d.claims.has('fresh')).toBe(false);
+    // The kept session's fate is unchanged: retained, claim released.
+    expect(d.dirs.has('resumed')).toBe(true);
+    expect(d.claims.has('resumed')).toBe(false);
+  });
+
+  it('a run that was NOT resumed retained the fresh session itself — it is never destroyed here', async () => {
+    const d = disk();
+    const report = await retainFailedRunSession(null, d.fresh, 'encode');
+    expect(report?.sessionId).toBe('fresh');
+    expect(d.destroyed).toEqual([]);
+    expect(d.dirs.has('fresh')).toBe(true);
+  });
+});

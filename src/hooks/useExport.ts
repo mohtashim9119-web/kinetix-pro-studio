@@ -20,7 +20,7 @@ import { trackExportTeardown } from '../services/exportTeardownLatch';
 import { normalizeSaveSessionFileResult } from '../services/tauriFfmpeg';
 import { checkExportDestinationPathLength } from '../services/exportDestinationPath';
 import { TauriFfmpeg, type DestroySessionOutcome, type OrphanSweepReport, type RetainForResumeReport, type SessionDiskSnapshot } from '../services/tauriFfmpeg';
-import { decideSessionRetentionOnFailure, buildNativeFailureKind } from './exportSessionRetentionDecision';
+import { decideSessionRetentionOnFailure, buildNativeFailureKind, type RetainableSession } from './exportSessionRetentionDecision';
 import { decideResumeAdoptionOutcome } from './exportResumeAdoptionDecision';
 import { type Project, type ResolutionTier } from '../types';
 import { isTauri } from '../services/tauriFfmpeg';
@@ -426,6 +426,37 @@ export function progressFor(stage: ExportStage): number {
     return stage.total > 0 ? Math.round((stage.index / stage.total) * 90) : 0;
   }
   return 0;
+}
+
+/**
+ * The retain step of a FAILED run: `decideSessionRetentionOnFailure` on the
+ * session the run rendered into — the re-entered one when it was resumed,
+ * otherwise the fresh one.
+ *
+ * A resumed run never wrote a byte to the fresh session, so once the resumed
+ * one is retained the fresh one is destroyed — guarded, and with no manifest
+ * the native side releases this process's claim and deletes the folder. Only
+ * dropping its handle left both: discovery never lists a folder without a
+ * manifest, and the orphan sweep skips one our live claim holds, until a
+ * restart plus an hour. A run that was not resumed retained the fresh session
+ * itself, so it is never destroyed here.
+ */
+export async function retainFailedRunSession(
+  resumed: RetainableSession | null,
+  fresh: Pick<TauriBackend, 'ffmpeg' | 'dispose'> | null,
+  failureKind: string,
+): Promise<RetainForResumeReport | null> {
+  const active = resumed ?? ((fresh?.ffmpeg ?? null) as unknown as RetainableSession | null);
+  const report = await decideSessionRetentionOnFailure(active, failureKind);
+  if (report !== null && resumed && fresh) {
+    try {
+      await fresh.dispose({ force: false, failureKind });
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn('[ws3-resume] could not release the unused fresh session', err instanceof Error ? err.message : String(err));
+    }
+  }
+  return report;
 }
 
 export function useExport(
@@ -932,15 +963,20 @@ export function useExport(
       failureKind: string,
     ): Promise<{ attempted: boolean; report: RetainForResumeReport | null }> => {
       const active = (resumeFfmpeg ??
-        tauriBackendRef.current?.ffmpeg) as unknown as { retainForResume?(failureKind?: string): Promise<RetainForResumeReport> } | null;
+        tauriBackendRef.current?.ffmpeg) as unknown as RetainableSession | null;
       const attempted = Boolean(active?.retainForResume);
       try {
-        const report = await decideSessionRetentionOnFailure(active, failureKind);
+        const report = await retainFailedRunSession(
+          resumeFfmpeg as unknown as RetainableSession | null,
+          tauriBackendRef.current,
+          failureKind,
+        );
         if (report === null) return { attempted, report: null };
         if (resumeFfmpeg) forgetExportSession(resumePlanSessionId!);
-        // The session dir is not deleted (when retained) — only this
-        // in-memory handle is done with it. `dispose()` must not also try
-        // to destroy it, so the ref is cleared without calling destroy().
+        // A retained session dir is not deleted — only this in-memory handle
+        // is done with it, so the ref is cleared without calling destroy().
+        // (On a resumed run the fresh session behind it was already destroyed
+        // by `retainFailedRunSession`.)
         tauriBackendRef.current = null;
         return { attempted, report };
       } catch (err) {
