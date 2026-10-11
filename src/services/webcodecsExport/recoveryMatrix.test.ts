@@ -111,6 +111,8 @@ function ffmpegHarness(o: {
   salvageTruncatePictures?: number;
 } = {}) {
   const calls: string[] = [];
+  /** Every file the pipeline removed, in order - a piece removed mid-run is a re-render. */
+  const deleted: string[] = [];
   const measured = o.measuredPictures ?? FRAMES;
   // WS3 Round 12 (H1) — tracked by path so `driveGlRun`'s per-append verify
   // (`sessionFileSize` read right after `appendFileRaw`) sees a landed size
@@ -127,17 +129,16 @@ function ffmpegHarness(o: {
     return { pictures: o.salvageTruncatePictures ?? FRAMES, vclNals: FRAMES, bytesRemoved: 0, keptBytes: 100 };
   });
   const exec = vi.fn(async () => { calls.push('exec'); return 0; });
-  // The first count is the per-piece completion guard (exact); the shortfall
-  // under test is the post-concat reading that follows it.
-  let countCalls = 0;
+  // The REAL shape: a single-piece export concatenates nothing, so the piece
+  // guard and the post-concat guard read the same file and see the same count.
   const countAnnexbFrames = vi.fn(async () => {
     calls.push('countAnnexbFrames');
-    const n = ++countCalls === 1 ? FRAMES : measured;
-    return { pictures: n, vclNals: n };
+    return { pictures: measured, vclNals: measured };
   });
   const ffmpeg = {
     writeFile: vi.fn(async () => undefined), writeFileRaw: vi.fn(async () => undefined), exec,
-    readFile: vi.fn(async () => new Uint8Array()), deleteFile: vi.fn(async () => undefined),
+    readFile: vi.fn(async () => new Uint8Array()),
+    deleteFile: vi.fn(async (p: string) => { deleted.push(p); landed.delete(p); }),
     appendFileRaw: vi.fn(async (p: string, data: Uint8Array) => {
       landed.set(p, (landed.get(p) ?? 0) + data.byteLength);
     }),
@@ -147,20 +148,45 @@ function ffmpegHarness(o: {
     countAnnexbFrames, concatAnnexbPieces: vi.fn(async () => undefined),
     truncateAnnexb, truncateAnnexbToOffset,
   } as unknown as WebCodecsFfmpeg;
-  return { ffmpeg, calls, truncateAnnexb, truncateAnnexbToOffset, exec, countAnnexbFrames };
+  return { ffmpeg, calls, deleted, truncateAnnexb, truncateAnnexbToOffset, exec, countAnnexbFrames };
 }
 
 async function run(
   ffmpeg: WebCodecsFfmpeg,
   drive: (fake: FakeWorker) => Promise<void> | void,
   options: { requestForcedSealConsent?: (o: ForcedMp4SealOffer) => Promise<boolean> } = {},
+  /**
+   * A piece that comes back off-plan is re-rendered once before the run settles
+   * for a recorded deviation. The re-render removes the short `piece_0.h264`
+   * and asks for a fresh render; `rerender` is what that render does. A clean
+   * export removes `piece_0.h264` only at the very end, so the replay is armed
+   * for the first removal only and only when `rerenders` says one is expected.
+   */
+  rerender?: { times: number; drive: (fake: FakeWorker) => Promise<void> | void; deleted: string[] },
 ) {
   const fake = new FakeWorker();
+  let seenDeletes = 0;
+  let replays = 0;
+  const watcher = rerender
+    ? setInterval(() => {
+        const removed = rerender.deleted.filter((f) => f === 'piece_0.h264').length;
+        while (seenDeletes < removed && replays < rerender.times) {
+          seenDeletes++; replays++;
+          void Promise.resolve().then(() => rerender.drive(fake));
+        }
+      }, 1)
+    : null;
   const p = exportProjectWebCodecs(project(), ffmpeg, { width: 1920, height: 1080, fps: FPS, ...options }, () => undefined, { createWorker: () => fake });
   await flush();
   await drive(fake);
-  return { result: await p, fake };
+  try { return { result: await p, fake }; } finally { if (watcher) clearInterval(watcher); }
 }
+
+const cleanRun = (fake: FakeWorker): void => {
+  fake.emit(chunk(0, 8));
+  fake.emit({ type: 'run-done', runId: 'run_0', frameCount: FRAMES });
+  fake.emit({ type: 'done', frameCount: FRAMES, diagnostics: diagnostics() });
+};
 
 /** One hung rotation, then a clean resumed attempt. */
 async function hangOnceThenSucceed(fake: FakeWorker): Promise<void> {
@@ -247,33 +273,31 @@ describe('END-TO-END recovery matrix', () => {
     expect(h.exec).not.toHaveBeenCalled();
   });
 
-  it('ROW 4 — salvage truncates, guard reports a shortfall, operator CONSENTS, a short MP4 ships', async () => {
-    // The salvaged piece keeps every frame it claimed, so salvage passes its own
-    // exact-match check; the post-concat guard then measures 3 short.
+  it('ROW 4 — a piece comes back off-plan twice (first render, bounded re-render): the deviation is recorded, the post-concat guard offers the seal, the operator CONSENTS, a short MP4 ships', async () => {
+    // Real route: the single piece IS the film, so the piece guard and the
+    // concat guard both read 27 of 30. The deviation is recorded at the piece;
+    // the guard then reports the same shortfall and the seal is offered.
     const h = ffmpegHarness({ measuredPictures: FRAMES - 3 });
     const seen: ForcedMp4SealOffer[] = [];
-    const { result } = await run(h.ffmpeg, (fake) => {
-      fake.emit(chunk(0, 8));
-      fake.emit({ type: 'run-done', runId: 'run_0', frameCount: FRAMES });
-      fake.emit({ type: 'done', frameCount: FRAMES, diagnostics: diagnostics() });
-    }, { requestForcedSealConsent: async (o) => { seen.push(o); return true; } });
+    const { result, fake } = await run(h.ffmpeg, cleanRun, {
+      requestForcedSealConsent: async (o) => { seen.push(o); return true; },
+    }, { times: 1, drive: cleanRun, deleted: h.deleted });
 
     expect(result.ok).toBe(true);
+    expect(fake.initMessages).toHaveLength(2); // first render + exactly one re-render
     expect(seen).toHaveLength(1);
     expect(seen[0]!.picturesKept).toBe(FRAMES - 3);
     expect(seen[0]!.picturesLost).toBe(3);
+    expect(seen[0]!.deviatingPieces).toEqual([{ pieceIndex: 0, counted: FRAMES - 3, expected: FRAMES }]);
     // The guard ran BEFORE the seal, and the seal is one ordinary mux.
-    expect(h.calls.indexOf('countAnnexbFrames')).toBeLessThan(h.calls.indexOf('exec'));
+    expect(h.calls.lastIndexOf('countAnnexbFrames')).toBeLessThan(h.calls.indexOf('exec'));
     expect(h.calls.filter((c) => c === 'exec')).toHaveLength(1);
   });
 
   it('ROW 5 — same shortfall, operator DECLINES: the unchanged typed failure, nothing muxed', async () => {
     const h = ffmpegHarness({ measuredPictures: FRAMES - 3 });
-    const { result } = await run(h.ffmpeg, (fake) => {
-      fake.emit(chunk(0, 8));
-      fake.emit({ type: 'run-done', runId: 'run_0', frameCount: FRAMES });
-      fake.emit({ type: 'done', frameCount: FRAMES, diagnostics: diagnostics() });
-    }, { requestForcedSealConsent: async () => false });
+    const { result } = await run(h.ffmpeg, cleanRun, { requestForcedSealConsent: async () => false },
+      { times: 1, drive: cleanRun, deleted: h.deleted });
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('unreachable');
@@ -282,19 +306,21 @@ describe('END-TO-END recovery matrix', () => {
     expect(h.exec).not.toHaveBeenCalled();
   });
 
-  it('ROW 6 — a rewind FOLLOWED BY a shortfall still reaches the seal seam exactly once', async () => {
-    // The interaction row: Rung 3 and Rung 2b in the same export. A rewind must
-    // not consume, skip, or double the sealing offer.
+  it('ROW 6 — a rewind FOLLOWED BY an off-plan piece still reaches the seal seam exactly once', async () => {
+    // The interaction row: Rung 3 and the deviation route in the same export. A
+    // rewind must not consume, skip, or double the sealing offer. The re-render
+    // of the short piece is a fresh, clean render (no second hang).
     const h = ffmpegHarness({ measuredPictures: FRAMES - 1 });
     const seen: ForcedMp4SealOffer[] = [];
     const { result, fake } = await run(h.ffmpeg, hangOnceThenSucceed, {
       requestForcedSealConsent: async (o) => { seen.push(o); return true; },
-    });
+    }, { times: 1, drive: cleanRun, deleted: h.deleted });
     expect(result.ok).toBe(true);
-    expect(fake.initMessages).toHaveLength(2);
-    expect(h.truncateAnnexbToOffset).toHaveBeenCalledTimes(1);
+    expect(fake.initMessages).toHaveLength(3); // first + rewind + the one re-render
+    expect(h.truncateAnnexbToOffset).toHaveBeenCalledTimes(1); // only the first render's rewind
     expect(seen).toHaveLength(1);
     expect(seen[0]!.picturesLost).toBe(1);
+    expect(seen[0]!.deviatingPieces).toEqual([{ pieceIndex: 0, counted: FRAMES - 1, expected: FRAMES }]);
   });
 
   it('ROW 7 — CLEAN: none of the above runs, and the ffmpeg trace holds no recovery call', async () => {

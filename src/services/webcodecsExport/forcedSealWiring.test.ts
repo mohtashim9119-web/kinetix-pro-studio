@@ -94,13 +94,12 @@ function harness(measuredPictures: number): {
   // (`sessionFileSize` read right after `appendFileRaw`) sees a landed size
   // consistent with what was actually appended.
   const landed = new Map<string, number>();
-  let countCalls = 0;
   const ffmpeg = {
     writeFile: rec('writeFile', async () => undefined),
     writeFileRaw: rec('writeFileRaw', async () => undefined),
     exec: rec('exec', async () => 0),
     readFile: rec('readFile', async () => new Uint8Array()),
-    deleteFile: rec('deleteFile', async () => undefined),
+    deleteFile: rec('deleteFile', async (p: string) => { landed.delete(p); }),
     appendFileRaw: rec('appendFileRaw', async (p: string, data: Uint8Array) => {
       landed.set(p, (landed.get(p) ?? 0) + data.byteLength);
     }),
@@ -108,13 +107,12 @@ function harness(measuredPictures: number): {
     kill: rec('kill', async () => undefined),
     destroy: rec('destroy', async () => undefined),
     sessionFileSize: rec('sessionFileSize', async (p: string) => landed.get(p) ?? 1_700_000_000),
-    // The FIRST count is the per-piece completion guard (exact here); the
-    // shortfall under test is the post-concat reading that follows it. (A
-    // single-piece export concatenates nothing, so both read the same file.)
-    countAnnexbFrames: rec('countAnnexbFrames', async () => {
-      const n = ++countCalls === 1 ? EXPECTED_FRAMES : measuredPictures;
-      return { pictures: n, vclNals: n };
-    }),
+    // The REAL shape: a single-piece export concatenates nothing, so the
+    // piece-completion guard and the post-concat guard read the same file and
+    // see the same count. A short count therefore records a piece deviation
+    // (after the bounded re-render comes back equally short) AND fails the
+    // concat guard - the route the seal is actually reached by.
+    countAnnexbFrames: rec('countAnnexbFrames', async () => ({ pictures: measuredPictures, vclNals: measuredPictures })),
     concatAnnexbPieces: rec('concatAnnexbPieces', async () => undefined),
     truncateAnnexb: rec('truncateAnnexb', async () => ({ pictures: measuredPictures, vclNals: measuredPictures, bytesRemoved: 0, keptBytes: 100 })),
     truncateAnnexbToOffset: rec('truncateAnnexbToOffset', async () => ({ pictures: 0, vclNals: 0, bytesRemoved: 0, keptBytes: 0 })),
@@ -126,19 +124,23 @@ async function run(
   ffmpeg: WebCodecsFfmpeg,
   requestForcedSealConsent?: (offer: ForcedMp4SealOffer) => Promise<boolean>,
 ) {
-  const fake = new FakeWorker();
-  const p = exportProjectWebCodecs(
+  // Every worker the pipeline asks for (the first render, and the bounded
+  // re-render of a piece that came back off-plan) renders the one clean run.
+  const createWorker = (): ExportWorkerHandle => {
+    const w = new FakeWorker();
+    setTimeout(() => {
+      w.emit({ type: 'chunk', runId: 'run_0', bytes: new Uint8Array(8).buffer, chunkType: 'key', timestamp: 0 });
+      w.emit({ type: 'run-done', runId: 'run_0', frameCount: EXPECTED_FRAMES });
+      w.emit({ type: 'done', frameCount: EXPECTED_FRAMES, diagnostics: diagnostics() });
+    }, 0);
+    return w;
+  };
+  return exportProjectWebCodecs(
     project(), ffmpeg,
     { width: 1920, height: 1080, fps: FPS, ...(requestForcedSealConsent ? { requestForcedSealConsent } : {}) },
     () => undefined,
-    { createWorker: () => fake },
+    { createWorker },
   );
-  await Promise.resolve();
-  await Promise.resolve();
-  fake.emit({ type: 'chunk', runId: 'run_0', bytes: new Uint8Array(8).buffer, chunkType: 'key', timestamp: 0 });
-  fake.emit({ type: 'run-done', runId: 'run_0', frameCount: EXPECTED_FRAMES });
-  fake.emit({ type: 'done', frameCount: EXPECTED_FRAMES, diagnostics: diagnostics() });
-  return p;
 }
 
 describe('forced MP4 sealing — wired at the concat-guard seam', () => {
@@ -186,6 +188,8 @@ describe('forced MP4 sealing — wired at the concat-guard seam', () => {
     expect(offer.picturesExpected).toBe(30);
     expect(offer.picturesLost).toBe(3);
     expect(offer.fps).toBe(FPS);
+    // Reached through the real route: the short piece is a RECORDED deviation.
+    expect(offer.deviatingPieces).toEqual([{ pieceIndex: 0, counted: EXPECTED_FRAMES - 3, expected: EXPECTED_FRAMES }]);
     expect(offer.keptWallDurationSeconds).toBeCloseTo(27 / FPS, 10);
     expect(offer.lostWallDurationSeconds).toBeCloseTo(3 / FPS, 10);
     // Declined here, so still a failure — see the next test for the message.

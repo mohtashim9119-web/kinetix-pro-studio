@@ -97,7 +97,7 @@ function harness(overrides: Overrides = {}): WebCodecsFfmpeg {
     writeFileRaw: vi.fn(async () => undefined),
     exec: vi.fn(async () => 0),
     readFile: vi.fn(async () => new Uint8Array()),
-    deleteFile: vi.fn(async () => undefined),
+    deleteFile: vi.fn(async (p: string) => { landed.delete(p); }),
     appendFileRaw: vi.fn(async (p: string, data: Uint8Array) => {
       landed.set(p, (landed.get(p) ?? 0) + data.byteLength);
     }),
@@ -114,19 +114,23 @@ function harness(overrides: Overrides = {}): WebCodecsFfmpeg {
 }
 
 async function run(ffmpeg: WebCodecsFfmpeg, withVoiceover: boolean, savePath?: string) {
-  const fake = new FakeWorker();
-  const p = exportProjectWebCodecs(
+  // Every worker the pipeline asks for (the first render, and the bounded
+  // re-render of a piece that comes back off-plan) renders the one clean run.
+  const createWorker = (): ExportWorkerHandle => {
+    const w = new FakeWorker();
+    setTimeout(() => {
+      w.emit({ type: 'chunk', runId: 'run_0', bytes: new Uint8Array(8).buffer, chunkType: 'key', timestamp: 0 });
+      w.emit({ type: 'run-done', runId: 'run_0', frameCount: EXPECTED_FRAMES });
+      w.emit({ type: 'done', frameCount: EXPECTED_FRAMES, diagnostics: diagnostics() });
+    }, 0);
+    return w;
+  };
+  return exportProjectWebCodecs(
     project(withVoiceover), ffmpeg,
     { width: 1920, height: 1080, fps: FPS, ...(savePath ? { savePath } : {}) },
     () => undefined,
-    { createWorker: () => fake },
+    { createWorker },
   );
-  await Promise.resolve();
-  await Promise.resolve();
-  fake.emit({ type: 'chunk', runId: 'run_0', bytes: new Uint8Array(8).buffer, chunkType: 'key', timestamp: 0 });
-  fake.emit({ type: 'run-done', runId: 'run_0', frameCount: EXPECTED_FRAMES });
-  fake.emit({ type: 'done', frameCount: EXPECTED_FRAMES, diagnostics: diagnostics() });
-  return p;
 }
 
 const PROJECT_META = { segmentCount: 1, hasVoiceover: true, exportResolution: '1080p' as const, exportFps: 30 as const, ts: 't' };
@@ -196,18 +200,17 @@ describe('WS3 Round 20 — post-encode failures carry the last piece liveness an
   });
 
   it('the frame-count guard MISMATCH (typed concat failure, no consent surface) carries liveness too', async () => {
-    let calls = 0;
+    // Real route: the single piece is the film, so the piece guard (after its
+    // bounded re-render) and the concat guard both read 25 of 30. The piece is
+    // a recorded deviation; with no consent surface the guard's typed failure stands.
     const ffmpeg = harness({
-      // First count: the per-piece completion guard (exact); then the post-concat reading.
-      countAnnexbFrames: vi.fn(async () => {
-        const n = ++calls === 1 ? EXPECTED_FRAMES : EXPECTED_FRAMES - 5;
-        return { pictures: n, vclNals: n };
-      }),
+      countAnnexbFrames: vi.fn(async () => ({ pictures: EXPECTED_FRAMES - 5, vclNals: EXPECTED_FRAMES - 5 })),
     });
     const r = await run(ffmpeg, false);
     expect(r.ok).toBe(false);
     if (r.ok) return;
     expect(r.error.kind).toBe('concat');
+    expect(r.error.message).toContain('measuredPictures=25');
     expectPopulated(r.error, 'concat:verify');
   });
 
