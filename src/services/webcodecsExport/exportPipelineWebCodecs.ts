@@ -4293,7 +4293,13 @@ async function exportProjectWebCodecsRun(
       // The operator consents to a SPECIFIC thing: which pieces deviated, by
       // how much, and that everything after each drop moves one frame earlier.
       const offer = baseOffer !== null && pieceDeviations.length > 0
-        ? { ...baseOffer, deviatingPieces: pieceDeviations.map((d) => ({ ...d })) }
+        ? {
+            ...baseOffer,
+            deviatingPieces: pieceDeviations.map((d) => ({ ...d })),
+            ...((ffmpeg as unknown as { sessionId?: string }).sessionId
+              ? { sessionId: (ffmpeg as unknown as { sessionId: string }).sessionId }
+              : {}),
+          }
         : baseOffer;
       // No offer (empty, or not actually short — e.g. the stream is LONGER
       // than expected, which sealing cannot fix) => the status quo failure.

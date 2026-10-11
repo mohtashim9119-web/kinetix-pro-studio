@@ -934,7 +934,7 @@ export function BulkExportModal({
                 {tab === 'active' && (
                   <ActiveProgress id={p.id} phase={row?.phase} progress={liveProgress.get(p.id)} onCancel={() => setConfirmCancel({ ids: [p.id], name: p.name, running: row?.phase === 'exporting' })} />
                 )}
-                {tab !== 'ready' && tab !== 'finished' && tab !== 'active' && (message || canRetry) && (
+                {tab !== 'ready' && tab !== 'active' && (tab !== 'finished' || (row?.phase === 'done' && message !== undefined && message !== 'Done')) && (message || canRetry) && (
                   <div className="kxd-xrow-status" data-tone={statusTone}>
                     <span data-testid={`bulk-export-status-${p.id}`} className="kxd-xrow-msg" title={message ?? ''}>
                       {message ?? ''}

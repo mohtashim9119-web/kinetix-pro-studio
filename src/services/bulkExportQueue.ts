@@ -462,7 +462,7 @@ export class BulkExportRunner {
           row.finishedAt = item.finishedAt ?? Date.now();
           row.exportMs = item.startedAt !== undefined ? Math.max(0, row.finishedAt - item.startedAt) : undefined;
         }
-        row.phase = 'done'; row.message = 'Done';
+        row.phase = 'done'; row.message = item.detail ? `Done — ${item.detail}` : 'Done';
       }
       else if (item.status === 'failed') { row.phase = 'failed'; row.message = item.detail ? `Failed — Retry — ${item.detail}` : 'Failed — Retry'; }
       else if (item.status === 'paused' && item.reason === PIPELINE_BUSY_REASON) { row.phase = 'waiting'; row.message = item.detail; }

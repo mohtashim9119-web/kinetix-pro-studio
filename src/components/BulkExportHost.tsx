@@ -14,6 +14,8 @@ import { ENCODE_END_PCT } from '../services/exportEta';
 import { awaitExportTeardown } from '../services/exportTeardownLatch';
 import { MediaLoadTimeoutError } from '../services/projectMediaPreparation';
 import { loadProjectMedia, type LoadedProjectMedia } from '../services/bulkExportMedia';
+import { bulkDeviationNote } from '../services/webcodecsExport/pieceDeviationText';
+import type { ForcedMp4SealOffer } from '../services/webcodecsExport/muxOnly';
 import type { Project } from '../types';
 
 import { bulkRowResumeNote, NOTHING_FOUND_NOTE } from '../services/webcodecsExport/resumeRefusalText';
@@ -158,15 +160,33 @@ function BulkExportSlot({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.pendingResumeOffer, input.resume, resolveResumeChoice]);
 
+  // Bulk has no one to ask: the seal decision is answered yes so the deliverable
+  // is kept. What it must not do is stay silent — the offer (with its recorded
+  // deviations) is remembered here and reaches the row's notice when the row
+  // finishes, and the diagnostics get one line per deviating piece.
+  const sealedOffer = useRef<ForcedMp4SealOffer | null>(null);
   useEffect(() => {
-    if (state.pendingSealConsent) resolveSealConsent(true);
+    const offer = state.pendingSealConsent;
+    if (!offer) return;
+    if (!sealedOffer.current) {
+      sealedOffer.current = offer;
+      for (const d of offer.deviatingPieces ?? []) {
+        // eslint-disable-next-line no-console
+        console.warn('[ws3-bulk-deviation] saved with a recorded piece deviation', JSON.stringify({
+          projectId: input.project.id, sessionId: offer.sessionId ?? null, ...d,
+        }));
+      }
+    }
+    resolveSealConsent(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.pendingSealConsent, resolveSealConsent]);
 
   useEffect(() => {
     if (finished.current) return;
     if (state.showExportSuccess) {
       finished.current = true;
-      onDone({ status: 'done' });
+      const note = bulkDeviationNote(sealedOffer.current ?? state.lastExportSealedOffer ?? { fps });
+      onDone(note ? { status: 'done', detail: note } : { status: 'done' });
       return;
     }
     if (state.error && !state.isExporting) {

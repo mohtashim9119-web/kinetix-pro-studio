@@ -633,3 +633,31 @@ describe('BulkExportModal — Dashboard revamp Stage 4 (Bulk Export tab)', () =>
     expect(order).toEqual(['b', 'a']);   // Apple, Banana
   });
 });
+
+describe('BulkExportModal — a finished row carries its notice', () => {
+  async function finishedWith(detail: string | undefined): Promise<void> {
+    const projects = [project('a')];
+    const runner = new BulkExportRunner({
+      listProjects: () => projects.map(p => ({ id: p.id, name: p.name })),
+      loadProject: async id => projects.find(p => p.id === id) ?? null,
+      storage: mem(),
+      playChime: () => {},
+      execute: async () => ({ status: 'done', ...(detail ? { detail } : {}) }),
+    });
+    await mount(runner);
+    act(() => { selectAll(runner); });
+    await act(async () => { await runner.startSelected(); });
+    await act(async () => { await new Promise(r => setTimeout(r, 10)); });
+    await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="bulk-export-tab-finished"]')!.click(); });
+  }
+
+  it('a deviation notice shows on the Finished row', async () => {
+    await finishedWith('Piece 3: 1,795 frames rendered, 1,796 planned');
+    expect(container.querySelector('[data-testid="bulk-export-status-a"]')!.textContent).toContain('Piece 3');
+  });
+
+  it('a clean Finished row shows no status line (pin)', async () => {
+    await finishedWith(undefined);
+    expect(container.querySelector('[data-testid="bulk-export-status-a"]')).toBeNull();
+  });
+});

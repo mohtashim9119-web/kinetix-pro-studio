@@ -159,6 +159,8 @@ export interface ForcedMp4SealOffer {
    * earlier against the audio (1 / fps seconds per frame).
    */
   deviatingPieces?: readonly PieceDeviation[];
+  /** The export session the deviations were recorded in (diagnostics only). */
+  sessionId?: string;
 }
 
 /**

@@ -178,3 +178,29 @@ describe('BulkExportRunner', () => {
     expect(started).toEqual([]);
   });
 });
+
+describe('BulkExportRunner — a done row can carry a notice', () => {
+  const runWith = async (outcome: { status: 'done'; detail?: string }) => {
+    const runner = new BulkExportRunner({
+      listProjects: () => [{ id: 'a', name: 'a' }],
+      loadProject: async id => project(id),
+      storage: mem(),
+      playChime: () => {},
+      execute: async () => outcome,
+    });
+    selectAll(runner);
+    await runner.startSelected();
+    await vi.waitFor(() => expect(runner.snapshot()[0]?.phase).toBe('done'));
+    return runner.snapshot()[0]!;
+  };
+
+  it('a done outcome with a detail shows it after "Done"', async () => {
+    const row = await runWith({ status: 'done', detail: 'Piece 3: 1,795 frames rendered, 1,796 planned' });
+    expect(row.message).toBe('Done — Piece 3: 1,795 frames rendered, 1,796 planned');
+  });
+
+  it('a clean done outcome still reads exactly "Done" (pin)', async () => {
+    const row = await runWith({ status: 'done' });
+    expect(row.message).toBe('Done');
+  });
+});

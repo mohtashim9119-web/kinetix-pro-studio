@@ -306,3 +306,45 @@ describe('BulkExportHost: an honest start (resume vs restart)', () => {
     expect(h.setProgress).toHaveBeenCalledWith({ pct: 1, stage: 'Encoding segment 1 / 20' });
   });
 });
+
+describe('BulkExportHost never ships a shorter film silently', () => {
+  const offer = {
+    picturesKept: 3659, picturesExpected: 3660, picturesLost: 1, keptWallDurationSeconds: 121.97, lostWallDurationSeconds: 0.03, fps: 30,
+    sessionId: 'sess-1',
+    deviatingPieces: [{ pieceIndex: 2, counted: 1795, expected: 1796 }],
+  };
+
+  it('a recorded deviation is auto-accepted, the deliverable stands, and the row notice names the piece, counts and shift', async () => {
+    hook.state = { ...hook.state, pendingSealConsent: offer, showExportSuccess: true, isExporting: false };
+    const run = mountHost();
+    const outcome = await done(run({}));
+    expect(hook.resolveSealConsent).toHaveBeenCalledWith(true);
+    expect(outcome.status).toBe('done');
+    const detail = (outcome as { detail?: string }).detail ?? '';
+    expect(detail).toContain('Piece 3');
+    expect(detail).toContain('1,795');
+    expect(detail).toContain('1,796');
+    expect(detail).toContain('33 ms');
+  });
+
+  it('diagnostics carry one line naming project id, session id, piece and counts', async () => {
+    const lines: string[] = [];
+    const warn = vi.spyOn(console, 'warn').mockImplementation((...a: unknown[]) => { lines.push(a.map(String).join(' ')); });
+    hook.state = { ...hook.state, pendingSealConsent: offer, showExportSuccess: true, isExporting: false };
+    await done(mountHost()({}));
+    warn.mockRestore();
+    const mine = lines.filter(l => l.includes('[ws3-bulk-deviation]'));
+    expect(mine).toHaveLength(1);
+    expect(mine[0]).toContain('"projectId":"P"');
+    expect(mine[0]).toContain('"sessionId":"sess-1"');
+    expect(mine[0]).toContain('"pieceIndex":2');
+    expect(mine[0]).toContain('"counted":1795');
+    expect(mine[0]).toContain('"expected":1796');
+  });
+
+  it('a clean bulk row reports nothing new (pin)', async () => {
+    hook.state = { ...hook.state, showExportSuccess: true, isExporting: false };
+    const outcome = await done(mountHost()({}));
+    expect(outcome).toEqual({ status: 'done' });
+  });
+});
