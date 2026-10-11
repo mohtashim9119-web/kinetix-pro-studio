@@ -97,7 +97,7 @@ describe('findResumeOffer — resume refusal notice', () => {
     });
     expect(offer).toBeNull();
     expect(notice?.kind).toBe('budget_exhausted');
-    expect(notice?.reason).toContain('recovery budget exhausted');
+    expect(notice?.reason).toContain('recovery attempts used without progress');
   });
 
   it('an ordinary identity mismatch (v1-era manifest, wrong project, etc.) yields NO notice — silent, not alarming', async () => {
@@ -304,5 +304,61 @@ describe('findResumeOffer — the offer mutates nothing; adoption runs only afte
     const adopted = await adoptResumeOffer(offer!, { io: run.io, countPicturesImpl: async () => 60 });
     expect(adopted.resumable?.sessionId).toBe(SESSION);
     expect(adopted.notice).toBeNull();
+  });
+});
+
+describe('findResumeOffer — the recovery budget never refuses across projects, and never deletes its evidence', () => {
+  const EXHAUSTED = 'ffffffff-2222-4333-8444-555555555555';
+  const EMPTY = '00000000-2222-4333-8444-555555555555';
+  async function manifestOf(sessionId: string, opts: { projectId?: string; attempts?: number; checkpoint?: boolean }): Promise<string> {
+    const hash = await expectedHash();
+    let m = createExportStateManifest({ sessionId, projectId: opts.projectId ?? 'proj-1', sourceTimelineHash: hash, fps: 30, width: 1920, height: 1080 });
+    if (opts.checkpoint !== false) {
+      m = appendExportCheckpoint(m, { pieceIndex: 0, encoderSessionIndex: 1, byteOffset: 4_000, cumulativePictures: 30, fps: 30, width: 1920, height: 1080, sourceTimelineHash: hash });
+    }
+    if (opts.attempts !== undefined) m = { ...m, totalRecoveryAttempts: opts.attempts };
+    return serializeExportState(m);
+  }
+  function diskIo(manifests: Record<string, string>): { io: ResumeDiscoveryIo; destroyed: string[] } {
+    const destroyed: string[] = [];
+    const io: ResumeDiscoveryIo = {
+      listResumableSessionIds: async () => Object.keys(manifests),
+      readSessionClaim: async () => ({ holderLiveness: 'unclaimed' }),
+      peekExportState: async (id) => ({ kind: 'found', bytes: Array.from(new TextEncoder().encode(manifests[id]!)) }),
+      peekSessionFileSize: async () => 5_000,
+      reenter: async (sessionId) => ({
+        sessionId,
+        readExportState: async () => new TextEncoder().encode(manifests[sessionId]!),
+        sessionFileSize: async () => 5_000,
+        prepareCheckpointResume: async () => { throw new Error('not in this test'); },
+        truncateAnnexbToOffset: async () => { throw new Error('not in this test'); },
+        destroy: async () => { destroyed.push(sessionId); },
+      }),
+    };
+    return { io, destroyed };
+  }
+  const params = (io: ResumeDiscoveryIo) => ({ project: project(), fps: 30, width: 1920, height: 1080, pieceExpectedFrames: [60], io, nowMs: 0 });
+
+  it('(4) a FOREIGN project\'s exhausted session produces no refusal notice on this row', async () => {
+    const { io } = diskIo({ [EXHAUSTED]: await manifestOf(EXHAUSTED, { projectId: 'someone-else', attempts: 4 }) });
+    const { offer, notice } = await findResumeOffer(params(io));
+    expect(offer).toBeNull();
+    expect(notice).toBeNull();
+  });
+
+  it('(5) this project\'s refusal carries the real reason and count', async () => {
+    const { io } = diskIo({ [EXHAUSTED]: await manifestOf(EXHAUSTED, { attempts: 4 }) });
+    const { notice } = await findResumeOffer(params(io));
+    expect(notice?.kind).toBe('budget_exhausted');
+    expect(notice?.reason).toBe('Resume unavailable — 4 of 4 recovery attempts used without progress. Starting fresh.');
+  });
+
+  it('D1.5 — the refused session is not collected as collateral in the same pass', async () => {
+    const { io, destroyed } = diskIo({
+      [EMPTY]: await manifestOf(EMPTY, { checkpoint: false }),
+      [EXHAUSTED]: await manifestOf(EXHAUSTED, { attempts: 4 }),
+    });
+    await findResumeOffer(params(io));
+    expect(destroyed).not.toContain(EXHAUSTED);
   });
 });

@@ -385,7 +385,7 @@ describe('resume discovery — the fence ordering', () => {
     const h = harness({ json: serializeExportState(manifest) });
     const result = await discoverResumableExport(h.io, target, h.countPictures);
     expect(result.resumable).toBeNull();
-    expect(result.rejected[0]!.reason).toContain('recovery budget exhausted');
+    expect(result.rejected[0]!.reason).toContain('recovery attempts used without progress');
     expect(result.rejected[0]!.budgetExhausted).toBe(true);
     expect(h.fence).not.toHaveBeenCalled(); // no Annex-B I/O — pure manifest check
   });

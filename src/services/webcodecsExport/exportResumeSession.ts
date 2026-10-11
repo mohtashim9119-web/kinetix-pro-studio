@@ -187,6 +187,8 @@ export async function findResumeOffer(params: {
 
   let offer: ResumeOffer | null = null;
   let notice: ResumeRefusalNotice | null = null;
+  /** This project's sessions the recovery budget refused this pass. */
+  let budgetRefused: string[] = [];
   try {
     const expected = await buildExpectedIdentity(params.project, {
       fps: params.fps, width: params.width, height: params.height,
@@ -198,6 +200,9 @@ export async function findResumeOffer(params: {
       sessionIds.filter((id) => id !== params.inUseSessionId),
       exportSessionCreatedAt,
     );
+    // The budget is checked only after identity (`validateExportState`), so a
+    // budget refusal is always THIS project's session on THIS timeline.
+    budgetRefused = rejected.filter((r) => r.budgetExhausted).map((r) => r.sessionId);
     const best = ranked[0];
     if (best) {
       offer = {
@@ -221,10 +226,14 @@ export async function findResumeOffer(params: {
   }
 
   // A resumable session is NEVER collected while it is still resumable, and
-  // neither is the session in use. Everything else goes through the policy.
+  // neither is the session in use. A session the recovery budget just refused
+  // is kept too: it is this project's record of why the export restarts, and
+  // deleting it in the same pass would erase that evidence. Everything else
+  // goes through the policy.
   const protectedIds = [
     ...(offer ? [offer.sessionId] : []),
     ...(params.inUseSessionId ? [params.inUseSessionId] : []),
+    ...budgetRefused,
   ];
   try {
     const collected = await collectAbandonedSessions(io, {

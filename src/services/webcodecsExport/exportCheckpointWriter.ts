@@ -43,6 +43,7 @@ import {
   recordBoundaryRewind,
   recordHardwareFailover,
   recordPieceCompleted,
+  recordForwardProgress,
   recordResumeAttempt,
   recordRotationSeen,
   serializeExportState,
@@ -243,7 +244,10 @@ export function createExportCheckpointWriter(
       if (!enabled) return;
       pendingCompletedPieces = Math.max(pendingCompletedPieces, donePieceIndex + 1);
       if (manifest === null) return;
+      const before = manifest.completedPieces ?? 0;
       manifest = recordPieceCompleted(manifest, donePieceIndex);
+      // Forward progress: the loop guard starts over.
+      if ((manifest.completedPieces ?? 0) > before) manifest = recordForwardProgress(manifest);
       dirty = true;
       pump();
     },
@@ -265,7 +269,9 @@ export function createExportCheckpointWriter(
         sourceTimelineHash: hash,
       };
       try {
-        manifest = appendExportCheckpoint(manifest, full);
+        // Monotonic append: a row that lands is beyond every one already
+        // recorded, the adopted resume point included — forward progress.
+        manifest = recordForwardProgress(appendExportCheckpoint(manifest, full));
       } catch (err) {
         // A non-monotonic or malformed row is DROPPED, never forced in and
         // never allowed to abort the export: the manifest's monotonicity is

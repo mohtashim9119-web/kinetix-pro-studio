@@ -210,10 +210,13 @@ describe('ExportCheckpointWriter recovery-budget notes (C7)', () => {
       const writer = createExportCheckpointWriter(ffmpeg, identity());
       writer.beginPiece(0);
       await flush();
-      writer.noteBoundaryRewind();
-      writer.noteHardwareFailover();
       writer.noteRotation();
       writer.record({ encoderSessionIndex: 1, byteOffset: 4096, seamByteOffset: 4000, cumulativePictures: 1800 });
+      // After the last checkpoint: a checkpoint is forward progress and resets
+      // the loop guard (`recordForwardProgress`), so these must come after it
+      // to still be standing at the piece boundary.
+      writer.noteBoundaryRewind();
+      writer.noteHardwareFailover();
       await flush();
       const piece0 = writer.snapshot()!;
       expect(piece0.boundaryRewindsUsed).toBe(1);

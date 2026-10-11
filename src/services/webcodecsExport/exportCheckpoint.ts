@@ -35,7 +35,14 @@ export const MAX_HARDWARE_FAILOVER_PER_EXPORT = 1;
 export const MAX_DRIVE_GL_RUN_ATTEMPTS_PER_EXPORT = 4;
 /** 2 rewind truncates + 1 failover truncate (exact-offset). */
 export const MAX_TRUNCATES_PER_EXPORT = 3;
-/** Cross-process ceiling on rewind/failover/resume-repair events for one export. */
+/**
+ * Cross-process LOOP GUARD: how many rewind/failover/resume events may happen
+ * in a row WITHOUT the export moving forward before a resume is refused. It
+ * exists to stop a checkpoint that crashes or stalls every time it is
+ * resumed from being resumed forever. It must never penalise ordinary
+ * cancel/Retry cycles that made progress, so `recordForwardProgress` resets
+ * the count whenever a new checkpoint lands or a piece finishes.
+ */
 export const MAX_TOTAL_RECOVERY_ATTEMPTS_PER_EXPORT = MAX_DRIVE_GL_RUN_ATTEMPTS_PER_EXPORT;
 
 /**
@@ -185,7 +192,9 @@ export interface ExportRecoveryBudget {
   hardwareFailoverUsed?: boolean;
   /** Resume-handshake attempts for the current checkpoint generation (default 0). */
   checkpointResumeAttempts?: number;
-  /** Rewind + failover + resume-repair events across process restarts (default 0). */
+  /** Rewind + failover + resume-repair events across process restarts SINCE
+   *  THE LAST FORWARD PROGRESS (a new checkpoint or a finished piece — see
+   *  `recordForwardProgress`). Default 0. The name predates that reset. */
   totalRecoveryAttempts?: number;
 }
 
@@ -634,6 +643,18 @@ export function recordResumeAttempt(manifest: ExportStateManifest): ExportStateM
   };
 }
 
+/**
+ * The export moved forward: a checkpoint beyond every one already recorded
+ * was appended, or a piece finished. Recovery events before it were not a
+ * loop, so the loop guard starts over. `boundaryRewindsUsed` and
+ * `hardwareFailoverUsed` are NOT reset: they are the in-process rewind and
+ * failover gates' own per-export counters, not this guard.
+ */
+export function recordForwardProgress(manifest: ExportStateManifest): ExportStateManifest {
+  if ((manifest.totalRecoveryAttempts ?? 0) === 0 && (manifest.checkpointResumeAttempts ?? 0) === 0) return manifest;
+  return { ...manifest, totalRecoveryAttempts: 0, checkpointResumeAttempts: 0 };
+}
+
 export function isRecoveryBudgetExhausted(manifest: ExportRecoveryBudget): boolean {
   const budget = normalizeRecoveryBudget(manifest);
   if (budget.boundaryRewindsUsed >= MAX_BOUNDARY_REWINDS_PER_EXPORT) {
@@ -648,12 +669,12 @@ export function isRecoveryBudgetExhausted(manifest: ExportRecoveryBudget): boole
 export function recoveryBudgetExhaustionReason(manifest: ExportRecoveryBudget): string {
   const budget = normalizeRecoveryBudget(manifest);
   if (budget.boundaryRewindsUsed >= MAX_BOUNDARY_REWINDS_PER_EXPORT) {
-    return `recovery budget exhausted: boundary rewinds ${budget.boundaryRewindsUsed}/${MAX_BOUNDARY_REWINDS_PER_EXPORT}`;
+    return `Resume unavailable — ${budget.boundaryRewindsUsed} of ${MAX_BOUNDARY_REWINDS_PER_EXPORT} boundary rewinds used. Starting fresh.`;
   }
   if (budget.totalRecoveryAttempts >= MAX_TOTAL_RECOVERY_ATTEMPTS_PER_EXPORT) {
-    return `recovery budget exhausted: total recovery attempts ${budget.totalRecoveryAttempts}/${MAX_TOTAL_RECOVERY_ATTEMPTS_PER_EXPORT}`;
+    return `Resume unavailable — ${budget.totalRecoveryAttempts} of ${MAX_TOTAL_RECOVERY_ATTEMPTS_PER_EXPORT} recovery attempts used without progress. Starting fresh.`;
   }
-  return 'recovery budget exhausted';
+  return 'Resume unavailable — the recovery budget is used up. Starting fresh.';
 }
 
 export function createExportStateManifest(params: {
@@ -837,14 +858,6 @@ export function validateExportState(
     checkpointResumeAttempts,
     totalRecoveryAttempts,
   };
-  if (isRecoveryBudgetExhausted(recoveryBudget)) {
-    return {
-      kind: 'recovery_budget_exhausted',
-      reason: recoveryBudgetExhaustionReason(recoveryBudget),
-      budget: normalizeRecoveryBudget(recoveryBudget),
-    };
-  }
-
   if (value.projectId !== expected.projectId) {
     return { kind: 'clean', reason: 'checkpoint projectId mismatch' };
   }
@@ -857,6 +870,16 @@ export function validateExportState(
     value.height !== expected.height
   ) {
     return { kind: 'clean', reason: 'checkpoint fps/resolution mismatch' };
+  }
+  // The budget is checked only once the manifest is known to be THIS
+  // project's, on THIS timeline: another project's (or an edited timeline's)
+  // exhausted session is an ordinary mismatch, never this export's refusal.
+  if (isRecoveryBudgetExhausted(recoveryBudget)) {
+    return {
+      kind: 'recovery_budget_exhausted',
+      reason: recoveryBudgetExhaustionReason(recoveryBudget),
+      budget: normalizeRecoveryBudget(recoveryBudget),
+    };
   }
 
   const checkpoints: ExportCheckpointRecord[] = [];
