@@ -166,47 +166,11 @@ function causeString(err: unknown): string {
 }
 
 // ---------------------------------------------------------------------------
-// Single-active-export state (plan §9.3: one export at a time, same as the
-// legacy path — the export UI already prevents re-entry). Mirrors
-// exportWorker.ts's own module-level `running`/`cancelRequested` singleton
-// pattern. Lets `cancelExportWebCodecs` reach the in-flight worker/ffmpeg
-// without threading a handle back out of `exportProjectWebCodecs`'s plain
-// `Promise<ExportResult>` return type (the plan's own public API shape,
-// §4.4 — no wrapper object). `activeFfmpeg` now stays set for the ENTIRE
-// multi-piece export (not just one run), so a cancel that lands while a
-// Tier 1/C `ffmpeg.exec` is in flight (no worker active at that moment)
-// still has something to kill — see this file's header, cancel sequence.
+// No module-level run state. This dev spike is driven only by
+// `webcodecsStep2Spike/main.ts`, which never cancels a run, so it keeps no
+// worker or session handle at module scope (the shipped pipeline's per-run
+// cancel lives in `exportPipelineWebCodecs.ts`'s `ExportRunControl`).
 // ---------------------------------------------------------------------------
-
-let activeWorker: Worker | null = null;
-let activeFfmpeg: WebCodecsFfmpeg | null = null;
-
-/**
- * Cancel sequence (plan §9.1, adapted for this step — Step 7 wires the
- * generation-counter/useExport.ts side): post `cancel` to the worker (if a
- * GL piece is currently driving one), terminate it (hard stop in case it's
- * wedged), kill whatever ffmpeg subprocess is in flight (a GL piece's
- * append, a Tier 1/C piece's encode/remux, the concat, or the mux — all run
- * through the same `ffmpeg.exec`/`appendFileRaw`, so one kill covers
- * whichever phase is active), then destroy the session. `destroy()` is
- * idempotent (`TauriFfmpeg`'s own doc comment), so a caller that also tears
- * down its own ffmpeg handle afterward is safe.
- */
-export async function cancelExportWebCodecs(): Promise<void> {
-  const worker = activeWorker;
-  const ffmpeg = activeFfmpeg;
-  activeWorker = null;
-  activeFfmpeg = null;
-  if (worker) {
-    const cancelMsg: ExportWorkerInboundMessage = { type: 'cancel' };
-    worker.postMessage(cancelMsg);
-    worker.terminate();
-  }
-  if (ffmpeg) {
-    await ffmpeg.kill();
-    await ffmpeg.destroy();
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Part 1 — Routing (plan §3.2/§3.3, refined — see this file's own header).
@@ -500,7 +464,6 @@ function driveGlRun(
     // STEP 8 SPIKE OVERRIDE — points at the software-forced worker duplicate,
     // not the real exportWorker.ts.
     const worker = new Worker(new URL('./exportWorkerSoftwareSpike.ts', import.meta.url), { type: 'module' });
-    activeWorker = worker;
 
     let appendQueue: Promise<void> = Promise.resolve();
     let appendError: Error | null = null;
@@ -528,7 +491,6 @@ function driveGlRun(
       if (settled) return;
       settled = true;
       clearWatchdog();
-      if (activeWorker === worker) activeWorker = null;
       worker.terminate();
       resolve(result);
     };
@@ -874,7 +836,6 @@ export async function exportProjectWebCodecsSoftwareSpike(
   };
 
   onProgress({ type: 'loading_ffmpeg' });
-  activeFfmpeg = ffmpeg;
 
   const pieceFiles: string[] = [];
   let framesCompletedBase = 0;
@@ -924,7 +885,6 @@ export async function exportProjectWebCodecsSoftwareSpike(
         },
       );
       if (!driveResult.ok) {
-        activeFfmpeg = null;
         return { ok: false, error: driveResult.error };
       }
       pieceFiles.push(runFile);
@@ -934,14 +894,12 @@ export async function exportProjectWebCodecsSoftwareSpike(
       const result = await encodeTier1Piece(ffmpeg, segment, asset, globalConfig, fps, width, height, pieceIndex);
       onFrameProgress(plan.expectedFrames);
       if (!result.ok) {
-        activeFfmpeg = null;
         return { ok: false, error: result.error };
       }
       pieceFiles.push(result.h264File);
     } else {
       const result = await encodeCanvasPiece(ffmpeg, plan, project, assetMap, globalConfig, fps, width, height, pieceIndex, onFrameProgress);
       if (!result.ok) {
-        activeFfmpeg = null;
         return { ok: false, error: result.error };
       }
       pieceFiles.push(result.h264File);
@@ -963,7 +921,6 @@ export async function exportProjectWebCodecsSoftwareSpike(
       await concatAnnexbPieces(ffmpeg, pieceFiles, videoAllFile);
     }
   } catch (err) {
-    activeFfmpeg = null;
     return { ok: false, error: { kind: 'concat', message: 'Failed to concatenate the encoded pieces.', cause: causeString(err) } };
   }
   const finalVideoFile = pieceFiles.length === 1 ? pieceFiles[0]! : videoAllFile;
@@ -975,7 +932,6 @@ export async function exportProjectWebCodecsSoftwareSpike(
     const bytes = typeof rawBytes === 'string' ? new TextEncoder().encode(rawBytes) : rawBytes;
     const actualFrames = countAnnexbFrames(bytes);
     if (actualFrames !== totalExpectedFramesOverall) {
-      activeFfmpeg = null;
       return {
         ok: false,
         error: {
@@ -987,7 +943,6 @@ export async function exportProjectWebCodecsSoftwareSpike(
       };
     }
   } catch (err) {
-    activeFfmpeg = null;
     return { ok: false, error: { kind: 'concat', message: 'Failed to verify the concatenated output frame count.', cause: causeString(err) } };
   }
 
@@ -1004,7 +959,6 @@ export async function exportProjectWebCodecsSoftwareSpike(
       await ffmpeg.writeFile(audioFile, audioBytes);
     }
   } catch (err) {
-    activeFfmpeg = null;
     return {
       ok: false,
       error: { kind: 'mux', message: 'Failed to prepare the voiceover audio for muxing.', cause: causeString(err) },
@@ -1017,7 +971,6 @@ export async function exportProjectWebCodecsSoftwareSpike(
     // instead; see muxOnly.ts's own doc comment on the `sessionId` param.
     await muxOnly(ffmpeg, project.id, finalVideoFile, audioFile, outputFile, fps);
   } catch (err) {
-    activeFfmpeg = null;
     return { ok: false, error: { kind: 'mux', message: 'Failed to mux the encoded output with audio.', cause: causeString(err) } };
   }
 
@@ -1030,12 +983,10 @@ export async function exportProjectWebCodecsSoftwareSpike(
     try {
       await ffmpeg.saveSessionFile(outputFile, options.savePath);
     } catch (err) {
-      activeFfmpeg = null;
       return { ok: false, error: { kind: 'unknown', message: 'Failed to save the exported file to disk.', cause: causeString(err) } };
     }
   }
 
-  activeFfmpeg = null;
   onProgress({ type: 'done' });
   return { ok: true, outputFile };
 }

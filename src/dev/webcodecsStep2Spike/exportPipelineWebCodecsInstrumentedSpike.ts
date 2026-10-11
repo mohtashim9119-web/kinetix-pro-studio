@@ -360,8 +360,6 @@ type RunDriveResult =
 
 const WATCHDOG_MS = 30_000;
 
-let activeWorker: Worker | null = null;
-
 function driveGlRun(
   ffmpeg: WebCodecsFfmpeg,
   runId: string,
@@ -383,7 +381,6 @@ function driveGlRun(
 ): Promise<RunDriveResult> {
   return new Promise((resolve) => {
     const worker = new Worker(new URL('./exportWorkerInstrumentedSpike.ts', import.meta.url), { type: 'module' });
-    activeWorker = worker;
 
     let appendQueue: Promise<void> = Promise.resolve();
     let appendError: Error | null = null;
@@ -413,7 +410,6 @@ function driveGlRun(
       if (settled) return;
       settled = true;
       clearWatchdog();
-      if (activeWorker === worker) activeWorker = null;
       worker.terminate();
       resolve(result);
     };
