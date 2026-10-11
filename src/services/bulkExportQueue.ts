@@ -368,7 +368,9 @@ export class BulkExportRunner {
     row.phase = 'queued';
     row.message = 'Queued';
     this.commit();
-    this.queue.enqueue([this.jobFor(verdict.project, verdict.settings, resume)]);
+    // Not added only while this id is still queued or running: the row then
+    // shows that live item's real state, never a "Queued" with nothing behind it.
+    if (this.queue.enqueue([this.jobFor(verdict.project, verdict.settings, resume)]) === 0) this.onQueue();
   }
 
   private jobFor(project: Project, settings: BulkExportSettings, resume: boolean): QueueJob {

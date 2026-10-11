@@ -138,7 +138,10 @@ export class SyncQueue {
   }
 
   /** Adds jobs to the batch (starting one if idle). A job whose id is already
-   *  queued or running is not added twice. Returns how many were added. */
+   *  queued or running is not added twice. A FINISHED item with the same id is
+   *  replaced, not kept beside the new one: there is at most one item per id,
+   *  so every lookup by id (cancel, the progress and row views) reaches the
+   *  live one. Returns how many were added. */
   enqueue(newJobs: readonly QueueJob[], opts?: { next?: boolean }): number {
     // A finished batch is history once new work arrives.
     if (!this.pumping && this.items.every(i => TERMINAL.has(i.status))) {
@@ -150,6 +153,8 @@ export class SyncQueue {
     for (const job of newJobs) {
       const live = this.items.find(i => i.id === job.id && !TERMINAL.has(i.status));
       if (live) continue;
+      // A retried id goes to the back as ONE item: its finished history entry goes.
+      this.items = this.items.filter(i => i.id !== job.id);
       this.jobs.set(job.id, job);
       const item: QueueItem = { id: job.id, label: job.label, status: 'queued', position: this.items.length + 1, workerSec: 0 };
       if (opts?.next) {

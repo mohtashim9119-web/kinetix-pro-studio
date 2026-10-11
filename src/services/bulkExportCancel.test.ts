@@ -147,3 +147,62 @@ describe('Reordering the queue', () => {
     expect(h.runs.map(r => r.project.id)).toEqual(['a', 'd']);
   });
 });
+
+/**
+ * A Retry while the queue is pumping used to APPEND a second item with the
+ * same id, leaving the finished one in place. Every lookup by id then hit the
+ * stale item: `onQueue` deleted the running row's progress (the row showed
+ * "Queued" while it ran, and every progress update was dropped), and
+ * `cancel(id)` found the finished item and did nothing.
+ */
+describe('one live queue item per id — a Retry replaces the finished item', () => {
+  function liveHarness(ids: string[]) {
+    const h = harness(ids, { hasCheckpoint: true });
+    const exec = (h.runner as unknown as { execute: (i: BulkExportExecutorInput) => Promise<unknown> }).execute;
+    h.runner.setExecutor(input => {
+      const p = exec(input) as Promise<never>;
+      input.setProgress({ pct: 12, stage: 'Encoding' });
+      // The real slot reports its stage on every change; each one emits the queue.
+      input.setPhase('Encoding');
+      return p;
+    });
+    return h;
+  }
+  const queueIds = (r: BulkExportRunner): string[] =>
+    (r as unknown as { queue: { snapshot(): { items: readonly { id: string }[] } } }).queue.snapshot().items.map(i => i.id);
+
+  it('(1) cancel A, Retry A while B runs, cancel B → A runs WITH live progress', async () => {
+    const h = liveHarness(['a', 'b']);
+    selectAll(h.runner);
+    await h.runner.startSelected();
+    await vi.waitFor(() => expect(phaseOf(h.runner, 'a')).toBe('exporting'));
+    h.runner.cancel('a');
+    await vi.waitFor(() => expect(phaseOf(h.runner, 'b')).toBe('exporting'));
+    await h.runner.retry('a');
+    expect(phaseOf(h.runner, 'a')).toBe('queued');
+    h.runner.cancel('b');
+    await vi.waitFor(() => expect(phaseOf(h.runner, 'a')).toBe('exporting'));
+    expect(h.runs.map(r => r.project.id)).toEqual(['a', 'b', 'a']);
+    expect(h.runner.progressSnapshot().get('a')?.pct).toBe(12);
+    expect(queueIds(h.runner).filter(id => id === 'a')).toHaveLength(1);
+  });
+
+  it('(2) the retried row\'s cancel actually stops it, and the queue advances', async () => {
+    const h = liveHarness(['a', 'b']);
+    selectAll(h.runner);
+    await h.runner.startSelected();
+    await vi.waitFor(() => expect(phaseOf(h.runner, 'a')).toBe('exporting'));
+    h.runner.cancel('a');
+    await vi.waitFor(() => expect(phaseOf(h.runner, 'b')).toBe('exporting'));
+    await h.runner.retry('a');
+    h.runner.cancel('b');
+    await vi.waitFor(() => expect(phaseOf(h.runner, 'a')).toBe('exporting'));
+    await h.runner.retry('b');
+    expect(phaseOf(h.runner, 'b')).toBe('queued');
+    h.runner.cancel('a');
+    expect(h.runs[2]!.signal.aborted).toBe(true);
+    await vi.waitFor(() => expect(phaseOf(h.runner, 'a')).toBe('cancelled'));
+    await vi.waitFor(() => expect(phaseOf(h.runner, 'b')).toBe('exporting'));
+    expect(h.runs.map(r => r.project.id)).toEqual(['a', 'b', 'a', 'b']);
+  });
+});
