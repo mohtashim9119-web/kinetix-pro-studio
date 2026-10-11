@@ -326,7 +326,6 @@ describe('END-TO-END recovery matrix', () => {
     const order: string[] = [];
     const outcome = await evaluateResumeCandidate(
       {
-        listResumableSessionIds: async () => [SESSION],
         reenter: async (sessionId) => ({
           sessionId,
           readExportState: async () => new TextEncoder().encode(serializeExportState(manifest)),
@@ -372,7 +371,6 @@ describe('END-TO-END recovery matrix', () => {
     const touched: string[] = [];
     const outcome = await evaluateResumeCandidate(
       {
-        listResumableSessionIds: async () => [SESSION],
         reenter: async (sessionId) => ({
           sessionId,
           readExportState: async () => new TextEncoder().encode(serializeExportState(manifest)),

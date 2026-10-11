@@ -164,6 +164,15 @@ export function discoveryIoFor(fake: ByteFfmpeg): ResumeDiscoveryIo {
   };
   return {
     listResumableSessionIds: async () => (fake.manifestOnDisk() ? [SESSION_ID] : []),
+    // Read-only: neither arms the fence nor touches a byte.
+    peekExportState: async () => {
+      const onDisk = fake.manifestOnDisk();
+      return onDisk ? { kind: 'found', bytes: Array.from(new TextEncoder().encode(onDisk)) } : { kind: 'notFound' };
+    },
+    peekSessionFileSize: async (_id, p) => {
+      if (!fake.files.has(p)) throw new Error(`no such file ${p}`);
+      return read(p).length;
+    },
     reenter: async () => { fake.setFencePending(true); return handle; },
   };
 }

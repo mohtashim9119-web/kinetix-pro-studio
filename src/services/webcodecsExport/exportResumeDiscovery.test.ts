@@ -16,6 +16,7 @@ import {
   selectSessionsToCollect,
   pieceFileName,
   ABANDONED_SESSION_TTL_MS,
+  type ResumeAdoptIo,
   type ResumeDiscoveryIo,
   type ResumeSessionHandle,
   type ResumeTargetPlan,
@@ -102,10 +103,19 @@ function harness(opts: {
     calls.push(`count(${path})`);
     return opts.pieceCounts?.[path] ?? 1800;
   });
+  const manifestBytes = (): Uint8Array => new TextEncoder().encode(
+    opts.json ?? manifestJson({ rows: [{ pieceIndex: 1, encoderSessionIndex: 1, byteOffset: 4_000, cumulativePictures: 1_200 }] }),
+  );
   const io: ResumeDiscoveryIo = {
     listResumableSessionIds: async () => {
       calls.push('list');
       return opts.sessionIds ?? [SESSION];
+    },
+    peekExportState: async () => ({ kind: 'found', bytes: Array.from(manifestBytes()) }),
+    peekSessionFileSize: async (_id: string, path: string) => {
+      const size = fileSizes[path];
+      if (size === undefined) throw new Error(`no such file ${path}`);
+      return size;
     },
     reenter: async (sessionId: string) => {
       calls.push(`reenter(${sessionId})`);
@@ -113,9 +123,7 @@ function harness(opts: {
         sessionId,
         readExportState: async () => {
           calls.push('readExportState');
-          return new TextEncoder().encode(
-            opts.json ?? manifestJson({ rows: [{ pieceIndex: 1, encoderSessionIndex: 1, byteOffset: 4_000, cumulativePictures: 1_200 }] }),
-          );
+          return manifestBytes();
         },
         sessionFileSize: async (path: string) => {
           calls.push(`size(${path})`);
@@ -243,13 +251,17 @@ describe('resume discovery — the fence ordering', () => {
   it('discovery takes the first candidate that works and reports the rest', async () => {
     let first = true;
     const h = harness({ sessionIds: [SESSION_2, SESSION] });
+    const staleJson = manifestJson({ sessionId: SESSION_2, hash: HASH_B, rows: [{ pieceIndex: 1, encoderSessionIndex: 1, byteOffset: 4_000, cumulativePictures: 1_200 }] });
     const io: ResumeDiscoveryIo = {
       listResumableSessionIds: h.io.listResumableSessionIds,
+      peekExportState: async (id) =>
+        id === SESSION_2 ? { kind: 'found', bytes: Array.from(new TextEncoder().encode(staleJson)) } : h.io.peekExportState(id),
+      peekSessionFileSize: h.io.peekSessionFileSize,
       reenter: async (id) => {
         const handle = await h.io.reenter(id);
         if (first) {
           first = false;
-          return { ...handle, readExportState: async () => new TextEncoder().encode(manifestJson({ sessionId: SESSION_2, hash: HASH_B, rows: [{ pieceIndex: 1, encoderSessionIndex: 1, byteOffset: 4_000, cumulativePictures: 1_200 }] })) };
+          return { ...handle, readExportState: async () => new TextEncoder().encode(staleJson) };
         }
         return handle;
       },
@@ -269,13 +281,14 @@ describe('resume discovery — the fence ordering', () => {
     // (`ffmpeg_prepare_checkpoint_resume` truncates before its own post-repair
     // check can fail).
     let currentSize = 5_000;
+    const json = manifestJson({ rows: [{ pieceIndex: 1, encoderSessionIndex: 1, byteOffset: 4_000, cumulativePictures: 1_200 }] });
     return {
       listResumableSessionIds: async () => [SESSION],
+      peekExportState: async () => ({ kind: 'found', bytes: Array.from(new TextEncoder().encode(json)) }),
+      peekSessionFileSize: async () => currentSize,
       reenter: async (sessionId) => ({
         sessionId,
-        readExportState: async () => new TextEncoder().encode(
-          manifestJson({ rows: [{ pieceIndex: 1, encoderSessionIndex: 1, byteOffset: 4_000, cumulativePictures: 1_200 }] }),
-        ),
+        readExportState: async () => new TextEncoder().encode(json),
         sessionFileSize: async () => currentSize,
         prepareCheckpointResume: async () => {
           currentSize = 4_000; // the native repair's truncate landed...
@@ -298,8 +311,7 @@ describe('resume discovery — the fence ordering', () => {
   it('a fence that never settles expires TRUNCATE_BOUND_MS rather than hanging discovery', async () => {
     vi.useFakeTimers();
     const kill = vi.fn(async () => undefined);
-    const io: ResumeDiscoveryIo = {
-      listResumableSessionIds: async () => [SESSION],
+    const io: ResumeAdoptIo = {
       reenter: async (sessionId) => ({
         sessionId,
         readExportState: async () => new TextEncoder().encode(
@@ -331,8 +343,7 @@ describe('resume discovery — the fence ordering', () => {
 
   it('bitstream_touched: the seam step-back cut mutates the file, THEN fails', async () => {
     let currentSize = 5_000;
-    const io: ResumeDiscoveryIo = {
-      listResumableSessionIds: async () => [SESSION],
+    const io: ResumeAdoptIo = {
       reenter: async (sessionId) => ({
         sessionId,
         readExportState: async () => new TextEncoder().encode(
@@ -487,6 +498,8 @@ describe('a rejected candidate releases its claim only where no byte can have ch
     const io: ResumeDiscoveryIo = {
       listResumableSessionIds: async () => Object.keys(sessions),
       readSessionClaim: async (id) => ({ holderLiveness: claims.has(id) ? 'live' : 'unclaimed' }),
+      peekExportState: async (id) => ({ kind: 'found', bytes: Array.from(new TextEncoder().encode(sessions[id]!.json)) }),
+      peekSessionFileSize: async (id) => sizes.get(id) ?? 5_000,
       reenter: async (sessionId) => {
         claims.add(sessionId);
         const spec = sessions[sessionId]!;
@@ -667,8 +680,7 @@ describe('abandoned-session cleanup policy', () => {
 
   it('actually destroys what it selects, and survives one that refuses', async () => {
     const destroyed: string[] = [];
-    const io: ResumeDiscoveryIo = {
-      listResumableSessionIds: async () => [],
+    const io: ResumeAdoptIo = {
       reenter: async (id) => {
         if (id === 'stuck') throw new Error('locked');
         return {
@@ -694,8 +706,7 @@ describe('abandoned-session cleanup policy', () => {
    *  destroy a session a live claim holds. */
   function claimAwareIo(claims: Record<string, 'live' | 'stale' | 'unclaimed'>) {
     const destroyed: string[] = [];
-    const io: ResumeDiscoveryIo = {
-      listResumableSessionIds: async () => [],
+    const io: ResumeAdoptIo = {
       readSessionClaim: async (id) => ({ holderLiveness: claims[id] ?? 'unclaimed' }),
       reenter: async (id) => ({
         sessionId: id,

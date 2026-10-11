@@ -38,8 +38,11 @@ function project(): Project {
 }
 
 function ioFor(handle: Partial<ResumeSessionHandle> & { readExportState: ResumeSessionHandle['readExportState'] }): ResumeDiscoveryIo {
+  const sessionFileSize = handle.sessionFileSize ?? (async () => 5_000);
   return {
     listResumableSessionIds: async () => [SESSION],
+    peekExportState: async () => ({ kind: 'found', bytes: Array.from(await handle.readExportState()) }),
+    peekSessionFileSize: async (_id, path) => sessionFileSize(path),
     reenter: async (sessionId) => ({
       sessionId,
       sessionFileSize: async () => 5_000,
@@ -107,7 +110,12 @@ describe('findResumeOffer — resume refusal notice', () => {
   });
 
   it('no surviving sessions at all yields no offer and no notice', async () => {
-    const io: ResumeDiscoveryIo = { listResumableSessionIds: async () => [], reenter: async () => { throw new Error('unreachable'); } };
+    const io: ResumeDiscoveryIo = {
+      listResumableSessionIds: async () => [],
+      peekExportState: async () => { throw new Error('unreachable'); },
+      peekSessionFileSize: async () => { throw new Error('unreachable'); },
+      reenter: async () => { throw new Error('unreachable'); },
+    };
     const { offer, notice } = await findResumeOffer({
       project: project(), fps: 30, width: 1920, height: 1080,
       pieceExpectedFrames: [60], io, nowMs: 0,
@@ -125,6 +133,8 @@ describe('findResumeOffer — resume refusal notice', () => {
     let reentered = false;
     const io: ResumeDiscoveryIo = {
       listResumableSessionIds: async () => [SESSION],
+      peekExportState: async () => { throw new Error('should not be called — live claim must block first'); },
+      peekSessionFileSize: async () => { throw new Error('should not be called — live claim must block first'); },
       reenter: async (sessionId) => {
         reentered = true;
         return {

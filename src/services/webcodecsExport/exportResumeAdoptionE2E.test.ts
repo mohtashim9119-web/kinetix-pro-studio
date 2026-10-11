@@ -81,10 +81,20 @@ function harness(opts: {
   const destroyedSessionIds: string[] = [];
   let reenterCalls = 0;
   const fileSizes = opts.fileSizes ?? { 'piece_0.h264': 1_078_396_331 };
+  const manifestText = (): string => (typeof opts.json === 'function' ? opts.json() : opts.json ?? machine1Manifest());
   const io: ResumeDiscoveryIo = {
     listResumableSessionIds: async () => {
       calls.push('list');
       return [SESSION_ID];
+    },
+    peekExportState: async () => {
+      if (opts.readExportStateThrows) throw new Error(opts.readExportStateThrows);
+      return { kind: 'found', bytes: Array.from(new TextEncoder().encode(manifestText())) };
+    },
+    peekSessionFileSize: async (_id: string, path: string) => {
+      const size = fileSizes[path];
+      if (size === undefined) throw new Error(`no such file ${path}`);
+      return size;
     },
     reenter: async (sessionId: string) => {
       reenterCalls += 1;
@@ -94,8 +104,7 @@ function harness(opts: {
         readExportState: async () => {
           calls.push('readExportState');
           if (opts.readExportStateThrows) throw new Error(opts.readExportStateThrows);
-          const json = typeof opts.json === 'function' ? opts.json() : opts.json ?? machine1Manifest();
-          return new TextEncoder().encode(json);
+          return new TextEncoder().encode(manifestText());
         },
         sessionFileSize: async (path: string) => {
           calls.push(`size(${path})`);

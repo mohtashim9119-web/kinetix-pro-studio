@@ -99,7 +99,24 @@ export interface ResumeDiscoveryIo {
    * case. Production (`exportResumeSession.ts`'s `tauriIo`) always supplies it.
    */
   readSessionClaim?(sessionId: string): Promise<SessionClaimLivenessView>;
+  /**
+   * Phase A (the offer) — a pure read of the manifest (`ffmpeg_peek_export_state`):
+   * no claim, no `resume_pending`, no fence. `notFound` covers a missing
+   * session, a missing manifest and a torn write alike.
+   */
+  peekExportState(sessionId: string): Promise<{ kind: 'found'; bytes: number[] } | { kind: 'notFound' }>;
+  /**
+   * Phase A — a file's byte length without a session handle
+   * (`ffmpeg_session_file_size`, which takes no claim and checks no fence).
+   */
+  peekSessionFileSize(sessionId: string, path: string): Promise<number>;
 }
+
+/**
+ * What adoption (Phase B) needs. The manifest and file length are re-read
+ * through the claimed handle, so the read-only probes are not part of it.
+ */
+export type ResumeAdoptIo = Pick<ResumeDiscoveryIo, 'reenter' | 'readSessionClaim'>;
 
 /** A validated, fenced, ready-to-continue export. */
 export interface ResumableExport {
@@ -219,7 +236,7 @@ export function pieceFileName(pieceIndex: number): string {
  * call is the authoritative one.
  */
 async function selectCheckpoint(
-  session: ResumeSessionHandle,
+  sessionFileSize: (path: string) => Promise<number>,
   serialized: Uint8Array,
   expected: ExportCheckpointExpectedIdentity,
 ): Promise<
@@ -253,7 +270,7 @@ async function selectCheckpoint(
   const pieceFile = pieceFileName(provisional.checkpoint.pieceIndex);
   let fileLength: number;
   try {
-    fileLength = await session.sessionFileSize(pieceFile);
+    fileLength = await sessionFileSize(pieceFile);
   } catch (err) {
     return { ok: false, reason: `surviving ${pieceFile} is unreadable: ${message(err)}` };
   }
@@ -317,7 +334,7 @@ export type ResumeCandidateOutcome =
  * identity check has already passed — that is the whole point of the ordering.
  */
 export async function evaluateResumeCandidate(
-  io: ResumeDiscoveryIo,
+  io: ResumeAdoptIo,
   sessionId: string,
   target: ResumeTargetPlan,
   countPictures: (session: ResumeSessionHandle, path: string) => Promise<number>,
@@ -401,7 +418,7 @@ async function evaluateReenteredCandidate(
     return { ok: false, reason: `export_state.json unreadable: ${message(err)}` };
   }
 
-  const selected = await selectCheckpoint(session, serialized, target.expected);
+  const selected = await selectCheckpoint((path) => session.sessionFileSize(path), serialized, target.expected);
   if (!selected.ok) return selected;
 
   // ── Piece-boundary resume: whole pieces are finished, nothing inside the
@@ -597,6 +614,166 @@ async function evaluateReenteredCandidate(
   };
 }
 
+// ---------------------------------------------------------------------------
+// Phase A — the offer: read-only, ranked
+// ---------------------------------------------------------------------------
+
+/**
+ * A session that can be offered, as far as can be told without touching it.
+ * Adoption (Phase B) re-derives all of this through the claimed handle and
+ * refuses if it no longer matches.
+ */
+export interface ResumeCandidate {
+  sessionId: string;
+  kind: 'checkpoint' | 'piece';
+  manifest: ExportStateManifest;
+  /** The checkpoint the surviving file length supports (`kind: 'checkpoint'`). */
+  checkpoint: ExportCheckpointRecord | null;
+  /** Whole pieces finished — the piece to resume at (`kind: 'piece'`). */
+  completedPieces: number;
+  /** Pictures the resume would keep: finished pieces + the fenced prefix. */
+  projectedPicturesRendered: number;
+  picturesTotal: number;
+  /** The claim read `stale`: the prior holder process is gone. */
+  staleClaim: boolean;
+  createdAtMs: number | null;
+}
+
+type CandidateInspection =
+  | { ok: true; candidate: ResumeCandidate }
+  | ({ ok: false } & Omit<ResumeRejection, 'sessionId'>);
+
+function sumFrames(pieceExpectedFrames: readonly number[], pieces: number): number {
+  let total = 0;
+  for (let i = 0; i < pieces; i++) total += pieceExpectedFrames[i] ?? 0;
+  return total;
+}
+
+async function inspectCandidate(
+  io: ResumeDiscoveryIo,
+  sessionId: string,
+  target: ResumeTargetPlan,
+  createdAtMs: number | null,
+): Promise<CandidateInspection> {
+  let staleClaim = false;
+  if (io.readSessionClaim) {
+    let claim: SessionClaimLivenessView;
+    try {
+      claim = await io.readSessionClaim(sessionId);
+    } catch (err) {
+      return { ok: false, reason: `cannot read session claim: ${message(err)}` };
+    }
+    if (claim.holderLiveness === 'live') {
+      return {
+        ok: false,
+        reason: 'another window is using this session (its claim is held by a running process) — not offering it',
+        liveClaimBlocked: true,
+      };
+    }
+    staleClaim = claim.holderLiveness === 'stale';
+  }
+
+  let peek: { kind: 'found'; bytes: number[] } | { kind: 'notFound' };
+  try {
+    peek = await io.peekExportState(sessionId);
+  } catch (err) {
+    return { ok: false, reason: `export_state.json unreadable: ${message(err)}` };
+  }
+  if (peek.kind === 'notFound') return { ok: false, reason: 'export_state.json unreadable: not found' };
+
+  const selected = await selectCheckpoint(
+    (path) => io.peekSessionFileSize(sessionId, path),
+    new Uint8Array(peek.bytes),
+    target.expected,
+  );
+  if (!selected.ok) {
+    const { ok: _ok, ...rejection } = selected;
+    return { ok: false, ...rejection };
+  }
+
+  const picturesTotal = sumFrames(target.pieceExpectedFrames, target.pieceExpectedFrames.length);
+  if (selected.kind === 'piece') {
+    if (selected.completedPieces > target.pieceExpectedFrames.length) {
+      return { ok: false, reason: 'manifest records more finished pieces than the current plan has' };
+    }
+    return {
+      ok: true,
+      candidate: {
+        sessionId, kind: 'piece', manifest: selected.manifest, checkpoint: null,
+        completedPieces: selected.completedPieces,
+        projectedPicturesRendered: sumFrames(target.pieceExpectedFrames, selected.completedPieces),
+        picturesTotal, staleClaim, createdAtMs,
+      },
+    };
+  }
+  if (selected.checkpoint.pieceIndex >= target.pieceExpectedFrames.length) {
+    return { ok: false, reason: 'checkpoint names a piece the current plan does not have' };
+  }
+  return {
+    ok: true,
+    candidate: {
+      sessionId, kind: 'checkpoint', manifest: selected.manifest, checkpoint: selected.checkpoint,
+      completedPieces: selected.manifest.completedPieces ?? 0,
+      projectedPicturesRendered:
+        sumFrames(target.pieceExpectedFrames, selected.checkpoint.pieceIndex) + selected.checkpoint.cumulativePictures,
+      picturesTotal, staleClaim, createdAtMs,
+    },
+  };
+}
+
+/**
+ * Ranking, highest first: (a) projected pictures rendered, (b) the
+ * checkpoint's byte offset (0 for a piece-boundary resume), (c) the session's
+ * ledger creation time, newer first, unknown last. The id breaks any remaining
+ * tie so the order is deterministic.
+ */
+export function compareResumeCandidates(a: ResumeCandidate, b: ResumeCandidate): number {
+  if (a.projectedPicturesRendered !== b.projectedPicturesRendered) {
+    return b.projectedPicturesRendered - a.projectedPicturesRendered;
+  }
+  const ao = a.checkpoint?.byteOffset ?? 0;
+  const bo = b.checkpoint?.byteOffset ?? 0;
+  if (ao !== bo) return bo - ao;
+  if (a.createdAtMs !== b.createdAtMs) {
+    if (a.createdAtMs === null) return 1;
+    if (b.createdAtMs === null) return -1;
+    return b.createdAtMs - a.createdAtMs;
+  }
+  return a.sessionId < b.sessionId ? -1 : a.sessionId > b.sessionId ? 1 : 0;
+}
+
+/**
+ * Phase A. Inspects every candidate WITHOUT taking a claim, arming the fence
+ * or writing a byte: it calls `readSessionClaim`, `peekExportState` and
+ * `peekSessionFileSize`, nothing else. Safe to run and abandon at any moment —
+ * the next pass sees exactly what this one saw.
+ *
+ * Valid = the claim is not live, the manifest reads, its identity matches
+ * `target`, a checkpoint the real file length supports resolves (or whole
+ * pieces are finished), and the plan has the piece it names. A fully rendered
+ * session is valid and ranks top. Every other candidate is rejected with why.
+ */
+export async function rankResumeCandidates(
+  io: ResumeDiscoveryIo,
+  target: ResumeTargetPlan,
+  sessionIds: readonly string[],
+  createdAtMs: (sessionId: string) => number | null,
+): Promise<{ ranked: ResumeCandidate[]; rejected: ResumeRejection[] }> {
+  const ranked: ResumeCandidate[] = [];
+  const rejected: ResumeRejection[] = [];
+  for (const sessionId of sessionIds) {
+    const inspected = await inspectCandidate(io, sessionId, target, createdAtMs(sessionId));
+    if (inspected.ok) {
+      ranked.push(inspected.candidate);
+    } else {
+      const { ok: _ok, ...rejection } = inspected;
+      rejected.push({ sessionId, ...rejection });
+    }
+  }
+  ranked.sort(compareResumeCandidates);
+  return { ranked, rejected };
+}
+
 /**
  * Scan every surviving session and return the first that is genuinely
  * resumable for `target`, plus every one that was not and why.
@@ -727,7 +904,7 @@ export function selectSessionsToCollect(params: {
  * the same way. Without `io.readSessionClaim` the collector behaves as before.
  */
 export async function collectAbandonedSessions(
-  io: ResumeDiscoveryIo,
+  io: Pick<ResumeDiscoveryIo, 'reenter' | 'readSessionClaim'>,
   params: {
     candidates: readonly AbandonedSessionCandidate[];
     protectedSessionIds: readonly string[];

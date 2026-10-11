@@ -290,6 +290,19 @@ export class TauriFfmpeg implements FfmpegLike {
     return invoke<ExportStatePeekResult>('ffmpeg_peek_export_state', { sessionId });
   }
 
+  /**
+   * A session file's byte length with no handle: `ffmpeg_session_file_size`
+   * takes no claim and checks no fence, so this is safe before the operator
+   * has chosen to resume anything (the resume offer's file-length probe).
+   */
+  static async peekSessionFileSize(sessionId: string, path: string): Promise<number> {
+    try {
+      return await invoke<number>('ffmpeg_session_file_size', { sessionId, path });
+    } catch (err) {
+      throw new Error(typeof err === 'string' ? err : String(err));
+    }
+  }
+
   /** Sweeps manifest-less orphan session directories older than the threshold. */
   static async sweepOrphanSessions(minAgeSecs?: number): Promise<OrphanSweepReport> {
     return invoke<OrphanSweepReport>('ffmpeg_sweep_orphan_sessions', {

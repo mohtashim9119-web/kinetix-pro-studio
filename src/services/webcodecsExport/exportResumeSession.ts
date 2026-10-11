@@ -97,6 +97,9 @@ function refusalNoticeFromRejections(rejected: readonly ResumeRejection[]): Resu
 
 const tauriIo: ResumeDiscoveryIo = {
   listResumableSessionIds: () => TauriFfmpeg.listResumableSessionIds(),
+  // Phase A (the offer) — neither takes a claim nor checks the fence.
+  peekExportState: (sessionId) => TauriFfmpeg.peekExportState(sessionId),
+  peekSessionFileSize: (sessionId, path) => TauriFfmpeg.peekSessionFileSize(sessionId, path),
   reenter: async (sessionId) => (await TauriFfmpeg.reenter(sessionId)) as unknown as ResumeSessionHandle,
   // WS3 STEP 8 (H5) — read-only, does not take the claim. Wires the native
   // `ffmpeg_read_session_claim` command (already merged, STEP 3) into
