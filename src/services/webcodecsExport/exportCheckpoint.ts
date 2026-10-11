@@ -201,6 +201,15 @@ export interface ExportRecoveryBudget {
 }
 
 export interface ExportStateManifest extends ExportRecoveryBudget {
+  /**
+   * D7.1a — set while a resumed run is in progress, from adoption until the
+   * run's own outcome is known. NOT a charge: an operator cancel and forward
+   * progress clear it; a run that ends by itself without progress, or a later
+   * adoption that finds it still set (the process died mid-run), commits it to
+   * `totalRecoveryAttempts`. Validation counts it as one attempt. Present only
+   * while set, so a manifest without one is unchanged on disk.
+   */
+  resumeAttemptInFlight?: true;
   schemaVersion: typeof EXPORT_STATE_SCHEMA_VERSION;
   /**
    * WS3 STEP 9 (C7) — every `VideoEncoder` session rotation this piece hit,
@@ -645,6 +654,24 @@ export function recordResumeAttempt(manifest: ExportStateManifest): ExportStateM
   };
 }
 
+/** D7.1a — a resumed run has started; its attempt is in flight, not charged. */
+export function recordResumeAttemptStarted(manifest: ExportStateManifest): ExportStateManifest {
+  return { ...commitResumeAttempt(manifest), resumeAttemptInFlight: true };
+}
+
+/** D7.1a — the in-flight attempt was lost without an operator decision: charge it. */
+export function commitResumeAttempt(manifest: ExportStateManifest): ExportStateManifest {
+  if (manifest.resumeAttemptInFlight !== true) return manifest;
+  return recordResumeAttempt(clearResumeAttempt(manifest));
+}
+
+/** D7.1a — the operator decided (cancel), or the run moved forward: no charge. */
+export function clearResumeAttempt(manifest: ExportStateManifest): ExportStateManifest {
+  if (manifest.resumeAttemptInFlight === undefined) return manifest;
+  const { resumeAttemptInFlight: _cleared, ...rest } = manifest;
+  return rest;
+}
+
 /**
  * The export moved forward: a checkpoint beyond every one already recorded
  * was appended, or a piece finished. Recovery events before it were not a
@@ -656,16 +683,19 @@ export function recordResumeAttempt(manifest: ExportStateManifest): ExportStateM
  * keeps bounding rewinds within that one run.
  */
 export function recordForwardProgress(manifest: ExportStateManifest): ExportStateManifest {
+  const cleared = clearResumeAttempt(manifest);
   if (
-    (manifest.totalRecoveryAttempts ?? 0) === 0 &&
-    (manifest.checkpointResumeAttempts ?? 0) === 0 &&
-    (manifest.boundaryRewindsUsed ?? 0) === 0
-  ) return manifest;
-  return { ...manifest, totalRecoveryAttempts: 0, checkpointResumeAttempts: 0, boundaryRewindsUsed: 0 };
+    (cleared.totalRecoveryAttempts ?? 0) === 0 &&
+    (cleared.checkpointResumeAttempts ?? 0) === 0 &&
+    (cleared.boundaryRewindsUsed ?? 0) === 0
+  ) return cleared;
+  return { ...cleared, totalRecoveryAttempts: 0, checkpointResumeAttempts: 0, boundaryRewindsUsed: 0 };
 }
 
-export function isRecoveryBudgetExhausted(manifest: ExportRecoveryBudget): boolean {
-  const budget = normalizeRecoveryBudget(manifest);
+/** `inFlight`: an attempt in progress counts as one (D7.1a — a run that died
+ *  mid-attempt never got to commit it). */
+export function isRecoveryBudgetExhausted(manifest: ExportRecoveryBudget, inFlight = false): boolean {
+  const budget = withInFlight(normalizeRecoveryBudget(manifest), inFlight);
   if (budget.boundaryRewindsUsed >= MAX_BOUNDARY_REWINDS_PER_EXPORT) {
     return true;
   }
@@ -675,8 +705,12 @@ export function isRecoveryBudgetExhausted(manifest: ExportRecoveryBudget): boole
   return false;
 }
 
-export function recoveryBudgetExhaustionReason(manifest: ExportRecoveryBudget): string {
-  const budget = normalizeRecoveryBudget(manifest);
+function withInFlight(budget: Required<ExportRecoveryBudget>, inFlight: boolean): Required<ExportRecoveryBudget> {
+  return inFlight ? { ...budget, totalRecoveryAttempts: budget.totalRecoveryAttempts + 1 } : budget;
+}
+
+export function recoveryBudgetExhaustionReason(manifest: ExportRecoveryBudget, inFlight = false): string {
+  const budget = withInFlight(normalizeRecoveryBudget(manifest), inFlight);
   if (budget.boundaryRewindsUsed >= MAX_BOUNDARY_REWINDS_PER_EXPORT) {
     return `Resume unavailable — ${budget.boundaryRewindsUsed} of ${MAX_BOUNDARY_REWINDS_PER_EXPORT} boundary rewinds used. Starting fresh.`;
   }
@@ -855,10 +889,12 @@ export function validateExportState(
     rotationsSeen === null ||
     completedPieces === null ||
     (value.hardwareFailoverUsed !== undefined &&
-      typeof value.hardwareFailoverUsed !== 'boolean')
+      typeof value.hardwareFailoverUsed !== 'boolean') ||
+    (value.resumeAttemptInFlight !== undefined && value.resumeAttemptInFlight !== true)
   ) {
     return { kind: 'clean', reason: 'checkpoint recovery budget fields are invalid' };
   }
+  const resumeAttemptInFlight = value.resumeAttemptInFlight === true;
   const recoveryBudget: ExportRecoveryBudget = {
     boundaryRewindsUsed,
     hardwareFailoverUsed: typeof value.hardwareFailoverUsed === 'boolean'
@@ -883,11 +919,11 @@ export function validateExportState(
   // The budget is checked only once the manifest is known to be THIS
   // project's, on THIS timeline: another project's (or an edited timeline's)
   // exhausted session is an ordinary mismatch, never this export's refusal.
-  if (isRecoveryBudgetExhausted(recoveryBudget)) {
+  if (isRecoveryBudgetExhausted(recoveryBudget, resumeAttemptInFlight)) {
     return {
       kind: 'recovery_budget_exhausted',
-      reason: recoveryBudgetExhaustionReason(recoveryBudget),
-      budget: normalizeRecoveryBudget(recoveryBudget),
+      reason: recoveryBudgetExhaustionReason(recoveryBudget, resumeAttemptInFlight),
+      budget: withInFlight(normalizeRecoveryBudget(recoveryBudget), resumeAttemptInFlight),
     };
   }
 
@@ -932,6 +968,7 @@ export function validateExportState(
         rotationsSeen: rotationsSeen ?? 0,
         completedPieces: completedPieces ?? 0,
         ...normalizeRecoveryBudget(recoveryBudget),
+        ...(resumeAttemptInFlight ? { resumeAttemptInFlight: true as const } : {}),
       },
       completedPieces: completedPieces ?? 0,
     };
@@ -970,6 +1007,7 @@ export function validateExportState(
       rotationsSeen: rotationsSeen ?? 0,
       completedPieces: completedPieces ?? 0,
       ...normalizeRecoveryBudget(recoveryBudget),
+      ...(resumeAttemptInFlight ? { resumeAttemptInFlight: true as const } : {}),
     },
     checkpoint,
   };

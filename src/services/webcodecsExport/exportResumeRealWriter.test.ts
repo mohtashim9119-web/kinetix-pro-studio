@@ -139,6 +139,37 @@ describe('GL tier — cancel mid-first-piece', () => {
     return { f, p };
   }
 
+  it('D7.1a — an operator cancel of a resumed run charges nothing: no marker, no attempt on disk', async () => {
+    const { f, p } = await cancelledAt(15);
+    const found = await discover(f, p, 1);
+    if (!found.ok) throw new Error('expected an offer');
+    const w2 = new FakeWorker();
+    const c2 = createExportRunControl();
+    const run2 = exportProjectWebCodecs(p, f.ffmpeg, { ...DIMS, control: c2, resume: resumePlanOf(found) }, () => undefined, { createWorker: () => w2 });
+    void run2.catch(() => undefined);
+    await flush();
+    expect(manifestOf(f).resumeAttemptInFlight, 'the attempt is in flight while the run runs').toBe(true);
+    await cancelExportWebCodecs(c2, { keepForResume: true });
+    expect(manifestOf(f).resumeAttemptInFlight).toBeUndefined();
+    expect(manifestOf(f).totalRecoveryAttempts ?? 0).toBe(0);
+  });
+
+  it('D7.1a — a resumed run that fails by itself without progress still charges its attempt', async () => {
+    const { f, p } = await cancelledAt(15);
+    const found = await discover(f, p, 1);
+    if (!found.ok) throw new Error('expected an offer');
+    vi.mocked(f.ffmpeg.appendFileRaw).mockRejectedValue(new Error('EIO: device went away'));
+    const w2 = new FakeWorker();
+    const run2 = exportProjectWebCodecs(p, f.ffmpeg, { ...DIMS, control: createExportRunControl(), resume: resumePlanOf(found) }, () => undefined, { createWorker: () => w2 });
+    await flush();
+    await feedFrames(w2, au, 10, 12, [], FRAMES, 3);
+    await new Promise((r) => setTimeout(r, 1100));
+    const r = await run2;
+    expect(r.ok).toBe(false);
+    expect(manifestOf(f).resumeAttemptInFlight).toBeUndefined();
+    expect(manifestOf(f).totalRecoveryAttempts).toBe(1);
+  });
+
   it('cancel after the first rotation → the REAL writer left a checkpoint at the stop point, and Retry resumes there', async () => {
     const { f, p } = await cancelledAt(15);
     expect(f.destroyed(), 'the session must survive a bulk cancel').toBe(false);

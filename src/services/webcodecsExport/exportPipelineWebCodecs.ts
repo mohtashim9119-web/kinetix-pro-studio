@@ -93,7 +93,7 @@ import type { FontConfig } from './textRenderer';
 import { resolveFontBytes } from './fontResolver';
 import { fenceSafeCheckpointOffset } from './exportCheckpointPlacement';
 import { recordCleanupFailure } from './exportCleanupNotices';
-import { createExportCheckpointWriter } from './exportCheckpointWriter';
+import { createExportCheckpointWriter, type ExportCheckpointWriter } from './exportCheckpointWriter';
 import { buildSourceTimelineHash, timelineIdentityFromProject, MAX_BOUNDARY_REWINDS_PER_EXPORT, type ExportStateManifest } from './exportCheckpoint';
 import {
   muxOnly,
@@ -410,10 +410,35 @@ export interface CancelExportOptions {
 export interface ExportRunControl {
   worker: ExportWorkerHandle | null;
   ffmpeg: WebCodecsFfmpeg | null;
+  /** Set by `cancelExportWebCodecs` before it touches anything: the run's end
+   *  is the operator's decision, never a lost attempt (D7.1a). */
+  cancelled: boolean;
+  /** Registered by the run: clears its in-flight resume attempt and waits for
+   *  the manifest to land, before the cancel closes the session. */
+  onOperatorCancel: (() => Promise<void>) | null;
 }
 
 export function createExportRunControl(): ExportRunControl {
-  return { worker: null, ffmpeg: null };
+  return { worker: null, ffmpeg: null, cancelled: false, onOperatorCancel: null };
+}
+
+/** How long a cancel waits for the run's manifest write before closing the
+ *  session anyway. On expiry the in-flight marker stays on disk and counts —
+ *  the fail-safe direction. */
+const OPERATOR_CANCEL_MANIFEST_BOUND_MS = 5_000;
+
+async function boundedOperatorCancel(control: ExportRunControl): Promise<void> {
+  const hook = control.onOperatorCancel;
+  if (!hook) return;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      hook().catch(() => undefined),
+      new Promise<void>((resolve) => { timer = setTimeout(resolve, OPERATOR_CANCEL_MANIFEST_BOUND_MS); }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
 }
 
 /** Clears `control.ffmpeg` only if it is still `ffmpeg` (the ownership check). */
@@ -429,6 +454,8 @@ export function cancelExportWebCodecs(control: ExportRunControl, opts: CancelExp
 
 async function cancelExportWebCodecsInner(control: ExportRunControl, opts: CancelExportOptions): Promise<void> {
   logExportEvent('cancelled', 'cancelExportWebCodecs invoked');
+  // The operator decided: nothing from here on is a lost resume attempt.
+  control.cancelled = true;
   // Only THIS run's handles — never whatever another run left registered.
   const worker = control.worker;
   const ffmpeg = control.ffmpeg;
@@ -460,6 +487,9 @@ async function cancelExportWebCodecsInner(control: ExportRunControl, opts: Cance
     // manifest: there is no "resume this cancelled export" offer, so leaving
     // the directory behind would just be a leak the operator never asked for.
     logExportEvent('session-cleanup', `sessionId=${ffmpeg.sessionId ?? 'unknown'} reason=cancel keepForResume=${opts.keepForResume === true}`);
+    // D7.1a — before the session closes: the run's in-flight resume attempt is
+    // cleared (an operator cancel is not a lost attempt) and the manifest lands.
+    await boundedOperatorCancel(control);
     await ffmpeg.destroy({ force: opts.keepForResume !== true, failureKind: 'cancel' });
   }
 }
@@ -2984,7 +3014,45 @@ export function decideHardwareFailoverDisposition(input: { failoverUsed: boolean
  * an annexb remux) -> concat -> frame-count guard -> mux -> optionally save
  * to disk (see `ExportOptionsWebCodecs.savePath`) -> return.
  */
+/**
+ * Runs one export. D7.1a: when the run ends by itself without the operator
+ * cancelling — a failed result or a thrown error — its in-flight resume
+ * attempt (if any, and if no progress cleared it) is committed to the
+ * recovery budget before the result returns, so the caller's retain step
+ * keeps the charged manifest.
+ */
 export async function exportProjectWebCodecs(
+  project: Project,
+  ffmpeg: WebCodecsFfmpeg,
+  options: ExportOptionsWebCodecs = {},
+  onProgress: ProgressCallback = () => undefined,
+  deps: { createWorker?: () => ExportWorkerHandle } = {},
+): Promise<ExportResult> {
+  const control = options.control ?? createExportRunControl();
+  const runEnd: { writer: ExportCheckpointWriter | null } = { writer: null };
+  const commitLostAttempt = async (): Promise<void> => {
+    const writer = runEnd.writer;
+    if (control.cancelled || writer === null) return;
+    writer.commitResumeAttempt();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+      writer.flush(),
+      new Promise<void>((resolve) => { timer = setTimeout(resolve, OPERATOR_CANCEL_MANIFEST_BOUND_MS); }),
+    ]);
+    if (timer !== undefined) clearTimeout(timer);
+  };
+  let result: ExportResult;
+  try {
+    result = await exportProjectWebCodecsRun(project, ffmpeg, { ...options, control }, onProgress, deps, runEnd);
+  } catch (err) {
+    await commitLostAttempt();
+    throw err;
+  }
+  if (!result.ok) await commitLostAttempt();
+  return result;
+}
+
+async function exportProjectWebCodecsRun(
   project: Project,
   ffmpeg: WebCodecsFfmpeg,
   options: ExportOptionsWebCodecs = {},
@@ -2998,6 +3066,7 @@ export async function exportProjectWebCodecs(
    * in isolation.
    */
   deps: { createWorker?: () => ExportWorkerHandle } = {},
+  runEnd: { writer: ExportCheckpointWriter | null } = { writer: null },
 ): Promise<ExportResult> {
   const fps = options.fps ?? 30;
   // This run's own cancel handle. Cleared only while it still holds THIS run's
@@ -3249,6 +3318,14 @@ export async function exportProjectWebCodecs(
     width,
     height,
   });
+  // D7.1a — the run's own resume-attempt bookkeeping: an operator cancel
+  // clears the in-flight attempt before the session closes; the outer
+  // `exportProjectWebCodecs` commits it when the run ends by itself.
+  runEnd.writer = checkpointWriter;
+  control.onOperatorCancel = async () => {
+    checkpointWriter.clearResumeAttempt();
+    await checkpointWriter.flush();
+  };
 
   const resume = options.resume ?? null;
 
@@ -3476,7 +3553,10 @@ export async function exportProjectWebCodecs(
         // resets them, `adoptManifest` keeps the whole object, and
         // `appendExportCheckpoint`/every subsequent `record()` call
         // preserves whatever this stamped).
-        checkpointWriter.noteResumeAttempt();
+        // D7.1a — NOT a charge: an in-flight marker. Cleared by an operator
+        // cancel or forward progress; committed if the run ends by itself
+        // without progress, or by the next adoption if the process dies.
+        checkpointWriter.noteResumeAttemptStarted();
       } else if (!resumingThisPiece) {
         checkpointWriter.beginPiece(pieceIndex);
       }

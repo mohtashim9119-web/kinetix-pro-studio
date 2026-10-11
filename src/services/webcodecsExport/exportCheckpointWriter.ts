@@ -43,8 +43,11 @@ import {
   recordBoundaryRewind,
   recordHardwareFailover,
   recordPieceCompleted,
+  clearResumeAttempt,
+  commitResumeAttempt,
   recordForwardProgress,
   recordResumeAttempt,
+  recordResumeAttemptStarted,
   recordRotationSeen,
   serializeExportState,
   type ExportCheckpointRecord,
@@ -109,7 +112,21 @@ export interface ExportCheckpointWriter {
    */
   noteBoundaryRewind(): void;
   noteHardwareFailover(): void;
+  /** An attempt already known to be lost: charge it now. */
   noteResumeAttempt(): void;
+  /**
+   * D7.1a — a resumed run starts: write the in-flight marker instead of
+   * charging. If the marker cannot be written, the attempt is charged in
+   * memory instead (fail toward counting, never toward a free retry).
+   */
+  noteResumeAttemptStarted(): void;
+  /** D7.1a — the run ended by itself without progress: charge the in-flight attempt. */
+  commitResumeAttempt(): void;
+  /** D7.1a — the operator cancelled: the in-flight attempt is not charged. */
+  clearResumeAttempt(): void;
+  /** Resolves once every pending write has landed: `true` when the newest
+   *  manifest reached disk, `false` when the write failed. */
+  flush(): Promise<boolean>;
   /** WS3 STEP 9 (C7) — call on EVERY 'session-rotate', regardless of
    *  whether a checkpoint was actually written for it (see
    *  `ExportStateManifest.rotationsSeen`'s own doc comment). */
@@ -145,6 +162,8 @@ export function createExportCheckpointWriter(
   let inFlight = false;
   let dirty = false;
   let writesIssued = 0;
+  let lastWriteOk = true;
+  const idleWaiters: (() => void)[] = [];
   /** Resolved timeline hash, once it lands. `null` while pending or failed. */
   let hash: string | null = null;
   /** A `beginPiece` that arrived before the hash did. */
@@ -160,7 +179,9 @@ export function createExportCheckpointWriter(
     writesIssued++;
     const serialized = serializeExportState(manifest);
     void write!(serialized)
+      .then(() => { lastWriteOk = true; })
       .catch((err: unknown) => {
+        lastWriteOk = false;
         // eslint-disable-next-line no-console
         console.warn('[ws3-resume] checkpoint write failed — resume will rewind further', err instanceof Error ? err.message : String(err));
       })
@@ -169,6 +190,7 @@ export function createExportCheckpointWriter(
         // Coalesced rotations that arrived during this write are picked up
         // here, as ONE write of the newest manifest.
         pump();
+        if (!inFlight) for (const wake of idleWaiters.splice(0)) wake();
       });
   };
 
@@ -232,7 +254,10 @@ export function createExportCheckpointWriter(
       pieceIndex = nextPieceIndex;
       hash = existing.sourceTimelineHash;
       deferredPieceIndex = null;
-      manifest = existing;
+      // D7.1a — a marker still set means the previous run died mid-attempt
+      // (no cancel, no progress, no outcome): that attempt was lost — charge it.
+      manifest = commitResumeAttempt(existing);
+      if (manifest !== existing) { dirty = true; pump(); }
     },
     ensureManifest(nextPieceIndex: number): void {
       if (!enabled || manifest !== null || deferredPieceIndex !== null) return;
@@ -301,6 +326,42 @@ export function createExportCheckpointWriter(
       manifest = recordResumeAttempt(manifest);
       dirty = true;
       pump();
+    },
+    noteResumeAttemptStarted(): void {
+      if (!enabled || manifest === null) return;
+      manifest = recordResumeAttemptStarted(manifest);
+      dirty = true;
+      pump();
+      void this.flush().then((ok) => {
+        if (!ok && manifest !== null) manifest = commitResumeAttempt(manifest);
+      });
+    },
+    commitResumeAttempt(): void {
+      if (!enabled || manifest === null) return;
+      const next = commitResumeAttempt(manifest);
+      if (next === manifest) return;
+      manifest = next;
+      dirty = true;
+      pump();
+    },
+    clearResumeAttempt(): void {
+      if (!enabled || manifest === null) return;
+      const next = clearResumeAttempt(manifest);
+      if (next === manifest) return;
+      manifest = next;
+      dirty = true;
+      pump();
+    },
+    flush(): Promise<boolean> {
+      if (!enabled) return Promise.resolve(true);
+      return new Promise<boolean>((resolve) => {
+        const check = (): void => {
+          if (!inFlight && !dirty) { resolve(lastWriteOk); return; }
+          idleWaiters.push(check);
+          pump();
+        };
+        check();
+      });
     },
     noteRotation(): void {
       if (!enabled || manifest === null) return;
