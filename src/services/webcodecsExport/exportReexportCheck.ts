@@ -2,8 +2,10 @@
  * WS3 Batch 2 (STEP 2) — the pre-export "does an existing checkpoint match
  * THIS timeline" check, run at Export-click time, before `ExportSettingsModal`
  * opens. Distinct from `exportResumeSession.ts`'s `findResumeOffer`, which
- * runs mid-export (after fps/resolution are already chosen) and engages the
- * native fence via `reenter` — this module only ever peeks
+ * runs mid-export (after fps/resolution are already chosen) and ranks every
+ * candidate by progress (read-only too; only `adoptResumeOffer`, after the
+ * operator chose Resume, engages the native fence via `reenter`) — this
+ * module only ever peeks
  * (`TauriFfmpeg.peekExportState`, 2A), never claims, never fences.
  *
  * Reuses `buildSourceTimelineHash`/`timelineIdentityFromProject` directly
@@ -41,8 +43,8 @@ export type ReexportCheckOutcome =
   | { kind: 'edited'; sessionId: string; manifest: ExportStateManifest };
 
 /**
- * Newest first — matches `findResumeOffer`'s own newest-first policy
- * (`exportResumeSession.ts`). `checkExistingCheckpoint` takes the newest one
+ * Newest first. NOT `findResumeOffer`'s order any more — that offer ranks by
+ * furthest progress (`rankResumeCandidates`). `checkExistingCheckpoint` takes the newest one
  * that belongs to the project, keeping the two-option modal's semantics
  * simple: "the" checkpoint, not "a" checkpoint chosen from a list the operator
  * never sees.
@@ -144,8 +146,8 @@ export type CheckpointPurgeOutcome =
  * Discards a checkpoint session — forced, it is meant to go. Never one whose
  * claim reads `live`: a live claim may be a run using it right now. That
  * check is CONSERVATIVE: this process also keeps claims on sessions no run is
- * using (an export cancelled while its resume offer was open, among others),
- * and those are skipped too until a restart makes the claim stale. Skipping
+ * using (C1b's post-fence holds, a cancel that lands during adoption), and
+ * those are skipped too until a restart makes the claim stale. Skipping
  * is the intended failure direction.
  */
 export async function purgeCheckpointSession(

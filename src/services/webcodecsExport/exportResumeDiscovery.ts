@@ -5,7 +5,7 @@
  * WS3 Round 10, Blocker 3. Cursor's `exportCheckpoint.ts` owns manifest
  * writing, validation, and the native pre-append fence. It has no way to FIND a
  * session: `ffmpeg_create_session` mints a fresh UUID under
- * `$TMPDIR/kinetix-export-<uuid>/` and the renderer forgets it when the app
+ * `<storage root>/export-sessions/kinetix-export-<uuid>/` and the renderer forgets it when the app
  * closes. This module is the discovery half.
  *
  * WHAT IT GUARANTEES, IN ORDER, PER CANDIDATE:
@@ -43,10 +43,12 @@ import { TRUNCATE_BOUND_MS, withFfmpegLivenessBound } from './ffmpegLivenessBoun
  * no use for). Liveness is PID + process start time, not a heartbeat
  * timeout — see `session_claim.rs`'s `is_holder_process_live`: a slow-but-
  * alive holder reads `live`, never `stale`, and PID reuse is guarded by the
- * start-time comparison.
+ * start-time comparison on macOS (libproc), Linux (`/proc`) and Windows. A
+ * PID that exists but whose start time cannot be read still reads `live`.
  */
 export interface SessionClaimLivenessView {
-  /** `live` = a DIFFERENT process holds this session and is still running;
+  /** `live` = a running process holds this session — another app instance,
+   *  OR this process itself (its own claim reads `live` too);
    *  `stale` = the holder process is gone (crashed) — safe to recover;
    *  `unclaimed` = no claim file at all. */
   holderLiveness: 'live' | 'stale' | 'unclaimed';
@@ -184,8 +186,8 @@ export interface ResumeRejection {
   budgetExhausted?: boolean;
   /**
    * WS3 STEP 8 (H5) — true when this candidate was refused because its
-   * claim read `live` (a DIFFERENT process is currently using it), checked
-   * BEFORE `reenter` was even attempted. Distinct from an ordinary reenter
+   * claim read `live` (a running process holds it — possibly this one),
+   * checked BEFORE `reenter` was even attempted. Distinct from an ordinary reenter
    * failure: this is not "something went wrong with the session", it's
    * "another window already owns it" — a different operator-facing message,
    * and not evidence the session itself is broken.
@@ -330,8 +332,11 @@ export type ResumeCandidateOutcome =
     };
 
 /**
- * Inspect one surviving session. Never mutates Annex-B bytes unless the
- * identity check has already passed — that is the whole point of the ordering.
+ * Phase B for one session — adoption. MUTATES: `reenter` takes this process's
+ * claim and arms the fence, then the fence and the seam step-back cut the
+ * piece file. Call only after the operator chose Resume (`adoptRankedResume`).
+ * No Annex-B byte is cut unless identity has already passed, and a rejection
+ * releases the claim only where no native byte write can have run (C1b).
  */
 export async function evaluateResumeCandidate(
   io: ResumeAdoptIo,
@@ -942,9 +947,9 @@ export function selectSessionsToCollect(params: {
  * Never a session a `live` claim holds: the policy picks by age alone, and
  * `reenter` succeeds on this process's own claim, so a run using the session
  * would have its appends fenced and its files deleted. CONSERVATIVE — this
- * process also holds claims no run is using (an export cancelled while its
- * resume offer was open, among others); those stay until a restart makes the
- * claim stale, and are collected then. A claim that cannot be read is skipped
+ * process also holds claims no run is using (C1b's post-fence holds, a cancel
+ * that lands during adoption); those stay until a restart makes the claim
+ * stale, and are collected then. A claim that cannot be read is skipped
  * the same way. Without `io.readSessionClaim` the collector behaves as before.
  */
 export async function collectAbandonedSessions(

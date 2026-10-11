@@ -1,9 +1,8 @@
 /**
  * WS3 Round 28 (D1) — the ONE decision for what happens when the operator
- * has explicitly chosen "Resume" on a discovered offer, and the second,
- * adopting `reenter` call (`useExport.ts`'s own re-entry, distinct from the
- * read-only one `discoverResumableExport` already performed while building
- * the offer) either succeeds or fails.
+ * has explicitly chosen "Resume" on a discovered offer, and adoption
+ * (`adoptResumeOffer` — the first and only `reenter`; the offer itself,
+ * `findResumeOffer`, is read-only) either succeeds or fails.
  *
  * Field evidence (Machine 1, build 831c872, `docs/STATUS.md`): a retained
  * session (manifest present, one complete piece, 1,078,402,941 bytes) was

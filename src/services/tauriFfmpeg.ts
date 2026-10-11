@@ -17,7 +17,7 @@ export interface SessionClaimView {
   holderStartTimeMs: number;
   holderInstanceId: string;
   claimedAtMs: number;
-  /** `live` = a different process holds it and is still running; `stale` =
+  /** `live` = a running process holds it (this one included); `stale` =
    *  the holder process is gone (crashed), safe to recover; `unclaimed` =
    *  no claim file exists. */
   holderLiveness: 'live' | 'stale' | 'unclaimed';
@@ -198,7 +198,7 @@ export async function probeVideoFps(blob: Blob): Promise<number> {
  * Tauri IPC to the native Rust backend.
  *
  * Each instance is backed by an isolated server-side session directory
- * under $TMPDIR/kinetix-export-<uuid>/. Call destroy() when the export
+ * under <storage root>/export-sessions/kinetix-export-<uuid>/. Call destroy() when the export
  * completes (success or failure) to release that directory.
  *
  * Known tech debt:
@@ -279,7 +279,7 @@ export class TauriFfmpeg implements FfmpegLike {
   /**
    * WS3 Batch 2 (STEP 2, 2A) — a pure read of a session's manifest bytes.
    * Engages no fence, takes no claim, never marks `resume_pending`; safe to
-   * call before the operator has chosen anything. `{ kind: 'not-found' }`
+   * call before the operator has chosen anything. `{ kind: 'notFound' }`
    * covers every benign absence uniformly (missing session, missing
    * manifest, or a torn/truncated write) — never throws for those. Schema
    * validation of the returned bytes is the caller's job

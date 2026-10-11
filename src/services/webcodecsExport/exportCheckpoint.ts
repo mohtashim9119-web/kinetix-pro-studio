@@ -216,7 +216,7 @@ export interface ExportStateManifest extends ExportRecoveryBudget {
    * Carried across the piece-scoped manifest reset. Absent = 0.
    */
   completedPieces?: number;
-  /** ffmpeg session id (`kinetix-export-{uuid}`). */
+  /** ffmpeg session id: the bare UUID (its directory is `kinetix-export-{uuid}`). */
   sessionId: string;
   projectId: string;
   sourceTimelineHash: string;

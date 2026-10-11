@@ -279,7 +279,8 @@ fn recover_export_state_replace(dir: &Path) -> Result<(), String> {
 // Tauri commands
 // ---------------------------------------------------------------------------
 
-/// Creates a new isolated session directory under $TMPDIR.
+/// Creates a new isolated session directory under the configured storage
+/// root's `export-sessions/` tree (`export_sessions_base_dir`), not `$TMPDIR`.
 /// Returns the session id (UUID v4 string) that must be passed to all
 /// subsequent commands for this export.
 #[tauri::command]
@@ -340,9 +341,12 @@ pub fn ffmpeg_list_resumable_sessions(app: tauri::AppHandle) -> Result<Vec<Strin
 }
 
 /// Re-enters an existing crash-surviving session directory without minting a
-/// fresh UUID. This only opens the session for read/size/truncate operations:
-/// append/count/concat remain blocked until `ffmpeg_prepare_checkpoint_resume`
-/// succeeds. Idempotent for the process that already holds the fence (it
+/// fresh UUID, and arms the resume fence. While armed, `ffmpeg_read_file`,
+/// both writes, `ffmpeg_delete_file` and BOTH truncates refuse every path but
+/// the manifest's (`export_state.json*`), and append, count, concat and exec
+/// are refused outright, until `ffmpeg_prepare_checkpoint_resume` or
+/// `ffmpeg_clear_resume_fence` lifts the fence. The size probe, the manifest
+/// write and the session-level commands are not gated. Idempotent for the process that already holds the fence (it
 /// re-entered this session and its claim is still on disk): a repeat call
 /// does not re-arm `resume_pending`. A stale foreign claim is taken over and
 /// armed as before.
@@ -1621,11 +1625,14 @@ fn truncate_annexb_to_offset_inner(
 ///
 /// Order is load-bearing:
 /// 1. inspect the tail backwards;
-/// 2. run the canonical whole-AU truncate unconditionally;
+/// 2. run the canonical whole-AU truncate — skipped (a plain count instead)
+///    when the file already ends exactly at the checkpoint offset — and
+///    refuse if it kept fewer bytes than the checkpoint offset;
 /// 3. truncate to the authoritative checkpoint byte offset;
-/// 4. run the canonical truncate again and require a no-op;
-/// 5. require the canonical picture count to equal the checkpoint;
-/// 6. only then open append/count/concat for this resumed session.
+/// 4. require the kept length and the canonical picture count on the kept
+///    prefix to equal the checkpoint;
+/// 5. only then fsync and open append/count/concat for this resumed session.
+/// Steps 2 and 3 cut the file BEFORE step 4 can fail.
 #[tauri::command]
 pub fn ffmpeg_prepare_checkpoint_resume(
     app: tauri::AppHandle,
