@@ -433,6 +433,7 @@ import { BulkProjectsModal } from './components/BulkProjectsModal';
 import { BulkExportModal, BulkExportRunningNotice } from './components/BulkExportModal';
 import { BulkExportHost } from './components/BulkExportHost';
 import { ExportInterestRegistry } from './services/webcodecsExport/exportInterestRegistry';
+import { editorResumeToast } from './services/webcodecsExport/resumeRefusalText';
 import { bulkBatchRunner } from './services/bulkSyncQueue';
 import { BulkExportRunner } from './services/bulkExportQueue';
 import { withStorageAvailability } from './services/bulkExportMedia';
@@ -5804,15 +5805,7 @@ export default function App() {
   useEffect(() => {
     const notice = exportState.resumeRefusalNotice;
     if (!notice) return;
-    showToast(
-      notice.kind === 'bitstream_touched'
-        ? `A previous export session couldn't be resumed — its saved video was already partly cut (${notice.reason}). Starting fresh.`
-        : notice.kind === 'no_checkpoint_yet'
-          ? 'No checkpoint yet — restarting from the beginning.'
-          : notice.kind === 'never_checkpointed' || notice.kind === 'live_claim_blocked'
-            ? `A previous export session couldn't be resumed (${notice.reason}). Starting fresh.`
-            : `A previous export session couldn't be resumed — recovery attempts on this project are used up. Starting fresh.`,
-    );
+    showToast(editorResumeToast(notice));
   }, [exportState.resumeRefusalNotice, showToast]);
 
   // --- Phase 2a H.4 guard: unsupported-language log entry ---

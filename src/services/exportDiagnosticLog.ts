@@ -41,7 +41,10 @@ export type ExportLogPhase =
   | 'watchdog'
   | 'cancelled'
   | 'disk-full'
-  | 'session-cleanup';
+  | 'session-cleanup'
+  /** One export session's cleanup disposition: kept / collected / skipped,
+   *  with its project id and the reason (`findResumeOffer`). */
+  | 'session-disposition';
 
 export function logExportEvent(phase: ExportLogPhase, detail: string, level: ExportLogLevel = 'info'): void {
   if (!isTauri()) return;

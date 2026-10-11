@@ -217,3 +217,24 @@ describe('(4) the collector deletes only what is provably abandoned', () => {
     expect(w.disk.has(oldest)).toBe(false);
   });
 });
+
+describe('every disposition is logged with project id, session id and reason', () => {
+  it('collected, kept and skipped sessions each log their project and reason', async () => {
+    const w = world();
+    await w.leftover('A', 3000 - 1, 900);
+    const kept = await w.leftover('A', 600, 300);
+    const live = await w.leftover('A', 300, 200);
+    const doomed = await w.leftover('A', 100, 100);
+    w.disk.get(live)!.claimed = true;
+    const lines: string[] = [];
+    const fresh = w.uuid();
+    await findResumeOffer({
+      project: proj('A'), fps: 30, width: 1920, height: 1080, pieceExpectedFrames: [3000],
+      inUseSessionId: fresh, io: w.io, nowMs: 1_000, logDisposition: (line) => lines.push(line),
+    });
+    const of = (id: string): string | undefined => lines.find((l) => l.includes(`sessionId=${id}`));
+    expect(of(doomed)).toMatch(/disposition=collected projectId=A .*reason=/);
+    expect(of(live)).toMatch(/disposition=skipped projectId=A .*reason=.*live claim/);
+    expect(of(kept)).toMatch(/disposition=kept projectId=A .*reason=/);
+  });
+});

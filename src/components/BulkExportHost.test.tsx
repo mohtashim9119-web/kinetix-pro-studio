@@ -268,7 +268,7 @@ describe('BulkExportHost: an honest start (resume vs restart)', () => {
     const h = mountWithProgress(true);
     h.start();
     await settle();
-    expect(h.setProgress).toHaveBeenCalledWith(expect.objectContaining({ note: RESTART_NOTE }));
+    expect(h.setProgress).toHaveBeenCalledWith(expect.objectContaining({ note: `${RESTART_NOTE} (r)` }));
     expect(RESTART_NOTE).toBe('No checkpoint yet — restarting from the beginning');
   });
 
@@ -278,8 +278,8 @@ describe('BulkExportHost: an honest start (resume vs restart)', () => {
     const h = mountWithProgress(true);
     h.start();
     await settle();
-    expect(h.setProgress).toHaveBeenCalledWith(expect.objectContaining({ note: COULD_NOT_RESUME_NOTE }));
-    expect(h.setProgress).not.toHaveBeenCalledWith(expect.objectContaining({ note: RESTART_NOTE }));
+    expect(h.setProgress).toHaveBeenCalledWith(expect.objectContaining({ note: `${COULD_NOT_RESUME_NOTE} (another window is using this session)` }));
+    expect(h.setProgress).not.toHaveBeenCalledWith(expect.objectContaining({ note: expect.stringContaining(RESTART_NOTE) }));
   });
 
   it('a Retry whose export begins encoding with no offer and no notice still says it restarted', async () => {

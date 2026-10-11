@@ -15,10 +15,12 @@ import {
   timelineIdentityFromProject,
   type ExportCheckpointExpectedIdentity,
 } from './exportCheckpoint';
+import { logExportEvent } from '../exportDiagnosticLog';
 import {
   adoptRankedResume,
   collectAbandonedSessions,
   rankResumeCandidates,
+  selectSessionsToCollect,
   type ResumableExport,
   type ResumeAdoptIo,
   type ResumeCandidate,
@@ -182,8 +184,14 @@ export async function findResumeOffer(params: {
   interests?: import('./exportInterestRegistry').ExportInterestView;
   /** This export's owner name in `interests` (a bulk row passes 'bulk'). */
   interestOwner?: string;
+  /** Receives one line per session disposition (default: the diagnostic log). */
+  logDisposition?: (line: string) => void;
 }): Promise<{ offer: ResumeOffer | null; notice: ResumeRefusalNotice | null }> {
   const io = params.io ?? tauriIo;
+  const logLine = params.logDisposition ?? ((line: string) => logExportEvent('session-disposition', line));
+  const projectId = params.project.id;
+  const disposition = (sessionId: string, what: string, reason: string): void =>
+    logLine(`disposition=${what} projectId=${projectId} sessionId=${sessionId} reason=${reason}`);
   const nowMs = params.nowMs ?? Date.now();
 
   let sessionIds: string[] = [];
@@ -254,14 +262,29 @@ export async function findResumeOffer(params: {
     ...(params.interests?.protectedSessionIds() ?? []),
   ];
   const projectHeldElsewhere = params.interests?.heldByOther(params.project.id, params.interestOwner) === true;
+  const reasonKept = (id: string): string | null => {
+    if (projectHeldElsewhere) return 'another owner still needs this project (bulk row queued, running or awaiting Retry)';
+    if (offer?.sessionId === id) return 'offered for resume';
+    if (id === params.inUseSessionId) return 'in use by this export';
+    if (budgetRefused.includes(id)) return 'refused by the recovery budget this pass — kept as the record of why';
+    if (params.interests?.protectedSessionIds().has(id)) return 'another run is using it';
+    if (exportSessionCreatedAt(id) === null) return 'age unknown — nothing proves it abandoned';
+    return null;
+  };
   try {
+    const candidates = ownSessionIds.map((sessionId) => ({ sessionId, createdAtMs: exportSessionCreatedAt(sessionId) }));
+    for (const c of candidates) {
+      const why = reasonKept(c.sessionId);
+      if (why) disposition(c.sessionId, 'kept', why);
+    }
+    const policy = { candidates, protectedSessionIds: protectedIds, nowMs };
+    const doomed = projectHeldElsewhere ? [] : selectSessionsToCollect(policy);
+    for (const c of candidates) {
+      if (!reasonKept(c.sessionId) && !doomed.includes(c.sessionId)) disposition(c.sessionId, 'kept', 'within the project\'s retention cap and TTL');
+    }
     const collected = projectHeldElsewhere ? [] : await collectAbandonedSessions(io, {
-      candidates: ownSessionIds.map((sessionId) => ({
-        sessionId,
-        createdAtMs: exportSessionCreatedAt(sessionId),
-      })),
-      protectedSessionIds: protectedIds,
-      nowMs,
+      ...policy,
+      onDisposition: (id, what, reason) => disposition(id, what, reason),
     });
     for (const id of collected) forgetExportSession(id);
     // A collected session is gone: adoption must not fall through to it.

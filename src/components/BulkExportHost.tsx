@@ -16,12 +16,8 @@ import { MediaLoadTimeoutError } from '../services/projectMediaPreparation';
 import { loadProjectMedia, type LoadedProjectMedia } from '../services/bulkExportMedia';
 import type { Project } from '../types';
 
-/** Shown on the row when a Retry has nothing to continue from. */
-export const RESTART_NOTE = 'No checkpoint yet — restarting from the beginning';
-/** A survivor existed but could not be used (claim held, cut bitstream, spent budget…) — never dressed up as "no checkpoint yet". */
-export const COULD_NOT_RESUME_NOTE = "Couldn't resume the saved checkpoint — restarting from the beginning";
-/** A Retry that was offered nothing and given no reason. */
-export const NOTHING_FOUND_NOTE = "Couldn't find a usable checkpoint — restarting from the beginning";
+import { bulkRowResumeNote, NOTHING_FOUND_NOTE } from '../services/webcodecsExport/resumeRefusalText';
+export { RESTART_NOTE, COULD_NOT_RESUME_NOTE, NOTHING_FOUND_NOTE } from '../services/webcodecsExport/resumeRefusalText';
 
 const errorText = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
@@ -110,7 +106,7 @@ function BulkExportSlot({
     const stage = state.stageLabel || 'Starting…';
     // Encoding began on a Retry that was never offered a checkpoint: say so.
     if (!startInfo.current && input.resume && state.stage?.type === 'encoding_segment') {
-      startInfo.current = { note: state.resumeRefusalNotice ? COULD_NOT_RESUME_NOTE : NOTHING_FOUND_NOTE };
+      startInfo.current = { note: state.resumeRefusalNotice ? bulkRowResumeNote(state.resumeRefusalNotice) : NOTHING_FOUND_NOTE };
     }
     input.setPhase(stage);
     report(state.progress, stage);
@@ -122,7 +118,8 @@ function BulkExportSlot({
     if (finished.current || startInfo.current) return;
     const notice = state.resumeRefusalNotice;
     if (notice) {
-      startInfo.current = { note: notice.kind === 'no_checkpoint_yet' ? RESTART_NOTE : COULD_NOT_RESUME_NOTE };
+      // The real reason, never one of a few fixed strings.
+      startInfo.current = { note: bulkRowResumeNote(notice) };
       report(0, 'Starting…');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

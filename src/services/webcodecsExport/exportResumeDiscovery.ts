@@ -960,20 +960,28 @@ export async function collectAbandonedSessions(
     nowMs: number;
     ttlMs?: number;
     maxRetained?: number;
+    /** Told every outcome for a session the policy selected. */
+    onDisposition?: (sessionId: string, disposition: 'collected' | 'skipped' | 'destroy-failed', reason: string) => void;
   },
 ): Promise<string[]> {
   const doomed = selectSessionsToCollect(params);
   const collected: string[] = [];
+  const tell = params.onDisposition ?? (() => undefined);
   for (const sessionId of doomed) {
     try {
-      if (io.readSessionClaim && (await io.readSessionClaim(sessionId)).holderLiveness === 'live') continue;
+      if (io.readSessionClaim && (await io.readSessionClaim(sessionId)).holderLiveness === 'live') {
+        tell(sessionId, 'skipped', 'live claim — a running process holds it');
+        continue;
+      }
       const session = await io.reenter(sessionId);
       // STEP 3b — this policy exists specifically to discard sessions past
       // the retention cap/TTL; a manifest is expected (that's why they were
       // resumable candidates at all) and must not stop the collection.
       await session.destroy({ force: true, failureKind: 'ttl-collect' });
       collected.push(sessionId);
+      tell(sessionId, 'collected', 'over the project\'s retention cap or past its TTL');
     } catch (err) {
+      tell(sessionId, 'destroy-failed', message(err));
       // eslint-disable-next-line no-console
       console.warn('[ws3-resume] could not collect abandoned export session', sessionId, message(err));
     }
