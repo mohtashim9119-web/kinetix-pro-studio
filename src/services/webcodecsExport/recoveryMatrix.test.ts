@@ -303,10 +303,11 @@ describe('END-TO-END recovery matrix', () => {
     expect(h.truncateAnnexb).not.toHaveBeenCalled();
     expect(h.truncateAnnexbToOffset).not.toHaveBeenCalled();
     // `muxOnly` is stubbed in this file, so a clean export's whole native
-    // trace is the guard and nothing else. (Rows 4 and 6 reach `exec` because
+    // trace is the two counts and nothing else: the per-piece completion guard,
+    // then the post-concat guard. (Rows 4 and 6 reach `exec` because
     // `sealTruncatedAnnexbToMp4` is the REAL function and calls the real
     // `muxOnly` — the stub only replaces the module's named export.)
-    expect(h.calls).toEqual(['countAnnexbFrames']);
+    expect(h.calls).toEqual(['countAnnexbFrames', 'countAnnexbFrames']);
   });
 
   // ── The two crash rows. Their byte-real proofs live in

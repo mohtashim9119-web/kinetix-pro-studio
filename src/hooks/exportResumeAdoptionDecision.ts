@@ -39,9 +39,20 @@ export function decideResumeAdoptionOutcome(params: {
   choice: 'resume' | 'clean';
   sessionId: string;
   reenterError: string | null;
+  /** No retry can change the verdict (a finished piece's picture count was never recorded as a deviation). */
+  unrecoverable?: boolean;
 }): ResumeAdoptionFailure | null {
   if (params.choice !== 'resume') return null;
   if (params.reenterError === null) return null;
+  if (params.unrecoverable) {
+    return {
+      kind: 'resume_adoption_failed',
+      message:
+        `The retained export session (${params.sessionId}) cannot be resumed: ${params.reenterError}. ` +
+        'Retrying will not change this — the finished piece on disk is not what the timeline needs. ' +
+        'Nothing was overwritten — no export ran. Choose "Start Clean" to begin a new export.',
+    };
+  }
   return {
     kind: 'resume_adoption_failed',
     message:

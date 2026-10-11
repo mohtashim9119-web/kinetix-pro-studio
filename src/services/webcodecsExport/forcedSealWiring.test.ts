@@ -155,7 +155,8 @@ describe('forced MP4 sealing — wired at the concat-guard seam', () => {
     expect(calls.map((c) => c.fn)).toEqual([
       'appendFileRaw',      // the one chunk
       'sessionFileSize',    // WS3 Round 12 (H1) — per-append verify
-      'countAnnexbFrames',  // the guard
+      'countAnnexbFrames',  // the per-piece completion guard (one full read of the piece)
+      'countAnnexbFrames',  // the post-concat guard
       'sessionFileSize',    // mux bound sizing
       'exec',               // muxOnly (video only)
       'deleteFile',         // intermediate cleanup: piece_0.h264

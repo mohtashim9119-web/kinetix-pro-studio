@@ -173,12 +173,26 @@ describe('WS3 Round 20 — post-encode failures carry the last piece liveness an
     // Two pieces are needed for concat to run; a single piece skips it. Use
     // the one-piece path's other post-encode failure instead: the guard's
     // count call throwing is a `concat`-kind failure at "concat:verify".
-    const ffmpeg = harness({ countAnnexbFrames: vi.fn(async () => { throw new Error('count exploded'); }) });
+    // The first count is the per-piece completion guard; it succeeds so the
+    // run reaches the post-concat guard, whose count is the one that throws.
+    const count = vi.fn()
+      .mockResolvedValueOnce({ pictures: EXPECTED_FRAMES, vclNals: EXPECTED_FRAMES })
+      .mockRejectedValue(new Error('count exploded'));
+    const ffmpeg = harness({ countAnnexbFrames: count });
     const r = await run(ffmpeg, false);
     expect(r.ok).toBe(false);
     if (r.ok) return;
     expect(r.error.kind).toBe('concat');
     expectPopulated(r.error, 'concat:verify');
+  });
+
+  it('a piece whose completion count cannot be read fails as a typed concat error naming the piece', async () => {
+    const ffmpeg = harness({ countAnnexbFrames: vi.fn(async () => { throw new Error('count exploded'); }) });
+    const r = await run(ffmpeg, false);
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error.kind).toBe('concat');
+    expect(r.error.message).toContain('piece 0');
   });
 
   it('the frame-count guard MISMATCH (typed concat failure, no consent surface) carries liveness too', async () => {

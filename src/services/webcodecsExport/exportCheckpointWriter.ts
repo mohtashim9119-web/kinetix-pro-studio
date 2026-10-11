@@ -43,6 +43,7 @@ import {
   recordBoundaryRewind,
   recordHardwareFailover,
   recordPieceCompleted,
+  recordPieceDeviation,
   clearResumeAttempt,
   commitResumeAttempt,
   recordForwardProgress,
@@ -51,6 +52,7 @@ import {
   recordRotationSeen,
   serializeExportState,
   type ExportCheckpointRecord,
+  type PieceDeviation,
   type ExportStateManifest,
 } from './exportCheckpoint';
 
@@ -143,10 +145,23 @@ export interface ExportCheckpointWriter {
    * piece 0, with no fence — finished pieces are proven by picture count.
    */
   notePieceCompleted(pieceIndex: number): void;
+  /**
+   * Records that a finished piece's counted pictures differ from the plan
+   * (`PieceDeviation`) and persists it. Export-lifetime: every later
+   * piece-scoped manifest carries it. Applied to the first manifest when the
+   * timeline hash has not landed yet.
+   */
+  notePieceDeviation(deviation: PieceDeviation): void;
+  /** Seeds the deviations a resumed export already recorded (never written by itself). */
+  carryPieceDeviations(deviations: readonly PieceDeviation[]): void;
   /** The manifest as it stands — for tests and diagnostics. */
   snapshot(): ExportStateManifest | null;
   /** Number of writes actually issued — for tests and diagnostics. */
   readonly writesIssued: number;
+}
+
+function withDeviation(list: readonly PieceDeviation[], d: PieceDeviation): PieceDeviation[] {
+  return [...list.filter((x) => x.pieceIndex !== d.pieceIndex), { ...d }].sort((a, b) => a.pieceIndex - b.pieceIndex);
 }
 
 export function createExportCheckpointWriter(
@@ -171,6 +186,8 @@ export function createExportCheckpointWriter(
   /** Finished pieces reported before any manifest existed (the hash was still
    *  pending); applied to the first manifest built. */
   let pendingCompletedPieces = 0;
+  /** Count deviations of finished pieces — export-lifetime, applied to every manifest built. */
+  let deviations: PieceDeviation[] = [];
 
   const pump = (): void => {
     if (!enabled || inFlight || !dirty || manifest === null) return;
@@ -211,6 +228,7 @@ export function createExportCheckpointWriter(
       // Finished pieces are an export-lifetime fact too: the piece-scoped
       // reset must not forget them.
       completedPieces: Math.max(manifest?.completedPieces ?? 0, pendingCompletedPieces),
+      pieceDeviations: deviations,
     });
     dirty = true;
     pump();
@@ -257,6 +275,7 @@ export function createExportCheckpointWriter(
       // D7.1a — a marker still set means the previous run died mid-attempt
       // (no cancel, no progress, no outcome): that attempt was lost — charge it.
       manifest = commitResumeAttempt(existing);
+      for (const d of existing.pieceDeviations ?? []) deviations = withDeviation(deviations, d);
       if (manifest !== existing) { dirty = true; pump(); }
     },
     ensureManifest(nextPieceIndex: number): void {
@@ -275,6 +294,18 @@ export function createExportCheckpointWriter(
       if ((manifest.completedPieces ?? 0) > before) manifest = recordForwardProgress(manifest);
       dirty = true;
       pump();
+    },
+    notePieceDeviation(deviation: PieceDeviation): void {
+      if (!enabled) return;
+      deviations = withDeviation(deviations, deviation);
+      if (manifest === null) return;
+      manifest = recordPieceDeviation(manifest, deviation);
+      dirty = true;
+      pump();
+    },
+    carryPieceDeviations(carried: readonly PieceDeviation[]): void {
+      if (!enabled) return;
+      for (const d of carried) deviations = withDeviation(deviations, d);
     },
     record(row): void {
       // A rotation that beats the hash produces no checkpoint. It cannot

@@ -200,7 +200,26 @@ export interface ExportRecoveryBudget {
   totalRecoveryAttempts?: number;
 }
 
+/**
+ * A finished piece whose counted pictures differ from the plan's exact count
+ * for it. Recorded the moment the piece completes, so the deviation is never
+ * silent and a later resume can tell a KNOWN, disclosed deviation from an
+ * unknown one (which it still refuses).
+ */
+export interface PieceDeviation {
+  pieceIndex: number;
+  counted: number;
+  expected: number;
+}
+
 export interface ExportStateManifest extends ExportRecoveryBudget {
+  /**
+   * Finished pieces whose picture count differs from the plan (see
+   * `PieceDeviation`). Export-lifetime, carried across the piece-scoped manifest
+   * reset like `completedPieces`. Present only when non-empty, so a manifest
+   * without one is unchanged on disk. Not part of the recovery budget.
+   */
+  pieceDeviations?: PieceDeviation[];
   /**
    * D7.1a — set while a resumed run is in progress, from adoption until the
    * run's own outcome is known. NOT a charge: an operator cancel and forward
@@ -645,6 +664,12 @@ export function recordPieceCompleted(manifest: ExportStateManifest, pieceIndex: 
   };
 }
 
+/** Records (or replaces, for the same piece) a piece's count deviation. Pure. */
+export function recordPieceDeviation(manifest: ExportStateManifest, deviation: PieceDeviation): ExportStateManifest {
+  const others = (manifest.pieceDeviations ?? []).filter((d) => d.pieceIndex !== deviation.pieceIndex);
+  return { ...manifest, pieceDeviations: [...others, { ...deviation }].sort((a, b) => a.pieceIndex - b.pieceIndex) };
+}
+
 export function recordResumeAttempt(manifest: ExportStateManifest): ExportStateManifest {
   const budget = normalizeRecoveryBudget(manifest);
   return {
@@ -734,6 +759,8 @@ export function createExportStateManifest(params: {
   carriedBudget?: ExportLifetimeBudget;
   /** Pieces already fully rendered before this manifest starts (carried like the budget). */
   completedPieces?: number;
+  /** Count deviations of those pieces (carried like `completedPieces`). */
+  pieceDeviations?: readonly PieceDeviation[];
 }): ExportStateManifest {
   const carried = params.carriedBudget ?? ZERO_LIFETIME_BUDGET;
   return {
@@ -747,6 +774,9 @@ export function createExportStateManifest(params: {
     checkpoints: [],
     rotationsSeen: 0,
     completedPieces: params.completedPieces ?? 0,
+    ...(params.pieceDeviations && params.pieceDeviations.length > 0
+      ? { pieceDeviations: params.pieceDeviations.map((d) => ({ ...d })) }
+      : {}),
     boundaryRewindsUsed: carried.boundaryRewindsUsed,
     hardwareFailoverUsed: carried.hardwareFailoverUsed,
     checkpointResumeAttempts: 0,
@@ -894,6 +924,10 @@ export function validateExportState(
   ) {
     return { kind: 'clean', reason: 'checkpoint recovery budget fields are invalid' };
   }
+  const pieceDeviations = parsePieceDeviations(value.pieceDeviations);
+  if (pieceDeviations === null) {
+    return { kind: 'clean', reason: 'checkpoint pieceDeviations field is invalid' };
+  }
   const resumeAttemptInFlight = value.resumeAttemptInFlight === true;
   const recoveryBudget: ExportRecoveryBudget = {
     boundaryRewindsUsed,
@@ -967,6 +1001,7 @@ export function validateExportState(
         checkpoints,
         rotationsSeen: rotationsSeen ?? 0,
         completedPieces: completedPieces ?? 0,
+        ...(pieceDeviations.length > 0 ? { pieceDeviations } : {}),
         ...normalizeRecoveryBudget(recoveryBudget),
         ...(resumeAttemptInFlight ? { resumeAttemptInFlight: true as const } : {}),
       },
@@ -1019,6 +1054,7 @@ export function validateExportState(
       checkpoints,
       rotationsSeen: rotationsSeen ?? 0,
       completedPieces: completedPieces ?? 0,
+      ...(pieceDeviations.length > 0 ? { pieceDeviations } : {}),
       ...normalizeRecoveryBudget(recoveryBudget),
       ...(resumeAttemptInFlight ? { resumeAttemptInFlight: true as const } : {}),
     },
@@ -1103,6 +1139,27 @@ function isPositiveFinite(value: unknown): value is number {
 
 function isNonNegativeSafeInteger(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+}
+
+/** `[]` when absent; `null` when present but malformed (an invalid manifest, never ignored). */
+function parsePieceDeviations(value: unknown): PieceDeviation[] | null {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) return null;
+  const out: PieceDeviation[] = [];
+  for (const row of value) {
+    if (
+      !isRecord(row) ||
+      !isNonNegativeSafeInteger(row.pieceIndex) ||
+      !isNonNegativeSafeInteger(row.counted) ||
+      !isPositiveSafeInteger(row.expected) ||
+      row.counted === row.expected ||
+      out.some((d) => d.pieceIndex === row.pieceIndex)
+    ) {
+      return null;
+    }
+    out.push({ pieceIndex: row.pieceIndex, counted: row.counted, expected: row.expected });
+  }
+  return out;
 }
 
 function optionalNonNegativeInteger(value: unknown): number | null | undefined {

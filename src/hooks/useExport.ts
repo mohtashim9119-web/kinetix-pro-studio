@@ -904,6 +904,7 @@ export function useExport(
         if (generationRef.current !== gen) { await abandonStart(); return; }
         if (choice === 'resume') {
           let reenterError: string | null = null;
+          let reenterUnrecoverable = false;
           try {
             // Phase B, only now. The export runs on the handle adoption
             // re-entered and fenced — re-entering again would re-arm the
@@ -911,6 +912,7 @@ export function useExport(
             const adopted = await adoptResumeOffer(offer);
             if (adopted.notice) setState(prev => ({ ...prev, resumeRefusalNotice: adopted.notice }));
             if (!adopted.resumable) {
+              reenterUnrecoverable = adopted.rejected[0]?.unrecoverable === true;
               throw new Error(adopted.rejected[0]?.reason ?? 'no offered session could be adopted');
             }
             resumeFfmpeg = adopted.resumable.session as unknown as WebCodecsFfmpeg;
@@ -944,7 +946,7 @@ export function useExport(
           // indistinguishable, from the operator's side, from the app
           // quietly minting a brand new session folder and failing anyway.
           const adoptionFailure = decideResumeAdoptionOutcome({
-            choice, sessionId: offer.sessionId, reenterError,
+            choice, sessionId: offer.sessionId, reenterError, unrecoverable: reenterUnrecoverable,
           });
           if (adoptionFailure) {
             // eslint-disable-next-line no-console

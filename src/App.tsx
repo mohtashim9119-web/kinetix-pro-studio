@@ -7854,9 +7854,27 @@ export default function App() {
               This export is shorter than your timeline
             </div>
             <p className="text-sm text-zinc-300 leading-relaxed">
-              The encoder stopped early. Everything rendered so far is valid video and can be
-              saved as a playable MP4 — but it will be a shorter film than the one you asked for.
+              {exportState.pendingSealConsent.deviatingPieces && exportState.pendingSealConsent.deviatingPieces.length > 0
+                ? 'The encoder dropped frames while rendering. Everything rendered is valid video and can be saved as a playable MP4 — but it will be a shorter film than the one you asked for.'
+                : 'The encoder stopped early. Everything rendered so far is valid video and can be saved as a playable MP4 — but it will be a shorter film than the one you asked for.'}
             </p>
+            {exportState.pendingSealConsent.deviatingPieces && exportState.pendingSealConsent.deviatingPieces.length > 0 && (
+              <div className="bg-zinc-800/70 rounded-lg px-3 py-2 text-xs text-zinc-300 leading-relaxed" data-testid="seal-deviating-pieces">
+                <div className="text-amber-400 font-semibold mb-1">Where frames were lost</div>
+                <ul className="list-disc pl-4">
+                  {exportState.pendingSealConsent.deviatingPieces.map((d) => (
+                    <li key={d.pieceIndex}>
+                      Piece {d.pieceIndex + 1}: {d.counted.toLocaleString()} frames rendered, {d.expected.toLocaleString()} planned
+                    </li>
+                  ))}
+                </ul>
+                <div className="mt-1 text-zinc-400">
+                  Everything after each of these moves one frame earlier against the voiceover
+                  (about {Math.round(1000 / exportState.pendingSealConsent.fps)} ms per frame at{' '}
+                  {exportState.pendingSealConsent.fps} fps).
+                </div>
+              </div>
+            )}
             <div className="grid grid-cols-3 gap-3 text-center">
               <div className="bg-zinc-800/70 rounded-lg py-3">
                 <div className="text-lg font-semibold text-zinc-100">

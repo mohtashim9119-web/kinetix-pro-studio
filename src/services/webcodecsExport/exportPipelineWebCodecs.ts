@@ -94,7 +94,7 @@ import { resolveFontBytes } from './fontResolver';
 import { fenceSafeCheckpointOffset } from './exportCheckpointPlacement';
 import { recordCleanupFailure } from './exportCleanupNotices';
 import { createExportCheckpointWriter, type ExportCheckpointWriter } from './exportCheckpointWriter';
-import { buildSourceTimelineHash, timelineIdentityFromProject, MAX_BOUNDARY_REWINDS_PER_EXPORT, type ExportStateManifest } from './exportCheckpoint';
+import { buildSourceTimelineHash, timelineIdentityFromProject, MAX_BOUNDARY_REWINDS_PER_EXPORT, type ExportStateManifest, type PieceDeviation } from './exportCheckpoint';
 import {
   muxOnly,
   forcedMp4SealOffer,
@@ -3349,6 +3349,43 @@ async function exportProjectWebCodecsRun(
 
   const resume = options.resume ?? null;
 
+  // Finished pieces whose counted pictures differ from the plan: the ones a
+  // resumed export already recorded, plus any this run finds. They are
+  // disclosed by the seal offer below and persisted by the writer.
+  const pieceDeviations: PieceDeviation[] = [...(resume?.manifest?.pieceDeviations ?? [])];
+  checkpointWriter.carryPieceDeviations(pieceDeviations);
+
+  /**
+   * The completion guard. Counts a finished piece with the same native counter
+   * resume and the concat guard use and compares it with the plan's exact
+   * count for that piece. A mismatch is RECORDED (manifest + diagnostics line)
+   * and the run CONTINUES: the total shortfall reaches the post-concat guard,
+   * which presents the existing seal decision naming each deviating piece.
+   * Returns the error to fail with only when the count itself cannot be read.
+   */
+  const checkPieceCount = async (pieceIndex: number, file: string, expectedFrames: number): Promise<ExportError | null> => {
+    let counted: number;
+    try {
+      counted = (await withFfmpegLivenessBound(
+        { label: 'FRAME_COUNT_BOUND_MS', boundMs: FRAME_COUNT_BOUND_MS, ffmpeg, files: [file], pieceCount: pieces.length, pieceIndex },
+        async () => await ffmpeg.countAnnexbFrames(file),
+      )).pictures;
+    } catch (err) {
+      return boundedStepError('concat', `Failed to count the pictures of finished piece ${pieceIndex}.`, err);
+    }
+    if (counted === expectedFrames) return null;
+    const deviation: PieceDeviation = { pieceIndex, counted, expected: expectedFrames };
+    const at = pieceDeviations.findIndex((d) => d.pieceIndex === pieceIndex);
+    if (at >= 0) pieceDeviations[at] = deviation; else pieceDeviations.push(deviation);
+    checkpointWriter.notePieceDeviation(deviation);
+    // eslint-disable-next-line no-console
+    console.warn('[ws3-piece-count] piece finished off-plan', JSON.stringify({
+      sessionId: (ffmpeg as unknown as { sessionId?: string }).sessionId ?? null,
+      ...deviation,
+    }));
+    return null;
+  };
+
   const pieceFiles: string[] = [];
   let framesCompletedBase = 0;
 
@@ -4047,7 +4084,20 @@ async function exportProjectWebCodecsRun(
       // rotations. It names no real session, and nothing reads it for a
       // piece this checkpoint marks complete — a pure sequencing device,
       // not a claim about a session that exists.
-      if (checkpointWriter.enabled) {
+      // A salvaged piece already passed its zero-tolerance exact check above.
+      let glPieceDeviates = false;
+      if (!driveResult.salvaged) {
+        const countError = await checkPieceCount(pieceIndex, runFile, plan.expectedFrames);
+        if (countError) {
+          releaseRunFfmpeg(control, ffmpeg);
+          return { ok: false, error: countError };
+        }
+        glPieceDeviates = pieceDeviations.some((d) => d.pieceIndex === pieceIndex);
+      }
+      // A deviating piece writes no closing checkpoint: that record claims
+      // `expectedFrames` pictures, which the file does not hold. Its completion
+      // plus its recorded deviation is what a resume reads.
+      if (checkpointWriter.enabled && !glPieceDeviates) {
         const finalByteOffset = await ffmpeg.sessionFileSize(runFile).catch(() => null);
         if (finalByteOffset !== null) {
           const lastRecorded = checkpointWriter.snapshot()?.checkpoints.at(-1);
@@ -4071,6 +4121,11 @@ async function exportProjectWebCodecsRun(
         releaseRunFfmpeg(control, ffmpeg);
         return { ok: false, error: result.error };
       }
+      const plainCountError = await checkPieceCount(pieceIndex, result.h264File, plan.expectedFrames);
+      if (plainCountError) {
+        releaseRunFfmpeg(control, ffmpeg);
+        return { ok: false, error: plainCountError };
+      }
       checkpointWriter.notePieceCompleted(pieceIndex);
       pieceFiles.push(result.h264File);
     } else {
@@ -4079,6 +4134,11 @@ async function exportProjectWebCodecsRun(
       if (!result.ok) {
         releaseRunFfmpeg(control, ffmpeg);
         return { ok: false, error: result.error };
+      }
+      const canvasCountError = await checkPieceCount(pieceIndex, result.h264File, plan.expectedFrames);
+      if (canvasCountError) {
+        releaseRunFfmpeg(control, ffmpeg);
+        return { ok: false, error: canvasCountError };
       }
       checkpointWriter.notePieceCompleted(pieceIndex);
       pieceFiles.push(result.h264File);
@@ -4170,7 +4230,12 @@ async function exportProjectWebCodecsRun(
       // direction. `forcedMp4SealOffer` never rewrites a count and never
       // turns the guard green; it only decides whether a non-empty, strictly
       // shorter, picture-valid prefix EXISTS to be offered.
-      const offer = forcedMp4SealOffer(measured, totalExpectedFramesOverall, fps);
+      const baseOffer = forcedMp4SealOffer(measured, totalExpectedFramesOverall, fps);
+      // The operator consents to a SPECIFIC thing: which pieces deviated, by
+      // how much, and that everything after each drop moves one frame earlier.
+      const offer = baseOffer !== null && pieceDeviations.length > 0
+        ? { ...baseOffer, deviatingPieces: pieceDeviations.map((d) => ({ ...d })) }
+        : baseOffer;
       // No offer (empty, or not actually short — e.g. the stream is LONGER
       // than expected, which sealing cannot fix) => the status quo failure.
       // An offer with no consent hook, or a declined one => the same.

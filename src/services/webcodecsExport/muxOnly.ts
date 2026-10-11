@@ -94,6 +94,7 @@
 
 import type { FfmpegLike } from '../segmentEncoder';
 import type { AnnexbFrameCount } from './annexbFrameCount';
+import type { PieceDeviation } from './exportCheckpoint';
 import { recordCleanupFailure } from './exportCleanupNotices';
 
 function causeString(err: unknown): string {
@@ -152,6 +153,12 @@ export interface ForcedMp4SealOffer {
   keptWallDurationSeconds: number;
   lostWallDurationSeconds: number;
   fps: number;
+  /**
+   * Finished pieces whose counted pictures differ from the plan, when the
+   * shortfall comes from them. Each drop moves everything after it one frame
+   * earlier against the audio (1 / fps seconds per frame).
+   */
+  deviatingPieces?: readonly PieceDeviation[];
 }
 
 /**

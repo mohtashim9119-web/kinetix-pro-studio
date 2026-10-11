@@ -33,6 +33,7 @@ import {
   type ExportCheckpointExpectedIdentity,
   type ExportCheckpointRecord,
   type ExportStateManifest,
+  type PieceDeviation,
 } from './exportCheckpoint';
 import { TRUNCATE_BOUND_MS, withFfmpegLivenessBound } from './ffmpegLivenessBound';
 
@@ -170,6 +171,12 @@ export interface ResumeRejection {
   sessionId: string;
   reason: string;
   /**
+   * True when no retry can ever change the verdict: a finished piece holds a
+   * picture count the manifest never recorded as a deviation. The operator is
+   * told so plainly instead of being invited to try again.
+   */
+  unrecoverable?: boolean;
+  /**
    * Set when a native mutating call (the pre-append fence, or the post-fence
    * seam step-back cut) failed AFTER already cutting bytes from the surviving
    * Annex-B file — never on a call that failed cleanly. `reason` alone cannot
@@ -228,6 +235,21 @@ export interface ResumeTargetPlan {
   expected: ExportCheckpointExpectedIdentity;
   /** `expectedFrames` per piece, in piece order — the current plan's. */
   pieceExpectedFrames: readonly number[];
+}
+
+/**
+ * A finished piece may deviate from the plan ONLY when the manifest recorded
+ * exactly that deviation — same piece, same counted, same expected — at the
+ * moment the piece completed. Anything else is an unknown deviation and is
+ * refused: existence and plausibility are not evidence.
+ */
+function isRecordedDeviation(
+  deviations: readonly PieceDeviation[] | undefined,
+  pieceIndex: number,
+  counted: number,
+  expected: number,
+): boolean {
+  return (deviations ?? []).some((d) => d.pieceIndex === pieceIndex && d.counted === counted && d.expected === expected);
 }
 
 export function pieceFileName(pieceIndex: number): string {
@@ -335,6 +357,7 @@ export type ResumeCandidateOutcome =
       liveClaimBlocked?: boolean;
       neverCheckpointed?: boolean;
       noCheckpointYet?: boolean;
+      unrecoverable?: boolean;
     };
 
 /**
@@ -483,8 +506,12 @@ async function evaluateReenteredCandidate(
       } catch (err) {
         return { ok: false, reason: `earlier piece ${i} is unreadable: ${message(err)}` };
       }
-      if (pictures !== expectedFrames) {
-        return { ok: false, reason: `earlier piece ${i} holds ${pictures} pictures, plan expects ${expectedFrames}` };
+      if (pictures !== expectedFrames && !isRecordedDeviation(selected.manifest.pieceDeviations, i, pictures, expectedFrames)) {
+        return {
+          ok: false,
+          reason: `earlier piece ${i} holds ${pictures} pictures, plan expects ${expectedFrames}`,
+          unrecoverable: true,
+        };
       }
       rendered += pictures;
     }
@@ -593,10 +620,11 @@ async function evaluateReenteredCandidate(
     } catch (err) {
       return { ok: false, reason: `earlier piece ${i} is unreadable: ${message(err)}` };
     }
-    if (pictures !== expectedFrames) {
+    if (pictures !== expectedFrames && !isRecordedDeviation(manifest.pieceDeviations, i, pictures, expectedFrames)) {
       return {
         ok: false,
         reason: `earlier piece ${i} holds ${pictures} pictures, plan expects ${expectedFrames}`,
+        unrecoverable: true,
       };
     }
     picturesAlreadyRendered += pictures;
@@ -812,6 +840,7 @@ function rejectionFrom(sessionId: string, outcome: Extract<ResumeCandidateOutcom
     ...(outcome.liveClaimBlocked ? { liveClaimBlocked: true } : {}),
     ...(outcome.neverCheckpointed ? { neverCheckpointed: true } : {}),
     ...(outcome.noCheckpointYet ? { noCheckpointYet: true } : {}),
+    ...(outcome.unrecoverable ? { unrecoverable: true } : {}),
   };
 }
 
