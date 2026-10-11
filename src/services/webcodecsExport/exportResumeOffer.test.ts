@@ -10,6 +10,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import {
+  adoptRankedResume,
   rankResumeCandidates,
   type ResumeDiscoveryIo,
   type ResumeSessionHandle,
@@ -246,5 +247,80 @@ describe('Phase A — rankResumeCandidates (read-only offer)', () => {
     const { ranked, rejected } = await rankResumeCandidates(h.io, target, [OLD], () => 1);
     expect(ranked).toEqual([]);
     expect(rejected[0]!.noCheckpointYet).toBe(true);
+  });
+});
+
+describe('Phase B — adoptRankedResume (mutating, after consent)', () => {
+  it('(1) adopting the chosen session produces today\'s ResumableExport shape', async () => {
+    const s: FakeSession = {
+      json: manifest({ sessionId: OLD, rows: [{ pieceIndex: 1, encoderSessionIndex: 2, byteOffset: 8_000, seamByteOffset: 7_900, cumulativePictures: 800 }] }),
+      files: { 'piece_0.h264': 10_000, 'piece_1.h264': 8_200 },
+    };
+    const h = multiSessionIo({ [OLD]: s });
+    const { ranked } = await rankResumeCandidates(h.io, target, [OLD], () => 1);
+    const adopted = await adoptRankedResume(h.io, ranked, target, async (_s, p) => {
+      h.calls.push(`count(${p})`);
+      return p === 'piece_1.h264' ? 800 : 1000;
+    });
+    expect(adopted.rejected).toEqual([]);
+    const r = adopted.resumable!;
+    expect(Object.keys(r).sort()).toEqual([
+      'appendFromByteOffset', 'checkpoint', 'manifest', 'picturesAlreadyRendered', 'picturesTotal',
+      'pieceFile', 'repair', 'session', 'sessionId', 'staleClaimRecovered',
+    ]);
+    expect(r.sessionId).toBe(OLD);
+    expect(r.pieceFile).toBe('piece_1.h264');
+    expect(r.appendFromByteOffset).toBe(7_900);
+    expect(r.picturesAlreadyRendered).toBe(1_800);
+    expect(r.picturesTotal).toBe(3_000);
+    expect(r.staleClaimRecovered).toBe(false);
+    expect(h.calls.filter((c) => c.startsWith('reenter('))).toEqual([`reenter(${OLD})`]);
+  });
+
+  it('(2) a Phase-B failure releases per C1b and falls through to the NEXT ranked candidate', async () => {
+    // OLD ranks first but its fence refuses: held (fence invoked). NEW's
+    // manifest goes bad between offer and adopt: released (no fence ran).
+    // THIRD adopts.
+    const sessions: Record<string, FakeSession> = {
+      [OLD]: { ...sixtyPercent(OLD), fenceThrows: 'checkpoint offset is not a canonical whole-AU boundary' },
+      [NEW]: { json: manifest({ sessionId: NEW, completedPieces: 1 }), files: {} },
+      [THIRD]: tenPercent(THIRD),
+    };
+    const h = multiSessionIo(sessions);
+    const { ranked } = await rankResumeCandidates(h.io, target, [OLD, NEW, THIRD], () => 1);
+    expect(ranked.map((c) => c.sessionId)).toEqual([OLD, NEW, THIRD]);
+    sessions[NEW]!.json = manifest({ sessionId: NEW, hash: OTHER_HASH, completedPieces: 1 });
+    const adopted = await adoptRankedResume(h.io, ranked, target, h.countPictures);
+    expect(adopted.resumable?.sessionId).toBe(THIRD);
+    expect(adopted.rejected.map((r) => r.sessionId)).toEqual([OLD, NEW]);
+    expect(h.calls).not.toContain(`destroy(${OLD},unforced)`);
+    expect(h.calls).toContain(`destroy(${NEW},unforced)`);
+    expect(h.calls).not.toContain(`destroy(${THIRD},unforced)`);
+    // Order: each candidate is tried only after the one before it failed.
+    const reenters = h.calls.filter((c) => c.startsWith('reenter('));
+    expect(reenters).toEqual([`reenter(${OLD})`, `reenter(${NEW})`, `reenter(${THIRD})`]);
+  });
+
+  it('a session whose selection changed since the offer is refused before any byte write', async () => {
+    const sessions: Record<string, FakeSession> = { [OLD]: sixtyPercent(OLD) };
+    const h = multiSessionIo(sessions);
+    const { ranked } = await rankResumeCandidates(h.io, target, [OLD], () => 1);
+    sessions[OLD]!.files['piece_1.h264'] = 100; // the offered checkpoint no longer fits
+    const adopted = await adoptRankedResume(h.io, ranked, target, h.countPictures);
+    expect(adopted.resumable).toBeNull();
+    expect(h.calls.some((c) => c.startsWith('prepareCheckpointResume('))).toBe(false);
+    expect(h.calls).toContain(`destroy(${OLD},unforced)`);
+  });
+
+  it('(3) the winner\'s bytes are untouched until adopt is called', async () => {
+    const h = multiSessionIo({ [OLD]: { ...sixtyPercent(OLD), json: manifest({ sessionId: OLD, rows: [{ pieceIndex: 1, encoderSessionIndex: 2, byteOffset: 8_000, seamByteOffset: 7_900, cumulativePictures: 800 }] }) } });
+    const { ranked } = await rankResumeCandidates(h.io, target, [OLD], () => 1);
+    expect(h.files(OLD)['piece_1.h264']).toBe(8_200);
+    expect(mutatingCalls(h.calls)).toEqual([]);
+    await adoptRankedResume(h.io, ranked, target, async (_s, p) => (p === 'piece_1.h264' ? 800 : 1000));
+    const firstMutation = h.calls.findIndex((c) => MUTATING.some((m) => c.startsWith(m)));
+    const lastPeek = h.calls.map((c) => c.startsWith('peek')).lastIndexOf(true);
+    expect(firstMutation).toBeGreaterThan(lastPeek);
+    expect(h.files(OLD)['piece_1.h264']).toBe(7_900);
   });
 });

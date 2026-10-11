@@ -249,7 +249,6 @@ describe('resume discovery — the fence ordering', () => {
   });
 
   it('discovery takes the first candidate that works and reports the rest', async () => {
-    let first = true;
     const h = harness({ sessionIds: [SESSION_2, SESSION] });
     const staleJson = manifestJson({ sessionId: SESSION_2, hash: HASH_B, rows: [{ pieceIndex: 1, encoderSessionIndex: 1, byteOffset: 4_000, cumulativePictures: 1_200 }] });
     const io: ResumeDiscoveryIo = {
@@ -259,8 +258,7 @@ describe('resume discovery — the fence ordering', () => {
       peekSessionFileSize: h.io.peekSessionFileSize,
       reenter: async (id) => {
         const handle = await h.io.reenter(id);
-        if (first) {
-          first = false;
+        if (id === SESSION_2) {
           return { ...handle, readExportState: async () => new TextEncoder().encode(staleJson) };
         }
         return handle;
@@ -542,11 +540,12 @@ describe('a rejected candidate releases its claim only where no byte can have ch
     vi.useRealTimers();
   });
 
-  it('(1) a hash mismatch releases, unforced, and the next pass is not live-blocked', async () => {
+  it('(1) a hash mismatch is rejected by the read-only offer — never claimed — and the next pass is not live-blocked', async () => {
     const c = claimedIo({ [SESSION_2]: { json: manifestJson({ sessionId: SESSION_2, hash: HASH_B, rows }) } });
     const first = await discoverResumableExport(c.io, target, async () => 1800, [SESSION_2]);
     expect(first.rejected.map((r) => r.reason)).toEqual(['checkpoint sourceTimelineHash mismatch']);
-    expect(c.destroys).toEqual([{ sessionId: SESSION_2, opts: expect.objectContaining({ force: false }) }]);
+    expect(c.claims.has(SESSION_2)).toBe(false);
+    expect(c.destroys).toEqual([]);
     const second = await discoverResumableExport(c.io, target, async () => 1800, [SESSION_2]);
     expect(second.rejected.some((r) => r.liveClaimBlocked)).toBe(false);
     expect(second.rejected.map((r) => r.reason)).toEqual(first.rejected.map((r) => r.reason));
@@ -614,15 +613,15 @@ describe('a rejected candidate releases its claim only where no byte can have ch
     expect(second.rejected.every((r) => r.liveClaimBlocked)).toBe(true);
   });
 
-  it('(7) the winner is never released — only the rejected candidate before it', async () => {
+  it('(7) the winner is never released, and a candidate the offer rejected is never claimed', async () => {
     const c = claimedIo({
       [SESSION_2]: { json: manifestJson({ sessionId: SESSION_2, hash: HASH_B, rows }) },
       [SESSION]: { json: manifestJson({ rows }) },
     });
     const found = await discoverResumableExport(c.io, target, async () => 1800, [SESSION_2, SESSION]);
     expect(found.resumable?.sessionId).toBe(SESSION);
-    expect(c.destroys.map((d) => d.sessionId)).toEqual([SESSION_2]);
-    expect(c.claims.has(SESSION)).toBe(true);
+    expect(c.destroys).toEqual([]);
+    expect([...c.claims]).toEqual([SESSION]);
   });
 
   it('a release that fails changes neither the rejection nor its reason', async () => {

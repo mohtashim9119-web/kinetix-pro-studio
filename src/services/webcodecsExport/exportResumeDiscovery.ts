@@ -338,6 +338,9 @@ export async function evaluateResumeCandidate(
   sessionId: string,
   target: ResumeTargetPlan,
   countPictures: (session: ResumeSessionHandle, path: string) => Promise<number>,
+  /** Phase B: the candidate the operator accepted. Adoption refuses, before
+   *  any byte write, when the session no longer selects what was offered. */
+  offered?: ResumeCandidate,
 ): Promise<ResumeCandidateOutcome> {
   // WS3 STEP 8 (H5) — claim-aware reentry. Read-only inspection FIRST, before
   // `reenter` is even attempted: a `live` claim held by a different process
@@ -389,9 +392,28 @@ export async function evaluateResumeCandidate(
   // (`prepare_checkpoint_resume_inner`). From that point every rejection keeps
   // the claim held, so this app run cannot re-fence it.
   const fence = { invoked: false };
-  const outcome = await evaluateReenteredCandidate(session, sessionId, target, countPictures, staleClaimRecovered, fence);
+  const outcome = await evaluateReenteredCandidate(session, sessionId, target, countPictures, staleClaimRecovered, fence, offered);
   if (!outcome.ok && !fence.invoked) await releaseRejectedCandidate(session);
   return outcome;
+}
+
+function selectionMatchesOffer(
+  selected:
+    | { kind: 'checkpoint'; checkpoint: ExportCheckpointRecord }
+    | { kind: 'piece'; completedPieces: number },
+  offered: ResumeCandidate,
+): boolean {
+  if (selected.kind !== offered.kind) return false;
+  if (selected.kind === 'piece') return selected.completedPieces === offered.completedPieces;
+  const a = selected.checkpoint;
+  const b = offered.checkpoint;
+  return (
+    b !== null &&
+    a.pieceIndex === b.pieceIndex &&
+    a.encoderSessionIndex === b.encoderSessionIndex &&
+    a.byteOffset === b.byteOffset &&
+    a.cumulativePictures === b.cumulativePictures
+  );
 }
 
 async function releaseRejectedCandidate(session: ResumeSessionHandle): Promise<void> {
@@ -410,6 +432,7 @@ async function evaluateReenteredCandidate(
   countPictures: (session: ResumeSessionHandle, path: string) => Promise<number>,
   staleClaimRecovered: boolean,
   fence: { invoked: boolean },
+  offered: ResumeCandidate | undefined,
 ): Promise<ResumeCandidateOutcome> {
   let serialized: Uint8Array;
   try {
@@ -420,6 +443,9 @@ async function evaluateReenteredCandidate(
 
   const selected = await selectCheckpoint((path) => session.sessionFileSize(path), serialized, target.expected);
   if (!selected.ok) return selected;
+  if (offered && !selectionMatchesOffer(selected, offered)) {
+    return { ok: false, reason: 'the session changed between the resume offer and its adoption — not resuming it' };
+  }
 
   // ── Piece-boundary resume: whole pieces are finished, nothing inside the
   // next one is checkpointed. No fence (nothing to fence); the finished pieces
@@ -775,44 +801,62 @@ export async function rankResumeCandidates(
 }
 
 /**
- * Scan every surviving session and return the first that is genuinely
- * resumable for `target`, plus every one that was not and why.
- *
- * Candidates are inspected NEWEST FIRST (`listResumableSessionIds` returns them
- * sorted by UUID, which carries no time, so the caller supplies the order it
- * knows — see `orderedSessionIds`). The first success wins; every candidate
- * turned down keeps its files (its claim released where no byte can have
- * changed — see `evaluateResumeCandidate`) and is reported, so the cleanup policy — not this
- * function — decides their fate.
+ * Phase B, after the operator chose Resume. Adopts the first candidate of
+ * Phase A's ranking that survives the real handshake — re-enter, arm,
+ * fence-or-clear, seam step-back, earlier-piece counts — on that ONE session.
+ * Each failure falls through to the next ranked candidate; its claim is
+ * released only where no native byte write can have run (C1b, see
+ * `evaluateResumeCandidate`). Candidates after the winner are never touched.
+ */
+export async function adoptRankedResume(
+  io: ResumeAdoptIo,
+  ranked: readonly ResumeCandidate[],
+  target: ResumeTargetPlan,
+  countPictures: (session: ResumeSessionHandle, path: string) => Promise<number>,
+): Promise<ResumeDiscoveryResult> {
+  const rejected: ResumeRejection[] = [];
+  for (const candidate of ranked) {
+    const outcome = await evaluateResumeCandidate(io, candidate.sessionId, target, countPictures, candidate);
+    if (outcome.ok) return { resumable: outcome.value, rejected };
+    rejected.push(rejectionFrom(candidate.sessionId, outcome));
+  }
+  return { resumable: null, rejected };
+}
+
+function rejectionFrom(sessionId: string, outcome: Extract<ResumeCandidateOutcome, { ok: false }>): ResumeRejection {
+  return {
+    sessionId,
+    reason: outcome.reason,
+    ...(outcome.bitstreamTouched ? { bitstreamTouched: outcome.bitstreamTouched } : {}),
+    ...(outcome.budgetExhausted ? { budgetExhausted: true } : {}),
+    ...(outcome.liveClaimBlocked ? { liveClaimBlocked: true } : {}),
+    ...(outcome.neverCheckpointed ? { neverCheckpointed: true } : {}),
+    ...(outcome.noCheckpointYet ? { noCheckpointYet: true } : {}),
+  };
+}
+
+/**
+ * Offer and adopt in one call, for a caller with no consent step between
+ * them: Phase A ranks every candidate read-only, Phase B adopts the best one
+ * that survives. `rejected` lists Phase A's rejections, then Phase B's.
+ * `findResumeOffer` runs the two phases separately, with the operator between.
  */
 export async function discoverResumableExport(
   io: ResumeDiscoveryIo,
   target: ResumeTargetPlan,
   countPictures: (session: ResumeSessionHandle, path: string) => Promise<number>,
-  orderedSessionIds?: readonly string[],
+  sessionIds?: readonly string[],
+  createdAtMs: (sessionId: string) => number | null = () => null,
 ): Promise<ResumeDiscoveryResult> {
   let ids: readonly string[];
   try {
-    ids = orderedSessionIds ?? (await io.listResumableSessionIds());
+    ids = sessionIds ?? (await io.listResumableSessionIds());
   } catch {
     return { resumable: null, rejected: [] };
   }
-
-  const rejected: ResumeRejection[] = [];
-  for (const sessionId of ids) {
-    const outcome = await evaluateResumeCandidate(io, sessionId, target, countPictures);
-    if (outcome.ok) return { resumable: outcome.value, rejected };
-    rejected.push({
-      sessionId,
-      reason: outcome.reason,
-      ...(outcome.bitstreamTouched ? { bitstreamTouched: outcome.bitstreamTouched } : {}),
-      ...(outcome.budgetExhausted ? { budgetExhausted: true } : {}),
-      ...(outcome.liveClaimBlocked ? { liveClaimBlocked: true } : {}),
-      ...(outcome.neverCheckpointed ? { neverCheckpointed: true } : {}),
-      ...(outcome.noCheckpointYet ? { noCheckpointYet: true } : {}),
-    });
-  }
-  return { resumable: null, rejected };
+  const offer = await rankResumeCandidates(io, target, ids, createdAtMs);
+  const adopted = await adoptRankedResume(io, offer.ranked, target, countPictures);
+  return { resumable: adopted.resumable, rejected: [...offer.rejected, ...adopted.rejected] };
 }
 
 // ---------------------------------------------------------------------------
