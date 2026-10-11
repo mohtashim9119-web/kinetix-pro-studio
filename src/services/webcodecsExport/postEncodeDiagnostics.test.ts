@@ -196,7 +196,14 @@ describe('WS3 Round 20 — post-encode failures carry the last piece liveness an
   });
 
   it('the frame-count guard MISMATCH (typed concat failure, no consent surface) carries liveness too', async () => {
-    const ffmpeg = harness({ countAnnexbFrames: vi.fn(async () => ({ pictures: EXPECTED_FRAMES - 5, vclNals: EXPECTED_FRAMES - 5 })) });
+    let calls = 0;
+    const ffmpeg = harness({
+      // First count: the per-piece completion guard (exact); then the post-concat reading.
+      countAnnexbFrames: vi.fn(async () => {
+        const n = ++calls === 1 ? EXPECTED_FRAMES : EXPECTED_FRAMES - 5;
+        return { pictures: n, vclNals: n };
+      }),
+    });
     const r = await run(ffmpeg, false);
     expect(r.ok).toBe(false);
     if (r.ok) return;

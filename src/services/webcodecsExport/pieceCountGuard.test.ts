@@ -90,7 +90,7 @@ async function run(
     sessionId: SESSION,
     writeExportState: vi.fn(async (s: string) => { manifests.push(JSON.parse(s) as Record<string, unknown>); }),
     writeFile: vi.fn(async () => undefined), writeFileRaw: vi.fn(async () => undefined), exec: vi.fn(async () => 0),
-    readFile: vi.fn(async () => new Uint8Array()), deleteFile: vi.fn(async () => undefined),
+    readFile: vi.fn(async () => new Uint8Array()), deleteFile: vi.fn(async (p: string) => { landed.delete(p); }),
     appendFileRaw: vi.fn(async (p: string, d: Uint8Array) => { landed.set(p, (landed.get(p) ?? 0) + d.byteLength); }),
     saveSessionFile: vi.fn(async () => undefined), kill: vi.fn(async () => undefined), destroy: vi.fn(async () => undefined),
     sessionFileSize: vi.fn(async (p: string) => landed.get(p) ?? 1_000),

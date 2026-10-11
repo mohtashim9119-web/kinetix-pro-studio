@@ -94,6 +94,7 @@ function harness(measuredPictures: number): {
   // (`sessionFileSize` read right after `appendFileRaw`) sees a landed size
   // consistent with what was actually appended.
   const landed = new Map<string, number>();
+  let countCalls = 0;
   const ffmpeg = {
     writeFile: rec('writeFile', async () => undefined),
     writeFileRaw: rec('writeFileRaw', async () => undefined),
@@ -107,7 +108,13 @@ function harness(measuredPictures: number): {
     kill: rec('kill', async () => undefined),
     destroy: rec('destroy', async () => undefined),
     sessionFileSize: rec('sessionFileSize', async (p: string) => landed.get(p) ?? 1_700_000_000),
-    countAnnexbFrames: rec('countAnnexbFrames', async () => ({ pictures: measuredPictures, vclNals: measuredPictures })),
+    // The FIRST count is the per-piece completion guard (exact here); the
+    // shortfall under test is the post-concat reading that follows it. (A
+    // single-piece export concatenates nothing, so both read the same file.)
+    countAnnexbFrames: rec('countAnnexbFrames', async () => {
+      const n = ++countCalls === 1 ? EXPECTED_FRAMES : measuredPictures;
+      return { pictures: n, vclNals: n };
+    }),
     concatAnnexbPieces: rec('concatAnnexbPieces', async () => undefined),
     truncateAnnexb: rec('truncateAnnexb', async () => ({ pictures: measuredPictures, vclNals: measuredPictures, bytesRemoved: 0, keptBytes: 100 })),
     truncateAnnexbToOffset: rec('truncateAnnexbToOffset', async () => ({ pictures: 0, vclNals: 0, bytesRemoved: 0, keptBytes: 0 })),

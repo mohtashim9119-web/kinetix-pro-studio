@@ -2965,6 +2965,16 @@ function collectUsedFontFamilies(project: Project): Set<string> {
  *  ceiling stops there rather than growing with piece count. */
 export { MAX_BOUNDARY_REWINDS_PER_EXPORT };
 
+/**
+ * A GL piece that finishes off-plan is re-rendered once before the run settles
+ * for a recorded deviation. Run-scoped, in-process counters: a re-render is not
+ * a recovery attempt and never touches the persisted resume budget. At about a
+ * minute per 1,800-frame piece, 3 per export caps the extra render time at a
+ * few minutes if the encoder drop is systematic.
+ */
+export const MAX_PIECE_RERENDERS_PER_PIECE = 1;
+export const MAX_PIECE_RERENDERS_PER_EXPORT = 3;
+
 export type BoundedRerenderDisposition =
   | { action: 'rewind' }
   | { action: 'abort'; reason: string };
@@ -3347,12 +3357,12 @@ async function exportProjectWebCodecsRun(
     await checkpointWriter.flush();
   };
 
-  const resume = options.resume ?? null;
+  const resumeAtStart = options.resume ?? null;
 
   // Finished pieces whose counted pictures differ from the plan: the ones a
   // resumed export already recorded, plus any this run finds. They are
   // disclosed by the seal offer below and persisted by the writer.
-  const pieceDeviations: PieceDeviation[] = [...(resume?.manifest?.pieceDeviations ?? [])];
+  const pieceDeviations: PieceDeviation[] = [...(resumeAtStart?.manifest?.pieceDeviations ?? [])];
   checkpointWriter.carryPieceDeviations(pieceDeviations);
 
   /**
@@ -3363,19 +3373,19 @@ async function exportProjectWebCodecsRun(
    * which presents the existing seal decision naming each deviating piece.
    * Returns the error to fail with only when the count itself cannot be read.
    */
-  const checkPieceCount = async (pieceIndex: number, file: string, expectedFrames: number): Promise<ExportError | null> => {
-    let counted: number;
+  const measurePieceCount = async (pieceIndex: number, file: string): Promise<{ counted: number } | { error: ExportError }> => {
     try {
-      counted = (await withFfmpegLivenessBound(
+      const measured = await withFfmpegLivenessBound(
         { label: 'FRAME_COUNT_BOUND_MS', boundMs: FRAME_COUNT_BOUND_MS, ffmpeg, files: [file], pieceCount: pieces.length, pieceIndex },
         async () => await ffmpeg.countAnnexbFrames(file),
-      )).pictures;
+      );
+      return { counted: measured.pictures };
     } catch (err) {
-      return boundedStepError('concat', `Failed to count the pictures of finished piece ${pieceIndex}.`, err);
+      return { error: boundedStepError('concat', `Failed to count the pictures of finished piece ${pieceIndex}.`, err) };
     }
-    if (counted === expectedFrames) return null;
-    const deviation: PieceDeviation = { pieceIndex, counted, expected: expectedFrames };
-    const at = pieceDeviations.findIndex((d) => d.pieceIndex === pieceIndex);
+  };
+  const recordPieceDeviationNow = (deviation: PieceDeviation): void => {
+    const at = pieceDeviations.findIndex((d) => d.pieceIndex === deviation.pieceIndex);
     if (at >= 0) pieceDeviations[at] = deviation; else pieceDeviations.push(deviation);
     checkpointWriter.notePieceDeviation(deviation);
     // eslint-disable-next-line no-console
@@ -3383,7 +3393,31 @@ async function exportProjectWebCodecsRun(
       sessionId: (ffmpeg as unknown as { sessionId?: string }).sessionId ?? null,
       ...deviation,
     }));
-    return null;
+  };
+  /**
+   * Preferred action on a deviation (GL pieces only — the encoder drop lives
+   * there; plain/canvas deviations are deterministic and a second render would
+   * repeat them): remove the short file and render the piece again. Bounded per
+   * piece and per export. Returns false when the allowance is spent or the
+   * short file cannot be removed — the caller then records the deviation.
+   * Appending a second render onto the old bytes is never an option.
+   */
+  const tryRerenderPiece = async (pieceIndex: number, file: string): Promise<boolean> => {
+    if ((pieceRerendersByPiece.get(pieceIndex) ?? 0) >= MAX_PIECE_RERENDERS_PER_PIECE) return false;
+    if (pieceRerendersUsed >= MAX_PIECE_RERENDERS_PER_EXPORT) return false;
+    try {
+      await ffmpeg.deleteFile(file);
+    } catch {
+      return false;
+    }
+    pieceRerendersUsed++;
+    pieceRerendersByPiece.set(pieceIndex, (pieceRerendersByPiece.get(pieceIndex) ?? 0) + 1);
+    // eslint-disable-next-line no-console
+    console.info('[ws3-piece-count] re-rendering an off-plan piece', JSON.stringify({
+      sessionId: (ffmpeg as unknown as { sessionId?: string }).sessionId ?? null,
+      pieceIndex, rerendersUsed: pieceRerendersUsed,
+    }));
+    return true;
   };
 
   const pieceFiles: string[] = [];
@@ -3464,12 +3498,21 @@ async function exportProjectWebCodecsRun(
   // `isRecoveryBudgetExhausted`, the CROSS-PROCESS "may this resume happen
   // at all" gate, which is independent of this IN-PROCESS "may THIS
   // process attempt another rewind right now" gate).
-  let boundaryRewindsUsed = resume?.manifest?.boundaryRewindsUsed ?? 0;
+  let boundaryRewindsUsed = resumeAtStart?.manifest?.boundaryRewindsUsed ?? 0;
   // WS3 Rung 5a — per-EXPORT, one-shot. See `decideHardwareFailoverDisposition`.
   // Same STEP 9 seeding rationale as `boundaryRewindsUsed` above.
-  let hardwareFailoverUsed = resume?.manifest?.hardwareFailoverUsed ?? false;
+  let hardwareFailoverUsed = resumeAtStart?.manifest?.hardwareFailoverUsed ?? false;
+
+  // Run-scoped re-render bookkeeping (see MAX_PIECE_RERENDERS_PER_*).
+  let pieceRerendersUsed = 0;
+  const pieceRerendersByPiece = new Map<number, number>();
+  let rerenderThisPiece = false;
 
   for (let pieceIndex = 0; pieceIndex < pieces.length; pieceIndex++) {
+    // A re-render starts the piece from nothing: the resume plan described the
+    // FIRST render of this piece and must not steer the second.
+    const resume = rerenderThisPiece ? null : resumeAtStart;
+    rerenderThisPiece = false;
     const plan = pieces[pieceIndex]!;
     // WS3 Round 10 (Blocker 3) — a resumed run does not re-render the pieces
     // that already finished. Their files are on disk in the SAME re-entered
@@ -4087,12 +4130,22 @@ async function exportProjectWebCodecsRun(
       // A salvaged piece already passed its zero-tolerance exact check above.
       let glPieceDeviates = false;
       if (!driveResult.salvaged) {
-        const countError = await checkPieceCount(pieceIndex, runFile, plan.expectedFrames);
-        if (countError) {
+        const measured = await measurePieceCount(pieceIndex, runFile);
+        if ('error' in measured) {
           releaseRunFfmpeg(control, ffmpeg);
-          return { ok: false, error: countError };
+          return { ok: false, error: measured.error };
         }
-        glPieceDeviates = pieceDeviations.some((d) => d.pieceIndex === pieceIndex);
+        if (measured.counted !== plan.expectedFrames) {
+          if (await tryRerenderPiece(pieceIndex, runFile)) {
+            // Render this piece again from nothing; earlier pieces stand.
+            rerenderThisPiece = true;
+            onProgress({ type: 'recovering', index: pieceIndex, total: pieces.length });
+            pieceIndex--;
+            continue;
+          }
+          recordPieceDeviationNow({ pieceIndex, counted: measured.counted, expected: plan.expectedFrames });
+          glPieceDeviates = true;
+        }
       }
       // A deviating piece writes no closing checkpoint: that record claims
       // `expectedFrames` pictures, which the file does not hold. Its completion
@@ -4121,10 +4174,13 @@ async function exportProjectWebCodecsRun(
         releaseRunFfmpeg(control, ffmpeg);
         return { ok: false, error: result.error };
       }
-      const plainCountError = await checkPieceCount(pieceIndex, result.h264File, plan.expectedFrames);
-      if (plainCountError) {
+      const plainMeasured = await measurePieceCount(pieceIndex, result.h264File);
+      if ('error' in plainMeasured) {
         releaseRunFfmpeg(control, ffmpeg);
-        return { ok: false, error: plainCountError };
+        return { ok: false, error: plainMeasured.error };
+      }
+      if (plainMeasured.counted !== plan.expectedFrames) {
+        recordPieceDeviationNow({ pieceIndex, counted: plainMeasured.counted, expected: plan.expectedFrames });
       }
       checkpointWriter.notePieceCompleted(pieceIndex);
       pieceFiles.push(result.h264File);
@@ -4135,10 +4191,13 @@ async function exportProjectWebCodecsRun(
         releaseRunFfmpeg(control, ffmpeg);
         return { ok: false, error: result.error };
       }
-      const canvasCountError = await checkPieceCount(pieceIndex, result.h264File, plan.expectedFrames);
-      if (canvasCountError) {
+      const canvasMeasured = await measurePieceCount(pieceIndex, result.h264File);
+      if ('error' in canvasMeasured) {
         releaseRunFfmpeg(control, ffmpeg);
-        return { ok: false, error: canvasCountError };
+        return { ok: false, error: canvasMeasured.error };
+      }
+      if (canvasMeasured.counted !== plan.expectedFrames) {
+        recordPieceDeviationNow({ pieceIndex, counted: canvasMeasured.counted, expected: plan.expectedFrames });
       }
       checkpointWriter.notePieceCompleted(pieceIndex);
       pieceFiles.push(result.h264File);

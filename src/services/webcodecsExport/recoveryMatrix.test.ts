@@ -127,7 +127,14 @@ function ffmpegHarness(o: {
     return { pictures: o.salvageTruncatePictures ?? FRAMES, vclNals: FRAMES, bytesRemoved: 0, keptBytes: 100 };
   });
   const exec = vi.fn(async () => { calls.push('exec'); return 0; });
-  const countAnnexbFrames = vi.fn(async () => { calls.push('countAnnexbFrames'); return { pictures: measured, vclNals: measured }; });
+  // The first count is the per-piece completion guard (exact); the shortfall
+  // under test is the post-concat reading that follows it.
+  let countCalls = 0;
+  const countAnnexbFrames = vi.fn(async () => {
+    calls.push('countAnnexbFrames');
+    const n = ++countCalls === 1 ? FRAMES : measured;
+    return { pictures: n, vclNals: n };
+  });
   const ffmpeg = {
     writeFile: vi.fn(async () => undefined), writeFileRaw: vi.fn(async () => undefined), exec,
     readFile: vi.fn(async () => new Uint8Array()), deleteFile: vi.fn(async () => undefined),
