@@ -462,7 +462,7 @@ import { summarizeProjectForBulk } from './services/syncLogSummary';
 import { projectCostLedger } from './services/projectCostLedgerShared';
 import { StorageRootRelocationView } from './components/recovery/StorageRootRelocationView';
 import { useStorageRootRelocation } from './hooks/useStorageRootRelocation';
-import { checkExistingCheckpoint, findUsableCheckpoint, type ReexportCheckOutcome } from './services/webcodecsExport/exportReexportCheck';
+import { findUsableCheckpoint, resolveReexportCheckpoint, type ReexportCheckOutcome } from './services/webcodecsExport/exportReexportCheck';
 import { useWhisper } from './hooks/useWhisper';
 import { usePlayback } from './hooks/usePlayback';
 import { TranscriptionBar } from './components/TranscriptionBar';
@@ -3591,11 +3591,19 @@ export default function App() {
     }
     setReexportChecking(true);
     let outcome: ReexportCheckOutcome;
+    let purge: Awaited<ReturnType<typeof resolveReexportCheckpoint>>['purge'];
     try {
-      outcome = await checkExistingCheckpoint(project, {
+      // The same spot specs the export run hashes into its checkpoint:
+      // `startExportWithSpots` hands this payload to `startExport`, and the
+      // writer hashes them (or `[]` when there are none). Hashing without
+      // them reads a spotted project's own checkpoint as edited — and purges it.
+      const spotRenderSpecs = buildExportSpotPayload(project, { projectDefault: project.spotDefaultGeometry }).request?.spotRenderSpecs;
+      ({ outcome, purge } = await resolveReexportCheckpoint(project, {
         listResumableSessionIds: () => TauriFfmpeg.listResumableSessionIds(),
         peekExportState: (sessionId) => TauriFfmpeg.peekExportState(sessionId),
-      });
+        readSessionClaim: (sessionId) => TauriFfmpeg.readSessionClaim(sessionId),
+        reenter: (sessionId) => TauriFfmpeg.reenter(sessionId),
+      }, { spotRenderSpecs }));
     } finally {
       setReexportChecking(false);
     }
@@ -3607,12 +3615,22 @@ export default function App() {
       setReexportOffer({ sessionId: outcome.sessionId, manifest: outcome.manifest });
       return;
     }
-    // 'edited' — no modal. Auto-purge, surface the verbatim inline notice,
-    // open a fresh export config.
-    await purgeCheckpointSession(outcome.sessionId, 'timeline-edited-auto-purge');
-    setReexportEditedNotice(true);
+    // 'edited' — no modal. The checkpoint was auto-purged: surface the
+    // verbatim inline notice, open a fresh export config. A live claim skips
+    // the purge (conservatively — see `purgeCheckpointSession`), and then
+    // nothing was cleared, so the notice would be false.
+    if (purge?.kind === 'skipped-live-claim') {
+      // eslint-disable-next-line no-console
+      console.warn('[ws3-reexport] edited checkpoint kept: a live claim holds it', purge.sessionId);
+    } else {
+      if (purge?.kind === 'failed') {
+        // eslint-disable-next-line no-console
+        console.warn('[ws3-reexport] checkpoint purge failed (non-fatal — TTL sweep will catch it later)', purge.reason);
+      }
+      setReexportEditedNotice(true);
+    }
     setShowExportSettingsModal(true);
-  }, [project, purgeCheckpointSession]);
+  }, [project]);
 
   const handleReexportStartFresh = useCallback(async (): Promise<void> => {
     if (!reexportOffer) return;

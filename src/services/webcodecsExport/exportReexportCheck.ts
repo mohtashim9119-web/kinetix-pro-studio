@@ -16,11 +16,23 @@ import {
   type ExportStateManifest,
 } from './exportCheckpoint';
 import { exportSessionCreatedAt } from './exportSessionLedger';
+import type { SpotRenderSpec } from './spotRenderSpec';
 
 export interface ReexportCheckIo {
   listResumableSessionIds(): Promise<string[]>;
   /** Wraps `TauriFfmpeg.peekExportState` — never reenter/claim/fence. */
   peekExportState(sessionId: string): Promise<{ kind: 'found'; bytes: number[] } | { kind: 'notFound' }>;
+}
+
+/**
+ * The hash ingredients beyond the project itself. REQUIRED, so every caller
+ * states the spot specs: the checkpoint writer hashes WITH them
+ * (`exportPipelineWebCodecs.ts`), and a check that hashes without them reads a
+ * spotted project's own valid checkpoint as `edited` — which the Export click
+ * then purges.
+ */
+export interface ReexportCheckExtras {
+  spotRenderSpecs: SpotRenderSpec[] | null | undefined;
 }
 
 export type ReexportCheckOutcome =
@@ -29,14 +41,14 @@ export type ReexportCheckOutcome =
   | { kind: 'edited'; sessionId: string; manifest: ExportStateManifest };
 
 /**
- * Only the single NEWEST resumable session is considered — matches
- * `findResumeOffer`'s own newest-first policy (`exportResumeSession.ts`),
- * and keeps the two-option modal's semantics simple: "the" checkpoint, not
- * "a" checkpoint chosen from a list the operator never sees.
+ * Newest first — matches `findResumeOffer`'s own newest-first policy
+ * (`exportResumeSession.ts`). `checkExistingCheckpoint` takes the newest one
+ * that belongs to the project, keeping the two-option modal's semantics
+ * simple: "the" checkpoint, not "a" checkpoint chosen from a list the operator
+ * never sees.
  */
-function newestSessionId(ids: readonly string[]): string | null {
-  if (ids.length === 0) return null;
-  const ordered = [...ids].sort((a, b) => {
+function newestFirst(ids: readonly string[]): string[] {
+  return [...ids].sort((a, b) => {
     const at = exportSessionCreatedAt(a);
     const bt = exportSessionCreatedAt(b);
     if (at === bt) return a < b ? -1 : 1;
@@ -44,7 +56,6 @@ function newestSessionId(ids: readonly string[]): string | null {
     if (bt === null) return -1;
     return bt - at;
   });
-  return ordered[0] ?? null;
 }
 
 function decodeManifest(bytes: number[]): ExportStateManifest | null {
@@ -68,20 +79,23 @@ function decodeManifest(bytes: number[]): ExportStateManifest | null {
 }
 
 /**
- * `no-checkpoint` — nothing resumable exists, or the newest one's manifest
- * couldn't be read/parsed (peek's NotFound, or a shape peek did not expect —
- * both treated identically to "nothing to offer", never as an error the
- * operator sees before they've even opened export config).
- * `unedited` — the newest checkpoint's `sourceTimelineHash` matches what the
- * CURRENT project would hash to, computed with THAT checkpoint's own
- * fps/width/height (never a UI-selected value, since none has been chosen
- * yet at this point in the flow).
- * `edited` — a checkpoint exists but the hash differs.
+ * `no-checkpoint` — no resumable session belongs to this project, or its
+ * manifest couldn't be read/parsed (peek's NotFound, or a shape peek did not
+ * expect — both treated identically to "nothing to offer", never as an error
+ * the operator sees before they've even opened export config).
+ * `unedited` — this project's newest checkpoint's `sourceTimelineHash`
+ * matches what the CURRENT project would hash to, computed with THAT
+ * checkpoint's own fps/width/height (never a UI-selected value, since none has
+ * been chosen yet at this point in the flow).
+ * `edited` — this project's checkpoint exists but the hash differs.
+ *
+ * Another project's session is never considered: its `projectId` is part of
+ * the hashed identity, so it would always read `edited` — and be purged.
  */
 export async function checkExistingCheckpoint(
   project: Project,
   io: ReexportCheckIo,
-  extras?: { spotRenderSpecs?: import('./spotRenderSpec').SpotRenderSpec[] | null },
+  extras: ReexportCheckExtras,
 ): Promise<ReexportCheckOutcome> {
   let ids: string[] = [];
   try {
@@ -89,31 +103,79 @@ export async function checkExistingCheckpoint(
   } catch {
     return { kind: 'no-checkpoint' };
   }
-  const sessionId = newestSessionId(ids);
-  if (sessionId === null) return { kind: 'no-checkpoint' };
 
-  let peek: { kind: 'found'; bytes: number[] } | { kind: 'notFound' };
-  try {
-    peek = await io.peekExportState(sessionId);
-  } catch {
-    return { kind: 'no-checkpoint' };
+  for (const sessionId of newestFirst(ids)) {
+    let peek: { kind: 'found'; bytes: number[] } | { kind: 'notFound' };
+    try {
+      peek = await io.peekExportState(sessionId);
+    } catch {
+      continue;
+    }
+    if (peek.kind === 'notFound') continue;
+    const manifest = decodeManifest(peek.bytes);
+    if (manifest === null || manifest.projectId !== project.id) continue;
+
+    const currentHash = await buildSourceTimelineHash(
+      timelineIdentityFromProject(
+        project,
+        { fps: manifest.fps, width: manifest.width, height: manifest.height },
+        extras,
+      ),
+    );
+    return currentHash === manifest.sourceTimelineHash
+      ? { kind: 'unedited', sessionId, manifest }
+      : { kind: 'edited', sessionId, manifest };
   }
-  if (peek.kind === 'notFound') return { kind: 'no-checkpoint' };
+  return { kind: 'no-checkpoint' };
+}
 
-  const manifest = decodeManifest(peek.bytes);
-  if (manifest === null) return { kind: 'no-checkpoint' };
+export interface CheckpointPurgeIo {
+  /** Read-only claim inspection (`TauriFfmpeg.readSessionClaim`). */
+  readSessionClaim(sessionId: string): Promise<{ holderLiveness: 'live' | 'stale' | 'unclaimed' }>;
+  reenter(sessionId: string): Promise<{ destroy(opts: { force: boolean; failureKind: string }): Promise<unknown> }>;
+}
 
-  const currentHash = await buildSourceTimelineHash(
-    timelineIdentityFromProject(
-      project,
-      { fps: manifest.fps, width: manifest.width, height: manifest.height },
-      extras,
-    ),
-  );
+export type CheckpointPurgeOutcome =
+  | { kind: 'purged'; sessionId: string }
+  | { kind: 'skipped-live-claim'; sessionId: string }
+  | { kind: 'failed'; sessionId: string; reason: string };
 
-  return currentHash === manifest.sourceTimelineHash
-    ? { kind: 'unedited', sessionId, manifest }
-    : { kind: 'edited', sessionId, manifest };
+/**
+ * Discards a checkpoint session — forced, it is meant to go. Never one whose
+ * claim reads `live`: a live claim may be a run using it right now. That
+ * check is CONSERVATIVE: this process also keeps claims on sessions no run is
+ * using (an export cancelled while its resume offer was open, among others),
+ * and those are skipped too until a restart makes the claim stale. Skipping
+ * is the intended failure direction.
+ */
+export async function purgeCheckpointSession(
+  sessionId: string,
+  failureKind: string,
+  io: CheckpointPurgeIo,
+): Promise<CheckpointPurgeOutcome> {
+  try {
+    const claim = await io.readSessionClaim(sessionId);
+    if (claim.holderLiveness === 'live') return { kind: 'skipped-live-claim', sessionId };
+    const handle = await io.reenter(sessionId);
+    await handle.destroy({ force: true, failureKind });
+    return { kind: 'purged', sessionId };
+  } catch (err) {
+    return { kind: 'failed', sessionId, reason: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/**
+ * The Export-click check: what the newest checkpoint of this project says,
+ * and — only for `edited` — the auto-purge of exactly that session.
+ */
+export async function resolveReexportCheckpoint(
+  project: Project,
+  io: ReexportCheckIo & CheckpointPurgeIo,
+  extras: ReexportCheckExtras,
+): Promise<{ outcome: ReexportCheckOutcome; purge: CheckpointPurgeOutcome | null }> {
+  const outcome = await checkExistingCheckpoint(project, io, extras);
+  if (outcome.kind !== 'edited') return { outcome, purge: null };
+  return { outcome, purge: await purgeCheckpointSession(outcome.sessionId, 'timeline-edited-auto-purge', io) };
 }
 
 /** A manifest that actually records something to resume from. */

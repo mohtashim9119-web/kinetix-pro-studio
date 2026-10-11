@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { TransitionType, AnimationType, type Project } from '../../types';
 import { buildSourceTimelineHash, timelineIdentityFromProject } from './exportCheckpoint';
-import { checkExistingCheckpoint, findUsableCheckpoint, type ReexportCheckIo } from './exportReexportCheck';
+import { checkExistingCheckpoint, findUsableCheckpoint, resolveReexportCheckpoint, type ReexportCheckIo } from './exportReexportCheck';
+import type { SpotRenderSpec } from './spotRenderSpec';
 import { recordPieceCompleted, createExportStateManifest, serializeExportState } from './exportCheckpoint';
 
 function stubProject(overrides: Partial<Project> = {}): Project {
@@ -61,7 +62,7 @@ function fakeIo(overrides: Partial<ReexportCheckIo>): ReexportCheckIo {
 
 describe('checkExistingCheckpoint', () => {
   it('no-checkpoint when nothing is resumable', async () => {
-    const outcome = await checkExistingCheckpoint(stubProject(), fakeIo({}));
+    const outcome = await checkExistingCheckpoint(stubProject(), fakeIo({}), { spotRenderSpecs: undefined });
     expect(outcome).toEqual({ kind: 'no-checkpoint' });
   });
 
@@ -70,7 +71,7 @@ describe('checkExistingCheckpoint', () => {
       listResumableSessionIds: async () => ['sess-a'],
       peekExportState: async () => ({ kind: 'notFound' }),
     });
-    const outcome = await checkExistingCheckpoint(stubProject(), io);
+    const outcome = await checkExistingCheckpoint(stubProject(), io, { spotRenderSpecs: undefined });
     expect(outcome).toEqual({ kind: 'no-checkpoint' });
   });
 
@@ -81,7 +82,7 @@ describe('checkExistingCheckpoint', () => {
       listResumableSessionIds: async () => ['sess-a'],
       peekExportState: async () => ({ kind: 'found', bytes: bytesOf(manifestJson) }),
     });
-    const outcome = await checkExistingCheckpoint(project, io);
+    const outcome = await checkExistingCheckpoint(project, io, { spotRenderSpecs: undefined });
     expect(outcome.kind).toBe('unedited');
     if (outcome.kind === 'unedited') {
       expect(outcome.sessionId).toBe('sess-a');
@@ -101,7 +102,7 @@ describe('checkExistingCheckpoint', () => {
       listResumableSessionIds: async () => ['sess-a'],
       peekExportState: async () => ({ kind: 'found', bytes: bytesOf(manifestJson) }),
     });
-    const outcome = await checkExistingCheckpoint(edited, io);
+    const outcome = await checkExistingCheckpoint(edited, io, { spotRenderSpecs: undefined });
     expect(outcome.kind).toBe('edited');
     if (outcome.kind === 'edited') expect(outcome.sessionId).toBe('sess-a');
   });
@@ -119,7 +120,7 @@ describe('checkExistingCheckpoint', () => {
       listResumableSessionIds: async () => ['sess-a'],
       peekExportState: async () => ({ kind: 'found', bytes: bytesOf(manifestJson) }),
     });
-    const outcome = await checkExistingCheckpoint(stubProject(), io);
+    const outcome = await checkExistingCheckpoint(stubProject(), io, { spotRenderSpecs: undefined });
     expect(outcome.kind).toBe('unedited');
   });
 
@@ -128,7 +129,7 @@ describe('checkExistingCheckpoint', () => {
       listResumableSessionIds: async () => ['sess-a'],
       peekExportState: async () => ({ kind: 'found', bytes: bytesOf('{"not":"a manifest"}') }),
     });
-    const outcome = await checkExistingCheckpoint(stubProject(), io);
+    const outcome = await checkExistingCheckpoint(stubProject(), io, { spotRenderSpecs: undefined });
     expect(outcome).toEqual({ kind: 'no-checkpoint' });
   });
 
@@ -147,7 +148,7 @@ describe('checkExistingCheckpoint', () => {
         return { kind: 'found', bytes: bytesOf(manifestJson) };
       },
     });
-    await checkExistingCheckpoint(project, io);
+    await checkExistingCheckpoint(project, io, { spotRenderSpecs: undefined });
     expect(peekCount).toBe(1);
   });
 });
@@ -192,5 +193,79 @@ describe('findUsableCheckpoint — the bulk Retry question', () => {
     const m = await realManifest(p, SID(1), 1);
     const edited = stubProject({ script: 'changed', segments: [{ ...p.segments[0]!, duration: 5 }] });
     expect(await findUsableCheckpoint(edited, ioOf({ [SID(1)]: m }))).toBeNull();
+  });
+});
+
+/**
+ * C2 (P0-A + P0-B) — the Export-click auto-purge may delete ONLY this
+ * project's checkpoint, hashed from the same ingredients the writer used, and
+ * never one a live claim holds. With no ledger in this unit environment the
+ * newest-first order falls to the id tiebreak, so B's id sorts first: B is
+ * "newest".
+ */
+describe('re-export auto-purge deletes only THIS checkpoint (C2)', () => {
+  const B_SESSION = 'sess-a';
+  const A_SESSION = 'sess-b';
+  const NO_SPOTS = { spotRenderSpecs: undefined };
+
+  function purgeIo(sessions: Record<string, string>, claims: Record<string, 'live' | 'stale' | 'unclaimed'> = {}) {
+    const destroyed: { sessionId: string; opts: { force: boolean; failureKind: string } }[] = [];
+    const io = {
+      listResumableSessionIds: async () => Object.keys(sessions),
+      peekExportState: async (id: string) => ({ kind: 'found' as const, bytes: bytesOf(sessions[id]!) }),
+      readSessionClaim: async (id: string) => ({ holderLiveness: claims[id] ?? ('unclaimed' as const) }),
+      reenter: async (sessionId: string) => ({
+        destroy: async (opts: { force: boolean; failureKind: string }) => { destroyed.push({ sessionId, opts }); },
+      }),
+    };
+    return { io, destroyed };
+  }
+
+  it('(1) another project\'s newer session is never "edited" for this one, and its id never reaches destroy', async () => {
+    const a = stubProject({ id: 'proj-A' });
+    const b = stubProject({ id: 'proj-B', script: 'other' });
+    const both = purgeIo({ [B_SESSION]: await manifestFor(b, B_SESSION), [A_SESSION]: await manifestFor(a, A_SESSION) });
+    expect(await checkExistingCheckpoint(a, both.io, NO_SPOTS)).toMatchObject({ kind: 'unedited', sessionId: A_SESSION });
+    await resolveReexportCheckpoint(a, both.io, NO_SPOTS);
+    expect(both.destroyed).toEqual([]);
+
+    const onlyB = purgeIo({ [B_SESSION]: await manifestFor(b, B_SESSION) });
+    expect(await resolveReexportCheckpoint(a, onlyB.io, NO_SPOTS)).toEqual({ outcome: { kind: 'no-checkpoint' }, purge: null });
+    expect(onlyB.destroyed).toEqual([]);
+  });
+
+  it('(2) a spotted project whose manifest was hashed the writer\'s way reads "unedited"', async () => {
+    const p = stubProject();
+    const specs: SpotRenderSpec[] = [{ assetId: 'asset-1', startSec: 0.5, durSec: 1, xPct: 10, yPct: 10, wPct: 30, hPct: 30 }];
+    // The writer's derivation (exportPipelineWebCodecs.ts — the checkpoint writer's sourceTimelineHash).
+    const hash = await buildSourceTimelineHash(timelineIdentityFromProject(p, DIMS, { spotRenderSpecs: specs }));
+    const manifest = serializeExportState(createExportStateManifest({ sessionId: A_SESSION, projectId: p.id, sourceTimelineHash: hash, ...DIMS }));
+    const { io, destroyed } = purgeIo({ [A_SESSION]: manifest });
+    expect(await resolveReexportCheckpoint(p, io, { spotRenderSpecs: specs })).toMatchObject({ outcome: { kind: 'unedited', sessionId: A_SESSION }, purge: null });
+    expect(destroyed).toEqual([]);
+  });
+
+  it('(3) a live-claimed session is NOT purged and the skip is reported — the intended over-skip', async () => {
+    const p = stubProject();
+    const edited = stubProject({ script: 'changed', segments: [{ ...p.segments[0]!, duration: 5 }] });
+    const { io, destroyed } = purgeIo({ [A_SESSION]: await manifestFor(p, A_SESSION) }, { [A_SESSION]: 'live' });
+    expect(await resolveReexportCheckpoint(edited, io, NO_SPOTS)).toMatchObject({
+      outcome: { kind: 'edited', sessionId: A_SESSION },
+      purge: { kind: 'skipped-live-claim', sessionId: A_SESSION },
+    });
+    expect(destroyed).toEqual([]);
+  });
+
+  it('(4) the legitimate case still purges: same project, same specs, edited timeline (unclaimed or stale)', async () => {
+    const p = stubProject();
+    const edited = stubProject({ script: 'changed', segments: [{ ...p.segments[0]!, duration: 5 }] });
+    for (const liveness of ['unclaimed', 'stale'] as const) {
+      const { io, destroyed } = purgeIo({ [A_SESSION]: await manifestFor(p, A_SESSION) }, { [A_SESSION]: liveness });
+      expect(await resolveReexportCheckpoint(edited, io, NO_SPOTS)).toMatchObject({
+        outcome: { kind: 'edited', sessionId: A_SESSION },
+        purge: { kind: 'purged', sessionId: A_SESSION },
+      });
+      expect(destroyed).toEqual([{ sessionId: A_SESSION, opts: { force: true, failureKind: 'timeline-edited-auto-purge' } }]);
+    }
   });
 });
