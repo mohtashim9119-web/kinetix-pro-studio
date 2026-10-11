@@ -265,7 +265,7 @@ describe('Phase B — adoptRankedResume (mutating, after consent)', () => {
     expect(adopted.rejected).toEqual([]);
     const r = adopted.resumable!;
     expect(Object.keys(r).sort()).toEqual([
-      'appendFromByteOffset', 'checkpoint', 'manifest', 'picturesAlreadyRendered', 'picturesTotal',
+      'appendFromByteOffset', 'checkpoint', 'fencedByteOffset', 'manifest', 'picturesAlreadyRendered', 'picturesTotal',
       'pieceFile', 'repair', 'session', 'sessionId', 'staleClaimRecovered',
     ]);
     expect(r.sessionId).toBe(OLD);
@@ -336,6 +336,8 @@ describe('Phase B — adoptRankedResume (mutating, after consent)', () => {
     const firstMutation = h.calls.findIndex((c) => MUTATING.some((m) => c.startsWith(m)));
     const lastPeek = h.calls.map((c) => c.startsWith('peek')).lastIndexOf(true);
     expect(firstMutation).toBeGreaterThan(lastPeek);
-    expect(h.files(OLD)['piece_1.h264']).toBe(7_900);
+    // D7.1b — the fence trims the torn tail to the checkpoint's end and no
+    // further; the step back to the seam is the resumed run's, at its first append.
+    expect(h.files(OLD)['piece_1.h264']).toBe(8_000);
   });
 });

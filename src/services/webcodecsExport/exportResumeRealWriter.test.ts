@@ -100,6 +100,7 @@ function resumePlanOf(found: Extract<Awaited<ReturnType<typeof discover>>, { ok:
     pieceIndex: r.checkpoint.pieceIndex,
     encoderSessionIndex: r.checkpoint.encoderSessionIndex,
     byteOffset: r.appendFromByteOffset,
+    fencedByteOffset: r.fencedByteOffset,
     cumulativePictures: r.checkpoint.cumulativePictures,
     manifest: r.manifest,
   };
@@ -138,6 +139,57 @@ describe('GL tier — cancel mid-first-piece', () => {
     await cancelExportWebCodecs(control, { keepForResume: true });
     return { f, p };
   }
+
+  it('D7.1b — six cancel → Retry → cancel-before-the-first-append cycles: the same checkpoint is offered every time, nothing charged, the file never shorter than the checkpoint', async () => {
+    const { f, p } = await cancelledAt(15);
+    const cp = manifestOf(f).checkpoints[0]!;
+    expect(cp.seamByteOffset).toBeLessThan(cp.byteOffset); // the case under test
+    for (let cycle = 1; cycle <= 6; cycle++) {
+      const found = await discover(f, p, 1);
+      expect(found.ok, `cycle ${cycle}`).toBe(true);
+      if (!found.ok) return;
+      expect(found.value.checkpoint.cumulativePictures).toBe(10);
+      expect(f.files.get('piece_0.h264')!.length, `cycle ${cycle}: adoption cut below the checkpoint`).toBeGreaterThanOrEqual(cp.byteOffset);
+      const w2 = new FakeWorker();
+      const c2 = createExportRunControl();
+      const run2 = exportProjectWebCodecs(p, f.ffmpeg, { ...DIMS, control: c2, resume: resumePlanOf(found) }, () => undefined, { createWorker: () => w2 });
+      void run2.catch(() => undefined);
+      await flush();
+      await cancelExportWebCodecs(c2, { keepForResume: true }); // before the resumed run appends anything
+      expect(f.destroyed()).toBe(false);
+      expect(manifestOf(f).totalRecoveryAttempts ?? 0).toBe(0);
+      expect(f.files.get('piece_0.h264')!.length).toBeGreaterThanOrEqual(cp.byteOffset);
+    }
+  }, 30_000);
+
+  it('D7.1b — backstop: a file an older build already stepped back to the rotation seam is still offered, at the seam', async () => {
+    const { f, p } = await cancelledAt(15);
+    const cp = manifestOf(f).checkpoints[0]!;
+    f.files.set('piece_0.h264', f.files.get('piece_0.h264')!.slice(0, cp.seamByteOffset));
+    const found = await discover(f, p, 1);
+    expect(found.ok).toBe(true);
+    if (!found.ok) return;
+    expect(found.value.checkpoint.cumulativePictures).toBe(10);
+    expect(found.value.appendFromByteOffset).toBe(cp.seamByteOffset);
+    expect(countAnnexbAccessUnits(f.files.get('piece_0.h264')!).pictures).toBe(10);
+  });
+
+  it('pin — the crash-repair path still drops an incomplete trailing picture before a resume', async () => {
+    const { f, p } = await cancelledAt(15);
+    const cp = manifestOf(f).checkpoints[0]!;
+    const onDisk = f.files.get('piece_0.h264')!;
+    // A crash mid-write: half of the next picture landed after the checkpoint.
+    const torn = au(11).slice(0, Math.max(1, Math.floor(au(11).length / 2)));
+    const withTail = new Uint8Array(onDisk.length + torn.length);
+    withTail.set(onDisk, 0);
+    withTail.set(torn, onDisk.length);
+    f.files.set('piece_0.h264', withTail);
+    const found = await discover(f, p, 1);
+    expect(found.ok).toBe(true);
+    const kept = f.files.get('piece_0.h264')!;
+    expect(kept.length).toBe(cp.byteOffset);
+    expect(countAnnexbAccessUnits(kept).pictures).toBe(10);
+  });
 
   it('D7.1a — an operator cancel of a resumed run charges nothing: no marker, no attempt on disk', async () => {
     const { f, p } = await cancelledAt(15);

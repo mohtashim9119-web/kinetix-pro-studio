@@ -986,9 +986,22 @@ export function validateExportState(
       reason: 'the export was interrupted before its first checkpoint — nothing to resume from yet',
     };
   }
-  const checkpoint = [...checkpoints]
-    .reverse()
-    .find((row) => row.byteOffset <= annexbFileLength);
+  // D7.1b — the newest checkpoint the surviving bytes still hold. Normally its
+  // whole prefix `[0, byteOffset)`. BACKSTOP: a file an older build stepped
+  // back to the rotation seam (or one whose resume died after such a cut) ends
+  // between `seamByteOffset` and `byteOffset`; the bytes in that gap are the
+  // next session's leading parameter sets and hold no picture, so the
+  // checkpoint is still whole at the seam, and is resumed there: the record
+  // handed on carries `byteOffset = seamByteOffset`, which is what the fence
+  // verifies and where the run appends.
+  let checkpoint: ExportCheckpointRecord | undefined;
+  for (let i = checkpoints.length - 1; i >= 0 && !checkpoint; i--) {
+    const row = checkpoints[i]!;
+    if (row.byteOffset <= annexbFileLength) checkpoint = row;
+    else if (row.seamByteOffset !== undefined && row.seamByteOffset <= annexbFileLength) {
+      checkpoint = { ...row, byteOffset: row.seamByteOffset };
+    }
+  }
   if (!checkpoint) {
     return { kind: 'clean', reason: 'no checkpoint fits the surviving Annex-B file' };
   }

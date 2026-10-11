@@ -341,9 +341,10 @@ describe('END-TO-END recovery matrix', () => {
     );
     expect(outcome.ok).toBe(true);
     if (!outcome.ok) throw new Error('unreachable');
-    // Fence first, seam step-back second — and nothing counted at all, because
-    // the checkpoint is in piece 0 so there is no earlier piece to verify.
-    expect(order).toEqual(['fence', 'seamCut']);
+    // The fence only — D7.1b: the step back to the seam is the resumed run's,
+    // just before its first append — and nothing counted, because the
+    // checkpoint is in piece 0 so there is no earlier piece to verify.
+    expect(order).toEqual(['fence']);
     expect(outcome.value.appendFromByteOffset).toBe(3_960);
     expect(outcome.value.picturesAlreadyRendered).toBe(10);
 

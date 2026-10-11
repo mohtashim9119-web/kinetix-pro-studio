@@ -199,6 +199,14 @@ export interface ExportOptionsWebCodecs {
      * time. Both prefixes hold `cumulativePictures` pictures.
      */
     byteOffset: number;
+    /**
+     * D7.1b — where the piece file ends now (the fenced checkpoint end). When
+     * beyond `byteOffset`, the run steps back to `byteOffset` immediately
+     * before its first append — never earlier, so a cancel before that append
+     * leaves the checkpoint whole on disk. Omitted: the file already ends at
+     * `byteOffset`.
+     */
+    fencedByteOffset?: number;
     /** Pictures inside that prefix — this piece's own count, not the export's. */
     cumulativePictures: number;
     /**
@@ -1351,6 +1359,12 @@ export interface DriveGlRunDeps {
    */
   fileBaseByteOffset?: number;
   /**
+   * D7.1b — run once, inside the append queue, immediately before this run's
+   * first append. A resumed run uses it to step back to the rotation seam at
+   * the last moment. A throw fails the run like any append failure.
+   */
+  beforeFirstAppend?: () => Promise<void>;
+  /**
    * WS3 Round 10 (Blocker 3) — a durable checkpoint is available at an encoder
    * rotation. Called at most once per rotation, from inside the append queue,
    * with an offset that is already ABSOLUTE in `runFile` and already proven
@@ -1585,6 +1599,7 @@ export function driveGlRun(
      *  invocation started. Every checkpoint offset is reported relative to the
      *  FILE, so a resumed run adds this to its own local byte counter. */
     const fileBaseByteOffset = deps.fileBaseByteOffset ?? 0;
+    let pendingBeforeFirstAppend = deps.beforeFirstAppend;
     /**
      * A rotation that is waiting for its FOLLOWING bytes before a checkpoint
      * can be placed. The seam itself is not a legal checkpoint offset — the
@@ -2131,6 +2146,11 @@ export function driveGlRun(
         const payload = concatChunks(parts, batchBytes);
         const batchStartOffset = appendBytes;
         try {
+          if (pendingBeforeFirstAppend) {
+            const step = pendingBeforeFirstAppend;
+            pendingBeforeFirstAppend = undefined;
+            await step();
+          }
           const appendFileRawStarted = now();
           await ffmpeg.appendFileRaw(runFile, payload);
           const appendFileRawMs = now() - appendFileRawStarted;
@@ -3560,11 +3580,28 @@ async function exportProjectWebCodecsRun(
       } else if (!resumingThisPiece) {
         checkpointWriter.beginPiece(pieceIndex);
       }
+      // D7.1b — the resumed piece's step back from the fenced checkpoint end
+      // to the rotation seam, run by the append queue immediately before the
+      // first append. Verified, not assumed: both prefixes hold
+      // `cumulativePictures` pictures by construction (no coded slice between).
+      const stepBackToSeam = (r: NonNullable<ExportOptionsWebCodecs['resume']>): (() => Promise<void>) | undefined => {
+        const from = r.fencedByteOffset;
+        if (from === undefined || from <= r.byteOffset) return undefined;
+        return async () => {
+          const cut = await ffmpeg.truncateAnnexbToOffset(runFile, r.byteOffset);
+          if (cut.keptBytes !== r.byteOffset || cut.pictures !== r.cumulativePictures) {
+            throw new Error(
+              `stepping back to the rotation seam changed the picture count (${cut.pictures} vs ${r.cumulativePictures}) — refusing to append`,
+            );
+          }
+        };
+      };
       const runGlPiece = (
         resumeFromFrameIndex?: number,
         resumeSessionIndex?: number,
         forceSoftware?: boolean,
         baseByteOffset = 0,
+        beforeFirstAppend?: () => Promise<void>,
       ): Promise<RunDriveResult> =>
         driveGlRun(
           ffmpeg,
@@ -3597,6 +3634,7 @@ async function exportProjectWebCodecsRun(
             forceSoftwareEncoder: forceSoftware,
             pinnedCodec: pinnedCodecForPiece,
             fileBaseByteOffset: baseByteOffset,
+            ...(beforeFirstAppend ? { beforeFirstAppend } : {}),
             ...(spotRenderSpecs.length > 0 ? { spotRenderSpecs } : {}),
             hardwareFailoverUsed: () => hardwareFailoverUsed,
             onRotationCheckpoint: (row) => checkpointWriter.record(row),
@@ -3606,7 +3644,7 @@ async function exportProjectWebCodecsRun(
         );
 
       let driveResult = resumingThisPiece
-        ? await runGlPiece(resume!.cumulativePictures, resume!.encoderSessionIndex, false, resume!.byteOffset)
+        ? await runGlPiece(resume!.cumulativePictures, resume!.encoderSessionIndex, false, resume!.byteOffset, stepBackToSeam(resume!))
         : await runGlPiece();
       // WS3 Round 14, STEP 5 (H2) — pin this piece's codec the first time any
       // worker for it reports one. `??=` only: once pinned, never revisited,

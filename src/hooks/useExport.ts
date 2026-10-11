@@ -921,6 +921,7 @@ export function useExport(
               pieceIndex: adopted.resumable.checkpoint.pieceIndex,
               encoderSessionIndex: adopted.resumable.checkpoint.encoderSessionIndex,
               byteOffset: adopted.resumable.appendFromByteOffset,
+              fencedByteOffset: adopted.resumable.fencedByteOffset,
               cumulativePictures: adopted.resumable.checkpoint.cumulativePictures,
               manifest: adopted.resumable.manifest,
             };

@@ -339,8 +339,9 @@ describe('resume discovery — the fence ordering', () => {
     expect(discovered.rejected[0]!.bitstreamTouched).toEqual({ path: 'piece_1.h264', fileLengthBefore: 5_000, fileLengthAfter: 4_000 });
   });
 
-  it('bitstream_touched: the seam step-back cut mutates the file, THEN fails', async () => {
+  it('D7.1b — adoption never steps back to the seam: the file keeps the checkpoint\'s whole prefix', async () => {
     let currentSize = 5_000;
+    const cut = vi.fn(async () => { throw new Error('adoption must not cut below the checkpoint'); });
     const io: ResumeAdoptIo = {
       reenter: async (sessionId) => ({
         sessionId,
@@ -352,17 +353,17 @@ describe('resume discovery — the fence ordering', () => {
           currentSize = cp.byteOffset;
           return { pictures: cp.cumulativePictures, vclNals: cp.cumulativePictures, bytesRemoved: 0, keptBytes: cp.byteOffset };
         },
-        truncateAnnexbToOffset: async () => {
-          currentSize = 3_000; // set_len landed...
-          throw new Error('cancelled'); // ...then the recount failed.
-        },
+        truncateAnnexbToOffset: cut,
         destroy: async () => {},
       }),
     };
     const r = await evaluateResumeCandidate(io, SESSION, target, async () => 1800);
-    expect(r.ok).toBe(false);
-    if (r.ok) throw new Error('unreachable');
-    expect(r.bitstreamTouched).toEqual({ path: 'piece_1.h264', fileLengthBefore: 4_000, fileLengthAfter: 3_000 });
+    expect(r.ok).toBe(true);
+    if (!r.ok) throw new Error('unreachable');
+    expect(cut).not.toHaveBeenCalled();
+    expect(currentSize).toBe(4_000);
+    expect(r.value.fencedByteOffset).toBe(4_000);
+    expect(r.value.appendFromByteOffset).toBe(3_000); // where the run appends, after its own step back
   });
 
   it('a fence failure with NO mutation is never reported as bitstream_touched', async () => {
@@ -570,13 +571,6 @@ describe('a rejected candidate releases its claim only where no byte can have ch
     expect(c.destroys).toEqual([]);
   });
 
-  it('(4) a seam cut whose picture count disagrees is held — the file is already shortened', async () => {
-    const c = claimedIo({ [SESSION]: { json: manifestJson({ rows: seamRows }), seam: 'mismatch' } });
-    const r = await discoverResumableExport(c.io, target, async () => 1800, [SESSION]);
-    expect(r.rejected[0]!.reason).toContain('stepping back to the rotation seam changed the picture count');
-    expect(c.destroys).toEqual([]);
-  });
-
   it('(5) "fence result disagrees" is held — the fence ran, the file was cut', async () => {
     const c = claimedIo({ [SESSION]: { json: manifestJson({ rows }), fence: 'disagree' } });
     const r = await discoverResumableExport(c.io, target, async () => 1800, [SESSION]);
@@ -601,15 +595,14 @@ describe('a rejected candidate releases its claim only where no byte can have ch
     expect(c.destroys).toEqual([]);
   });
 
-  it('a bitstreamTouched rejection (fence or seam cut, then failed) is held', async () => {
+  it('a bitstreamTouched rejection (the fence cut, then failed) is held', async () => {
     const c = claimedIo({
       [SESSION_2]: { json: manifestJson({ sessionId: SESSION_2, rows }), fence: 'mutate-then-fail' },
-      [SESSION]: { json: manifestJson({ rows: seamRows }), seam: 'mutate-then-fail' },
     });
-    const first = await discoverResumableExport(c.io, target, async () => 1800, [SESSION_2, SESSION]);
-    expect(first.rejected.map((r) => r.bitstreamTouched?.path)).toEqual(['piece_1.h264', 'piece_1.h264']);
+    const first = await discoverResumableExport(c.io, target, async () => 1800, [SESSION_2]);
+    expect(first.rejected.map((r) => r.bitstreamTouched?.path)).toEqual(['piece_1.h264']);
     expect(c.destroys).toEqual([]);
-    const second = await discoverResumableExport(c.io, target, async () => 1800, [SESSION_2, SESSION]);
+    const second = await discoverResumableExport(c.io, target, async () => 1800, [SESSION_2]);
     expect(second.rejected.every((r) => r.liveClaimBlocked)).toBe(true);
   });
 

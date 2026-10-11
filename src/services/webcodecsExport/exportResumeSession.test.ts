@@ -285,16 +285,17 @@ describe('findResumeOffer — the offer mutates nothing; adoption runs only afte
     expect(src.indexOf('adoptResumeOffer(', adoptAt + 'await adoptResumeOffer('.length)).toBe(-1);
   });
 
-  it('(3) choosing Resume still resumes — and the file is cut only then', async () => {
+  it('(3) choosing Resume still resumes — the fence runs only then, and never below the checkpoint', async () => {
     const run = appRun(await checkpointJson(), 4_500);
     const { offer } = await findResumeOffer(offerParams(run.io));
     expect(run.files['piece_0.h264']).toBe(4_500);
     const adopted = await adoptResumeOffer(offer!, { io: run.io, countPicturesImpl: async () => 60 });
     expect(adopted.resumable?.sessionId).toBe(SESSION);
     expect(adopted.resumable?.appendFromByteOffset).toBe(3_900);
+    expect(adopted.resumable?.fencedByteOffset).toBe(4_000);
     expect(adopted.resumable?.picturesAlreadyRendered).toBe(30);
-    expect(run.mutations).toEqual(['reenter', 'prepareCheckpointResume', 'truncateAnnexbToOffset']);
-    expect(run.files['piece_0.h264']).toBe(3_900);
+    expect(run.mutations).toEqual(['reenter', 'prepareCheckpointResume']);
+    expect(run.files['piece_0.h264']).toBe(4_000);
   });
 
   it('(4) no app restart is needed to get the offer back: abandon twice, then Resume adopts in the same run', async () => {

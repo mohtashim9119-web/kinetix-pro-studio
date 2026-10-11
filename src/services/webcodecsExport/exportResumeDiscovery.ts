@@ -144,6 +144,12 @@ export interface ResumableExport {
    * written on top of the kept ones). See `ExportCheckpointRecord`.
    */
   appendFromByteOffset: number;
+  /**
+   * D7.1b — where the piece file ends after adoption: the checkpoint's own end
+   * offset, never shorter. When it is beyond `appendFromByteOffset`, the
+   * resumed run steps back to the seam immediately before its first append.
+   */
+  fencedByteOffset: number;
   /** Pictures already on disk across the WHOLE export — completed pieces plus
    *  this piece's fenced prefix. What the resume offer shows the operator. */
   picturesAlreadyRendered: number;
@@ -496,6 +502,7 @@ async function evaluateReenteredCandidate(
         repair: { pictures: 0, vclNals: 0, bytesRemoved: 0, keptBytes: 0 },
         pieceFile: pieceFileName(n),
         appendFromByteOffset: 0,
+        fencedByteOffset: 0,
         picturesAlreadyRendered: rendered,
         picturesTotal: target.pieceExpectedFrames.reduce((a, b) => a + b, 0),
         staleClaimRecovered,
@@ -558,53 +565,20 @@ async function evaluateReenteredCandidate(
     };
   }
 
-  // ── The post-fence step back to the seam. The fence has cleared, so
-  // append/count/concat are open and an exact cut is legal. Both prefixes hold
-  // `cumulativePictures` pictures by construction — the bytes between them
-  // contain no coded slice — and that is ASSERTED, not assumed. ─────────────
-  let appendFromByteOffset = checkpoint.byteOffset;
+  // D7.1b — adoption never cuts below the checkpoint's end. The fence above
+  // removed only bytes at or beyond it (a torn tail). The step back to the
+  // rotation seam — needed so the re-rendered access unit does not write the
+  // next session's parameter sets and AUD a second time — is NOT done here:
+  // the resumed run does it immediately before its first append
+  // (`ExportOptionsWebCodecs.resume.fencedByteOffset`). Done here, a cancel
+  // before that first append left a file shorter than every checkpoint, and
+  // the next discovery found nothing to resume. A file that does end at the
+  // seam (an older build's cut, or a crash between the step back and the
+  // append) is resumed AT the seam: `validateExportState` hands that
+  // checkpoint on with `byteOffset = seamByteOffset`.
   const seamByteOffset = checkpoint.seamByteOffset;
-  if (typeof seamByteOffset === 'number' && seamByteOffset < checkpoint.byteOffset) {
-    // Same bracket as the fence above: `truncate_annexb_to_offset_inner`
-    // calls `set_len` (the mutation) before the count that can fail, so a
-    // thrown error here can equally follow a completed cut.
-    const fileLengthBeforeSeam = await session.sessionFileSize(pieceFile).catch(() => null);
-    let cut: { pictures: number; keptBytes: number };
-    try {
-      cut = await boundedTruncate(session, [pieceFile], () =>
-        session.truncateAnnexbToOffset(pieceFile, seamByteOffset),
-      );
-    } catch (err) {
-      const fileLengthAfterSeam = await session.sessionFileSize(pieceFile).catch(() => null);
-      if (
-        fileLengthBeforeSeam !== null &&
-        fileLengthAfterSeam !== null &&
-        fileLengthAfterSeam !== fileLengthBeforeSeam
-      ) {
-        return {
-          ok: false,
-          reason:
-            `stepping back to the rotation seam mutated ${pieceFile} before failing: ${message(err)} ` +
-            `(kept ${fileLengthAfterSeam} of ${fileLengthBeforeSeam} bytes)`,
-          bitstreamTouched: {
-            path: pieceFile,
-            fileLengthBefore: fileLengthBeforeSeam,
-            fileLengthAfter: fileLengthAfterSeam,
-          },
-        };
-      }
-      return { ok: false, reason: `could not step back to the rotation seam: ${message(err)}` };
-    }
-    if (cut.pictures !== checkpoint.cumulativePictures || cut.keptBytes !== checkpoint.seamByteOffset) {
-      return {
-        ok: false,
-        reason:
-          `stepping back to the rotation seam changed the picture count ` +
-          `(${cut.pictures} vs ${checkpoint.cumulativePictures}) — refusing to resume`,
-      };
-    }
-    appendFromByteOffset = checkpoint.seamByteOffset;
-  }
+  const appendFromByteOffset =
+    typeof seamByteOffset === 'number' && seamByteOffset < checkpoint.byteOffset ? seamByteOffset : checkpoint.byteOffset;
 
   // ── Only now may anything COUNT. Every piece before this one must already
   // hold exactly the picture count the current plan expects of it — existence
@@ -638,6 +612,7 @@ async function evaluateReenteredCandidate(
       repair,
       pieceFile,
       appendFromByteOffset,
+      fencedByteOffset: checkpoint.byteOffset,
       picturesAlreadyRendered,
       picturesTotal: target.pieceExpectedFrames.reduce((a, b) => a + b, 0),
       staleClaimRecovered,
