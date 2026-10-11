@@ -138,7 +138,9 @@ describe('findResumeOffer — resume refusal notice', () => {
     let reentered = false;
     const io: ResumeDiscoveryIo = {
       listResumableSessionIds: async () => [SESSION],
-      peekExportState: async () => { throw new Error('should not be called — live claim must block first'); },
+      // A session the ledger has no project for is identified by one read-only
+      // peek; the live claim is still what turns it down, before any reenter.
+      peekExportState: async () => ({ kind: 'found', bytes: Array.from(new TextEncoder().encode(manifestJsonFor({ byteOffset: 4_000, cumulativePictures: 30, hash: await expectedHash() }))) }),
       peekSessionFileSize: async () => { throw new Error('should not be called — live claim must block first'); },
       reenter: async (sessionId) => {
         reentered = true;

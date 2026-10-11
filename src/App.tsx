@@ -432,6 +432,7 @@ import { workspaceRegistry } from './components/workspaceRegistry';
 import { BulkProjectsModal } from './components/BulkProjectsModal';
 import { BulkExportModal, BulkExportRunningNotice } from './components/BulkExportModal';
 import { BulkExportHost } from './components/BulkExportHost';
+import { ExportInterestRegistry } from './services/webcodecsExport/exportInterestRegistry';
 import { bulkBatchRunner } from './services/bulkSyncQueue';
 import { BulkExportRunner } from './services/bulkExportQueue';
 import { withStorageAvailability } from './services/bulkExportMedia';
@@ -2190,7 +2191,11 @@ export default function App() {
   const leftPanelShown = showDashboard && !dashboardLeftCollapsed;
   const bulkSyncVisible = leftPanelShown && dashboardLeftTab === 'bulk-sync';
   const bulkExportVisible = leftPanelShown && dashboardLeftTab === 'bulk-export';
+  // One registry for the whole app: bulk publishes the projects it still needs,
+  // every export run publishes its sessions, and each export's collector skips them.
+  const exportInterests = useMemo(() => new ExportInterestRegistry(), []);
   const bulkExport = useMemo(() => new BulkExportRunner({
+    interests: exportInterests,
     listProjects: () => loadAllMetas().map(m => ({ id: m.id, name: m.name, lastExportPath: m.lastExportPath })),
     // A stored record has no media URLs: availability comes from storage, so
     // "url ''" no longer reads as offline (Start, Retry, pane-open checks).
@@ -2218,7 +2223,7 @@ export default function App() {
         return false;
       }
     },
-  }), []);
+  }), [exportInterests]);
   const [dashboardVersion, setDashboardVersion] = useState(0);
   const [showProjectSettingsModal, setShowProjectSettingsModal] = useState(false);
   // WS2 T4.1 — the machine-global settings surface. Separate flag from
@@ -3468,7 +3473,7 @@ export default function App() {
     recordLastExportPath(liveProjectRef.current.id, path);
     setProject(p => ({ ...p, lastExportPath: path }));
   }, []);
-  const exportApi = useExport(project, exportResolution, exportFps, onExportSavePath);
+  const exportApi = useExport(project, exportResolution, exportFps, onExportSavePath, { interests: exportInterests });
   const { state: exportState, startExport, cancelExport, retryExport, dismissSuccess, resolveSealConsent, resolveResumeChoice } = exportApi;
 
   // Layer 2 spots — THE export wiring seam. At every export kickoff the project's

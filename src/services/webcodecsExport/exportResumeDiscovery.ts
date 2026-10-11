@@ -876,10 +876,12 @@ export async function discoverResumableExport(
  * accumulate one per crash until the volume fills — a failure mode resume would
  * INTRODUCE, so the policy ships with it rather than after it.
  *
- * THE POLICY, in words: keep at most ONE abandoned session besides the one
- * currently resumable, and never keep an abandoned session past its TTL. Bound
- * on disk is therefore (1 resumable + 1 retained) x the session size, ~4.6 GB
- * at the 2.3 GB sizing case.
+ * THE POLICY, in words, PER PROJECT (the caller passes one project's
+ * sessions — see `findResumeOffer`): keep at most ONE abandoned session besides
+ * the one currently resumable, and never keep an abandoned session past its
+ * TTL. Bound on disk is therefore (1 resumable + 1 retained) x the session size
+ * per project, ~4.6 GB at the 2.3 GB sizing case. One project's leftovers never
+ * count against another's.
  *
  * WHAT IS NEVER COLLECTED:
  *   - the session the app is using right now (`inUseSessionId`);
@@ -889,9 +891,9 @@ export async function discoverResumableExport(
  *
  * AGE comes from a caller-supplied ledger (`createdAtMs`), because nothing in
  * the native surface exposes a directory mtime and v4 UUIDs carry no time. An
- * id the ledger does not know — a session from a build older than this round,
- * which never wrote a ledger entry — is treated as OLDEST, so those are the
- * first collected rather than the last. A directory with no `export_state.json`
+ * id whose age the ledger does not know is NEVER collected: nothing proves it
+ * abandoned, and under-collecting is the safe direction. The Storage settings'
+ * reclaim list still shows it for a manual clean-up. A directory with no `export_state.json`
  * at all is invisible to `ffmpeg_list_resumable_sessions` and therefore
  * uncollectable from here; from this round on every export writes its manifest
  * before it renders a frame, so only pre-round leftovers can be in that state.
@@ -922,18 +924,16 @@ export function selectSessionsToCollect(params: {
   const protectedIds = new Set(params.protectedSessionIds);
   const collectable = params.candidates.filter((c) => !protectedIds.has(c.sessionId));
 
-  // Newest first; unknown age sorts last (i.e. is treated as oldest).
-  const byAge = [...collectable].sort((a, b) => {
-    if (a.createdAtMs === b.createdAtMs) return a.sessionId < b.sessionId ? -1 : 1;
-    if (a.createdAtMs === null) return 1;
-    if (b.createdAtMs === null) return -1;
-    return b.createdAtMs - a.createdAtMs;
-  });
+  // An unknown age proves nothing about abandonment, so it is never collected
+  // (under-collecting is the safe direction). Known ages: newest first.
+  const byAge = collectable
+    .filter((c): c is AbandonedSessionCandidate & { createdAtMs: number } => c.createdAtMs !== null)
+    .sort((a, b) => (a.createdAtMs === b.createdAtMs ? (a.sessionId < b.sessionId ? -1 : 1) : b.createdAtMs - a.createdAtMs));
 
   const doomed = new Set<string>();
   byAge.forEach((candidate, rank) => {
     if (rank >= maxRetained) doomed.add(candidate.sessionId);
-    if (candidate.createdAtMs !== null && params.nowMs - candidate.createdAtMs > ttl) {
+    if (params.nowMs - candidate.createdAtMs > ttl) {
       doomed.add(candidate.sessionId);
     }
   });

@@ -668,13 +668,14 @@ describe('abandoned-session cleanup policy', () => {
     expect(doomed).toEqual(['ancient']);
   });
 
-  it('treats an unknown age as OLDEST, so pre-ledger leftovers go first', () => {
+  it('NEVER collects a session whose age is unknown — nothing proves it abandoned', () => {
     const doomed = selectSessionsToCollect({
-      candidates: [{ sessionId: 'unknown', createdAtMs: null }, fresh('known', 10_000)],
+      candidates: [{ sessionId: 'unknown', createdAtMs: null }, fresh('known', 10_000), fresh('older', 20_000), fresh('ancient', ABANDONED_SESSION_TTL_MS * 2)],
       protectedSessionIds: [],
       nowMs: now,
     });
-    expect(doomed).toEqual(['unknown']);
+    expect(doomed).not.toContain('unknown');
+    expect(doomed.sort()).toEqual(['ancient', 'older']);
   });
 
   it('actually destroys what it selects, and survives one that refuses', async () => {

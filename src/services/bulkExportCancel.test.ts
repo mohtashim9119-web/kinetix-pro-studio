@@ -206,3 +206,34 @@ describe('one live queue item per id — a Retry replaces the finished item', ()
     expect(h.runs.map(r => r.project.id)).toEqual(['a', 'b', 'a', 'b']);
   });
 });
+
+describe('bulk publishes the projects it still needs (the export collector skips them)', () => {
+  it('queued, running and awaiting-Retry rows are interests; a row back at Ready is not', async () => {
+    const { ExportInterestRegistry } = await import('./webcodecsExport/exportInterestRegistry');
+    const interests = new ExportInterestRegistry();
+    const projects = [project('a'), project('b')];
+    const resolvers = new Map<string, (o: { status: 'done' }) => void>();
+    const runner = new BulkExportRunner({
+      listProjects: () => projects.map(p => ({ id: p.id, name: p.name, lastExportPath: `/out/${p.id}.mp4` })),
+      loadProject: async id => projects.find(p => p.id === id) ?? null,
+      storage: mem(), playChime: () => {}, interests,
+      execute: input => new Promise(resolve => {
+        resolvers.set(input.project.id, resolve);
+        input.signal.addEventListener('abort', () => resolve({ status: 'failed', detail: 'cancelled' } as never));
+      }),
+    });
+    const held = (): string[] => [...(interests.snapshot().projects.bulk ?? [])].sort();
+    selectAll(runner);
+    await runner.startSelected();
+    await vi.waitFor(() => expect(phaseOf(runner, 'a')).toBe('exporting'));
+    expect(held()).toEqual(['a', 'b']);
+    runner.cancel('a');
+    await vi.waitFor(() => expect(phaseOf(runner, 'a')).toBe('cancelled'));
+    expect(held()).toEqual(['a', 'b']); // awaiting Retry: its checkpoint is still needed
+    expect(interests.heldByOther('a', 'editor')).toBe(true);
+    runner.returnToReady('a');
+    resolvers.get('b')!({ status: 'done' });
+    await vi.waitFor(() => expect(phaseOf(runner, 'b')).toBe('done'));
+    expect(held()).toEqual([]);
+  });
+});

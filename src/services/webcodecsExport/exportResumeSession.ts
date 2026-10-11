@@ -27,7 +27,12 @@ import {
   type ResumeSessionHandle,
   type ResumeTargetPlan,
 } from './exportResumeDiscovery';
-import { exportSessionCreatedAt, forgetExportSession } from './exportSessionLedger';
+import {
+  exportSessionCreatedAt,
+  exportSessionProjectId,
+  forgetExportSession,
+  recordExportSessionProject,
+} from './exportSessionLedger';
 import { FRAME_COUNT_BOUND_MS, withFfmpegLivenessBound } from './ffmpegLivenessBound';
 
 /**
@@ -173,6 +178,10 @@ export async function findResumeOffer(params: {
   nowMs?: number;
   io?: ResumeDiscoveryIo;
   spotRenderSpecs?: import('./spotRenderSpec').SpotRenderSpec[] | null;
+  /** Who else still needs which sessions — the collector skips them. */
+  interests?: import('./exportInterestRegistry').ExportInterestView;
+  /** This export's owner name in `interests` (a bulk row passes 'bulk'). */
+  interestOwner?: string;
 }): Promise<{ offer: ResumeOffer | null; notice: ResumeRefusalNotice | null }> {
   const io = params.io ?? tauriIo;
   const nowMs = params.nowMs ?? Date.now();
@@ -184,6 +193,10 @@ export async function findResumeOffer(params: {
     return { offer: null, notice: null };
   }
   if (sessionIds.length === 0) return { offer: null, notice: null };
+
+  // PROJECT SCOPE. This export only ever inspects, ranks, adopts or collects
+  // its OWN project's sessions; another project's are invisible to it.
+  const ownSessionIds = await sessionsOfProject(io, sessionIds, params.project.id);
 
   let offer: ResumeOffer | null = null;
   let notice: ResumeRefusalNotice | null = null;
@@ -197,7 +210,7 @@ export async function findResumeOffer(params: {
     const { ranked, rejected } = await rankResumeCandidates(
       io,
       target,
-      sessionIds.filter((id) => id !== params.inUseSessionId),
+      ownSessionIds.filter((id) => id !== params.inUseSessionId),
       exportSessionCreatedAt,
     );
     // The budget is checked only after identity (`validateExportState`), so a
@@ -230,14 +243,20 @@ export async function findResumeOffer(params: {
   // is kept too: it is this project's record of why the export restarts, and
   // deleting it in the same pass would erase that evidence. Everything else
   // goes through the policy.
+  //
+  // Cleanup is per project too (P2), and skips whatever another owner still
+  // needs (P3): every session it has published, and — when another owner (a
+  // bulk row) has interest in this project — all of this project's sessions.
   const protectedIds = [
     ...(offer ? [offer.sessionId] : []),
     ...(params.inUseSessionId ? [params.inUseSessionId] : []),
     ...budgetRefused,
+    ...(params.interests?.protectedSessionIds() ?? []),
   ];
+  const projectHeldElsewhere = params.interests?.heldByOther(params.project.id, params.interestOwner) === true;
   try {
-    const collected = await collectAbandonedSessions(io, {
-      candidates: sessionIds.map((sessionId) => ({
+    const collected = projectHeldElsewhere ? [] : await collectAbandonedSessions(io, {
+      candidates: ownSessionIds.map((sessionId) => ({
         sessionId,
         createdAtMs: exportSessionCreatedAt(sessionId),
       })),
@@ -254,6 +273,39 @@ export async function findResumeOffer(params: {
   }
 
   return { offer, notice };
+}
+
+/**
+ * Which of `sessionIds` belong to `projectId`, from the ledger's project
+ * column. A session the ledger has no project for (written by a build older
+ * than that column, or after site data was cleared) is identified ONCE from
+ * its manifest — a read-only peek, no claim, no rank — and the answer is
+ * stamped so no later pass reads it again. Its identity is the only thing
+ * read; a foreign session found this way is dropped like any other.
+ */
+async function sessionsOfProject(io: ResumeDiscoveryIo, sessionIds: readonly string[], projectId: string): Promise<string[]> {
+  const own: string[] = [];
+  for (const id of sessionIds) {
+    let owner = exportSessionProjectId(id);
+    if (owner === null) {
+      owner = await identifyProject(io, id);
+      if (owner !== null) recordExportSessionProject(id, owner);
+    }
+    if (owner === projectId) own.push(id);
+  }
+  return own;
+}
+
+async function identifyProject(io: ResumeDiscoveryIo, sessionId: string): Promise<string | null> {
+  try {
+    const peek = await io.peekExportState(sessionId);
+    if (peek.kind !== 'found') return null;
+    const parsed: unknown = JSON.parse(new TextDecoder().decode(new Uint8Array(peek.bytes)));
+    const projectId = (parsed as { projectId?: unknown } | null)?.projectId;
+    return typeof projectId === 'string' && projectId.length > 0 ? projectId : null;
+  } catch {
+    return null;
+  }
 }
 
 /**

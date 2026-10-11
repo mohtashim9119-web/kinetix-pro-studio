@@ -5,7 +5,8 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import { useExport, type ExportFps, type ExportResolution } from '../hooks/useExport';
-import type { BulkExportExecutorInput, BulkExportRunner } from '../services/bulkExportQueue';
+import { BULK_EXPORT_INTEREST_OWNER, type BulkExportExecutorInput, type BulkExportRunner } from '../services/bulkExportQueue';
+import type { ExportInterestRegistry } from '../services/webcodecsExport/exportInterestRegistry';
 import { buildExportSpotPayload } from '../services/spots/exportSpecs';
 import { DEFAULT_RESOLUTION_TIER } from '../services/resolutionConfig';
 import type { QueueJobOutcome } from '../services/syncQueue';
@@ -67,6 +68,7 @@ export function BulkExportHost({
   return (
     <BulkExportSlot
       input={job}
+      interests={runner.interests}
       onDone={(o) => {
         resolveRef.current?.(o);
         resolveRef.current = null;
@@ -77,10 +79,11 @@ export function BulkExportHost({
 }
 
 function BulkExportSlot({
-  input, onDone,
+  input, onDone, interests,
 }: {
   input: BulkExportExecutorInput;
   onDone: (o: QueueJobOutcome) => void;
+  interests?: ExportInterestRegistry;
 }): React.ReactElement {
   const resolution: ExportResolution = input.resolution ?? DEFAULT_RESOLUTION_TIER;
   const fps: ExportFps = input.fps;
@@ -89,6 +92,7 @@ function BulkExportSlot({
     resolution,
     fps,
     () => {},
+    { interests, interestOwner: BULK_EXPORT_INTEREST_OWNER },
   );
   const finished = useRef(false);
 

@@ -207,6 +207,16 @@ export class SyncQueue {
     this.emit();
   }
 
+  /** Drops a FINISHED item (its row has moved on, e.g. back to Ready), so a
+   *  later emit cannot re-apply its old status. A live item is never dropped. */
+  forget(id: string): void {
+    const before = this.items.length;
+    this.items = this.items.filter(i => i.id !== id || !TERMINAL.has(i.status));
+    if (this.items.length === before) return;
+    this.items.forEach((it, i) => { it.position = i + 1; });
+    this.emit();
+  }
+
   cancelAll(): void {
     for (const item of [...this.items]) this.cancel(item.id);
   }

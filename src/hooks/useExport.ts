@@ -34,6 +34,7 @@ import { readUiState, patchUiState } from '../services/uiStateStore';
 import { resolveDimensions, DEFAULT_ASPECT_RATIO } from '../services/resolutionConfig';
 import { playExportCompleteChime } from '../services/notificationSound';
 import { claimPipeline, pipelineConflict, EXPORT_BLOCKED_BY_SYNC } from '../services/pipelineGuard';
+import type { ExportInterestRegistry } from '../services/webcodecsExport/exportInterestRegistry';
 
 /** Export quality tier — the same closed set as the project's own native
  *  resolutionTier (services/resolutionConfig.ts); dimensions are always
@@ -481,13 +482,27 @@ export async function releaseAbandonedResumedSession(
   }
 }
 
+export interface UseExportOptions {
+  /** The app's one interest registry: this hook publishes the sessions its
+   *  run is using, and discovery's collector skips what others published. */
+  interests?: ExportInterestRegistry;
+  /** Owner name for project interests (bulk rows pass 'bulk'; default 'editor'). */
+  interestOwner?: string;
+}
+
 export function useExport(
   project: Project,
   exportResolution: ExportResolution,
   exportFps: ExportFps,
   onSavePath: (path: string) => void,
+  options: UseExportOptions = {},
 ): UseExportApi {
   const [state, setState] = useState<UseExportState>(IDLE_STATE);
+  const { interests, interestOwner = 'editor' } = options;
+  /** This hook instance's own SESSION-interest owner name. */
+  const sessionOwnerRef = useRef<string | null>(null);
+  if (sessionOwnerRef.current === null) sessionOwnerRef.current = `export-run:${crypto.randomUUID()}`;
+  const sessionInterestOwner = sessionOwnerRef.current;
 
   // Tauri native backend ref — lazy: created on first startExport.
   const tauriBackendRef = useRef<TauriBackend | null>(null);
@@ -565,8 +580,9 @@ export function useExport(
       stopElapsedTimer();
       void teardown(false, 'unmount');
       void releaseAbandonedResumedSession(resumedSessionRef.current, 'unmount');
+      interests?.clear(sessionInterestOwner);
     };
-  }, [teardown, stopElapsedTimer]);
+  }, [teardown, stopElapsedTimer, interests, sessionInterestOwner]);
 
   const runExport = useCallback(async (snapshot: ExportSnapshot): Promise<void> => {
     const gen = ++generationRef.current;
@@ -826,7 +842,9 @@ export function useExport(
     let resumePlanSessionId: string | null = null;
     if (useWebCodecsPath) {
       const freshSessionId = (tauriBackendRef.current.ffmpeg as unknown as { sessionId?: string }).sessionId;
-      if (freshSessionId) recordExportSessionCreated(freshSessionId);
+      if (freshSessionId) recordExportSessionCreated(freshSessionId, Date.now(), snap.id);
+      // The run's own sessions are interests until the run settles (runClaimed's finally).
+      interests?.setSessions(sessionInterestOwner, freshSessionId ? [freshSessionId] : []);
       const routing = planWebCodecsExport(snap, fps);
       const pieceExpectedFrames = 'error' in routing ? [] : routing.pieces.map((p) => p.expectedFrames);
       const { offer, notice } = pieceExpectedFrames.length === 0
@@ -839,6 +857,8 @@ export function useExport(
             pieceExpectedFrames,
             inUseSessionId: freshSessionId,
             spotRenderSpecs: specs,
+            interests,
+            interestOwner,
           });
       if (generationRef.current !== gen) return;
       if (notice) setState(prev => ({ ...prev, resumeRefusalNotice: notice }));
@@ -865,6 +885,7 @@ export function useExport(
             }
             resumeFfmpeg = adopted.resumable.session as unknown as WebCodecsFfmpeg;
             resumedSessionRef.current = adopted.resumable.session;
+            interests?.setSessions(sessionInterestOwner, [freshSessionId ?? '', adopted.resumable.sessionId]);
             resumePlanSessionId = adopted.resumable.sessionId;
             resumePlan = {
               pieceIndex: adopted.resumable.checkpoint.pieceIndex,
@@ -1188,7 +1209,7 @@ export function useExport(
     // Best-effort completion sound — never awaited, never allowed to affect
     // the export flow or the toast if it fails (see notificationSound.ts).
     if (!snapshot.silent) void playExportCompleteChime();
-  }, [teardown, startElapsedTimer, stopElapsedTimer]);
+  }, [teardown, startElapsedTimer, stopElapsedTimer, interests, interestOwner, sessionInterestOwner]);
 
   /** runExport under the per-project guard: the 'export' claim is held for
    *  the whole run and released however it ends. A sync that started while
@@ -1211,8 +1232,11 @@ export function useExport(
           error: { kind: 'unknown', message: 'The export stopped unexpectedly.', cause: err instanceof Error ? err.message : String(err) },
         }));
       })
-      .finally(release);
-  }, [runExport, stopElapsedTimer]);
+      .finally(() => {
+        release();
+        interests?.clear(sessionInterestOwner);
+      });
+  }, [runExport, stopElapsedTimer, interests, sessionInterestOwner]);
 
   const startExport = useCallback((request?: ExportStartRequest): void => {
     if (!isTauri()) {

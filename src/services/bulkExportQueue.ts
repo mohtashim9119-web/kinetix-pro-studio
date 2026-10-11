@@ -12,6 +12,13 @@ import { playExportCompleteChime } from './notificationSound';
 import { fileExists } from './nativeFileExists';
 import { MUX_PCT } from './exportEta';
 import { PIPELINE_BUSY_REASON, pipelineConflict, runGuarded, waitingMessageFor } from './pipelineGuard';
+import type { ExportInterestRegistry } from './webcodecsExport/exportInterestRegistry';
+
+/** The owner name bulk export publishes its interests under. */
+export const BULK_EXPORT_INTEREST_OWNER = 'bulk';
+/** Row phases whose project's checkpoints bulk still needs: queued, running,
+ *  or awaiting a Retry / the operator. Done, Ready and Blocked need nothing. */
+const INTEREST_PHASES: ReadonlySet<BulkExportPhase> = new Set(['queued', 'exporting', 'cancelled', 'failed', 'paused', 'waiting']);
 
 /** `waiting`: the project was syncing when this row would have run — parked,
  *  never silently skipped; Retry once the sync is over. */
@@ -119,6 +126,9 @@ export class BulkExportRunner {
       exportSettingsFor?: (id: string) => WorkspaceExportChoice | undefined;
       storage?: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
       playChime?: () => void;
+      /** Where this runner publishes the projects it still needs (the export
+       *  collector skips them). */
+      interests?: ExportInterestRegistry;
     },
   ) {
     this.storage = deps.storage ?? (typeof localStorage !== 'undefined' ? localStorage : undefined);
@@ -137,9 +147,16 @@ export class BulkExportRunner {
     this.parkUnfinished();
     for (const id of readBulkExportSelection(this.storage)) this.ensureRow(id).selected = true;
     this.view = this.rows.map(r => ({ ...r, flags: r.flags ? [...r.flags] : undefined }));
+    // Rows restored from storage (a cancelled row awaiting Retry) are interests too.
+    this.publishInterests();
     if (this.rows.length > 0) {
       try { this.storage?.setItem(BULK_EXPORT_BATCH_KEY, JSON.stringify({ rows: this.rows })); } catch { /* ignore */ }
     }
+  }
+
+  /** The registry this runner publishes to — the bulk export slot passes it on. */
+  get interests(): ExportInterestRegistry | undefined {
+    return this.deps.interests;
   }
 
   setExecutor(fn: BulkExportExecutor): void {
@@ -320,6 +337,8 @@ export class BulkExportRunner {
     this.toReady(row);
     row.selected = false;
     this.persistSelection();
+    // The finished queue item would otherwise re-apply its status on the next emit.
+    this.queue.forget(id);
     this.commit();
   }
 
@@ -328,6 +347,7 @@ export class BulkExportRunner {
   clearFinished(ids: readonly string[]): void {
     const wanted = new Set(ids);
     for (const row of this.rows.filter(r => wanted.has(r.id) && r.phase === 'done')) {
+      this.queue.forget(row.id);
       this.toReady(row);
       row.finishedAt = undefined;
       row.exportMs = undefined;
@@ -482,8 +502,14 @@ export class BulkExportRunner {
 
   private commit(): void {
     this.view = this.rows.map(r => ({ ...r, flags: r.flags ? [...r.flags] : undefined }));
+    this.publishInterests();
     try { this.storage?.setItem(BULK_EXPORT_BATCH_KEY, JSON.stringify({ rows: this.rows })); } catch { /* ignore */ }
     for (const l of this.listeners) l();
+  }
+
+  /** Every row change republishes, so the interest set always equals the rows'. */
+  private publishInterests(): void {
+    this.deps.interests?.setProjects(BULK_EXPORT_INTEREST_OWNER, this.rows.filter(r => INTEREST_PHASES.has(r.phase)).map(r => r.id));
   }
 
   private emit(): void {
