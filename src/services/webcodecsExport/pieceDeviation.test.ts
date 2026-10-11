@@ -75,6 +75,16 @@ describe('manifest — pieceDeviations', () => {
     expect(v.manifest.pieceDeviations).toEqual([{ pieceIndex: 1, counted: 1795, expected: 1796 }]);
   });
 
+  it('a recorded cause survives validation; an unknown cause is refused', () => {
+    const m = recordPieceDeviation(manifest(), { pieceIndex: 1, counted: 1795, expected: 1796, cause: 'encoder_gap' });
+    const v = validateExportState(serializeExportState(m), identity, 0);
+    if (v.kind !== 'resume_at_piece') throw new Error('unreachable');
+    expect(v.manifest.pieceDeviations).toEqual([{ pieceIndex: 1, counted: 1795, expected: 1796, cause: 'encoder_gap' }]);
+    const bad = JSON.parse(serializeExportState(m));
+    bad.pieceDeviations[0].cause = 'mystery';
+    expect(validateExportState(JSON.stringify(bad), identity, 0).kind).toBe('clean');
+  });
+
   it('a manifest WITHOUT deviations is byte-identical on disk (no field written)', () => {
     expect(serializeExportState(manifest())).not.toContain('pieceDeviations');
   });

@@ -65,6 +65,7 @@ import {
   type ExportWorkerDiagnosticsPayload,
 } from './exportWorkerDiagnostics';
 import { CHECKPOINT_SESSION_FRAMES, planEncoderSessions } from './encoderSessionPlan';
+import { detectEncoderGap, type EncoderGap } from './encoderGap';
 import { EXPORT_CODEC_LADDER } from './hardwareCodecLadder';
 import { AppendBackpressureGate, APPEND_BACKPRESSURE_THRESHOLD_BYTES } from './appendBackpressureGate';
 
@@ -173,6 +174,13 @@ export interface ExportWorkerInitMessage {
    * undefined/false reproduces today's ladder exactly.
    */
   forceSoftwareEncoder?: boolean;
+  /**
+   * Fail the run (`encoder-gap`) when a completed flush finds fewer chunks than
+   * frames submitted. Set by the main thread only while it can still answer
+   * with a re-render; otherwise the gap is reported in the diagnostics and the
+   * piece completes, to be recorded as a deviation. Default off.
+   */
+  failOnEncoderGap?: boolean;
   /**
    * WS3 Round 14, STEP 5 (H2) — the CODEC this whole piece is pinned to,
    * decided ONCE by `exportPipelineWebCodecs.ts`'s piece-start probe
@@ -359,6 +367,7 @@ function buildDiagnostics(
     encoderSessionIndex: activeSessionIndex,
     encoderSessions: activeSessionCount,
     selectedHardwareRung: activeSelectedHardwareRung,
+    ...(activeEncoderGap ? { encoderGap: activeEncoderGap } : {}),
     selectedCodec: activeSelectedCodec,
     encoderSessionsOpened,
     encoderSessionsClosed,
@@ -377,6 +386,14 @@ function buildDiagnostics(
     spotPeakVideoDecoders: activeSpotPlayback?.peakOpenVideoDecoders ?? 0,
     spotFindings: activeSpotPlayback ? [...activeSpotPlayback.snapshotFindings()] : [],
   };
+}
+
+/** Thrown at a completed flush that found an encoder gap, when the main thread asked to fail on it. */
+export class EncoderGapError extends Error {
+  constructor(readonly gap: EncoderGap) {
+    super(`encoder emitted ${gap.emitted} chunks for ${gap.submitted} frames submitted (encoder session ${gap.sessionIndex})`);
+    this.name = 'EncoderGapError';
+  }
 }
 
 class EncodeStats {
@@ -435,6 +452,7 @@ let activeSpotPlayback: SpotPlaybackController | null = null;
  *  every rotation), mirroring `activeSessionIndex`'s "module scope so a
  *  snapshot can read it without a thread-through" pattern. */
 let activeSelectedHardwareRung: string | null = null;
+let activeEncoderGap: EncoderGap | null = null;
 /** WS3 Round 14, STEP 5 (H2) — same pattern, for the pinned CODEC. See
  *  `ExportWorkerDiagnosticsPayload.selectedCodec`. */
 let activeSelectedCodec: string | null = null;
@@ -1671,6 +1689,7 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
   // first build, which would clobber the value it just set. Reset up front,
   // where every other per-run `active*` field is initialized.
   activeSelectedHardwareRung = null;
+  activeEncoderGap = null;
   // WS3 Round 14, STEP 5 — same reset, for codec. Set to `payload.pinnedCodec`
   // immediately below (before any encoder is built) rather than left null,
   // since a pinned run's diagnostics should already name its codec even if
@@ -2027,6 +2046,19 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
   // the duration of the frame loop only — see HEARTBEAT_INTERVAL_MS and the
   // 'heartbeat' message case above for why this exists and what it does (and
   // does not) reset on the main thread.
+  // After a COMPLETED flush every submitted frame has produced one chunk; a
+  // shortfall is an encoder gap. Recorded always; fatal only when asked.
+  const checkEncoderGap = (): void => {
+    const gap = detectEncoderGap({
+      submitted: framesEmitted,
+      emitted: encodeStats.chunkCount,
+      fencedSessions: fence.fencedCount,
+      sessionIndex,
+    });
+    if (!gap) return;
+    activeEncoderGap = gap;
+    if (payload.failOnEncoderGap) throw new EncoderGapError(gap);
+  };
   const heartbeatTimer: ReturnType<typeof setInterval> = setInterval(() => {
     postOut({ type: 'heartbeat', atMs: performance.now() });
   }, HEARTBEAT_INTERVAL_MS);
@@ -2089,6 +2121,7 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
           }
           throw e;
         }
+        checkEncoderGap();
         encoder.close();
         // WS3 Round 14, STEP 6 (H3) — only the successful, non-aborted rotation
         // path reaches here; the flush-timeout abort above re-throws before
@@ -2191,6 +2224,7 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
       postTerminal('salvaged', framesEmitted, null, runState, outcome.reason);
       return;
     }
+    checkEncoderGap();
     endFlushObservation();
     closeEncoderOnce();
     postTerminal('done', framesEmitted, null, runState);
@@ -2208,7 +2242,9 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
         ? 'flush-timeout'
         : e instanceof GlContextLostError
           ? 'gl-context-lost'
-          : 'thrown';
+          : e instanceof EncoderGapError
+            ? 'encoder-gap'
+            : 'thrown';
       failState.setFailure(via, e);
     }
     closeEncoderOnce();

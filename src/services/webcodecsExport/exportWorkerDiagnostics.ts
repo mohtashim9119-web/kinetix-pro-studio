@@ -130,6 +130,11 @@ export type ExportFailureVia =
    *  the concat/frame-count guard to notice the file is short — this fires at
    *  the batch that lost bytes, naming it. */
   | 'append-short-write'
+  /** The encoder emitted fewer chunks than frames submitted at a completed
+   *  flush (`encoderGap.ts`): it swallowed a frame. Only raised when the main
+   *  thread asked for it (`failOnEncoderGap`); otherwise the gap is reported in
+   *  `ExportWorkerDiagnosticsPayload.encoderGap` and the run completes. */
+  | 'encoder-gap'
   | 'spot-asset-missing';
 
 /**
@@ -174,6 +179,7 @@ export const FAILURE_VIA_TO_KIND = {
   'append-drain-stall': 'encode',
   'append-queue-overflow': 'encode',
   'append-short-write': 'encode',
+  'encoder-gap': 'encode',
   'spot-asset-missing': 'spot_asset_missing',
 } as const satisfies Record<ExportFailureVia, ExportErrorKind>;
 
@@ -186,6 +192,8 @@ export interface ExportFailureIdentity {
 }
 
 export interface ExportWorkerDiagnosticsPayload {
+  /** Set when a completed flush found fewer chunks than submitted frames. */
+  encoderGap?: { submitted: number; emitted: number; sessionIndex: number } | null;
   phaseMs: Record<string, number>;
   instrumentationMs: number;
   demuxSplit: ExportDemuxSplit[];

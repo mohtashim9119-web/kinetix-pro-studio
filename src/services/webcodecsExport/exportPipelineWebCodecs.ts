@@ -1421,6 +1421,8 @@ export interface DriveGlRunDeps {
    *  `ExportWorkerInitMessage.forceSoftwareEncoder`; see its own doc comment.
    *  Set only by the rewind loop's failover branch, at most once per export. */
   forceSoftwareEncoder?: boolean;
+  /** Fail the run when the worker finds an encoder gap at a completed flush (see `encoderGap.ts`). */
+  failOnEncoderGap?: boolean;
   /** WS3 Round 14, STEP 5 (H2) — threaded straight to
    *  `ExportWorkerInitMessage.pinnedCodec`; see its own doc comment. Optional
    *  only so existing tests that construct `DriveGlRunDeps` without it keep
@@ -2664,6 +2666,7 @@ export function driveGlRun(
       frameGridBaseFrame: grid.baseFrame,
       resumeFromFrameIndex: deps.resumeFromFrameIndex,
       forceSoftwareEncoder: deps.forceSoftwareEncoder,
+      ...(deps.failOnEncoderGap !== undefined ? { failOnEncoderGap: deps.failOnEncoderGap } : {}),
       pinnedCodec: deps.pinnedCodec,
       ...(deps.spotRenderSpecs && deps.spotRenderSpecs.length > 0
         ? { spotRenderSpecs: deps.spotRenderSpecs }
@@ -3508,12 +3511,17 @@ async function exportProjectWebCodecsRun(
   let pieceRerendersUsed = 0;
   const pieceRerendersByPiece = new Map<number, number>();
   let rerenderThisPiece = false;
+  let rerenderForceSoftware: boolean = false;
+  /** Pieces where any render reported an encoder gap (the cause on a recorded deviation). */
+  const gapPieces = new Set<number>();
 
   for (let pieceIndex = 0; pieceIndex < pieces.length; pieceIndex++) {
     // A re-render starts the piece from nothing: the resume plan described the
     // FIRST render of this piece and must not steer the second.
     const resume = rerenderThisPiece ? null : resumeAtStart;
     rerenderThisPiece = false;
+    const forceSoftwareThisPiece: boolean = rerenderForceSoftware;
+    rerenderForceSoftware = false;
     const plan = pieces[pieceIndex]!;
     // WS3 Round 10 (Blocker 3) — a resumed run does not re-render the pieces
     // that already finished. Their files are on disk in the SAME re-entered
@@ -3713,6 +3721,9 @@ async function exportProjectWebCodecsRun(
             resumeFromFrameIndex,
             resumeSessionIndex,
             forceSoftwareEncoder: forceSoftware,
+            // Fail the rung on an encoder gap only while a re-render can still answer it.
+            failOnEncoderGap: (pieceRerendersByPiece.get(pieceIndex) ?? 0) < MAX_PIECE_RERENDERS_PER_PIECE
+              && pieceRerendersUsed < MAX_PIECE_RERENDERS_PER_EXPORT,
             pinnedCodec: pinnedCodecForPiece,
             fileBaseByteOffset: baseByteOffset,
             ...(beforeFirstAppend ? { beforeFirstAppend } : {}),
@@ -3724,9 +3735,9 @@ async function exportProjectWebCodecsRun(
           { originSec: plan.gridOriginSec, baseFrame: plan.gridBaseFrame },
         );
 
-      let driveResult = resumingThisPiece
+      let driveResult: RunDriveResult = resumingThisPiece
         ? await runGlPiece(resume!.cumulativePictures, resume!.encoderSessionIndex, false, resume!.byteOffset, stepBackToSeam(resume!))
-        : await runGlPiece();
+        : await runGlPiece(undefined, undefined, forceSoftwareThisPiece || undefined);
       // WS3 Round 14, STEP 5 (H2) — pin this piece's codec the first time any
       // worker for it reports one. `??=` only: once pinned, never revisited,
       // even if a later `driveResult` names a different one (it should not,
@@ -3901,6 +3912,25 @@ async function exportProjectWebCodecsRun(
         // e.g. a crash before the worker ever reported), in which case this
         // rewind's own worker is the first real chance to learn it.
         pinnedCodecForPiece ??= driveResult.diagnostics?.selectedCodec ?? undefined;
+      }
+      // An encoder gap fails the RUNG, not the export: render the piece again from
+      // scratch (the bounded re-render — no recovery charge), on the software
+      // encoder when the gap came from a hardware rung.
+      if (!driveResult.ok && driveResult.error.liveness?.failureVia === 'encoder-gap') {
+        const gap = driveResult.diagnostics?.encoderGap ?? null;
+        gapPieces.add(pieceIndex);
+        // eslint-disable-next-line no-console
+        console.warn('[ws3-encoder-gap] encoder emitted fewer chunks than frames submitted', JSON.stringify({
+          sessionId: (ffmpeg as unknown as { sessionId?: string }).sessionId ?? null,
+          pieceIndex, submitted: gap?.submitted ?? null, emitted: gap?.emitted ?? null,
+        }));
+        if (await tryRerenderPiece(pieceIndex, runFile)) {
+          rerenderThisPiece = true;
+          rerenderForceSoftware = driveResult.diagnostics?.selectedHardwareRung !== 'prefer-software';
+          onProgress({ type: 'recovering', index: pieceIndex, total: pieces.length });
+          pieceIndex--;
+          continue;
+        }
       }
       if (!driveResult.ok) {
         const watchdogFired = driveResult.error.message.includes('no output for 30s');
@@ -4130,6 +4160,15 @@ async function exportProjectWebCodecsRun(
       // not a claim about a session that exists.
       // A salvaged piece already passed its zero-tolerance exact check above.
       let glPieceDeviates = false;
+      if (driveResult.diagnostics?.encoderGap) {
+        const gap = driveResult.diagnostics.encoderGap;
+        gapPieces.add(pieceIndex);
+        // eslint-disable-next-line no-console
+        console.warn('[ws3-encoder-gap] encoder emitted fewer chunks than frames submitted', JSON.stringify({
+          sessionId: (ffmpeg as unknown as { sessionId?: string }).sessionId ?? null,
+          pieceIndex, submitted: gap.submitted, emitted: gap.emitted,
+        }));
+      }
       if (!driveResult.salvaged) {
         const measured = await measurePieceCount(pieceIndex, runFile);
         if ('error' in measured) {
@@ -4144,7 +4183,10 @@ async function exportProjectWebCodecsRun(
             pieceIndex--;
             continue;
           }
-          recordPieceDeviationNow({ pieceIndex, counted: measured.counted, expected: plan.expectedFrames });
+          recordPieceDeviationNow({
+            pieceIndex, counted: measured.counted, expected: plan.expectedFrames,
+            ...(gapPieces.has(pieceIndex) ? { cause: 'encoder_gap' as const } : {}),
+          });
           glPieceDeviates = true;
         }
       }

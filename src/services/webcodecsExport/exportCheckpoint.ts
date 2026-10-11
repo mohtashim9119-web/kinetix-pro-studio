@@ -210,7 +210,11 @@ export interface PieceDeviation {
   pieceIndex: number;
   counted: number;
   expected: number;
+  /** Why, when known: `encoder_gap` = the encoder reported emitting fewer chunks than frames submitted. */
+  cause?: PieceDeviationCause;
 }
+
+export type PieceDeviationCause = 'encoder_gap';
 
 export interface ExportStateManifest extends ExportRecoveryBudget {
   /**
@@ -1153,11 +1157,15 @@ function parsePieceDeviations(value: unknown): PieceDeviation[] | null {
       !isNonNegativeSafeInteger(row.counted) ||
       !isPositiveSafeInteger(row.expected) ||
       row.counted === row.expected ||
+      (row.cause !== undefined && row.cause !== 'encoder_gap') ||
       out.some((d) => d.pieceIndex === row.pieceIndex)
     ) {
       return null;
     }
-    out.push({ pieceIndex: row.pieceIndex, counted: row.counted, expected: row.expected });
+    out.push({
+      pieceIndex: row.pieceIndex, counted: row.counted, expected: row.expected,
+      ...(row.cause === 'encoder_gap' ? { cause: 'encoder_gap' as const } : {}),
+    });
   }
   return out;
 }

@@ -10,7 +10,7 @@ const n = (x: number): string => x.toLocaleString('en-US');
 /** "Piece 3: 1,795 frames rendered, 1,796 planned; Piece 5: …" (pieces shown 1-based). */
 export function describePieceDeviations(deviations: readonly PieceDeviation[]): string {
   return deviations
-    .map((d) => `Piece ${d.pieceIndex + 1}: ${n(d.counted)} frames rendered, ${n(d.expected)} planned`)
+    .map((d) => `Piece ${d.pieceIndex + 1}: ${n(d.counted)} frames rendered, ${n(d.expected)} planned${d.cause === 'encoder_gap' ? ' (the video encoder dropped a frame)' : ''}`)
     .join('; ');
 }
 

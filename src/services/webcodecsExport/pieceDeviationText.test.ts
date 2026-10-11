@@ -31,4 +31,9 @@ describe('piece deviation wording', () => {
     expect(bulkDeviationNote({ deviatingPieces: [], fps: 30 })).toBeNull();
     expect(bulkDeviationNote({ fps: 30 })).toBeNull();
   });
+
+  it('a deviation caused by an encoder gap says so', () => {
+    expect(describePieceDeviations([{ pieceIndex: 0, counted: 1829, expected: 1830, cause: 'encoder_gap' }]))
+      .toContain('the video encoder dropped a frame');
+  });
 });
