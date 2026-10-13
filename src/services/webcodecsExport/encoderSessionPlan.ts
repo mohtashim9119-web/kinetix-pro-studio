@@ -145,6 +145,49 @@ export function planEncoderSessions(
 }
 
 /**
+ * Where the FIRST durable checkpoint may land at the latest: one extra seam
+ * inside a piece's first `CHECKPOINT_SESSION_FRAMES` session, cut back to the
+ * last keyframe at or before this many frames (144 at 24 fps, 120 at 30/60).
+ *
+ * Why: checkpoints exist only at rotation seams, so before this a stall in a
+ * piece's first 300 frames (up to 12.5 s at 24 fps — the Windows spot stall
+ * hit frame 272) lost everything rendered. ~half the session keeps either half
+ * of the first window to ~6 s. It does NOT fix any stall — it bounds the loss —
+ * and costs one more encoder flush + rebuild per piece. Output-neutral for the
+ * same reason every seam is: it cuts only where `isKeyFrame` is already true.
+ */
+export const EARLY_CHECKPOINT_FRAMES = 150;
+
+/**
+ * The worker's checkpoint plan: `planEncoderSessions` at
+ * `CHECKPOINT_SESSION_FRAMES`, plus ONE early seam inside the first session.
+ *
+ * Every other seam is left exactly where the old plan put it (the early seam
+ * is inserted, never re-planned from), so a checkpoint written by the old plan
+ * is still a planned session start — only its session INDEX moves up by one,
+ * which the orchestrator reconciles from the worker's 'session-plan'
+ * `startSessionIndex`. No early seam is added when the first session holds no
+ * keyframe inside `(0, earlyCapFrames]`.
+ */
+export function planCheckpointSessions(
+  totalFrames: number,
+  isKeyFrame: (i: number) => boolean,
+  capFrames: number = CHECKPOINT_SESSION_FRAMES,
+  earlyCapFrames: number = EARLY_CHECKPOINT_FRAMES,
+): number[] {
+  const starts = planEncoderSessions(totalFrames, isKeyFrame, capFrames);
+  const firstEnd = starts[1] ?? totalFrames;
+  const limit = Math.min(earlyCapFrames, firstEnd - 1, totalFrames - 1);
+  for (let k = limit; k > 0; k--) {
+    if (isKeyFrame(k)) {
+      starts.splice(1, 0, k);
+      break;
+    }
+  }
+  return starts;
+}
+
+/**
  * Per-session frame counts for a plan, in order. They sum to `totalFrames` by
  * construction — the plan partitions `[0, totalFrames)` and never renumbers
  * anything — which is the arithmetic form of guarantee 1 above.

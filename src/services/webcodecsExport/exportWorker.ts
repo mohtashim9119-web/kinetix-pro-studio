@@ -73,7 +73,7 @@ import {
   type ExportFailureVia,
   type ExportWorkerDiagnosticsPayload,
 } from './exportWorkerDiagnostics';
-import { CHECKPOINT_SESSION_FRAMES, planEncoderSessions } from './encoderSessionPlan';
+import { CHECKPOINT_SESSION_FRAMES, planCheckpointSessions } from './encoderSessionPlan';
 import { detectEncoderGap, type EncoderGap } from './encoderGap';
 import { EXPORT_CODEC_LADDER } from './hardwareCodecLadder';
 import { AppendBackpressureGate, APPEND_BACKPRESSURE_THRESHOLD_BYTES } from './appendBackpressureGate';
@@ -275,7 +275,17 @@ export type ExportWorkerOutboundMessage =
   // from a dead one, and read the unchanged piece count as the fix having
   // failed. Same class of mistake as the phase log that was capped but never
   // routed: a change nobody can observe is a change nobody can trust.
-  | { type: 'session-plan'; pieceIndex: number; sessions: number; capFrames: number; totalFrames: number }
+  | {
+      type: 'session-plan';
+      pieceIndex: number;
+      sessions: number;
+      capFrames: number;
+      totalFrames: number;
+      /** The session this run starts in, by the worker's own plan. A resume of
+       *  a checkpoint written before the early seam carries the OLD index;
+       *  the orchestrator re-numbers its ledgers to this one. */
+      startSessionIndex?: number;
+    }
   // Windows spot-decode stall diagnostics — one line per decoder creation,
   // first frame, and bounded stall (sequentialDecode.ts / decodeStall.ts).
   // Written to the native diagnostic log by the main thread. Observational:
@@ -2013,7 +2023,9 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
   // `planEncoderSessions` only ever cuts at a frame for which THIS `isKeyFrame`
   // is already true, so a rotation adds no keyframe the unsplit run would not
   // have emitted — see that module's guarantee 2.
-  const sessionStarts = planEncoderSessions(totalFrames, isKeyFrame, CHECKPOINT_SESSION_FRAMES);
+  // Plus one early seam inside the first session (`EARLY_CHECKPOINT_FRAMES`)
+  // so a stall early in a piece still leaves a durable checkpoint.
+  const sessionStarts = planCheckpointSessions(totalFrames, isKeyFrame);
 
   // WS3 Tier 1 item 3c (Rung 3) — a rewind's resume point MUST be one of
   // `sessionStarts`'s own values: those are exactly the frames the planner
@@ -2122,6 +2134,7 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
     sessions: sessionStarts.length,
     capFrames: CHECKPOINT_SESSION_FRAMES,
     totalFrames,
+    startSessionIndex: initialSessionIndex,
   });
 
   failState.runStartSec = runStartSec;

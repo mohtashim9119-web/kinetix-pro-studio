@@ -2561,6 +2561,17 @@ export function driveGlRun(
           // still describes the WHOLE piece, but this run itself starts at
           // `resumeSessionIndex`, not the piece's own session 0.
           sessionAt = resumeSessionIndex;
+          // Early checkpoint seam: a checkpoint written before it numbered its
+          // seam one session lower. The worker's plan is the authority — move
+          // this run's starting ledger entries to the worker's index.
+          if (typeof data.startSessionIndex === 'number' && data.startSessionIndex !== resumeSessionIndex) {
+            const to = data.startSessionIndex;
+            sessionByteOffsets[to] = sessionByteOffsets[resumeSessionIndex]!;
+            sessionFrameIndices[to] = sessionFrameIndices[resumeSessionIndex]!;
+            delete sessionByteOffsets[resumeSessionIndex];
+            delete sessionFrameIndices[resumeSessionIndex];
+            sessionAt = to;
+          }
           deps.onSessionPlan?.(data.pieceIndex, data.sessions);
           break;
         case 'session-rotate': {

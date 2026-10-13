@@ -348,6 +348,43 @@ describe('driveGlRun fake-worker harness', () => {
     expect(result.diagnostics?.failure?.via).toBe('watchdog');
   });
 
+  it('resume across the early-seam change: an old checkpoint session index is re-numbered to the worker plan', async () => {
+    const fake = new FakeWorker();
+    const p = driveGlRun(
+      makeFfmpeg(),
+      'run_0',
+      'piece_0.h264',
+      [segment],
+      [asset],
+      config,
+      1920,
+      1080,
+      30,
+      30,
+      () => undefined,
+      textConfig,
+      0,
+      0,
+      {
+        createWorker: () => fake,
+        now: () => Date.now(),
+        // A v1.6.0 checkpoint: seam 288 was session 1 before the early seam.
+        resumeFromFrameIndex: 288,
+        resumeSessionIndex: 1,
+      },
+    );
+    fake.emit({ type: 'session-plan', pieceIndex: 0, sessions: 9, capFrames: 300, totalFrames: 2419, startSessionIndex: 2 });
+    fake.emit({ type: 'session-rotate', pieceIndex: 0, sessionIndex: 3, sessions: 9, frameIndex: 576 });
+    fake.emit(doneMsg({ 'frame-loop': 10 }, 2419 - 288));
+    const result = await p;
+    expect(result.ok).toBe(true);
+    expect(result.sessionFrameIndices[2]).toBe(288);
+    expect(result.sessionFrameIndices[3]).toBe(576);
+    expect(result.sessionFrameIndices[1]).toBeUndefined();
+    expect(result.sessionByteOffsets[2]).toBe(0);
+    expect(result.sessionByteOffsets[1]).toBeUndefined();
+  });
+
   it('cancelled path returns populated diagnostics', async () => {
     const fake = new FakeWorker();
     const p = startDrive(fake);
