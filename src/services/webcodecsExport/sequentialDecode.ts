@@ -46,18 +46,83 @@ import { findChunkRange } from '../videoDecoderPool';
  *  internal queue. Chosen per plan §4.2 ("≤ 8 undelivered frames"). */
 const DECODE_AHEAD_CAP = 8;
 
+/**
+ * Per-wait stall bound for a decode the caller wants bounded: the longest the
+ * consumer may sit parked with no decoder output. At 24 fps a frame is ~42 ms,
+ * so 4000 ms is ~96 frame times — far past any healthy gap (a hardware decoder's
+ * first output after configure is well under a second), and a real stall is
+ * hundreds of frame times. Two attempts (the spot ladder's limit) cost at most
+ * ~8 s, inside the 30 s worker watchdog, so the typed error always lands first.
+ */
+export const DECODE_STALL_BOUND_MS = 4000;
+
 /** Module-level decode resource counters — observable from export diagnostics. */
 let decodersCreated = 0;
 let decodersOpen = 0;
+/** Open decoders NOT configured `prefer-software` — the ones that may hold a
+ *  hardware decode session. Module state, so it is per realm: the export
+ *  worker's count never includes the preview pool's (main-thread) decoders. */
+let nonSoftwareDecodersOpen = 0;
 
-export function decodeResourceCounts(): { decodersCreated: number; decodersOpen: number } {
-  return { decodersCreated, decodersOpen };
+export function decodeResourceCounts(): {
+  decodersCreated: number;
+  decodersOpen: number;
+  nonSoftwareDecodersOpen: number;
+} {
+  return { decodersCreated, decodersOpen, nonSoftwareDecodersOpen };
 }
 
 /** Test / harness only — resets module counters between isolated runs. */
 export function resetDecodeResourceCounts(): void {
   decodersCreated = 0;
   decodersOpen = 0;
+  nonSoftwareDecodersOpen = 0;
+}
+
+/**
+ * The decoder produced no frame for `waitedMs` while the consumer was parked
+ * on it — the Windows spot-decode stall shape: configure + decode accepted,
+ * then no output and no `error` callback, so `flush()` never settles. Thrown
+ * only when the caller asked for a bound (`stallBoundMs`). The decoder has
+ * already been closed when this is thrown (closing is what rejects the
+ * pending flush and lets the generator's cleanup finish).
+ */
+export class DecodeStallError extends Error {
+  readonly assetUrl: string;
+  readonly waitedMs: number;
+  /** Which await expired: waiting for a frame, or for the end-of-range flush. */
+  readonly awaitName: 'decoder-output' | 'decoder-flush';
+  readonly hardwareAcceleration: HardwareAcceleration | 'default';
+  constructor(
+    assetUrl: string,
+    waitedMs: number,
+    awaitName: 'decoder-output' | 'decoder-flush',
+    hardwareAcceleration: HardwareAcceleration | 'default',
+  ) {
+    super(
+      `sequentialDecode: decoder produced no frame for ${Math.round(waitedMs)}ms ` +
+        `(${awaitName}, hardwareAcceleration=${hardwareAcceleration}) for ${assetUrl}`,
+    );
+    this.name = 'DecodeStallError';
+    this.assetUrl = assetUrl;
+    this.waitedMs = waitedMs;
+    this.awaitName = awaitName;
+    this.hardwareAcceleration = hardwareAcceleration;
+  }
+}
+
+/** The engine refused a decoder configured with an explicit
+ *  `hardwareAcceleration` (NotSupportedError) — e.g. no software H.264
+ *  decoder in this build. Only raised when the caller asked for a mode. */
+export class DecoderModeUnsupportedError extends Error {
+  readonly assetUrl: string;
+  readonly hardwareAcceleration: HardwareAcceleration;
+  constructor(assetUrl: string, hardwareAcceleration: HardwareAcceleration, detail: string) {
+    super(`sequentialDecode: hardwareAcceleration=${hardwareAcceleration} unsupported for ${assetUrl}: ${detail}`);
+    this.name = 'DecoderModeUnsupportedError';
+    this.assetUrl = assetUrl;
+    this.hardwareAcceleration = hardwareAcceleration;
+  }
 }
 
 export interface DecodeSegmentFramesOptions {
@@ -70,6 +135,13 @@ export interface DecodeSegmentFramesOptions {
   /** Fired once, after the demux await, with cache-hit vs first-fetch
    *  timings. Fetch/parse are 0 on a cache hit (the work already ran). */
   onDemuxTiming?: (info: { cacheHit: boolean; fetchMs: number; parseMs: number }) => void;
+  /** Explicit decoder mode. Omitted (the default) passes the demuxer's config
+   *  through untouched — same object, no `hardwareAcceleration` key — so every
+   *  caller that does not ask gets exactly the pre-ladder decoder. */
+  hardwareAcceleration?: HardwareAcceleration;
+  /** Longest the consumer may stay parked with no decoder output before the
+   *  decoder is closed and `DecodeStallError` is thrown. Omitted: unbounded. */
+  stallBoundMs?: number;
 }
 
 /**
@@ -138,7 +210,10 @@ export async function* decodeSegmentFrames(
     fetchMs: cacheHit ? 0 : (demuxed.fetchMs ?? 0),
     parseMs: cacheHit ? 0 : (demuxed.parseMs ?? 0),
   });
-  const { chunks, config } = demuxed;
+  const { chunks } = demuxed;
+  const mode = options.hardwareAcceleration;
+  const config: VideoDecoderConfig = mode ? { ...demuxed.config, hardwareAcceleration: mode } : demuxed.config;
+  const holdsHardware = mode !== 'prefer-software';
 
   // findChunkRange backs startIndex up to the keyframe at or before
   // startSec (a VideoDecoder can only begin decoding at a sync sample) and
@@ -183,6 +258,14 @@ export async function* decodeSegmentFrames(
 
   decodersCreated++;
   decodersOpen++;
+  if (holdsHardware) nonSoftwareDecodersOpen++;
+  let counted = true;
+  const releaseCounts = (): void => {
+    if (!counted) return;
+    counted = false;
+    if (decodersOpen > 0) decodersOpen--;
+    if (holdsHardware && nonSoftwareDecodersOpen > 0) nonSoftwareDecodersOpen--;
+  };
   const decoder = new VideoDecoder({
     output: (frame) => {
       if (stopped) {
@@ -200,9 +283,11 @@ export async function* decodeSegmentFrames(
       signalChange();
     },
     error: (e) => {
-      fatalError = new Error(
-        `sequentialDecode: VideoDecoder error for ${assetUrl} [${startSec}s-${endSec}s] (chunks ${startIndex}-${endIndex}): ${e.message}`,
-      );
+      fatalError = mode && e.name === 'NotSupportedError'
+        ? new DecoderModeUnsupportedError(assetUrl, mode, e.message)
+        : new Error(
+          `sequentialDecode: VideoDecoder error for ${assetUrl} [${startSec}s-${endSec}s] (chunks ${startIndex}-${endIndex}): ${e.message}`,
+        );
       signalChange();
     },
   });
@@ -215,7 +300,8 @@ export async function* decodeSegmentFrames(
     } catch {
       // Configure failed before any state change that would make close() unsafe — best-effort only.
     }
-    if (decodersOpen > 0) decodersOpen--;
+    releaseCounts();
+    if (mode) throw new DecoderModeUnsupportedError(assetUrl, mode, (err as Error).message);
     throw new Error(
       `sequentialDecode: VideoDecoder.configure failed for ${assetUrl} (codec=${config.codec}): ${(err as Error).message}`,
     );
@@ -232,6 +318,7 @@ export async function* decodeSegmentFrames(
   // throws synchronously if decode() is called with a non-keyframe chunk
   // right after a settled flush()). Since this generator never continues
   // feeding after its one flush(), that hazard cannot arise here.
+  let fedAll = false;
   const feedDone = (async () => {
     try {
       for (let i = startIndex; i <= endIndex; i++) {
@@ -243,6 +330,7 @@ export async function* decodeSegmentFrames(
         if (stopped || fatalError) return;
         decoder.decode(chunks[i]!);
       }
+      fedAll = true;
       if (!stopped && !fatalError) {
         await decoder.flush();
       }
@@ -276,9 +364,38 @@ export async function* decodeSegmentFrames(
 
       if (flushed) return; // fully fed, decoder drained, nothing left to ever arrive
 
+      // The consumer is parked only when nothing is buffered, so the decoder
+      // owes us output (or the flush). With a bound, a decoder that goes
+      // silent for that long is closed — which rejects a pending flush, so
+      // the cleanup below can finish — and reported as a stall.
+      const parkedAt = performance.now();
+      let expired = false;
+      let timer: ReturnType<typeof setTimeout> | null = null;
       await new Promise<void>((resolve) => {
         wake = resolve;
+        if (options.stallBoundMs !== undefined) {
+          timer = setTimeout(() => {
+            expired = true;
+            wake = null;
+            resolve();
+          }, options.stallBoundMs);
+        }
       });
+      if (timer !== null) clearTimeout(timer);
+      if (expired && outputQueue.length === 0 && !flushed && !fatalError) {
+        const stall = new DecodeStallError(
+          assetUrl,
+          performance.now() - parkedAt,
+          fedAll ? 'decoder-flush' : 'decoder-output',
+          mode ?? 'default',
+        );
+        try {
+          decoder.close();
+        } catch {
+          // Already closed — the stall is still the thing to report.
+        }
+        throw stall;
+      }
     }
   } finally {
     // Runs on BOTH normal completion and early termination (caller break /
@@ -294,7 +411,7 @@ export async function* decodeSegmentFrames(
     } catch {
       // Already closed (e.g. the decoder's own error callback path) — safe to ignore.
     }
-    if (decodersOpen > 0) decodersOpen--;
+    releaseCounts();
     // No per-asset demux release: getOrCreateDemux's cache has no
     // ref-counted "release" API (only a global clearDemuxCache, which
     // would be wrong to call here — it's a shared, long-lived cache also

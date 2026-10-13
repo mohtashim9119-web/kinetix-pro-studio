@@ -49,9 +49,9 @@ import { GlCompositor, type TextureSlot, type UploadSource } from '../gl/glCompo
 import { deriveCompositeParams, deriveSlotPlan, type ProjectEffectConfig } from '../gl/compositeParams';
 import { acquireOffscreenGlContext, GlContextLostError } from '../gl/glContext';
 import { computeObjectCoverUvRect } from '../gl/uvRect';
-import { decodeSegmentFrames, decodeResourceCounts } from './sequentialDecode';
+import { decodeSegmentFrames, decodeResourceCounts, DECODE_STALL_BOUND_MS } from './sequentialDecode';
 import { hasSpotRenderWork, type SpotRenderSpec } from './spotRenderSpec';
-import { SpotAssetError, SpotPlaybackController } from './spotPlayback';
+import { SpotAssetError, SpotPlaybackController, isWindowsDecoderPlatform } from './spotPlayback';
 import { SpotLayerRenderer } from './spotLayerRenderer';
 import { DecodeCursorRegistry, assetLastNeededSecByAsset } from './decodeCursorLifetime';
 import { FrameContentDigest } from './frameContentDigest';
@@ -1871,7 +1871,15 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
   if (spotSpecs) {
     try {
       spotRenderer = new SpotLayerRenderer(gl);
-      spotPlayback = new SpotPlaybackController(assets, spotSpecs);
+      // Windows spot-decode stall: the spot must not contend with the
+      // main-timeline decoder. Proactive route gated to Windows (WebView2);
+      // the reactive ladder (one software retry per asset) runs everywhere.
+      spotPlayback = new SpotPlaybackController(assets, spotSpecs, {
+        preferSoftwareWhenContended: isWindowsDecoderPlatform(
+          typeof navigator !== 'undefined' ? navigator.userAgent : undefined,
+        ),
+        stallBoundMs: DECODE_STALL_BOUND_MS,
+      });
       activeSpotPlayback = spotPlayback;
     } catch (e) {
       failState.setFailure('init-error', e);
