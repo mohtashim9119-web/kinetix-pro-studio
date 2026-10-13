@@ -328,6 +328,18 @@ export interface ExportWorkerDiagnosticsPayload {
   spotPeakVideoDecoders?: number;
   /** Clamp / non-fatal spot notes (e.g. short-clip-past-spec-end). */
   spotFindings?: string[];
+  /** Windows spot-decode stall diagnostics (`sequentialDecode.ts`): the last
+   *  decoder lines (decoder_open / decoder_first_frame / *_decode_stalled). */
+  decoderEvents?: string[];
+  /** Bounded stalls where no decoder existed yet (the demux never finished). */
+  decodeStallsBeforeDecoder?: number;
+  /** Bounded stalls inside a live decoder (configure + decode, then silence). */
+  decodeStallsInsideDecoder?: number;
+  /** The naming line of the most recent bounded stall, or null. */
+  lastDecodeStall?: string | null;
+  /** Live gauges at snapshot time — where a watchdog-time decode is parked. */
+  decodesAwaitingDemux?: number;
+  decodesParkedOnDecoder?: number;
 }
 
 /**

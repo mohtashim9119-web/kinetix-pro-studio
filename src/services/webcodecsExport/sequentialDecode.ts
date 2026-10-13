@@ -35,7 +35,7 @@
  * worker and on `window` on the main thread.
  */
 
-import { getOrCreateDemux, demuxCacheHas } from '../videoDemuxer';
+import { getOrCreateDemux, demuxCacheHas, DemuxStallError } from '../videoDemuxer';
 import { findChunkRange } from '../videoDecoderPool';
 
 /** Bounds how many decoded-but-not-yet-yielded VideoFrames this generator
@@ -70,6 +70,82 @@ export function decodeResourceCounts(): {
   nonSoftwareDecodersOpen: number;
 } {
   return { decodersCreated, decodersOpen, nonSoftwareDecodersOpen };
+}
+
+// ---------------------------------------------------------------------------
+// Decoder diagnostics — one line per decoder creation, one per first frame,
+// one per bounded stall; plus the counters that say WHERE a decode was stuck.
+// ---------------------------------------------------------------------------
+
+/** Lines retained for the diagnostics payload (oldest dropped first). */
+const DECODER_EVENT_CAP = 64;
+const decoderEvents: string[] = [];
+let decoderEventListener: ((line: string) => void) | null = null;
+let stallsBeforeDecoder = 0;
+let stallsInsideDecoder = 0;
+let lastStall: string | null = null;
+/** Live gauges: decodes awaiting their demux right now / parked on a decoder. */
+let awaitingDemux = 0;
+let parkedOnDecoder = 0;
+
+/** The worker routes every line to the main thread (native diagnostic log). */
+export function setDecoderEventListener(listener: ((line: string) => void) | null): void {
+  decoderEventListener = listener;
+}
+
+/** Appends one diagnostic line (retained + forwarded). Used by decodeStall.ts too. */
+export function emitDecoderEvent(line: string): void {
+  decoderEvents.push(line);
+  if (decoderEvents.length > DECODER_EVENT_CAP) decoderEvents.splice(0, decoderEvents.length - DECODER_EVENT_CAP);
+  decoderEventListener?.(line);
+}
+
+/** Counts a bounded stall and keeps its line as `lastStall`. */
+export function noteDecodeStall(where: 'before-decoder' | 'inside-decoder', line: string): void {
+  if (where === 'before-decoder') stallsBeforeDecoder++;
+  else stallsInsideDecoder++;
+  lastStall = line;
+}
+
+export function decodeDiagnostics(): {
+  events: string[];
+  stallsBeforeDecoder: number;
+  stallsInsideDecoder: number;
+  lastStall: string | null;
+  awaitingDemux: number;
+  parkedOnDecoder: number;
+} {
+  return {
+    events: decoderEvents.slice(),
+    stallsBeforeDecoder,
+    stallsInsideDecoder,
+    lastStall,
+    awaitingDemux,
+    parkedOnDecoder,
+  };
+}
+
+/** Test / per-run reset. */
+export function resetDecodeDiagnostics(): void {
+  decoderEvents.length = 0;
+  stallsBeforeDecoder = 0;
+  stallsInsideDecoder = 0;
+  lastStall = null;
+  awaitingDemux = 0;
+  parkedOnDecoder = 0;
+}
+
+/** Which WebCodecs engine this realm runs on, from its user agent. */
+export function decoderEngine(userAgent: string | undefined | null): 'webview2' | 'chromium' | 'wkwebview' | 'unknown' {
+  if (typeof userAgent !== 'string' || userAgent.length === 0) return 'unknown';
+  if (/\bEdg\//.test(userAgent) || (/\bWindows NT\b/.test(userAgent) && /\bChrome\//.test(userAgent))) return 'webview2';
+  if (/\bChrome\//.test(userAgent)) return 'chromium';
+  if (/AppleWebKit/.test(userAgent)) return 'wkwebview';
+  return 'unknown';
+}
+
+function realmEngine(): string {
+  return decoderEngine(typeof navigator !== 'undefined' ? navigator.userAgent : undefined);
 }
 
 /** Wakers of every consumer currently parked on a decoder in this realm. */
@@ -215,12 +291,21 @@ export async function* decodeSegmentFrames(
 ): AsyncGenerator<VideoFrame> {
   let demuxed;
   const cacheHit = demuxCacheHas(assetUrl);
+  awaitingDemux++;
   try {
     demuxed = await getOrCreateDemux(assetUrl);
   } catch (err) {
+    if (err instanceof DemuxStallError) {
+      const line = `decode_stalled_before_decoder: asset ${assetUrl} — ${err.message}`;
+      noteDecodeStall('before-decoder', line);
+      emitDecoderEvent(line);
+    }
     throw new Error(
       `sequentialDecode: demux failed for ${assetUrl} [${startSec}s-${endSec}s]: ${(err as Error).message}`,
+      { cause: err },
     );
+  } finally {
+    awaitingDemux--;
   }
   options.onDemuxTiming?.({
     cacheHit,
@@ -283,8 +368,16 @@ export async function* decodeSegmentFrames(
     if (decodersOpen > 0) decodersOpen--;
     if (holdsHardware && nonSoftwareDecodersOpen > 0) nonSoftwareDecodersOpen--;
   };
+  let firstFrameLogged = false;
   const decoder = new VideoDecoder({
     output: (frame) => {
+      if (!firstFrameLogged) {
+        firstFrameLogged = true;
+        emitDecoderEvent(
+          `decoder_first_frame asset=${assetUrl} hardwareAcceleration=${mode ?? 'default'} ` +
+            `coded=${frame.codedWidth}x${frame.codedHeight} visible=${frame.displayWidth}x${frame.displayHeight}`,
+        );
+      }
       if (stopped) {
         frame.close();
         return;
@@ -309,6 +402,11 @@ export async function* decodeSegmentFrames(
     },
   });
 
+  emitDecoderEvent(
+    `decoder_open engine=${realmEngine()} hardwareAcceleration=${mode ?? 'default'} codec=${config.codec} ` +
+      `config=${config.codedWidth}x${config.codedHeight} openDecoders=${decodersOpen} ` +
+      `nonSoftwareOpen=${nonSoftwareDecodersOpen} asset=${assetUrl}`,
+  );
   try {
     decoder.configure(config);
   } catch (err) {
@@ -389,6 +487,7 @@ export async function* decodeSegmentFrames(
       let expired = false;
       let timer: ReturnType<typeof setTimeout> | null = null;
       let parkedWake: (() => void) | null = null;
+      parkedOnDecoder++;
       await new Promise<void>((resolve) => {
         wake = resolve;
         parkedWake = resolve;
@@ -401,6 +500,7 @@ export async function* decodeSegmentFrames(
           }, options.stallBoundMs);
         }
       });
+      parkedOnDecoder--;
       if (parkedWake) parkedWakers.delete(parkedWake);
       if (timer !== null) clearTimeout(timer);
       if (options.isCancelled?.()) {

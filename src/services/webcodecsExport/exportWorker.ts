@@ -54,8 +54,11 @@ import {
   decodeResourceCounts,
   DECODE_STALL_BOUND_MS,
   wakeParkedDecodes,
+  setDecoderEventListener,
+  decodeDiagnostics,
+  resetDecodeDiagnostics,
 } from './sequentialDecode';
-import { DecodeStalledFailure, decodeStallFailureFrom, decodeStallVia } from './decodeStall';
+import { DecodeStalledFailure, decodeStallFailureFrom, decodeStallVia, recordDecodeStall } from './decodeStall';
 import { hasSpotRenderWork, type SpotRenderSpec } from './spotRenderSpec';
 import { SpotAssetError, SpotPlaybackController, isWindowsDecoderPlatform } from './spotPlayback';
 import { SpotLayerRenderer } from './spotLayerRenderer';
@@ -273,6 +276,11 @@ export type ExportWorkerOutboundMessage =
   // failed. Same class of mistake as the phase log that was capped but never
   // routed: a change nobody can observe is a change nobody can trust.
   | { type: 'session-plan'; pieceIndex: number; sessions: number; capFrames: number; totalFrames: number }
+  // Windows spot-decode stall diagnostics — one line per decoder creation,
+  // first frame, and bounded stall (sequentialDecode.ts / decodeStall.ts).
+  // Written to the native diagnostic log by the main thread. Observational:
+  // resets no liveness bound.
+  | { type: 'decoder-event'; line: string }
   | { type: 'session-rotate'; pieceIndex: number; sessionIndex: number; sessions: number; frameIndex: number }
   // Work-token / phase heartbeat. Does NOT reset the main-thread watchdog
   // (the set of resetting messages is unchanged: `chunk` and `queue-sample`
@@ -391,6 +399,27 @@ function buildDiagnostics(
     encodeQueueHighWater: activeEncodeQueueHighWater,
     spotPeakVideoDecoders: activeSpotPlayback?.peakOpenVideoDecoders ?? 0,
     spotFindings: activeSpotPlayback ? [...activeSpotPlayback.snapshotFindings()] : [],
+    ...decodeDiagnosticsFields(),
+  };
+}
+
+function decodeDiagnosticsFields(): Pick<
+  ExportWorkerDiagnosticsPayload,
+  | 'decoderEvents'
+  | 'decodeStallsBeforeDecoder'
+  | 'decodeStallsInsideDecoder'
+  | 'lastDecodeStall'
+  | 'decodesAwaitingDemux'
+  | 'decodesParkedOnDecoder'
+> {
+  const d = decodeDiagnostics();
+  return {
+    decoderEvents: d.events,
+    decodeStallsBeforeDecoder: d.stallsBeforeDecoder,
+    decodeStallsInsideDecoder: d.stallsInsideDecoder,
+    lastDecodeStall: d.lastStall,
+    decodesAwaitingDemux: d.awaitingDemux,
+    decodesParkedOnDecoder: d.parkedOnDecoder,
   };
 }
 
@@ -1445,6 +1474,9 @@ function waitForDequeue(encoder: VideoEncoder): Promise<void> {
 // Orchestration
 // ---------------------------------------------------------------------------
 
+// Every decoder line reaches the main thread (and from there the native log).
+setDecoderEventListener((line) => postOut({ type: 'decoder-event', line }));
+
 let running = false;
 let cancelRequested = false;
 /** WS3 Tier 1 item 3b — one gate per run, live only while a run is in
@@ -1606,6 +1638,10 @@ async function runFrameLoopTick(ctx: FrameLoopTickContext): Promise<boolean> {
           openDecoders: decodeResourceCounts().decodersOpen,
         });
         if (stall) {
+          // The phase row names the spot's segment and asset at the stall.
+          activeTracker?.setContext(stall.segmentIndex, stall.assetId);
+          activeTracker?.enter('spot-decode-stalled');
+          recordDecodeStall(stall);
           failState.setFailure(decodeStallVia(stall), stall);
         } else {
           failState.setFailure(
@@ -1718,6 +1754,7 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
   const pieceIndex = payload.pieceIndex ?? 0;
   const startIndex = payload.startIndex ?? 0;
   const tracker = new ExportPhaseTracker((msg) => postOut(msg), pieceIndex);
+  resetDecodeDiagnostics();
   activeTracker = tracker;
   activePieceIndex = pieceIndex;
   activeAppendBackpressureGate = new AppendBackpressureGate(APPEND_BACKPRESSURE_THRESHOLD_BYTES);
@@ -2288,6 +2325,7 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
       // reported failure.
       // WS3 Defect 1b/3 — a flush that never returned gets its OWN via, so the
       // payload names the flush rather than reading as a generic 'thrown'.
+      if (e instanceof DecodeStalledFailure) recordDecodeStall(e);
       const via: ExportFailureVia = e instanceof DecodeStalledFailure
         ? decodeStallVia(e)
         : e instanceof EncoderFlushTimeoutError || e instanceof FlushSalvageBoundError

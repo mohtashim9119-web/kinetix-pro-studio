@@ -12,7 +12,8 @@
  * were open — the line the operator reads instead of "no output for 30s".
  */
 
-import { DecodeStallError } from './sequentialDecode';
+import { DecodeStallError, emitDecoderEvent, noteDecodeStall } from './sequentialDecode';
+import { DemuxStallError } from '../videoDemuxer';
 import { SpotDecodeStalledError } from './spotPlayback';
 import type { ExportFailureVia } from './exportWorkerDiagnostics';
 
@@ -68,6 +69,18 @@ export function decodeStallFailureFrom(
       detail: `${err.message} (attempts: ${err.attempts})`,
     });
   }
+  const cause = err instanceof Error ? (err as Error & { cause?: unknown }).cause : undefined;
+  if (cause instanceof DemuxStallError) {
+    return new DecodeStalledFailure({
+      layer: ctx.layer,
+      segmentIndex: ctx.segmentIndex,
+      assetId: ctx.assetId ?? cause.url,
+      waitedMs: 0,
+      awaitName: 'demux-parse',
+      openDecoders: ctx.openDecoders,
+      detail: cause.message,
+    });
+  }
   if (err instanceof DecodeStallError) {
     return new DecodeStalledFailure({
       layer: ctx.layer,
@@ -84,4 +97,14 @@ export function decodeStallFailureFrom(
 
 export function decodeStallVia(f: DecodeStalledFailure): ExportFailureVia {
   return f.layer === 'spot' ? 'spot-decode-stalled' : 'decode-stalled';
+}
+
+/** The one naming line for a bounded stall: retained in the decoder
+ *  diagnostics, forwarded to the native log, counted as "inside the decoder"
+ *  (the decoder existed and went silent — a demux that never finished is
+ *  counted "before the decoder" by sequentialDecode itself). */
+export function recordDecodeStall(f: DecodeStalledFailure): void {
+  // A demux stall was already counted "before the decoder" where it happened.
+  if (f.awaitName !== 'demux-parse') noteDecodeStall('inside-decoder', f.message);
+  emitDecoderEvent(f.message);
 }

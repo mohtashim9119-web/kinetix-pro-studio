@@ -7,10 +7,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-vi.mock('../videoDemuxer', () => ({
-  getOrCreateDemux: vi.fn(),
-  demuxCacheHas: vi.fn(() => true),
-}));
+vi.mock('../videoDemuxer', async () => {
+  const actual = await vi.importActual<typeof import('../videoDemuxer')>('../videoDemuxer');
+  return { ...actual, getOrCreateDemux: vi.fn(), demuxCacheHas: vi.fn(() => true) };
+});
 
 import { getOrCreateDemux } from '../videoDemuxer';
 import {

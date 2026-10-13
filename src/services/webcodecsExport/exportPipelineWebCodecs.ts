@@ -2615,6 +2615,11 @@ export function driveGlRun(
           // check them against the monotonic clock. See checkLivenessBounds.
           checkLivenessBounds();
           break;
+        case 'decoder-event':
+          // Observational only: resets neither liveness bound.
+          if (data.line.includes('stalled')) logExportEvent('decoder', data.line, 'warn');
+          else logExportEvent('decoder', data.line);
+          break;
         case 'heartbeat':
           // Never resets WATCHDOG_MS or FORWARD_PROGRESS_BOUND_MS — see
           // checkLivenessBounds's doc comment and this message's own doc

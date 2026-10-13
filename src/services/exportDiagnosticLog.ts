@@ -44,7 +44,10 @@ export type ExportLogPhase =
   | 'session-cleanup'
   /** One export session's cleanup disposition: kept / collected / skipped,
    *  with its project id and the reason (`findResumeOffer`). */
-  | 'session-disposition';
+  | 'session-disposition'
+  /** Decoder creation / first frame / bounded stall lines from the export
+   *  worker (Windows spot-decode stall diagnostics). */
+  | 'decoder';
 
 export function logExportEvent(phase: ExportLogPhase, detail: string, level: ExportLogLevel = 'info'): void {
   if (!isTauri()) return;

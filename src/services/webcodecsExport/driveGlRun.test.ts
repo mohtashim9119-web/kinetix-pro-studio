@@ -7,6 +7,11 @@
  * can be asserted in node/vitest without a real module worker or GL.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
+
+vi.mock('../exportDiagnosticLog', async () => {
+  const actual = await vi.importActual<typeof import('../exportDiagnosticLog')>('../exportDiagnosticLog');
+  return { ...actual, logExportEvent: vi.fn() };
+});
 import { TransitionType, AnimationType } from '../../types';
 import type { Asset, HeadingOverlay, TextOverlay, VideoSegment } from '../../types';
 import {
@@ -321,6 +326,26 @@ describe('driveGlRun fake-worker harness', () => {
     expect(ffmpeg.truncateAnnexb).not.toHaveBeenCalled();
     expect(ffmpeg.deleteFile).not.toHaveBeenCalled();
     expect(ffmpeg.destroy).not.toHaveBeenCalled();
+  });
+
+  it('a decoder-event line is written to the native log and resets no liveness bound', async () => {
+    const { logExportEvent } = await import('../exportDiagnosticLog');
+    vi.mocked(logExportEvent).mockClear();
+    vi.useFakeTimers();
+    const fake = new FakeWorker();
+    const p = startDrive(fake);
+    fake.emit({ type: 'decoder-event', line: 'decoder_open engine=webview2 hardwareAcceleration=default codec=avc1.640020' });
+    expect(logExportEvent).toHaveBeenCalledWith(
+      'decoder',
+      'decoder_open engine=webview2 hardwareAcceleration=default codec=avc1.640020',
+    );
+    fake.emit({ type: 'decoder-event', line: 'spot_decode_stalled: segment 7 asset "avatar-02"' });
+    expect(logExportEvent).toHaveBeenLastCalledWith('decoder', 'spot_decode_stalled: segment 7 asset "avatar-02"', 'warn');
+    // Not a liveness reset: with only decoder-event messages, the watchdog still fires.
+    await vi.advanceTimersByTimeAsync(WATCHDOG_MS + 60);
+    const result = await p;
+    expect(result.ok).toBe(false);
+    expect(result.diagnostics?.failure?.via).toBe('watchdog');
   });
 
   it('cancelled path returns populated diagnostics', async () => {
