@@ -73,6 +73,8 @@ export interface SpotPlaybackOptions {
   /** Per-wait bound handed to `decodeSegmentFrames` — the stall signal the
    *  reactive route listens for. */
   stallBoundMs?: number;
+  /** Run-cancel predicate, passed through to every spot decode. */
+  isCancelled?: () => boolean;
 }
 
 interface VideoSpotSession {
@@ -244,6 +246,7 @@ export class SpotPlaybackController {
     return decodeSegmentFrames(url, 0, decodeEnd, {
       ...(rung === 'prefer-software' ? { hardwareAcceleration: 'prefer-software' as const } : {}),
       ...(this.options.stallBoundMs !== undefined ? { stallBoundMs: this.options.stallBoundMs } : {}),
+      ...(this.options.isCancelled ? { isCancelled: this.options.isCancelled } : {}),
     });
   }
 

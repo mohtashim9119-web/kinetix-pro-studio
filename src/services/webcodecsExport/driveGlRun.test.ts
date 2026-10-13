@@ -292,6 +292,37 @@ describe('driveGlRun fake-worker harness', () => {
     expect(result.diagnostics?.failure?.via).toBe('encoder-callback');
   });
 
+  it('a bounded spot decode stall settles as a typed error and leaves the piece intact (no truncate, delete or destroy)', async () => {
+    const fake = new FakeWorker();
+    const ffmpeg = makeFfmpeg();
+    const p = startDrive(fake, ffmpeg);
+    for (let i = 0; i < APPEND_BATCH_CHUNKS; i++) fake.emit(chunkMsg(i));
+    fake.emit({
+      type: 'error',
+      diagnostics: diagnostics({}, {
+        framesEncoded: APPEND_BATCH_CHUNKS,
+        failure: {
+          name: 'DecodeStalledFailure',
+          message: 'spot_decode_stalled: segment 7 asset "avatar-02" — decoder-flush produced no frame for 8004ms (open decoders: 1)',
+          via: 'spot-decode-stalled',
+          frameIndex: 272,
+          timelineSec: 11.333,
+        },
+      }),
+    });
+    const result = await p;
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.diagnostics?.failure?.via).toBe('spot-decode-stalled');
+    expect(result.error.message).toContain('spot_decode_stalled');
+    expect(result.error.message).toContain('segment 7');
+    expect(result.error.message).toContain('avatar-02');
+    expect(result.error.message).not.toContain('watchdog');
+    expect(ffmpeg.truncateAnnexb).not.toHaveBeenCalled();
+    expect(ffmpeg.deleteFile).not.toHaveBeenCalled();
+    expect(ffmpeg.destroy).not.toHaveBeenCalled();
+  });
+
   it('cancelled path returns populated diagnostics', async () => {
     const fake = new FakeWorker();
     const p = startDrive(fake);

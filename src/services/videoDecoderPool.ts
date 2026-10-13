@@ -75,6 +75,33 @@ import { getOrCreateDemux } from './videoDemuxer';
  *  the plan's stated 1-2s range. */
 export const WINDOW_AHEAD_SEC = 1.5;
 
+/**
+ * Longest a preview frame request may wait on a decoder that produces
+ * nothing. Same value as the export's `DECODE_STALL_BOUND_MS`
+ * (webcodecsExport/sequentialDecode.ts — not imported: that module imports
+ * this one): ~96 frame times at 24 fps, far past any healthy gap. On expiry
+ * the session is torn down (its decoder closed, not pooled), one
+ * `preview_decode_stalled` line is logged, and the request resolves null.
+ */
+export const PREVIEW_DECODE_STALL_BOUND_MS = 4000;
+
+/** A preview session's decoder went silent for `PREVIEW_DECODE_STALL_BOUND_MS`. */
+export class PreviewDecodeStallError extends Error {
+  readonly segmentId: string;
+  readonly assetUrl: string;
+  readonly waitedMs: number;
+  constructor(segmentId: string, assetUrl: string, waitedMs: number) {
+    super(
+      `preview_decode_stalled: segment ${segmentId} asset ${assetUrl} — decoder-output ` +
+        `produced no frame for ${Math.round(waitedMs)}ms; session released`,
+    );
+    this.name = 'PreviewDecodeStallError';
+    this.segmentId = segmentId;
+    this.assetUrl = assetUrl;
+    this.waitedMs = waitedMs;
+  }
+}
+
 /** Leading half of the sliding window (WS3 sparse-keyframe fix, see
  *  handleDecoderOutput): how much already-passed material a session keeps
  *  buffered behind its current target instead of discarding it the instant
@@ -173,6 +200,8 @@ interface DecoderHandle {
 }
 
 interface DecodeSession {
+  /** The pool key this session is stored under — named in a stall line. */
+  segmentId: string;
   assetUrl: string;
   /** Segment-level source-time ceiling this session may ever decode within
    *  — the segment's own [trimStart, trimEnd]-derived range. Fixed for the
@@ -386,6 +415,7 @@ export class VideoDecoderPool {
     if (existing) this.closeSession(existing);
 
     const session: DecodeSession = {
+      segmentId,
       assetUrl,
       startSec,
       endSec,
@@ -677,7 +707,23 @@ export class VideoDecoderPool {
         continue;
       }
 
-      await new Promise<void>((resolve) => session.waiters.push({ targetSec, settle: resolve }));
+      const parkedAt = performance.now();
+      let waiter: FrameWaiter | null = null;
+      const woke = await new Promise<boolean>((resolve) => {
+        const timer = setTimeout(() => resolve(false), PREVIEW_DECODE_STALL_BOUND_MS);
+        waiter = {
+          targetSec,
+          settle: () => {
+            clearTimeout(timer);
+            resolve(true);
+          },
+        };
+        session.waiters.push(waiter);
+      });
+      if (!woke) {
+        session.waiters = session.waiters.filter((w) => w !== waiter);
+        throw this.releaseStalledSession(session, performance.now() - parkedAt);
+      }
     }
   }
 
@@ -900,6 +946,32 @@ export class VideoDecoderPool {
     session.displayedFrame = selected.frame;
     this.enforceBudget();
     return selected.frame;
+  }
+
+  /** A silent decoder: close it (never pool it — its state is unknown), drop
+   *  the session so the next `ensureSession` builds a fresh one, and name it. */
+  private releaseStalledSession(session: DecodeSession, waitedMs: number): PreviewDecodeStallError {
+    const err = new PreviewDecodeStallError(session.segmentId, session.assetUrl, waitedMs);
+    console.warn(err.message);
+    if (session.handle) session.handle.errored = true;
+    // closeSession closes outright (not pooled) when a batch is in flight;
+    // force that path for a stall regardless.
+    const handle = session.handle;
+    this.closeSession(session);
+    if (handle) {
+      try {
+        handle.decoder.close();
+      } catch {
+        // Already closed.
+      }
+      const idle = this.idleHandles.get(handle.assetUrl);
+      if (idle) this.idleHandles.set(handle.assetUrl, idle.filter((h) => h !== handle));
+    }
+    if (this.sessions.get(session.segmentId) === session) {
+      this.sessions.delete(session.segmentId);
+      this.lastAccess.delete(session.segmentId);
+    }
+    return err;
   }
 
   hasSession(segmentId: string): boolean {

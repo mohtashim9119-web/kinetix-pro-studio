@@ -135,7 +135,13 @@ export type ExportFailureVia =
    *  thread asked for it (`failOnEncoderGap`); otherwise the gap is reported in
    *  `ExportWorkerDiagnosticsPayload.encoderGap` and the run completes. */
   | 'encoder-gap'
-  | 'spot-asset-missing';
+  | 'spot-asset-missing'
+  /** A main-timeline segment's decoder produced no frame for
+   *  `DECODE_STALL_BOUND_MS` (`decodeStall.ts`). Names segment + asset. */
+  | 'decode-stalled'
+  /** A spot clip's decoder stalled on every rung of its one-downgrade ladder
+   *  (`spotPlayback.ts`). Names segment + asset; never the 30 s watchdog. */
+  | 'spot-decode-stalled';
 
 /**
  * WS3 item F — exhaustive `ExportFailureVia` -> `ExportErrorKind` policy
@@ -181,6 +187,8 @@ export const FAILURE_VIA_TO_KIND = {
   'append-short-write': 'encode',
   'encoder-gap': 'encode',
   'spot-asset-missing': 'spot_asset_missing',
+  'decode-stalled': 'encode',
+  'spot-decode-stalled': 'encode',
 } as const satisfies Record<ExportFailureVia, ExportErrorKind>;
 
 export interface ExportFailureIdentity {

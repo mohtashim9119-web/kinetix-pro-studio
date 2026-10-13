@@ -52,6 +52,34 @@ export interface DemuxedVideo {
 
 const demuxCache = new Map<string, Promise<DemuxedVideo>>();
 
+/**
+ * Bound on the parse promise AFTER the whole file has been appended. mp4box
+ * box-parses and extracts samples synchronously inside a single whole-file
+ * `appendBuffer()`, so a healthy parse has settled by the time it returns; a
+ * promise still open after this long belongs to a file whose `onSamples` will
+ * never reach `nb_samples` (e.g. a sample table that declares more samples
+ * than it carries) and would otherwise wait forever. 10 s is far past any real
+ * parse and still well inside the export's 30 s watchdog.
+ */
+export const DEMUX_PARSE_BOUND_MS = 10_000;
+
+/** The parse never delivered the track's declared sample count. */
+export class DemuxStallError extends Error {
+  readonly url: string;
+  readonly received: number;
+  readonly expected: number;
+  constructor(url: string, received: number, expected: number, waitedMs: number) {
+    super(
+      `videoDemuxer: parse delivered ${received} of ${expected} samples and stopped ` +
+        `(${Math.round(waitedMs)}ms after the whole file was appended) for ${url}`,
+    );
+    this.name = 'DemuxStallError';
+    this.url = url;
+    this.received = received;
+    this.expected = expected;
+  }
+}
+
 /** True when `url` already has an in-flight or resolved cache entry. */
 export function demuxCacheHas(url: string): boolean {
   return demuxCache.has(url);
@@ -91,6 +119,7 @@ async function demux(url: string): Promise<DemuxedVideo> {
   let received = 0;
 
   const parseStarted = performance.now();
+  let parseBound: ReturnType<typeof setTimeout> | null = null;
   await new Promise<void>((resolve, reject) => {
     mp4boxFile.onError = (module: string, msg: string) => {
       reject(new Error(`mp4box error [${module}]: ${msg}`));
@@ -140,6 +169,14 @@ async function demux(url: string): Promise<DemuxedVideo> {
 
     const mp4boxBuf = MP4BoxBuffer.fromArrayBuffer(buf, 0);
     mp4boxFile.appendBuffer(mp4boxBuf);
+
+    // Every byte is in. Anything still unresolved past the bound never will be.
+    const appendedAt = performance.now();
+    parseBound = setTimeout(() => {
+      reject(new DemuxStallError(url, received, videoTrack?.nb_samples ?? 0, performance.now() - appendedAt));
+    }, DEMUX_PARSE_BOUND_MS);
+  }).finally(() => {
+    if (parseBound !== null) clearTimeout(parseBound);
   });
   const parseMs = performance.now() - parseStarted;
 

@@ -38,7 +38,7 @@ vi.mock('mp4box', () => ({
   Endianness: { BIG_ENDIAN: 0 },
 }));
 
-import { getOrCreateDemux, clearDemuxCache, releaseDemux, demuxCacheHas, demuxCacheSize } from './videoDemuxer';
+import { getOrCreateDemux, clearDemuxCache, releaseDemux, demuxCacheHas, demuxCacheSize, DemuxStallError, DEMUX_PARSE_BOUND_MS } from './videoDemuxer';
 import { createFile } from 'mp4box';
 const createFileMock = createFile as unknown as ReturnType<typeof vi.fn>;
 
@@ -216,5 +216,35 @@ describe('releaseDemux', () => {
     // a correctness one.
     expect(second).not.toBe(first);
     expect(demuxCacheHas('blob:d')).toBe(true);
+  });
+});
+
+describe('getOrCreateDemux — parse bound (no unbounded wait)', () => {
+  it('a parse whose onSamples never reaches nb_samples rejects typed within the bound, naming the url and the counts', async () => {
+    vi.useFakeTimers();
+    try {
+      const promise = getOrCreateDemux('blob:short');
+      const settled = promise.then(
+        () => null,
+        (e: unknown) => e,
+      );
+      const mockFile = await awaitOwnMockFile();
+      await vi.waitFor(() => expect(mockFile.appendBuffer).toHaveBeenCalled());
+      mockFile.onReady!({ videoTracks: [makeVideoTrack({ nb_samples: 84 })] });
+      mockFile.onSamples!(1, null, [makeSample(), makeSample({ cts: 33, is_sync: false })]);
+      await vi.advanceTimersByTimeAsync(DEMUX_PARSE_BOUND_MS + 50);
+      const err = await settled;
+      expect(err).toBeInstanceOf(DemuxStallError);
+      expect((err as DemuxStallError).url).toBe('blob:short');
+      expect((err as DemuxStallError).received).toBe(2);
+      expect((err as DemuxStallError).expected).toBe(84);
+      expect(demuxCacheHas('blob:short')).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('the bound is 10000 ms — a parse after a whole-file append is synchronous, so this only ever catches a parse that will never finish', () => {
+    expect(DEMUX_PARSE_BOUND_MS).toBe(10_000);
   });
 });

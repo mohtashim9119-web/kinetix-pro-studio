@@ -72,6 +72,20 @@ export function decodeResourceCounts(): {
   return { decodersCreated, decodersOpen, nonSoftwareDecodersOpen };
 }
 
+/** Wakers of every consumer currently parked on a decoder in this realm. */
+const parkedWakers = new Set<() => void>();
+
+/**
+ * Wakes every parked consumer so it re-reads its `isCancelled` predicate at
+ * once. The export worker calls this from its 'cancel' handler (next to
+ * `cancelRequested = true`), so a cancel during a silent decode ends the
+ * decode promptly instead of after the stall bound — and is never reported as
+ * a stall.
+ */
+export function wakeParkedDecodes(): void {
+  for (const wake of [...parkedWakers]) wake();
+}
+
 /** Test / harness only — resets module counters between isolated runs. */
 export function resetDecodeResourceCounts(): void {
   decodersCreated = 0;
@@ -142,6 +156,9 @@ export interface DecodeSegmentFramesOptions {
   /** Longest the consumer may stay parked with no decoder output before the
    *  decoder is closed and `DecodeStallError` is thrown. Omitted: unbounded. */
   stallBoundMs?: number;
+  /** Run-cancel predicate (the worker's `cancelRequested`). Read whenever a
+   *  parked wait wakes or expires: a cancelled run ends the decode quietly. */
+  isCancelled?: () => boolean;
 }
 
 /**
@@ -371,8 +388,11 @@ export async function* decodeSegmentFrames(
       const parkedAt = performance.now();
       let expired = false;
       let timer: ReturnType<typeof setTimeout> | null = null;
+      let parkedWake: (() => void) | null = null;
       await new Promise<void>((resolve) => {
         wake = resolve;
+        parkedWake = resolve;
+        parkedWakers.add(resolve);
         if (options.stallBoundMs !== undefined) {
           timer = setTimeout(() => {
             expired = true;
@@ -381,7 +401,18 @@ export async function* decodeSegmentFrames(
           }, options.stallBoundMs);
         }
       });
+      if (parkedWake) parkedWakers.delete(parkedWake);
       if (timer !== null) clearTimeout(timer);
+      if (options.isCancelled?.()) {
+        // Cancel, not a stall: end quietly. Closing rejects a pending flush so
+        // the cleanup below finishes at once.
+        try {
+          decoder.close();
+        } catch {
+          // Already closed.
+        }
+        return;
+      }
       if (expired && outputQueue.length === 0 && !flushed && !fatalError) {
         const stall = new DecodeStallError(
           assetUrl,
@@ -403,6 +434,17 @@ export async function* decodeSegmentFrames(
     // the feed loop has already finished and outputQueue is already empty.
     stopped = true;
     signalChange();
+    // A decoder that never drained (early break, cancel, stall) may hold the
+    // feed loop inside a flush() that will never settle on a silent driver.
+    // Closing it rejects that flush, so this await is bounded by the close
+    // itself rather than by the decoder. A completed decode is untouched.
+    if (!flushed) {
+      try {
+        if (decoder.state !== 'closed') decoder.close();
+      } catch {
+        // Already closed.
+      }
+    }
     await feedDone.catch(() => {});
     for (const frame of outputQueue) frame.close();
     outputQueue.length = 0;

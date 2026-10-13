@@ -49,7 +49,13 @@ import { GlCompositor, type TextureSlot, type UploadSource } from '../gl/glCompo
 import { deriveCompositeParams, deriveSlotPlan, type ProjectEffectConfig } from '../gl/compositeParams';
 import { acquireOffscreenGlContext, GlContextLostError } from '../gl/glContext';
 import { computeObjectCoverUvRect } from '../gl/uvRect';
-import { decodeSegmentFrames, decodeResourceCounts, DECODE_STALL_BOUND_MS } from './sequentialDecode';
+import {
+  decodeSegmentFrames,
+  decodeResourceCounts,
+  DECODE_STALL_BOUND_MS,
+  wakeParkedDecodes,
+} from './sequentialDecode';
+import { DecodeStalledFailure, decodeStallFailureFrom, decodeStallVia } from './decodeStall';
 import { hasSpotRenderWork, type SpotRenderSpec } from './spotRenderSpec';
 import { SpotAssetError, SpotPlaybackController, isWindowsDecoderPlatform } from './spotPlayback';
 import { SpotLayerRenderer } from './spotLayerRenderer';
@@ -609,6 +615,11 @@ function openCursor(
   const { start, end } = sourceRange(segment, sourceDuration);
   return {
     gen: decodeSegmentFrames(assetUrl, start, end, {
+      // No unbounded decode wait: a silent decoder fails typed within the
+      // bound (wrapped with segment + asset in resolveSlotSource), and a
+      // cancel ends the decode quietly instead of reading as a stall.
+      stallBoundMs: DECODE_STALL_BOUND_MS,
+      isCancelled: () => cancelRequested,
       onDemuxTiming: (info) => {
         if (info.cacheHit) return;
         tracker.recordDemuxSplit(assetId, info.fetchMs, info.parseMs);
@@ -809,6 +820,30 @@ class RunState {
     return local >= 0 ? this.startIndex + local : this.startIndex;
   }
 
+  /** `frameAt` with the decode stall named: a `DecodeStallError` from the
+   *  bounded cursor becomes a `DecodeStalledFailure` carrying this segment's
+   *  project index and asset id. Every other error passes through unchanged. */
+  private async boundedFrameAt(
+    cursor: DecodeCursor,
+    targetSec: number,
+    seg: VideoSegment,
+    assetId: string,
+  ): Promise<VideoFrame | null> {
+    try {
+      return await frameAt(cursor, targetSec, () => {
+        this.decodedSourceFrames++;
+      });
+    } catch (e) {
+      const stall = decodeStallFailureFrom(e, {
+        layer: 'segment',
+        segmentIndex: this.projectSegmentIndex(seg),
+        assetId,
+        openDecoders: decodeResourceCounts().decodersOpen,
+      });
+      throw stall ?? e;
+    }
+  }
+
   async resolveSlotSource(seg: VideoSegment, currentTime: number): Promise<SlotSource | null> {
     const asset = seg.assetId ? this.assetById.get(seg.assetId) : undefined;
     if (!asset) return null;
@@ -829,9 +864,7 @@ class RunState {
         cursor = openCursor(seg, asset.url, asset.duration, this.tracker, asset.id);
         this.cursors.open(seg.id, cursor);
         const targetSec = toSourceTime(seg, currentTime, asset.duration);
-        const frame = await frameAt(cursor, targetSec, () => {
-          this.decodedSourceFrames++;
-        });
+        const frame = await this.boundedFrameAt(cursor, targetSec, seg, asset.id);
         this.tracker.leave();
         this.tracker.add('cursor-open', performance.now() - openStarted);
         if (!frame) return null;
@@ -846,9 +879,7 @@ class RunState {
       // apart on a field run.
       const waitStarted = performance.now();
       const targetSec = toSourceTime(seg, currentTime, asset.duration);
-      const frame = await frameAt(cursor, targetSec, () => {
-        this.decodedSourceFrames++;
-      });
+      const frame = await this.boundedFrameAt(cursor, targetSec, seg, asset.id);
       this.tracker.add('decode-wait', performance.now() - waitStarted);
       if (!frame) return null;
       const w = frame.displayWidth;
@@ -1568,10 +1599,20 @@ async function runFrameLoopTick(ctx: FrameLoopTickContext): Promise<boolean> {
       try {
         draws = await ctx.spotPlayback.sampleAt(currentTime);
       } catch (e) {
-        failState.setFailure(
-          e instanceof SpotAssetError ? 'spot-asset-missing' : 'init-error',
-          e,
-        );
+        const stall = decodeStallFailureFrom(e, {
+          layer: 'spot',
+          segmentIndex: activeTracker?.context().segmentIndex ?? -1,
+          assetId: null,
+          openDecoders: decodeResourceCounts().decodersOpen,
+        });
+        if (stall) {
+          failState.setFailure(decodeStallVia(stall), stall);
+        } else {
+          failState.setFailure(
+            e instanceof SpotAssetError ? 'spot-asset-missing' : 'init-error',
+            e,
+          );
+        }
         return false;
       }
       ctx.spotRenderer.render(draws, width, height);
@@ -1879,6 +1920,7 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
           typeof navigator !== 'undefined' ? navigator.userAgent : undefined,
         ),
         stallBoundMs: DECODE_STALL_BOUND_MS,
+        isCancelled: () => cancelRequested,
       });
       activeSpotPlayback = spotPlayback;
     } catch (e) {
@@ -2246,7 +2288,9 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
       // reported failure.
       // WS3 Defect 1b/3 — a flush that never returned gets its OWN via, so the
       // payload names the flush rather than reading as a generic 'thrown'.
-      const via: ExportFailureVia = e instanceof EncoderFlushTimeoutError || e instanceof FlushSalvageBoundError
+      const via: ExportFailureVia = e instanceof DecodeStalledFailure
+        ? decodeStallVia(e)
+        : e instanceof EncoderFlushTimeoutError || e instanceof FlushSalvageBoundError
         ? 'flush-timeout'
         : e instanceof GlContextLostError
           ? 'gl-context-lost'
@@ -2375,6 +2419,9 @@ self.onmessage = (ev: MessageEvent<ExportWorkerInboundMessage>) => {
     });
   } else if (data.type === 'cancel') {
     cancelRequested = true;
+    // A frame parked on a silent decoder re-reads `cancelRequested` now,
+    // rather than after the stall bound.
+    wakeParkedDecodes();
   } else if (data.type === 'append-ack') {
     activeAppendBackpressureGate?.ack(data.bytesAcked);
   }

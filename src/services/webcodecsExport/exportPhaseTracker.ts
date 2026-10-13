@@ -83,6 +83,11 @@ export class ExportPhaseTracker {
     this.instrumentationMs += this.now() - t0;
   }
 
+  /** The segment index / asset id the next phase row will carry. */
+  context(): { segmentIndex: number; assetId: string | null } {
+    return { segmentIndex: this.segmentIndex, assetId: this.assetId };
+  }
+
   setFramesEncoded(n: number): void {
     const t0 = this.now();
     this.framesEncoded = n;
