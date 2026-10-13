@@ -68,7 +68,7 @@
 
 import type { Asset, HeadingOverlay, Project, TextOverlay, VideoSegment } from '../../types';
 import { validateSpotAssets } from './spotAssetGuard';
-import { evaluateSpotPathRefusal, hasSpotRenderWork, specEndSec, type SpotRenderSpec } from './spotRenderSpec';
+import { anySpotOverlapsSpan, evaluateSpotPathRefusal, hasSpotRenderWork, specEndSec, type SpotRenderSpec } from './spotRenderSpec';
 import {
   encodeSegment,
   encodePlainVideoSegment,
@@ -522,11 +522,15 @@ function computeIndividualTier(
   next: VideoSegment | undefined,
   project: Project,
   assetMap: Map<string, Asset>,
+  spotRenderSpecs?: readonly SpotRenderSpec[],
 ): Tier {
   const asset = segment.assetId ? assetMap.get(segment.assetId) : undefined;
-  const isPlain =
+  // A segment under a spot window is never plain: only the gl path draws spots, so it takes the
+  // gl-or-canvas branch (canvas keeps refusing in the spot guard, which names the segment).
+  const underSpot = anySpotOverlapsSpan(spotRenderSpecs, segment.startTime, segment.startTime + segment.duration);
+  const isPlain = !underSpot && (
     (!!asset && asset.type === 'video' && isPlainVideoSegment(segment, prev, next, project)) ||
-    (!!asset && asset.type === 'image' && isPlainImageSegment(segment, prev, next, project));
+    (!!asset && asset.type === 'image' && isPlainImageSegment(segment, prev, next, project)));
   if (isPlain) return 'plain';
   return isGlCompositableSegment(segment, project, { prev, next }) ? 'gl' : 'canvas';
 }
@@ -620,12 +624,16 @@ interface RoutingResult {
   tiers: Tier[];
 }
 
-function routeSegments(project: Project, assetMap: Map<string, Asset>): RoutingResult | { error: ExportError } {
+function routeSegments(
+  project: Project,
+  assetMap: Map<string, Asset>,
+  spotRenderSpecs?: readonly SpotRenderSpec[],
+): RoutingResult | { error: ExportError } {
   const segments = project.segments;
   const n = segments.length;
   const individualTiers: Tier[] = new Array(n);
   for (let i = 0; i < n; i++) {
-    individualTiers[i] = computeIndividualTier(segments[i]!, segments[i - 1], segments[i + 1], project, assetMap);
+    individualTiers[i] = computeIndividualTier(segments[i]!, segments[i - 1], segments[i + 1], project, assetMap, spotRenderSpecs);
   }
   const finalTiers = groupConnectedComponents(segments, individualTiers, project);
 
@@ -967,9 +975,13 @@ function countTiers(tiers: readonly WebCodecsTier[]): { plain: number; gl: numbe
 }
 
 /** Pure routing preview — same predicates the live orchestrator uses. */
-export function planWebCodecsExport(project: Project, fps: number): WebCodecsRoutingSummary | { error: ExportError } {
+export function planWebCodecsExport(
+  project: Project,
+  fps: number,
+  spotRenderSpecs?: readonly SpotRenderSpec[] | null,
+): WebCodecsRoutingSummary | { error: ExportError } {
   const assetMap = new Map<string, Asset>(project.assets.map((a) => [a.id, a]));
-  const routing = routeSegments(project, assetMap);
+  const routing = routeSegments(project, assetMap, spotRenderSpecs ?? undefined);
   if ('error' in routing) return routing;
   const pieces = buildPiecePlans(project, routing.tiers, fps, assetMap);
   const pieceCounts = { plain: 0, gl: 0, canvas: 0 };
@@ -3161,7 +3173,7 @@ async function exportProjectWebCodecsRun(
     }
   }
 
-  const routing = routeSegments(project, assetMap);
+  const routing = routeSegments(project, assetMap, spotRenderSpecs);
   if ('error' in routing) {
     return { ok: false, error: routing.error };
   }

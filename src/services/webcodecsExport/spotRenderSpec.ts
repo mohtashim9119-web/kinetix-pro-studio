@@ -108,6 +108,29 @@ export function rangesOverlap(a0: number, a1: number, b0: number, b1: number): b
   return a0 < b1 && b0 < a1;
 }
 
+/** Tolerance for "overlaps": a spot ending where a segment starts (to float noise) only touches it. */
+export const SPOT_OVERLAP_EPS_SEC = 1e-6;
+
+/** True when ANY spec's window overlaps [spanStart, spanEnd). The ONE overlap rule shared by the
+ *  router (a segment under a spot is never plain) and the refusal guard, so they cannot disagree. */
+export function anySpotOverlapsSpan(
+  specs: readonly SpotRenderSpec[] | null | undefined,
+  spanStart: number,
+  spanEnd: number,
+): boolean {
+  return findOverlappingSpot(specs, spanStart, spanEnd) !== undefined;
+}
+
+export function findOverlappingSpot(
+  specs: readonly SpotRenderSpec[] | null | undefined,
+  spanStart: number,
+  spanEnd: number,
+): SpotRenderSpec | undefined {
+  return (specs ?? []).find(
+    (s) => s.startSec < spanEnd - SPOT_OVERLAP_EPS_SEC && spanStart < specEndSec(s) - SPOT_OVERLAP_EPS_SEC,
+  );
+}
+
 export function evaluateSpotPathRefusal(
   project: { segments: ReadonlyArray<{ startTime: number; duration: number }> },
   specs: readonly SpotRenderSpec[] | null | undefined,
@@ -137,7 +160,7 @@ export function evaluateSpotPathRefusal(
     const p0 = segs[0]!.startTime;
     const last = segs[segs.length - 1]!;
     const p1 = last.startTime + last.duration;
-    const hit = list.find((s) => rangesOverlap(s.startSec, specEndSec(s), p0, p1));
+    const hit = findOverlappingSpot(list, p0, p1);
     if (hit) {
       return {
         path: piece.tier,

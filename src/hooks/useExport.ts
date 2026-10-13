@@ -723,7 +723,7 @@ export function useExport(
     // further down (that one only runs `if (useWebCodecsPath)`, for resume
     // discovery) rather than hoisting that call, to keep this addition from
     // touching the resume-discovery code path at all.
-    const pathSelectionRouting = planWebCodecsExport(snap, fps);
+    const pathSelectionRouting = planWebCodecsExport(snap, fps, snapshot.spotRenderSpecs);
     const routingForDiagnostics = 'error' in pathSelectionRouting ? null : pathSelectionRouting;
     const capabilityDiagnosis = diagnoseWebCodecsExportCapability();
 
@@ -875,7 +875,7 @@ export function useExport(
       if (freshSessionId) recordExportSessionCreated(freshSessionId, Date.now(), snap.id);
       // The run's own sessions are interests until the run settles (runClaimed's finally).
       interests?.setSessions(sessionInterestOwner, freshSessionId ? [freshSessionId] : []);
-      const routing = planWebCodecsExport(snap, fps);
+      const routing = planWebCodecsExport(snap, fps, specs);
       const pieceExpectedFrames = 'error' in routing ? [] : routing.pieces.map((p) => p.expectedFrames);
       const { offer, notice } = pieceExpectedFrames.length === 0
         ? { offer: null, notice: null }
