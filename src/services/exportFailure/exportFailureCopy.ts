@@ -117,6 +117,22 @@ export const HARDWARE_FAILOVER_NOTE =
 export const GRAPHICS_CONTEXT_LOST_NOTE =
   'The graphics context was lost during this export.';
 
+/**
+ * Refusals decided before any encoding starts: nothing was rendered, no checkpoint existed to
+ * lose, and the fresh session was released. They show "nothing was started" instead of the
+ * resume-unavailable copy, which describes a run that failed after it began.
+ */
+export const PREFLIGHT_REFUSAL_KINDS = ['spot_path_refused'] as const;
+
+export const PREFLIGHT_REFUSAL_COPY = {
+  title: 'Nothing was started',
+  body: 'The export was refused before encoding began, so nothing was rendered and nothing was lost. Fix what is named above, then export again.',
+} as const;
+
+export function isPreflightRefusalKind(kind: ExportErrorKind): boolean {
+  return (PREFLIGHT_REFUSAL_KINDS as readonly ExportErrorKind[]).includes(kind);
+}
+
 export function isNeverResumeKind(kind: ExportErrorKind): boolean {
   return (NEVER_RESUME_KINDS as readonly ExportErrorKind[]).includes(kind);
 }

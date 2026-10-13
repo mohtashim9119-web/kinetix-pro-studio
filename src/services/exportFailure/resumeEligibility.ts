@@ -13,6 +13,7 @@ import {
   GRAPHICS_CONTEXT_LOST_NOTE,
   HARDWARE_FAILOVER_NOTE,
   isNeverResumeKind,
+  isPreflightRefusalKind,
 } from './exportFailureCopy';
 
 export type DiskFullCardVariant = 'preflight' | 'mid-export';
@@ -108,6 +109,8 @@ export interface ExportFailurePresentation {
   /** Derived convenience flag — `primarySlot === 'resume'`. */
   offerResume: boolean;
   showResumeUnavailable: boolean;
+  /** A refusal decided before encoding: show "nothing was started", never resume-unavailable. */
+  showPreflightRefusal: boolean;
   showDegradedRecovery: boolean;
   showPreflightDisk: boolean;
   showSave: false;
@@ -138,7 +141,8 @@ export function resolveExportFailurePresentation(
   // Row 5 (cancelled) renders no unavailable card — Close only. Row 6 (no
   // match) does. `isNeverResumeKind` still includes asset_missing, but that
   // kind never reaches here with primarySlot === 'none' (row 1 wins first).
-  const showResumeUnavailable = primarySlot === 'none' && input.kind !== 'cancelled';
+  const showPreflightRefusal = isPreflightRefusalKind(input.kind);
+  const showResumeUnavailable = primarySlot === 'none' && input.kind !== 'cancelled' && !showPreflightRefusal;
 
   return {
     title,
@@ -147,6 +151,7 @@ export function resolveExportFailurePresentation(
     primarySlot,
     offerResume,
     showResumeUnavailable,
+    showPreflightRefusal,
     showDegradedRecovery,
     showPreflightDisk: preflight,
     showSave: false,

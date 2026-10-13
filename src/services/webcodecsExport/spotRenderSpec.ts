@@ -132,7 +132,10 @@ export function findOverlappingSpot(
 }
 
 export function evaluateSpotPathRefusal(
-  project: { segments: ReadonlyArray<{ startTime: number; duration: number }> },
+  project: {
+    segments: ReadonlyArray<{ startTime: number; duration: number }>;
+    assets?: ReadonlyArray<{ id: string; name?: string }>;
+  },
   specs: readonly SpotRenderSpec[] | null | undefined,
   args: {
     gateOpen: boolean;
@@ -162,9 +165,25 @@ export function evaluateSpotPathRefusal(
     const p1 = last.startTime + last.duration;
     const hit = findOverlappingSpot(list, p0, p1);
     if (hit) {
+      // Name every segment this spot sits on among the pieces that cannot draw it, so the
+      // operator knows exactly what to change or where to move the spot.
+      const segmentNumbers: number[] = [];
+      for (const other of args.routing.pieces) {
+        if (other.tier === 'gl') continue;
+        for (let k = 0; k < other.segmentCount; k++) {
+          const seg = project.segments[other.startIndex + k];
+          if (seg && anySpotOverlapsSpan([hit], seg.startTime, seg.startTime + seg.duration)) {
+            segmentNumbers.push(other.startIndex + k + 1);
+          }
+        }
+      }
+      const clip = project.assets?.find((a) => a.id === hit.assetId)?.name ?? hit.assetId;
+      const where = segmentNumbers.length === 1 ? `segment ${segmentNumbers[0]}` : `segments ${segmentNumbers.join(', ')}`;
       return {
         path: piece.tier,
-        message: `Export refused: spot asset "${hit.assetId}" overlaps the ${piece.tier} export path, which cannot render spots.`,
+        message:
+          `Export refused: spot "${clip}" overlaps ${where}, which would export on the ${piece.tier} path that cannot render spots. ` +
+          'Move the spot onto a segment that can render it, or remove the effect on that segment.',
       };
     }
   }

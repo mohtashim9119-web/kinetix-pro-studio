@@ -773,7 +773,13 @@ export function useExport(
         resumeRefusalNotice: null,
         orphanSweepNotice: null,
         cleanupNotices: [],
-        error: { kind: 'spot_path_refused', message: spotPathRefusal.message, spotPathRefusal },
+        error: {
+          kind: 'spot_path_refused',
+          message: spotPathRefusal.message,
+          spotPathRefusal,
+          // Why this path was chosen, so the refusal is diagnosable from its own payload.
+          liveness: { lastPhase: null, msSinceLastPhaseChange: null, pieceIndex: null, framesEncoded: null, exportPathSelection },
+        },
         elapsedSec: prev.elapsedSec,
       }));
       return;

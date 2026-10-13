@@ -15,6 +15,7 @@ import {
   type DiskFullCardVariant,
 } from '../../services/exportFailure/resumeEligibility';
 import { ExportResumeUnavailableCard } from './ExportResumeUnavailableCard';
+import { PREFLIGHT_REFUSAL_COPY } from '../../services/exportFailure/exportFailureCopy';
 
 export interface ExportFailureMessageProps {
   kind: ExportErrorKind;
@@ -136,6 +137,19 @@ export function ExportFailureMessage({
           </dl>
         )}
 
+        {presentation.showPreflightRefusal && (
+          <>
+            {rawError && (
+              <p data-testid="export-failure-refusal-detail" className="text-[11px] text-white mb-4">
+                {rawError}
+              </p>
+            )}
+            <div data-testid="export-preflight-refusal" role="status" className="mb-4 border border-amber-500/40 bg-amber-500/10 rounded-lg px-3 py-2 text-left">
+              <p className="text-[9px] font-black uppercase tracking-widest text-amber-300 mb-1">{PREFLIGHT_REFUSAL_COPY.title}</p>
+              <p className="text-[11px] text-amber-100">{PREFLIGHT_REFUSAL_COPY.body}</p>
+            </div>
+          </>
+        )}
         {presentation.showResumeUnavailable && <div className="mb-4"><ExportResumeUnavailableCard /></div>}
 
         {/*

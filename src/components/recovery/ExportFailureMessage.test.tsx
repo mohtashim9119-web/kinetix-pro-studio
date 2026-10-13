@@ -304,6 +304,24 @@ describe('ExportFailureMessage — Ruling A primary-slot ladder (a remedy for th
   });
 });
 
+describe('ExportFailureMessage — a pre-flight refusal started nothing', () => {
+  it('spot_path_refused shows "nothing started" copy and the refusal detail, never the resume-unavailable card', async () => {
+    await renderMessage({ kind: 'spot_path_refused', retentionAttempted: false, manifestPresent: false, rawError: 'Export refused: spot "avatar-02.mp4" overlaps segment 4' });
+    expect(container.querySelector('[data-testid="export-resume-unavailable"]')).toBeNull();
+    const card = container.querySelector('[data-testid="export-preflight-refusal"]');
+    expect(card).not.toBeNull();
+    expect(card!.textContent).toMatch(/nothing was started/i);
+    expect(card!.textContent).not.toMatch(/could not be preserved|no checkpoint/i);
+    expect(container.querySelector('[data-testid="export-failure-refusal-detail"]')!.textContent).toContain('segment 4');
+  });
+
+  it('pin: a post-run failure still shows the resume-unavailable copy', async () => {
+    await renderMessage({ kind: 'encode', retentionAttempted: false, manifestPresent: false });
+    expect(container.querySelector('[data-testid="export-resume-unavailable"]')!.textContent).toMatch(/could not be preserved/);
+    expect(container.querySelector('[data-testid="export-preflight-refusal"]')).toBeNull();
+  });
+});
+
 describe('ExportFailureMessage — Ruling B: reclaimable-bytes pending/resolved stability', () => {
   it('renders Reclaim disabled with pending copy while the byte count is in flight, then keeps the SAME slot once resolved', async () => {
     const fake = createExportFailureActionsFake();

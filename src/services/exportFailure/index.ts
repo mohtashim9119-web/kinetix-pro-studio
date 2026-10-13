@@ -6,6 +6,8 @@ export {
   NEVER_RESUME_KINDS,
   RESUME_UNAVAILABLE_COPY,
   isNeverResumeKind,
+  isPreflightRefusalKind,
+  PREFLIGHT_REFUSAL_COPY,
   type ExportFailureCopyMap,
   type ExportFailureKindCopy,
 } from './exportFailureCopy';
