@@ -138,4 +138,14 @@ describe('spot-aware routing', () => {
       expect(evaluateSpotPathRefusal(p, specs, { gateOpen: true, routing: r })).toBeNull();
     }
   });
+
+  it('(9) a spot changes the piece plan itself, so a checkpoint cut from a spot-blind plan cannot be matched piece for piece', () => {
+    const p = project(plainSix());
+    const blind = plan(p);
+    const aware = plan(p, [spec(4, 3.5)]);
+    expect(aware.pieces.map((x) => x.tier)).not.toEqual(blind.pieces.map((x) => x.tier));
+    // resume discovery compares per-piece expected frames and piece count against the checkpoint
+    expect(aware.pieces.map((x) => x.startIndex)).toEqual(blind.pieces.map((x) => x.startIndex));
+    expect(aware.pieceCounts).toEqual({ plain: 5, gl: 1, canvas: 0 });
+  });
 });
