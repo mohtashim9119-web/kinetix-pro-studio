@@ -121,4 +121,8 @@ jobs:
           echo "$probe" | grep -q 'Duration: 00:00:0' || { echo "::error::no Duration in probe"; exit 1; }
           echo "$probe" | grep -q 'Video: h264' || { echo "::error::no h264 video stream"; exit 1; }
           echo "$probe" | grep -q 'Audio: aac' || { echo "::error::no aac audio stream"; exit 1; }
-          echo "$probe" | grep -q '30 fps' || { echo "::error::no 30 fps in probe"; exit 1; }
+          # As ffmpeg.rs parse_ffmpeg_fps: the first number before " fps" (> 0).
+          # A -shortest mp4 reports e.g. "29.87 fps, 30 tbr" — the app accepts that.
+          fps=$(echo "$probe" | grep -oE '[0-9.]+ fps' | head -1 | cut -d' ' -f1)
+          echo "parsed fps: $fps"
+          awk -v f="$fps" 'BEGIN { exit !(f > 29 && f < 31) }' || { echo "::error::parsed fps '$fps' not ~30"; exit 1; }
