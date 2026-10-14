@@ -1,0 +1,124 @@
+name: macOS arm64 ffmpeg smoke
+
+# Runs the pinned arm64 ffmpeg sidecar on real Apple Silicon (GitHub's
+# macos-14 runners are M1) through the same argument shapes the app's
+# WebCodecs export path hands to `ffmpeg_exec` (src-tauri/src/ffmpeg.rs):
+#   - piece remux MP4 -> annexb   exportPipelineWebCodecs.ts:2738
+#   - video premux (-r, copy)     muxOnly.ts buildVideoRemuxArgs
+#   - audio mux (copy + aac)      muxOnly.ts buildAudioMuxArgs
+#   - duration/fps probe (-i)     ffmpeg.rs ffmpeg_probe_duration_secs / ffmpeg_probe_fps
+# Covers the sidecar binary only — not the app, the GPU/ANGLE compositing
+# path, or WebCodecs encoding (no display on CI). URL + SHA256 must match
+# build.yml's `Provision ffmpeg sidecar (macOS universal)` step.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: macos-14
+    env:
+      FFMPEG_ARM64_URL: https://ffmpeg.martin-riedl.de/download/macos/arm64/1789931890_9.0.2/ffmpeg.zip
+      FFMPEG_ARM64_SHA256: c8ed4c4e6978a03c485edbfe4e0a5dc2380f8a30bba5150531b31b094492d924
+      FFMPEG_X64_URL: https://ffmpeg.martin-riedl.de/download/macos/amd64/1789931006_9.0.2/ffmpeg.zip
+      FFMPEG_X64_SHA256: 7c6b4125b191cbf773832dc51f424cf2b6bb7da43007d1e066f95909e47cacd4
+    defaults:
+      run:
+        shell: bash
+        working-directory: /tmp
+    steps:
+      - name: Assert the runner is Apple Silicon
+        run: |
+          set -euo pipefail
+          arch=$(uname -m)
+          echo "uname -m: $arch"
+          sysctl -n machdep.cpu.brand_string
+          if [ "$arch" != "arm64" ]; then
+            echo "::error::runner is $arch, not arm64 — this run proves nothing about Apple Silicon"
+            exit 1
+          fi
+
+      - name: Download and verify the pinned arm64 (and x86_64) archives
+        run: |
+          set -euo pipefail
+          fetch() {
+            local url=$1 sha=$2 out=$3
+            curl -fSL --retry 3 --retry-delay 10 -o "$out" "$url"
+            echo "$sha  $out" | shasum -a 256 -c -
+            unzip -tq "$out"
+          }
+          fetch "$FFMPEG_ARM64_URL" "$FFMPEG_ARM64_SHA256" /tmp/ffmpeg-arm64.zip
+          fetch "$FFMPEG_X64_URL" "$FFMPEG_X64_SHA256" /tmp/ffmpeg-x64.zip
+          unzip -o /tmp/ffmpeg-arm64.zip -d /tmp/arm64/
+          unzip -o /tmp/ffmpeg-x64.zip -d /tmp/x64/
+
+      - name: Confirm the binary is arm64
+        run: |
+          set -euo pipefail
+          file /tmp/arm64/ffmpeg
+          file /tmp/arm64/ffmpeg | grep -q 'arm64'
+          lipo /tmp/arm64/ffmpeg -verify_arch arm64
+          # The app ships the lipo'd universal binary, as build.yml makes it.
+          lipo -create /tmp/arm64/ffmpeg /tmp/x64/ffmpeg -output /tmp/ffmpeg-universal
+          chmod +x /tmp/ffmpeg-universal
+          lipo -info /tmp/ffmpeg-universal
+
+      - name: ffmpeg -version (thin arm64, then universal's arm64 slice)
+        run: |
+          set -euo pipefail
+          /tmp/arm64/ffmpeg -version
+          arch -arm64 /tmp/ffmpeg-universal -version | head -1
+
+      - name: Capability lists the app relies on
+        run: |
+          set -euo pipefail
+          F=/tmp/ffmpeg-universal
+          need() { # $1 = listing flag, $2 = name
+            local out; out=$(arch -arm64 "$F" -hide_banner "$1")
+            echo "$out" | grep -E "(^|[[:space:]])$2([[:space:]]|$)" || { echo "::error::$1 does not list $2"; exit 1; }
+          }
+          need -bsfs h264_mp4toannexb
+          need -bsfs h264_metadata
+          need -encoders aac
+          need -muxers h264
+          need -muxers mp4
+
+      - name: App argument shapes on a generated clip
+        run: |
+          set -euo pipefail
+          F="arch -arm64 /tmp/ffmpeg-universal"
+          mkdir -p /tmp/s && cd /tmp/s
+          nonempty() { [ -s "$1" ] || { echo "::error::$1 missing or empty"; exit 1; }; ls -l "$1"; }
+
+          # Fixture (not an app op): stands in for a WebCodecs-encoded H.264 piece
+          # and the voiceover (written extensionless, as the app writes it).
+          enc=libx264; $F -hide_banner -encoders | grep -q ' libx264 ' || enc=h264_videotoolbox
+          echo "fixture encoder: $enc"
+          $F -hide_banner -f lavfi -i testsrc2=size=640x360:rate=30 -t 3 -pix_fmt yuv420p -c:v $enc -y tier1_piece_0.mp4
+          $F -hide_banner -f lavfi -i sine=frequency=440:sample_rate=48000 -t 3 -f wav -y voiceover_audio
+          nonempty tier1_piece_0.mp4; nonempty voiceover_audio
+
+          # exportPipelineWebCodecs.ts:2738 — piece MP4 -> raw annexb
+          $F -i tier1_piece_0.mp4 -c copy -bsf:v h264_mp4toannexb -f h264 -y piece_0.h264
+          nonempty piece_0.h264
+          head -c 4 piece_0.h264 | xxd | grep -q '0000 0001' || { echo "::error::piece_0.h264 has no annexb start code"; exit 1; }
+
+          # concat_annexb_pieces is a Rust byte copy (ffmpeg.rs:1810), not ffmpeg.
+          cat piece_0.h264 piece_0.h264 > video_all.h264
+
+          # muxOnly.ts buildVideoRemuxArgs
+          $F -r 30 -i video_all.h264 -c:v copy -colorspace bt709 -color_primaries bt709 -color_trc bt709 -movflags +faststart -y video_all.h264.premux.mp4
+          nonempty video_all.h264.premux.mp4
+
+          # muxOnly.ts buildAudioMuxArgs
+          $F -i video_all.h264.premux.mp4 -i voiceover_audio -c:v copy -colorspace bt709 -color_primaries bt709 -color_trc bt709 -c:a aac -b:a 192k -shortest -movflags +faststart -y export_final.mp4
+          nonempty export_final.mp4
+
+          # ffmpeg.rs ffmpeg_probe_duration_secs / ffmpeg_probe_fps: `-hide_banner -i <file>`
+          # exits non-zero by design; the app parses stderr.
+          probe=$($F -hide_banner -i export_final.mp4 2>&1 || true)
+          echo "$probe"
+          echo "$probe" | grep -q 'Duration: 00:00:0' || { echo "::error::no Duration in probe"; exit 1; }
+          echo "$probe" | grep -q 'Video: h264' || { echo "::error::no h264 video stream"; exit 1; }
+          echo "$probe" | grep -q 'Audio: aac' || { echo "::error::no aac audio stream"; exit 1; }
+          echo "$probe" | grep -q '30 fps' || { echo "::error::no 30 fps in probe"; exit 1; }
