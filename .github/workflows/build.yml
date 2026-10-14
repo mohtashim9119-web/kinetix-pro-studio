@@ -49,18 +49,49 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      # Both arches pinned to the same upstream ffmpeg (9.0.2) from one
+      # builder, by versioned URL and SHA256. The previous x86_64 source
+      # (evermeet.cx/ffmpeg/getrelease/zip) now answers HTTP 410 with a JSON
+      # body, which reached unzip and failed the job with exit code 9. To
+      # move versions: update all four values below together, taking each
+      # SHA256 from the `ffmpeg.zip.sha256` file next to its zip.
+      - name: Cache ffmpeg archives (macOS)
+        if: matrix.os == 'macos-latest'
+        uses: actions/cache@v4
+        with:
+          path: ~/ffmpeg-dl
+          key: ffmpeg-macos-9.0.2-1789931890-1789931006
+
       - name: Provision ffmpeg sidecar (macOS universal)
         if: matrix.os == 'macos-latest'
+        env:
+          FFMPEG_ARM64_URL: https://ffmpeg.martin-riedl.de/download/macos/arm64/1789931890_9.0.2/ffmpeg.zip
+          FFMPEG_ARM64_SHA256: c8ed4c4e6978a03c485edbfe4e0a5dc2380f8a30bba5150531b31b094492d924
+          FFMPEG_X64_URL: https://ffmpeg.martin-riedl.de/download/macos/amd64/1789931006_9.0.2/ffmpeg.zip
+          FFMPEG_X64_SHA256: 7c6b4125b191cbf773832dc51f424cf2b6bb7da43007d1e066f95909e47cacd4
         run: |
-          mkdir -p src-tauri/binaries
+          mkdir -p src-tauri/binaries ~/ffmpeg-dl
 
-          # Download arm64 ffmpeg
-          curl -L -o /tmp/ffmpeg-arm64.zip https://www.osxexperts.net/ffmpeg711arm.zip
-          unzip /tmp/ffmpeg-arm64.zip -d /tmp/ffmpeg-arm64/
+          # -f: an HTTP error fails here, never as a non-archive at unzip.
+          # A cached archive is re-verified; a mismatch is re-downloaded once.
+          fetch() {
+            local url=$1 sha=$2 out=$3
+            if [ ! -f "$out" ] || ! echo "$sha  $out" | shasum -a 256 -c -; then
+              rm -f "$out"
+              curl -fSL --retry 3 --retry-delay 10 -o "$out" "$url"
+              echo "$sha  $out" | shasum -a 256 -c -
+            fi
+            unzip -tq "$out"
+          }
 
-          # Download x86_64 ffmpeg
-          curl -L -o /tmp/ffmpeg-x64.zip https://evermeet.cx/ffmpeg/getrelease/zip
-          unzip /tmp/ffmpeg-x64.zip -d /tmp/ffmpeg-x64/
+          fetch "$FFMPEG_ARM64_URL" "$FFMPEG_ARM64_SHA256" ~/ffmpeg-dl/ffmpeg-arm64.zip
+          unzip -o ~/ffmpeg-dl/ffmpeg-arm64.zip -d /tmp/ffmpeg-arm64/
+
+          fetch "$FFMPEG_X64_URL" "$FFMPEG_X64_SHA256" ~/ffmpeg-dl/ffmpeg-x64.zip
+          unzip -o ~/ffmpeg-dl/ffmpeg-x64.zip -d /tmp/ffmpeg-x64/
+
+          lipo -verify_arch arm64 /tmp/ffmpeg-arm64/ffmpeg
+          lipo -verify_arch x86_64 /tmp/ffmpeg-x64/ffmpeg
 
           # Combine into a universal binary using lipo
           lipo -create \
