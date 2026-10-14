@@ -2,6 +2,11 @@ name: Build desktop installers
 
 on:
   workflow_dispatch:
+    inputs:
+      platform:
+        type: choice
+        options: [both, macos, windows]
+        default: both
 
 concurrency:
   group: build-${{ github.ref }}
@@ -11,18 +16,17 @@ jobs:
   build:
     strategy:
       fail-fast: false
+      # One job, one matrix: a job-level `if` cannot see `matrix`, so the
+      # `platform` input selects entries here (`inputs` is available in
+      # `strategy`). The two entries are the previous YAML values verbatim,
+      # written as JSON; Windows' artifact-path keeps its trailing newline.
+      # `both` yields both entries, as before.
       matrix:
-        include:
-          - os: macos-latest
-            target: universal-apple-darwin
-            artifact-name: kinetix-macos-universal
-            artifact-path: src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            artifact-name: kinetix-windows-x64
-            artifact-path: |
-              src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi
-              src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
+        include: >-
+          ${{ fromJSON(format('[{0}{1}{2}]',
+            inputs.platform != 'windows' && '{"os":"macos-latest","target":"universal-apple-darwin","artifact-name":"kinetix-macos-universal","artifact-path":"src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg"}' || '',
+            inputs.platform == 'both' && ',' || '',
+            inputs.platform != 'macos' && '{"os":"windows-latest","target":"x86_64-pc-windows-msvc","artifact-name":"kinetix-windows-x64","artifact-path":"src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi\nsrc-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe\n"}' || '')) }}
 
     runs-on: ${{ matrix.os }}
 
@@ -55,6 +59,11 @@ jobs:
       # body, which reached unzip and failed the job with exit code 9. To
       # move versions: update all four values below together, taking each
       # SHA256 from the `ffmpeg.zip.sha256` file next to its zip.
+      # Revert path: before 9.0.2 the arm64 half was ffmpeg 7.1.1 from
+      # https://www.osxexperts.net/ffmpeg711arm.zip (no published SHA256);
+      # the matching Intel 7.1.1 is https://evermeet.cx/ffmpeg/ffmpeg-7.1.1.zip
+      # (+ .sig). The arm64 9.0.2 binary cannot execute on the Intel dev Mac,
+      # so its Apple Silicon behaviour is unverified until a field export.
       - name: Cache ffmpeg archives (macOS)
         if: matrix.os == 'macos-latest'
         uses: actions/cache@v4
@@ -90,8 +99,8 @@ jobs:
           fetch "$FFMPEG_X64_URL" "$FFMPEG_X64_SHA256" ~/ffmpeg-dl/ffmpeg-x64.zip
           unzip -o ~/ffmpeg-dl/ffmpeg-x64.zip -d /tmp/ffmpeg-x64/
 
-          lipo -verify_arch arm64 /tmp/ffmpeg-arm64/ffmpeg
-          lipo -verify_arch x86_64 /tmp/ffmpeg-x64/ffmpeg
+          lipo /tmp/ffmpeg-arm64/ffmpeg -verify_arch arm64
+          lipo /tmp/ffmpeg-x64/ffmpeg -verify_arch x86_64
 
           # Combine into a universal binary using lipo
           lipo -create \
@@ -377,7 +386,14 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path src-tauri/binaries | Out-Null
-          Invoke-WebRequest -Uri "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip" -OutFile "$env:TEMP\ffmpeg-win.zip"
+          # Pinned to the 9.0.2 that shipped in 1.7.0 (byte-identical to what
+          # gyan.dev's unpinned ffmpeg-release-essentials.zip served then),
+          # from the versioned GitHub release asset. Same version as macOS.
+          $url = "https://github.com/GyanD/codexffmpeg/releases/download/9.0.2/ffmpeg-9.0.2-essentials_build.zip"
+          $sha = "60f467265b1e312373dbcd92200c2618a74850f98d3d078e94296bb3fa2047ba"
+          Invoke-WebRequest -Uri $url -OutFile "$env:TEMP\ffmpeg-win.zip" -MaximumRetryCount 3 -RetryIntervalSec 10
+          $got = (Get-FileHash -Algorithm SHA256 "$env:TEMP\ffmpeg-win.zip").Hash.ToLower()
+          if ($got -ne $sha) { Write-Error "ffmpeg-win.zip SHA256 $got != $sha"; exit 1 }
           Expand-Archive -Path "$env:TEMP\ffmpeg-win.zip" -DestinationPath "$env:TEMP\ffmpeg-windows" -Force
           $ffmpegExe = Get-ChildItem -Path "$env:TEMP\ffmpeg-windows" -Filter "ffmpeg.exe" -Recurse | Select-Object -First 1
           Copy-Item -Path $ffmpegExe.FullName -Destination "src-tauri/binaries/ffmpeg-x86_64-pc-windows-msvc.exe"
