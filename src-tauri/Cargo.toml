@@ -27,6 +27,7 @@ rfd = { version = "0.15", features = ["tokio"] }
 base64 = "0.22"
 reqwest = { version = "0.12", features = ["json", "gzip"] }
 tauri-plugin-shell = "2"
+tauri-plugin-opener = "2"
 
 # Optional: real ONNX forward pass for forced alignment (WS1 Task 5, Slice D2).
 # default-features = false + no api-NN feature keeps ort's own onnxruntime

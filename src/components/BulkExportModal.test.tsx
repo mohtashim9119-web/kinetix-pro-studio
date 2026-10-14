@@ -661,3 +661,95 @@ describe('BulkExportModal — a finished row carries its notice', () => {
     expect(container.querySelector('[data-testid="bulk-export-status-a"]')).toBeNull();
   });
 });
+
+describe('BulkExportModal — a finished row reveals its exported file', () => {
+  type Reveal = (path: string) => Promise<void>;
+  async function mountWith(runner: BulkExportRunner, reveal: Reveal): Promise<void> {
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+    await act(async () => {
+      root.render(<BulkExportModal runner={runner} workspaces={new WorkspaceRegistry(wsMem())} revealPath={reveal} />);
+    });
+  }
+  const tab = async (name: string): Promise<void> => {
+    await act(async () => { container.querySelector<HTMLButtonElement>(`[data-testid="bulk-export-tab-${name}"]`)!.click(); });
+  };
+  async function runWith(outcome: 'done' | 'failed' | 'hang', reveal: Reveal): Promise<BulkExportRunner> {
+    const projects = [project('a')];
+    const runner = new BulkExportRunner({
+      listProjects: () => projects.map(p => ({ id: p.id, name: p.name, lastExportPath: `/out/${p.id}.mp4` })),
+      loadProject: async id => projects.find(p => p.id === id) ?? null,
+      storage: mem(),
+      playChime: () => {},
+      fileExists: async () => false,
+      execute: () => outcome === 'hang' ? new Promise(() => {}) : Promise.resolve({ status: outcome, detail: 'x' }),
+    });
+    await mountWith(runner, reveal);
+    act(() => { selectAll(runner); });
+    await act(async () => { await runner.startSelected(); });
+    await act(async () => { await new Promise(r => setTimeout(r, 10)); });
+    return runner;
+  }
+
+  it('a Finished row has a keyboard-reachable, labelled reveal action that shows on hover and on focus', async () => {
+    await runWith('done', vi.fn(async () => {}));
+    await tab('finished');
+    const btn = container.querySelector<HTMLButtonElement>('[data-testid="bulk-export-reveal-a"]');
+    expect(btn).not.toBeNull();
+    expect(btn!.tagName).toBe('BUTTON');
+    expect(btn!.getAttribute('aria-label')).toBe('Open file location of a');
+    expect(btn!.title).toBe('Open file location');
+    // `.kxd-xrow-open` is the shared hover / focus-within reveal (ProjectDashboard.css).
+    expect(btn!.classList.contains('kxd-xrow-open')).toBe(true);
+    btn!.focus();
+    expect(document.activeElement).toBe(btn);
+  });
+
+  it('a queued / running row and a failed row have no reveal action', async () => {
+    await runWith('hang', vi.fn(async () => {}));
+    await tab('active');
+    expect(container.querySelector('[data-testid^="bulk-export-reveal-"]')).toBeNull();
+    act(() => root.unmount()); container.remove();
+    await runWith('failed', vi.fn(async () => {}));
+    await tab('failed');
+    expect(container.querySelector('[data-testid="bulk-export-row-a"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid^="bulk-export-reveal-"]')).toBeNull();
+  });
+
+  it('activating it reveals that row\'s exact exported path', async () => {
+    const reveal = vi.fn(async () => {});
+    const runner = await runWith('done', reveal);
+    expect(runner.snapshot().find(r => r.id === 'a')!.outputPath).toBe('/out/a.mp4');
+    await tab('finished');
+    await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="bulk-export-reveal-a"]')!.click(); });
+    expect(reveal).toHaveBeenCalledTimes(1);
+    expect(reveal).toHaveBeenCalledWith('/out/a.mp4');
+  });
+
+  it('a Finished row with no recorded path (an older batch) offers no reveal', async () => {
+    const storage = mem();
+    storage.setItem('kinetix:bulk-export-batch:v1', JSON.stringify({ rows: [{ id: 'a', name: 'a', selected: false, phase: 'done', message: 'Done', finishedAt: 1 }] }));
+    const reveal = vi.fn(async () => {});
+    const runner = new BulkExportRunner({
+      listProjects: () => [{ id: 'a', name: 'a' }], loadProject: async () => project('a'),
+      storage, playChime: () => {}, execute: async () => ({ status: 'done' }),
+    });
+    await mountWith(runner, reveal);
+    await tab('finished');
+    expect(container.querySelector('[data-testid="bulk-export-row-a"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="bulk-export-reveal-a"]')).toBeNull();
+    expect(reveal).not.toHaveBeenCalled();
+  });
+
+  it('a failed reveal (file moved / deleted) shows a message; the row and its state are unchanged', async () => {
+    const runner = await runWith('done', vi.fn(async () => { throw new Error('No such file'); }));
+    await tab('finished');
+    const before = runner.snapshot().find(r => r.id === 'a');
+    await act(async () => { container.querySelector<HTMLButtonElement>('[data-testid="bulk-export-reveal-a"]')!.click(); });
+    await act(async () => { await new Promise(r => setTimeout(r, 0)); });
+    expect(container.querySelector('[data-testid="bulk-export-reveal-error-a"]')!.textContent).toContain('Could not open the file location');
+    expect(container.querySelector('[data-testid="bulk-export-row-a"]')).not.toBeNull();
+    expect(runner.snapshot().find(r => r.id === 'a')).toEqual(before);
+  });
+});

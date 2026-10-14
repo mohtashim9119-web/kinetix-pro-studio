@@ -35,6 +35,8 @@ export interface BulkExportRow {
   finishedAt?: number;
   /** How long that export took, ms (its own run, queue wait excluded). */
   exportMs?: number;
+  /** The file this row's export wrote (set on Done; one .mp4 per row). */
+  outputPath?: string;
 }
 
 /** Live numbers for the export that is running (never persisted). */
@@ -461,6 +463,7 @@ export class BulkExportRunner {
         if (row.phase !== 'done') {
           row.finishedAt = item.finishedAt ?? Date.now();
           row.exportMs = item.startedAt !== undefined ? Math.max(0, row.finishedAt - item.startedAt) : undefined;
+          row.outputPath = this.claimed.get(item.id);
         }
         row.phase = 'done'; row.message = item.detail ? `Done — ${item.detail}` : 'Done';
       }

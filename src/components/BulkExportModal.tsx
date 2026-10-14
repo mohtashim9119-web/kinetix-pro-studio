@@ -17,6 +17,7 @@ import { dropTarget, moveQueued } from './queueReorder';
 import { ConfirmDialog } from './ConfirmDialog';
 import { WorkspaceTabs } from './WorkspaceTabs';
 import { relinkPickFolder } from '../services/relinkNative';
+import { revealExportedFile } from '../services/revealExport';
 import {
   FPS_OPTIONS, RESOLUTION_OPTIONS, shortFolder, useWorkspaceExportSettings, workspaceExportSettings,
   type WorkspaceExportSettingsStore,
@@ -495,7 +496,7 @@ function toneOf(phase: BulkExportPhase | undefined): 'bad' | 'warn' | 'live' | '
 }
 
 export function BulkExportModal({
-  runner, hidden = false, workspaces: injectedWorkspaces, exportSettings, onOpenProject,
+  runner, hidden = false, workspaces: injectedWorkspaces, exportSettings, onOpenProject, revealPath = revealExportedFile,
 }: {
   runner: BulkExportRunner;
   /** Not on screen (another tab, or the editor is up). The queue runs regardless. */
@@ -506,6 +507,8 @@ export function BulkExportModal({
   exportSettings?: WorkspaceExportSettingsStore;
   /** Opens a project in the editor (the row's hover / focus action). */
   onOpenProject?: (id: string) => void;
+  /** Shows a finished row's exported file in Finder / Explorer (default: the opener plugin). */
+  revealPath?: (path: string) => Promise<void>;
 }): React.ReactElement {
   // Fresh on every open (the tab coming on screen): the catalog and every
   // Blocked row are re-read, never a snapshot from when the pane first mounted.
@@ -526,6 +529,14 @@ export function BulkExportModal({
     [catalog, metaById],
   ));
   const rows = useSyncExternalStore(l => runner.subscribe(l), () => runner.snapshot());
+  // A reveal that failed (file moved / deleted): a note on that row only — the row itself is untouched.
+  const [revealError, setRevealError] = useState<{ id: string; text: string } | null>(null);
+  const reveal = (id: string, path: string): void => {
+    setRevealError(null);
+    revealPath(path).catch((err: unknown) => {
+      setRevealError({ id, text: `Could not open the file location — ${err instanceof Error ? err.message : String(err)}` });
+    });
+  };
   const byId = useMemo(() => new Map(rows.map(r => [r.id, r])), [rows]);
   const liveProgress = useSyncExternalStore(l => runner.subscribeProgress(l), () => runner.progressSnapshot());
   // The count is what Start will run: selected Ready projects (the only
@@ -911,6 +922,18 @@ export function BulkExportModal({
                         <ExternalLink size={13} aria-hidden="true" />
                       </button>
                     )}
+                    {tab === 'finished' && row?.phase === 'done' && row.outputPath && (
+                      <button
+                        type="button"
+                        className="kxd-xrow-open"
+                        data-testid={`bulk-export-reveal-${p.id}`}
+                        aria-label={`Open file location of ${p.name}`}
+                        title="Open file location"
+                        onClick={() => reveal(p.id, row.outputPath!)}
+                      >
+                        <FolderOpen size={13} aria-hidden="true" />
+                      </button>
+                    )}
                     {tab === 'finished' && (
                       <button
                         type="button"
@@ -931,6 +954,11 @@ export function BulkExportModal({
                     />
                   </div>
                 </div>
+                {tab === 'finished' && revealError?.id === p.id && (
+                  <div className="kxd-xrow-status" data-tone="bad">
+                    <span data-testid={`bulk-export-reveal-error-${p.id}`} className="kxd-xrow-msg" title={revealError.text}>{revealError.text}</span>
+                  </div>
+                )}
                 {tab === 'active' && (
                   <ActiveProgress id={p.id} phase={row?.phase} progress={liveProgress.get(p.id)} onCancel={() => setConfirmCancel({ ids: [p.id], name: p.name, running: row?.phase === 'exporting' })} />
                 )}
